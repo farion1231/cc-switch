@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -406,6 +405,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_provider_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
@@ -512,6 +513,7 @@ impl Default for AppSettings {
             language: None,
             visible_apps: None,
             claude_config_dir: None,
+            claude_provider_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
             opencode_config_dir: None,
@@ -550,6 +552,13 @@ impl AppSettings {
     fn normalize_paths(&mut self) {
         self.claude_config_dir = self
             .claude_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.claude_provider_config_dir = self
+            .claude_provider_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -653,6 +662,7 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()
@@ -854,10 +864,32 @@ pub fn reload_settings() -> Result<(), AppError> {
 
 pub fn get_claude_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
+    if let Some(path) = settings
+        .claude_provider_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+    {
+        return Some(path);
+    }
     settings
         .claude_config_dir
         .as_ref()
         .map(|p| resolve_override_path(p))
+}
+
+pub fn get_claude_configured_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .claude_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
+pub fn set_claude_provider_override_dir(path: Option<&str>) -> Result<(), AppError> {
+    let next = path.map(str::trim).filter(|value| !value.is_empty());
+    mutate_settings(|settings| {
+        settings.claude_provider_config_dir = next.map(|value| value.to_string());
+    })
 }
 
 pub fn get_codex_override_dir() -> Option<PathBuf> {

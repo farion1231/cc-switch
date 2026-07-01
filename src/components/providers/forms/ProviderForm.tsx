@@ -23,6 +23,7 @@ import type {
   CodexCatalogModel,
   CodexChatReasoning,
   ClaudeApiKeyField,
+  ClaudeActivationMode,
 } from "@/types";
 import {
   providerPresets,
@@ -57,6 +58,7 @@ import type { UniversalProviderPreset } from "@/config/universalProviderPresets"
 import {
   applyTemplateValues,
   hasApiKeyField,
+  isChatGptCodexOAuthBaseUrl,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
@@ -129,6 +131,70 @@ type PresetEntry = {
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
     | HermesProviderPreset;
+};
+
+type ClaudeManagedProviderType = "github_copilot" | "codex_oauth";
+
+const firstNonEmptyString = (...values: Array<unknown>): string | undefined => {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+};
+
+const resolveClaudeBaseUrlFromSettingsConfig = (
+  settingsConfig?: string | null,
+): string | undefined => {
+  if (!settingsConfig?.trim()) return undefined;
+
+  try {
+    const parsed = JSON.parse(settingsConfig) as Record<string, unknown>;
+    const env =
+      parsed.env && typeof parsed.env === "object"
+        ? (parsed.env as Record<string, unknown>)
+        : undefined;
+    const apiEndpoint =
+      parsed.apiEndpoint && typeof parsed.apiEndpoint === "object"
+        ? (parsed.apiEndpoint as Record<string, unknown>)
+        : undefined;
+
+    return firstNonEmptyString(
+      env?.ANTHROPIC_BASE_URL,
+      parsed.base_url,
+      parsed.baseURL,
+      parsed.apiEndpoint,
+      apiEndpoint?.url,
+    );
+  } catch {
+    return undefined;
+  }
+};
+
+export const resolveClaudeManagedProviderType = ({
+  baseUrl,
+  settingsConfig,
+  initialProviderType,
+  templateProviderType,
+}: {
+  baseUrl?: string | null;
+  settingsConfig?: string | null;
+  initialProviderType?: string;
+  templateProviderType?: string;
+}): ClaudeManagedProviderType | undefined => {
+  if (templateProviderType === "github_copilot") return "github_copilot";
+  if (templateProviderType === "codex_oauth") return "codex_oauth";
+  if (initialProviderType === "github_copilot") return "github_copilot";
+  if (initialProviderType === "codex_oauth") return "codex_oauth";
+  const effectiveBaseUrl =
+    firstNonEmptyString(baseUrl) ??
+    resolveClaudeBaseUrlFromSettingsConfig(settingsConfig);
+  if ((effectiveBaseUrl ?? "").includes("githubcopilot.com")) {
+    return "github_copilot";
+  }
+  if (isChatGptCodexOAuthBaseUrl(effectiveBaseUrl)) return "codex_oauth";
+  return undefined;
 };
 
 const codexApiFormatFromWireApi = (
@@ -329,6 +395,15 @@ function ProviderFormFull({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [claudeProfileDir, setClaudeProfileDir] = useState<string>(() => {
+    if (appId !== "claude") return "";
+    return initialData?.meta?.claudeProfileDir ?? "";
+  });
+  const [claudeActivationMode, setClaudeActivationMode] =
+    useState<ClaudeActivationMode>(() => {
+      if (appId !== "claude") return "legacy";
+      return initialData?.meta?.claudeActivationMode ?? "legacy";
+    });
 
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
@@ -367,6 +442,14 @@ function ProviderFormFull({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
+    setClaudeProfileDir(
+      appId === "claude" ? (initialData?.meta?.claudeProfileDir ?? "") : "",
+    );
+    setClaudeActivationMode(
+      appId === "claude"
+        ? (initialData?.meta?.claudeActivationMode ?? "legacy")
+        : "legacy",
     );
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setPricingConfig({
@@ -700,6 +783,14 @@ function ProviderFormFull({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
+  const managedProviderType = resolveClaudeManagedProviderType({
+    baseUrl,
+    settingsConfig: form.getValues("settingsConfig"),
+    initialProviderType: initialData?.meta?.providerType,
+    templateProviderType: templatePreset?.providerType,
+  });
+  const isManagedCopilotProvider = managedProviderType === "github_copilot";
+  const isManagedCodexOauthProvider = managedProviderType === "codex_oauth";
 
   const {
     useCommonConfig,
@@ -1123,13 +1214,8 @@ function ProviderFormFull({
     }
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
-      initialData?.meta?.providerType === "codex_oauth";
+    const isCopilotProvider = isManagedCopilotProvider;
+    const isCodexOauthProvider = isManagedCodexOauthProvider;
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
@@ -1255,13 +1341,8 @@ function ProviderFormFull({
     }
 
     // OAuth / 其它身份识别（与 handleSubmit 保持一致）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
-      initialData?.meta?.providerType === "codex_oauth";
+    const isCopilotProvider = isManagedCopilotProvider;
+    const isCodexOauthProvider = isManagedCodexOauthProvider;
 
     let settingsConfig: string;
 
@@ -1431,10 +1512,13 @@ function ProviderFormFull({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const trimmedClaudeProfileDir = claudeProfileDir.trim();
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+      templatePreset?.providerType ||
+      initialData?.meta?.providerType ||
+      managedProviderType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1505,6 +1589,16 @@ function ProviderFormFull({
       isFullUrl:
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
+          : undefined,
+      claudeProfileDir:
+        appId === "claude" &&
+        claudeActivationMode !== "legacy" &&
+        trimmedClaudeProfileDir
+          ? trimmedClaudeProfileDir
+          : undefined,
+      claudeActivationMode:
+        appId === "claude" && claudeActivationMode !== "legacy"
+          ? claudeActivationMode
           : undefined,
     };
 
@@ -1615,6 +1709,10 @@ function ProviderFormFull({
     if (value === "custom") {
       setActivePreset(null);
       form.reset(defaultValues);
+      if (appId === "claude") {
+        setClaudeActivationMode("legacy");
+        setClaudeProfileDir("");
+      }
 
       if (appId === "codex") {
         const template = getCodexCustomTemplate();
@@ -1780,6 +1878,10 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    if (appId === "claude") {
+      setClaudeActivationMode("legacy");
+      setClaudeProfileDir("");
+    }
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2049,22 +2151,11 @@ function ProviderFormFull({
               websiteUrl={claudeWebsiteUrl}
               isPartner={isClaudePartner}
               partnerPromotionKey={claudePartnerPromotionKey}
-              isCopilotPreset={
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com")
-              }
-              isCodexOauthPreset={
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
-              }
+              isCopilotPreset={isManagedCopilotProvider}
+              isCodexOauthPreset={isManagedCodexOauthProvider}
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com") ||
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
+                Boolean(managedProviderType)
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
@@ -2107,6 +2198,10 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              profileDir={claudeProfileDir}
+              onProfileDirChange={setClaudeProfileDir}
+              activationMode={claudeActivationMode}
+              onActivationModeChange={setClaudeActivationMode}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
               localProxyHeadersOverride={localProxyHeadersOverride}

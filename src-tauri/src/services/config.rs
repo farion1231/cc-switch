@@ -168,6 +168,9 @@ impl ConfigService {
             provider.category.as_deref(),
             auth,
             cfg_text,
+            // Config sync writes the stored provider template to live; it must not
+            // reuse the previous live model_provider as a history-stability anchor.
+            None,
             profile,
         )?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用

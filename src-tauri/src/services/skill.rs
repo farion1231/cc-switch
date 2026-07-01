@@ -16,9 +16,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
-use crate::config::get_app_config_dir;
+use crate::config::{get_app_config_dir, get_home_dir};
 use crate::database::Database;
 use crate::error::format_skill_error;
+use crate::provider::ClaudeActivationMode;
 
 // ========== 数据结构 ==========
 
@@ -481,14 +482,7 @@ impl SkillService {
         let location = crate::settings::get_skill_storage_location();
         let dir = match location {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
-            SkillStorageLocation::Unified => {
-                let home = dirs::home_dir().context(format_skill_error(
-                    "GET_HOME_DIR_FAILED",
-                    &[],
-                    Some("checkPermission"),
-                ))?;
-                home.join(".agents").join("skills")
-            }
+            SkillStorageLocation::Unified => get_home_dir().join(".agents").join("skills"),
         };
         fs::create_dir_all(&dir)?;
         Ok(dir)
@@ -506,7 +500,7 @@ impl SkillService {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
             AppType::Claude => {
-                if let Some(custom) = crate::settings::get_claude_override_dir() {
+                if let Some(custom) = crate::settings::get_claude_configured_override_dir() {
                     return Ok(custom.join("skills"));
                 }
             }
@@ -539,11 +533,7 @@ impl SkillService {
         }
 
         // 默认路径：回退到用户主目录下的标准位置
-        let home = dirs::home_dir().context(format_skill_error(
-            "GET_HOME_DIR_FAILED",
-            &[],
-            Some("checkPermission"),
-        ))?;
+        let home = get_home_dir();
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
@@ -554,6 +544,67 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
         })
+    }
+
+    fn get_app_skills_dir_for_db(db: &Database, app: &AppType) -> Result<PathBuf> {
+        if matches!(app, AppType::Claude) {
+            if let Some(active_profile_dir) =
+                Self::get_current_profile_and_config_claude_skills_dir(db)?
+            {
+                return Ok(active_profile_dir);
+            }
+        }
+
+        Self::get_app_skills_dir(app)
+    }
+
+    fn get_current_profile_and_config_claude_skills_dir(db: &Database) -> Result<Option<PathBuf>> {
+        let Some(current_id) =
+            crate::settings::get_effective_current_provider(db, &AppType::Claude)?
+        else {
+            return Ok(None);
+        };
+
+        let Some(provider) = db.get_provider_by_id(&current_id, AppType::Claude.as_str())? else {
+            return Ok(None);
+        };
+        let Some(meta) = provider.meta.as_ref() else {
+            return Ok(None);
+        };
+        if !matches!(
+            meta.claude_activation_mode.as_ref(),
+            Some(ClaudeActivationMode::ProfileAndConfig)
+        ) {
+            return Ok(None);
+        }
+
+        let raw_profile_dir = meta
+            .claude_profile_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow!("Claude profile-and-config skills sync requires a profile directory")
+            })?;
+        let profile_dir = Self::resolve_profile_path(raw_profile_dir);
+        if !profile_dir.is_absolute() {
+            return Err(anyhow!(
+                "Claude profile-and-config skills sync requires an absolute profile directory: {}",
+                raw_profile_dir
+            ));
+        }
+
+        Ok(Some(profile_dir.join("skills")))
+    }
+
+    fn resolve_profile_path(raw: &str) -> PathBuf {
+        if raw == "~" {
+            return get_home_dir();
+        }
+        if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+            return get_home_dir().join(stripped);
+        }
+        PathBuf::from(raw)
     }
 
     // ========== 统一管理方法 ==========
@@ -610,7 +661,7 @@ impl SkillService {
                     let mut updated = existing.clone();
                     updated.apps.set_enabled_for(current_app, true);
                     db.save_skill(&updated)?;
-                    Self::sync_to_app_dir(&updated.directory, current_app)?;
+                    Self::sync_to_app_dir_with_db(db, &updated.directory, current_app)?;
                     log::info!(
                         "Skill {} 已存在，更新 {:?} 启用状态",
                         updated.name,
@@ -768,7 +819,7 @@ impl SkillService {
         db.save_skill(&installed_skill)?;
 
         // 同步到当前应用目录
-        Self::sync_to_app_dir(&install_name, current_app)?;
+        Self::sync_to_app_dir_with_db(db, &install_name, current_app)?;
 
         log::info!(
             "Skill {} 安装成功，已启用 {:?}",
@@ -796,7 +847,7 @@ impl SkillService {
 
         // 从所有应用目录删除
         for app in AppType::all() {
-            let _ = Self::remove_from_app(&skill.directory, &app);
+            let _ = Self::remove_from_app_with_db(db, &skill.directory, &app);
         }
 
         // 从 SSOT 删除
@@ -1106,7 +1157,7 @@ impl SkillService {
 
         // 同步到所有已启用的应用目录
         for app in updated_skill.apps.enabled_apps() {
-            if let Err(e) = Self::sync_to_app_dir(&updated_skill.directory, &app) {
+            if let Err(e) = Self::sync_to_app_dir_with_db(db, &updated_skill.directory, &app) {
                 log::warn!("同步更新后的 skill 到 {:?} 失败: {e}", app);
             }
         }
@@ -1334,7 +1385,9 @@ impl SkillService {
         }
 
         if !restored_skill.apps.is_empty() {
-            if let Err(err) = Self::sync_to_app_dir(&restored_skill.directory, current_app) {
+            if let Err(err) =
+                Self::sync_to_app_dir_with_db(db, &restored_skill.directory, current_app)
+            {
                 let _ = db.delete_skill(&restored_skill.id);
                 let _ = fs::remove_dir_all(&restore_path);
                 return Err(err);
@@ -1365,9 +1418,9 @@ impl SkillService {
 
         // 同步文件
         if enabled {
-            Self::sync_to_app_dir(&skill.directory, app)?;
+            Self::sync_to_app_dir_with_db(db, &skill.directory, app)?;
         } else {
-            Self::remove_from_app(&skill.directory, app)?;
+            Self::remove_from_app_with_db(db, &skill.directory, app)?;
         }
 
         // 更新数据库
@@ -1588,13 +1641,26 @@ impl SkillService {
             return Ok(());
         }
 
+        let app_dir = Self::get_app_skills_dir(app)?;
+        Self::sync_to_app_dir_at(directory, app, &app_dir)
+    }
+
+    fn sync_to_app_dir_with_db(db: &Arc<Database>, directory: &str, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
+        let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
+        Self::sync_to_app_dir_at(directory, app, &app_dir)
+    }
+
+    fn sync_to_app_dir_at(directory: &str, app: &AppType, app_dir: &Path) -> Result<()> {
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(directory);
 
         Self::validate_sync_source_dir(&source, directory)?;
 
-        let app_dir = Self::get_app_skills_dir(app)?;
-        fs::create_dir_all(&app_dir)?;
+        fs::create_dir_all(app_dir)?;
 
         let dest = app_dir.join(directory);
 
@@ -1761,6 +1827,28 @@ impl SkillService {
         }
 
         let app_dir = Self::get_app_skills_dir(app)?;
+        Self::remove_from_app_dir(directory, app, &app_dir)
+    }
+
+    fn remove_from_app_with_db(db: &Arc<Database>, directory: &str, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
+        let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
+        Self::remove_from_app_dir(directory, app, &app_dir)?;
+
+        if matches!(app, AppType::Claude) {
+            let configured_dir = Self::get_app_skills_dir(app)?;
+            if configured_dir != app_dir {
+                Self::remove_from_app_dir(directory, app, &configured_dir)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn remove_from_app_dir(directory: &str, app: &AppType, app_dir: &Path) -> Result<()> {
         let skill_path = app_dir.join(directory);
 
         if skill_path.exists() || Self::is_symlink(&skill_path) {
@@ -1779,7 +1867,7 @@ impl SkillService {
 
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
-        let app_dir = Self::get_app_skills_dir(app)?;
+        let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
 
         let indexed_skills: HashMap<String, &InstalledSkill> = skills
             .values()
@@ -1811,7 +1899,7 @@ impl SkillService {
 
         for skill in skills.values() {
             if skill.apps.is_enabled_for(app) {
-                Self::sync_to_app_dir(&skill.directory, app)?;
+                Self::sync_to_app_dir_with_db(db, &skill.directory, app)?;
             }
         }
 
@@ -2661,7 +2749,7 @@ impl SkillService {
             db.save_skill(&skill)?;
 
             // 同步到当前应用目录
-            Self::sync_to_app_dir(&install_name, current_app)?;
+            Self::sync_to_app_dir_with_db(db, &install_name, current_app)?;
 
             log::info!(
                 "Skill {} installed from ZIP, enabled for {:?}",
@@ -3058,7 +3146,53 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{ClaudeActivationMode, Provider, ProviderMeta};
+    use serde_json::json;
+    use serial_test::serial;
     use tempfile::tempdir;
+
+    struct SettingsGuard {
+        _temp: tempfile::TempDir,
+        old_home: Option<std::ffi::OsString>,
+        old_test_home: Option<std::ffi::OsString>,
+        old_settings: crate::settings::AppSettings,
+    }
+
+    impl SettingsGuard {
+        fn new() -> Self {
+            let temp = tempdir().expect("tempdir");
+            let old_home = std::env::var_os("HOME");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let old_settings = crate::settings::get_settings();
+
+            std::env::set_var("HOME", temp.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+            Self {
+                _temp: temp,
+                old_home,
+                old_test_home,
+                old_settings,
+            }
+        }
+    }
+
+    impl Drop for SettingsGuard {
+        fn drop(&mut self) {
+            crate::settings::update_settings(self.old_settings.clone())
+                .expect("restore settings store");
+
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).expect("create skill dir");
@@ -3067,6 +3201,36 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    fn claude_provider_with_profile(
+        id: &str,
+        profile_dir: &Path,
+        activation_mode: ClaudeActivationMode,
+    ) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "test-token",
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: Some(ProviderMeta {
+                claude_profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+                claude_activation_mode: Some(activation_mode),
+                ..ProviderMeta::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
     }
 
     #[test]
@@ -3102,6 +3266,138 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    #[serial]
+    fn claude_skills_dir_ignores_provider_profile_override() {
+        let _settings = SettingsGuard::new();
+        let temp = tempdir().expect("tempdir");
+        let configured_claude_dir = temp.path().join("configured-claude");
+        let provider_profile_dir = temp.path().join("external-profile");
+
+        let mut settings = crate::settings::AppSettings::default();
+        settings.claude_config_dir = Some(configured_claude_dir.to_string_lossy().to_string());
+        settings.claude_provider_config_dir =
+            Some(provider_profile_dir.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).expect("update test settings");
+
+        let app_skills_dir =
+            SkillService::get_app_skills_dir(&AppType::Claude).expect("claude skills dir");
+
+        assert_eq!(app_skills_dir, configured_claude_dir.join("skills"));
+    }
+
+    #[test]
+    #[serial]
+    fn sync_to_app_uses_current_profile_and_config_claude_skills_dir() {
+        let _settings = SettingsGuard::new();
+        let temp = tempdir().expect("tempdir");
+        let configured_claude_dir = temp.path().join("configured-claude");
+        let provider_profile_dir = temp.path().join("profile-and-config");
+
+        let mut settings = crate::settings::AppSettings::default();
+        settings.claude_config_dir = Some(configured_claude_dir.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).expect("update test settings");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let provider = claude_provider_with_profile(
+            "profile-and-config",
+            &provider_profile_dir,
+            ClaudeActivationMode::ProfileAndConfig,
+        );
+        db.save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+        db.set_current_provider(AppType::Claude.as_str(), "profile-and-config")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("profile-and-config"))
+            .expect("set local current provider");
+
+        let skill_dir = "profile-skill";
+        write_skill(
+            &SkillService::get_ssot_dir()
+                .expect("ssot dir")
+                .join(skill_dir),
+            "Profile Skill",
+        );
+        db.save_skill(&InstalledSkill {
+            id: "local:profile-skill".to_string(),
+            name: "Profile Skill".to_string(),
+            description: None,
+            directory: skill_dir.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::only(&AppType::Claude),
+            installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save skill");
+
+        SkillService::sync_to_app(&db, &AppType::Claude).expect("sync claude skills");
+
+        assert!(
+            provider_profile_dir
+                .join("skills")
+                .join(skill_dir)
+                .join("SKILL.md")
+                .is_file(),
+            "profile-and-config Claude skills should sync into the selected profile"
+        );
+        assert!(
+            !configured_claude_dir
+                .join("skills")
+                .join(skill_dir)
+                .join("SKILL.md")
+                .exists(),
+            "profile-and-config Claude sync should not land in configured/default Claude dir"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn remove_from_app_clears_profile_and_configured_claude_skills_dirs() {
+        let _settings = SettingsGuard::new();
+        let temp = tempdir().expect("tempdir");
+        let configured_claude_dir = temp.path().join("configured-claude");
+        let provider_profile_dir = temp.path().join("profile-and-config");
+
+        let mut settings = crate::settings::AppSettings::default();
+        settings.claude_config_dir = Some(configured_claude_dir.to_string_lossy().to_string());
+        crate::settings::update_settings(settings).expect("update test settings");
+
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let provider = claude_provider_with_profile(
+            "profile-and-config",
+            &provider_profile_dir,
+            ClaudeActivationMode::ProfileAndConfig,
+        );
+        db.save_provider(AppType::Claude.as_str(), &provider)
+            .expect("save provider");
+        db.set_current_provider(AppType::Claude.as_str(), "profile-and-config")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("profile-and-config"))
+            .expect("set local current provider");
+
+        let skill_dir = "disabled-skill";
+        let profile_skill = provider_profile_dir.join("skills").join(skill_dir);
+        let configured_skill = configured_claude_dir.join("skills").join(skill_dir);
+        write_skill(&profile_skill, "Disabled Skill");
+        write_skill(&configured_skill, "Disabled Skill");
+
+        SkillService::remove_from_app_with_db(&db, skill_dir, &AppType::Claude)
+            .expect("remove Claude skill");
+
+        assert!(
+            !profile_skill.exists(),
+            "profile-and-config Claude skill copy should be removed"
+        );
+        assert!(
+            !configured_skill.exists(),
+            "configured/default Claude skill copy should also be removed"
+        );
     }
 
     #[test]

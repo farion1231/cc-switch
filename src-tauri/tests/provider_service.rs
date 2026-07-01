@@ -1317,9 +1317,9 @@ wire_api = "responses"
         "live config should keep the proxy bearer placeholder"
     );
     assert!(
-        live_config.contains(r#"model_provider = "deepseek-new""#)
+        live_config.contains(r#"model_provider = "deepseek""#)
             && live_config.contains(r#"name = "DeepSeek New""#),
-        "live config should update the Codex-visible provider label during takeover"
+        "live config should preserve the stable Codex history key while updating the visible provider label during takeover"
     );
     assert!(
         !live_config.contains("https://new.deepseek.example/v1"),

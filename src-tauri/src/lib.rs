@@ -599,6 +599,14 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to seed official providers: {e}"),
             }
 
+            if let Err(e) =
+                crate::services::provider::ProviderService::sync_current_claude_profile_env(
+                    &app_state,
+                )
+            {
+                log::warn!("Failed to sync Claude profile environment on startup: {e}");
+            }
+
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {

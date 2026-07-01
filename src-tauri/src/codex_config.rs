@@ -9,9 +9,10 @@ use crate::error::AppError;
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item};
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
+const LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_IDS: &[&str] = &["ccswitch"];
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
@@ -132,6 +133,7 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "lmstudio",
     "oss",
     "ollama-chat",
+    "ccswitch",
 ];
 
 /// 获取 Codex 配置目录路径
@@ -151,6 +153,37 @@ pub fn get_codex_auth_path() -> PathBuf {
 /// 获取 Codex config.toml 路径
 pub fn get_codex_config_path() -> PathBuf {
     get_codex_config_dir().join("config.toml")
+}
+
+pub fn extract_codex_model_provider(config_text: &str) -> Option<String> {
+    let trimmed = config_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    trimmed
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|doc| active_codex_model_provider_id(&doc))
+}
+
+#[allow(dead_code)]
+pub fn extract_codex_model(config_text: &str) -> Option<String> {
+    let trimmed = config_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(doc) = trimmed.parse::<DocumentMut>() {
+        return doc
+            .get("model")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+    }
+
+    None
 }
 
 pub fn get_codex_model_catalog_path() -> PathBuf {
@@ -265,10 +298,26 @@ pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
 }
 
 fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
-    doc.get("model_provider")
+    doc.get("profile")
         .and_then(|item| item.as_str())
         .map(str::trim)
-        .filter(|id| !id.is_empty())
+        .filter(|profile| !profile.is_empty())
+        .and_then(|profile| {
+            doc.get("profiles")
+                .and_then(|item| item.as_table_like())
+                .and_then(|profiles| profiles.get(profile))
+        })
+        .and_then(|item| item.as_table_like())
+        .and_then(|profile| profile.get("model_provider"))
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+        .or_else(|| {
+            doc.get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+        })
         .map(str::to_string)
 }
 
@@ -278,6 +327,217 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
         && !CODEX_RESERVED_MODEL_PROVIDER_IDS
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(id))
+}
+
+pub(crate) fn is_cc_switch_codex_model_provider_id(id: &str) -> bool {
+    id.eq_ignore_ascii_case(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        || LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_IDS
+            .iter()
+            .any(|legacy| legacy.eq_ignore_ascii_case(id))
+}
+
+fn stable_codex_model_provider_id_from_config(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    let provider_id = active_codex_model_provider_id(&doc)?;
+
+    if is_custom_codex_model_provider_id(&provider_id) {
+        Some(provider_id)
+    } else {
+        None
+    }
+}
+
+fn codex_model_provider_id_and_table_from_config(
+    config_text: &str,
+) -> Result<Option<(String, Option<Item>)>, AppError> {
+    if config_text.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(None);
+    };
+
+    let provider_table = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(provider_id.as_str()))
+        .cloned();
+
+    Ok(Some((provider_id, provider_table)))
+}
+
+fn normalize_codex_live_config_model_provider_with_anchors<'a>(
+    config_text: &str,
+    anchor_config_texts: impl IntoIterator<Item = &'a str>,
+) -> Result<String, AppError> {
+    if config_text.trim().is_empty() {
+        return Ok(config_text.to_string());
+    };
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let Some(source_provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+
+    let anchor_stable_provider_id = anchor_config_texts
+        .into_iter()
+        .find_map(stable_codex_model_provider_id_from_config);
+
+    let has_source_provider_table = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|table| table.get(source_provider_id.as_str()))
+        .is_some();
+    if !has_source_provider_table {
+        if is_cc_switch_codex_model_provider_id(&source_provider_id) {
+            let fallback_provider_id = anchor_stable_provider_id
+                .filter(|id| !is_cc_switch_codex_model_provider_id(id))
+                .unwrap_or_else(|| "openai".to_string());
+
+            rewrite_codex_profile_model_provider_refs(
+                &mut doc,
+                &source_provider_id,
+                &fallback_provider_id,
+            );
+            doc["model_provider"] = toml_edit::value(fallback_provider_id.as_str());
+
+            return Ok(doc.to_string());
+        }
+
+        return Ok(config_text.to_string());
+    }
+
+    if codex_config_uses_official_openai_endpoint(config_text, &source_provider_id) {
+        return Ok(config_text.to_string());
+    }
+
+    let stable_provider_id = anchor_stable_provider_id
+        .or_else(|| {
+            is_custom_codex_model_provider_id(&source_provider_id)
+                .then(|| source_provider_id.clone())
+        })
+        .unwrap_or_else(|| CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string());
+
+    if stable_provider_id == source_provider_id {
+        return Ok(config_text.to_string());
+    }
+
+    if let Some(model_providers) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+    {
+        let has_stable_provider_table = model_providers.get(stable_provider_id.as_str()).is_some();
+        if has_stable_provider_table && !is_cc_switch_codex_model_provider_id(&stable_provider_id) {
+            return Ok(config_text.to_string());
+        }
+
+        let Some(mut provider_table) = model_providers.remove(source_provider_id.as_str()) else {
+            return Ok(config_text.to_string());
+        };
+        normalize_codex_provider_table_name(
+            &mut provider_table,
+            &source_provider_id,
+            &stable_provider_id,
+        );
+        model_providers[stable_provider_id.as_str()] = provider_table;
+    }
+
+    rewrite_codex_profile_model_provider_refs(&mut doc, &source_provider_id, &stable_provider_id);
+    doc["model_provider"] = toml_edit::value(stable_provider_id.as_str());
+
+    Ok(doc.to_string())
+}
+
+fn normalize_codex_provider_table_name(
+    provider_table: &mut Item,
+    source_provider_id: &str,
+    stable_provider_id: &str,
+) {
+    if stable_provider_id != CC_SWITCH_CODEX_MODEL_PROVIDER_ID {
+        return;
+    }
+
+    let Some(table) = provider_table.as_table_like_mut() else {
+        return;
+    };
+    let name_matches_rewritten_provider = table
+        .get("name")
+        .and_then(|item| item.as_str())
+        .map(|name| name.eq_ignore_ascii_case(source_provider_id))
+        .unwrap_or(true);
+    if name_matches_rewritten_provider {
+        table.insert("name", toml_edit::value(stable_provider_id));
+    }
+}
+
+fn rewrite_codex_profile_model_provider_refs(
+    doc: &mut DocumentMut,
+    source_provider_id: &str,
+    stable_provider_id: &str,
+) {
+    let Some(profiles) = doc
+        .get_mut("profiles")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return;
+    };
+
+    let profile_keys: Vec<String> = profiles.iter().map(|(key, _)| key.to_string()).collect();
+    for profile_key in profile_keys {
+        let Some(profile_table) = profiles
+            .get_mut(&profile_key)
+            .and_then(|item| item.as_table_like_mut())
+        else {
+            continue;
+        };
+
+        let references_source = profile_table
+            .get("model_provider")
+            .and_then(|item| item.as_str())
+            == Some(source_provider_id);
+        if references_source {
+            profile_table.insert("model_provider", toml_edit::value(stable_provider_id));
+        }
+    }
+}
+
+/// Keep Codex's active `model_provider` stable across CC Switch provider changes.
+///
+/// Codex stores and filters resume history by `model_provider`, so switching between
+/// provider-specific ids like `rightcode` and `aihubmix` makes history appear to move.
+/// We preserve an existing custom provider id when possible and only rewrite the
+/// live config text that Codex sees at provider-driven write boundaries.
+pub fn normalize_codex_settings_config_model_provider(
+    settings: &mut Value,
+    anchor_config_text: Option<&str>,
+) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+
+    let current_config_text = read_codex_config_text().ok();
+    let anchors = anchor_config_text
+        .into_iter()
+        .chain(current_config_text.as_deref());
+    let normalized =
+        normalize_codex_live_config_model_provider_with_anchors(&config_text, anchors)?;
+
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("config".to_string(), Value::String(normalized));
+    }
+
+    Ok(())
 }
 
 /// Write only Codex `config.toml` for provider switching.
@@ -314,15 +574,37 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 
 /// Extract the upstream base URL from a Codex `config.toml` string.
 ///
-/// Prefers the active `[model_providers.<model_provider>].base_url`, falling
-/// back to a top-level `base_url`. Deliberately never reads a non-active
-/// `[model_providers.*]` section — the frontend `extractCodexBaseUrl`
-/// (`getRecoverableBaseUrlAssignments`) excludes those too, and a leftover
-/// section unrelated to the active provider must not leak into `{{baseUrl}}`.
+/// Prefers the selected profile's provider, then the active top-level
+/// `[model_providers.<model_provider>].base_url`, falling back to a top-level
+/// `base_url`. Deliberately never reads a non-active `[model_providers.*]`
+/// section — the frontend `extractCodexBaseUrl` (`getRecoverableBaseUrlAssignments`)
+/// excludes those too, and a leftover section unrelated to the active provider
+/// must not leak into `{{baseUrl}}`.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
 
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+    let active_profile_provider = doc
+        .get("profile")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .and_then(|profile| {
+            doc.get("profiles")
+                .and_then(|profiles| profiles.get(profile))
+        })
+        .and_then(|profile| profile.get("model_provider"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty());
+    let active_provider = active_profile_provider
+        .or_else(|| {
+            doc.get("model_provider")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+        })
+        .filter(|provider| !provider.is_empty());
+
+    if let Some(active_provider) = active_provider {
         if let Some(base_url) = doc
             .get("model_providers")
             .and_then(|providers| providers.get(active_provider))
@@ -336,6 +618,25 @@ pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     doc.get("base_url")
         .and_then(|v| v.as_str())
         .map(ToString::to_string)
+}
+
+fn codex_config_uses_official_openai_endpoint(config_text: &str, provider_id: &str) -> bool {
+    if !provider_id.eq_ignore_ascii_case("openai") {
+        return false;
+    }
+
+    extract_codex_base_url(config_text)
+        .map(|base_url| codex_base_url_is_openai_official(&base_url))
+        .unwrap_or(true)
+}
+
+fn codex_base_url_is_openai_official(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+
+    url.host_str()
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"))
 }
 
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
@@ -1150,13 +1451,98 @@ pub fn write_codex_provider_live_with_catalog(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
+    model_provider_anchor_config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
 ) -> Result<(), AppError> {
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
         .transpose()?;
+    let live_config = prepared_config
+        .as_deref()
+        .map(|text| {
+            normalize_codex_live_config_model_provider_with_anchors(
+                text,
+                model_provider_anchor_config_text,
+            )
+        })
+        .transpose()?;
 
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+    write_codex_live_for_provider(category, auth, live_config.as_deref())
+}
+
+fn restore_codex_backfill_model_provider_id(
+    config_text: &str,
+    template_config_text: &str,
+) -> Result<String, AppError> {
+    let Some((template_provider_id, template_provider_table)) =
+        codex_model_provider_id_and_table_from_config(template_config_text)?
+    else {
+        return Ok(config_text.to_string());
+    };
+
+    if config_text.trim().is_empty() {
+        return Ok(config_text.to_string());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let Some(live_provider_id) = active_codex_model_provider_id(&doc) else {
+        return Ok(config_text.to_string());
+    };
+
+    if live_provider_id == template_provider_id {
+        return Ok(config_text.to_string());
+    }
+
+    if let Some(model_providers) = doc
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_mut())
+    {
+        if let Some(provider_table) = model_providers.remove(live_provider_id.as_str()) {
+            model_providers[template_provider_id.as_str()] = provider_table;
+        } else if let Some(provider_table) = template_provider_table.clone() {
+            model_providers[template_provider_id.as_str()] = provider_table;
+        }
+    } else if let Some(provider_table) = template_provider_table {
+        doc["model_providers"] = toml_edit::table();
+        if let Some(model_providers) = doc["model_providers"].as_table_mut() {
+            model_providers[template_provider_id.as_str()] = provider_table;
+        }
+    }
+
+    rewrite_codex_profile_model_provider_refs(&mut doc, &live_provider_id, &template_provider_id);
+    doc["model_provider"] = toml_edit::value(template_provider_id.as_str());
+
+    Ok(doc.to_string())
+}
+
+/// Convert a Codex live config that was normalized for history stability back
+/// to the provider-specific id used by the stored provider template.
+pub fn restore_codex_settings_config_model_provider_for_backfill(
+    settings: &mut Value,
+    template_settings: &Value,
+) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    let Some(template_config_text) = template_settings
+        .get("config")
+        .and_then(|value| value.as_str())
+    else {
+        return Ok(());
+    };
+
+    let restored = restore_codex_backfill_model_provider_id(&config_text, template_config_text)?;
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("config".to_string(), Value::String(restored));
+    }
+
+    Ok(())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -1333,6 +1719,24 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
             .and_then(|item| item.as_bool())
             == Some(true)
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
+}
+
+pub(crate) fn config_uses_codex_unified_official_provider(config_text: &str) -> bool {
+    let Ok(doc) = config_text.parse::<DocumentMut>() else {
+        return false;
+    };
+    let Some(provider_id) = active_codex_model_provider_id(&doc) else {
+        return false;
+    };
+    if !is_cc_switch_codex_model_provider_id(&provider_id) {
+        return false;
+    }
+
+    doc.get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|providers| providers.get(provider_id.as_str()))
+        .and_then(|item| item.as_table())
+        .is_some_and(table_matches_codex_unified_official_provider)
 }
 
 /// 统一 Codex 会话历史：把官方供应商的 live 配置改写为以共享的
@@ -1577,16 +1981,17 @@ pub fn restore_codex_settings_for_backfill(
     if restore_provider_token {
         restore_codex_provider_token_for_backfill(settings, template_settings)?;
     }
+    restore_codex_settings_config_model_provider_for_backfill(settings, template_settings)?;
     Ok(())
 }
 
 /// Update a field in Codex config.toml using toml_edit (syntax-preserving).
 ///
 /// Supported fields:
-/// - `"base_url"`: writes to `[model_providers.<current>].base_url` if `model_provider` exists,
-///   otherwise falls back to top-level `base_url`.
-/// - `"wire_api"`: writes to `[model_providers.<current>].wire_api` if `model_provider` exists,
-///   otherwise falls back to top-level `wire_api`.
+/// - `"base_url"`: writes to `[model_providers.<active>].base_url` if a selected
+///   profile or top-level `model_provider` exists, otherwise falls back to top-level `base_url`.
+/// - `"wire_api"`: writes to `[model_providers.<active>].wire_api` if a selected
+///   profile or top-level `model_provider` exists, otherwise falls back to top-level `wire_api`.
 /// - `"model"` / `"model_catalog_json"`: writes to top-level field.
 ///
 /// Empty value removes the field.
@@ -1599,10 +2004,7 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
 
     match field {
         "base_url" | "wire_api" => {
-            let model_provider = doc
-                .get("model_provider")
-                .and_then(|item| item.as_str())
-                .map(str::to_string);
+            let model_provider = active_codex_model_provider_id(&doc);
 
             if let Some(provider_key) = model_provider {
                 // Ensure [model_providers] table exists
@@ -1656,10 +2058,7 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
         Err(_) => return toml_str.to_string(),
     };
 
-    let model_provider = doc
-        .get("model_provider")
-        .and_then(|item| item.as_str())
-        .map(str::to_string);
+    let model_provider = active_codex_model_provider_id(&doc);
 
     if let Some(provider_key) = model_provider {
         if let Some(model_providers) = doc
@@ -1817,6 +2216,27 @@ base_url = "https://other.example.com/v1"
         assert_eq!(
             extract_codex_base_url(input).as_deref(),
             Some("https://azure.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn extract_base_url_prefers_selected_profile_provider_section() {
+        let input = r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+
+[model_providers.local]
+base_url = "http://localhost:11434/v1"
+"#;
+
+        assert_eq!(
+            extract_codex_base_url(input).as_deref(),
+            Some("http://localhost:11434/v1")
         );
     }
 
@@ -2001,7 +2421,473 @@ model = "gpt-5.4"
     }
 
     #[test]
-    fn backfill_preserves_live_model_provider_id() {
+    fn normalize_live_config_preserves_current_custom_model_provider_id() {
+        let current = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[mcp_servers.context7]
+command = "npx"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("rightcode")
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert!(
+            model_providers.get("aihubmix").is_none(),
+            "source provider id should not remain in live config"
+        );
+
+        let stable_provider = model_providers
+            .get("rightcode")
+            .expect("stable provider table should exist");
+        assert_eq!(
+            stable_provider.get("base_url").and_then(|v| v.as_str()),
+            Some("https://aihubmix.example/v1")
+        );
+        assert!(
+            parsed.get("mcp_servers").is_some(),
+            "unrelated config should be preserved"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_keeps_official_openai_when_anchor_is_custom() {
+        let current = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "official OpenAI switches must keep future Codex history under openai"
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert!(
+            model_providers.get("rightcode").is_none(),
+            "custom anchor should not be injected into official OpenAI config"
+        );
+        assert_eq!(
+            model_providers
+                .get("openai")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://api.openai.com/v1")
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_rewrites_openai_custom_endpoint_when_custom_table_exists() {
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[model_providers.custom]
+name = "Stale Custom"
+base_url = "https://stale.example/v1"
+wire_api = "responses"
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "custom endpoint history must use the same key as future live sessions"
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        let provider = model_providers
+            .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+            .expect("custom provider table should exist");
+        assert_eq!(
+            provider.get("base_url").and_then(|v| v.as_str()),
+            Some("https://relay.example/v1"),
+            "the active OpenAI-named custom endpoint should replace stale custom table contents"
+        );
+        assert!(
+            model_providers.get("openai").is_none(),
+            "OpenAI-named custom endpoint should not remain under openai"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_resolves_selected_profile_provider_before_top_level() {
+        let target = r#"model_provider = "openai"
+model = "gpt-5.4"
+profile = "work"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "https://relay.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[profiles.work]
+model_provider = "OpenAI"
+model = "gpt-5.4"
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "profile-scoped custom endpoint history must use the stable custom key"
+        );
+        assert_eq!(
+            parsed
+                .get("profiles")
+                .and_then(|v| v.get("work"))
+                .and_then(|v| v.get("model_provider"))
+                .and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "selected profile provider reference should follow the rewritten provider"
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert_eq!(
+            model_providers
+                .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://relay.example/v1")
+        );
+        assert!(
+            model_providers.get("OpenAI").is_none(),
+            "profile provider id should not remain after normalization"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_keeps_target_provider_when_anchor_table_would_collide() {
+        let current = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "vendor_alpha"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://vendor-alpha.example/v1"
+wire_api = "responses"
+
+[model_providers.rightcode]
+name = "RightCode Profile"
+base_url = "https://profile-rightcode.example/v1"
+wire_api = "responses"
+
+[profiles.work]
+model_provider = "rightcode"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("vendor_alpha")
+        );
+
+        let model_providers = parsed
+            .get("model_providers")
+            .and_then(|v| v.as_table())
+            .expect("model_providers should exist");
+        assert_eq!(
+            model_providers
+                .get("rightcode")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://profile-rightcode.example/v1"),
+            "existing anchor provider table must not be overwritten"
+        );
+        assert_eq!(
+            model_providers
+                .get("vendor_alpha")
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://vendor-alpha.example/v1")
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_uses_target_custom_provider_when_current_is_reserved() {
+        let current = r#"model_provider = "openai""#;
+        let target = r#"model_provider = "aihubmix"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("aihubmix")
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("aihubmix"))
+                .is_some(),
+            "target provider id should be kept when there is no reusable live custom id"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_leaves_official_empty_config_unchanged() {
+        let current = r#"model_provider = "rightcode"
+
+[model_providers.rightcode]
+base_url = "https://rightcode.example/v1"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors("", Some(current)).unwrap();
+
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn normalize_live_config_rewrites_matching_profile_model_provider_refs() {
+        let current = r#"model_provider = "session_anchor"
+
+[model_providers.session_anchor]
+name = "Session Anchor"
+base_url = "https://anchor.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "vendor_alpha"
+model = "gpt-5.4"
+profile = "work"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://alpha.example/v1"
+wire_api = "responses"
+
+[profiles.work]
+model_provider = "vendor_alpha"
+model = "gpt-5.4"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("session_anchor")
+        );
+        assert_eq!(
+            parsed
+                .get("profiles")
+                .and_then(|v| v.get("work"))
+                .and_then(|v| v.get("model_provider"))
+                .and_then(|v| v.as_str()),
+            Some("session_anchor"),
+            "profile override matching the rewritten provider should stay valid"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_keeps_unrelated_profile_model_provider_refs() {
+        let current = r#"model_provider = "session_anchor"
+
+[model_providers.session_anchor]
+name = "Session Anchor"
+base_url = "https://anchor.example/v1"
+wire_api = "responses"
+"#;
+        let target = r#"model_provider = "vendor_alpha"
+model = "gpt-5.4"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://alpha.example/v1"
+wire_api = "responses"
+
+[model_providers.local_profile]
+name = "Local Profile"
+base_url = "http://localhost:11434/v1"
+wire_api = "responses"
+
+[profiles.local]
+model_provider = "local_profile"
+model = "local-model"
+"#;
+
+        let result =
+            normalize_codex_live_config_model_provider_with_anchors(target, Some(current)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed
+                .get("profiles")
+                .and_then(|v| v.get("local"))
+                .and_then(|v| v.get("model_provider"))
+                .and_then(|v| v.as_str()),
+            Some("local_profile"),
+            "unrelated profile provider references should be preserved"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("local_profile"))
+                .is_some(),
+            "unrelated provider tables should also remain available"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_keeps_stable_provider_across_repeated_switches() {
+        let anchor = r#"model_provider = "session_anchor"
+
+[model_providers.session_anchor]
+name = "Session Anchor"
+base_url = "https://anchor.example/v1"
+wire_api = "responses"
+"#;
+        let first_target = r#"model_provider = "vendor_alpha"
+
+[model_providers.vendor_alpha]
+name = "Vendor Alpha"
+base_url = "https://alpha.example/v1"
+wire_api = "responses"
+"#;
+        let second_target = r#"model_provider = "vendor_beta"
+
+[model_providers.vendor_beta]
+name = "Vendor Beta"
+base_url = "https://beta.example/v1"
+wire_api = "responses"
+"#;
+
+        let first =
+            normalize_codex_live_config_model_provider_with_anchors(first_target, Some(anchor))
+                .unwrap();
+        let second = normalize_codex_live_config_model_provider_with_anchors(
+            second_target,
+            Some(first.as_str()),
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&second).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("session_anchor"),
+            "stable provider id should not drift across repeated switches"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("session_anchor"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://beta.example/v1")
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_does_not_label_stable_ccswitch_as_openai() {
+        let target = r#"model_provider = "openai"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "http://100.75.29.71:8080/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|v| v.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID))
+            .expect("stable ccswitch provider table should exist");
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        assert_eq!(
+            provider.get("name").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID),
+            "custom API login must not expose itself as the official OpenAI provider"
+        );
+        assert_eq!(
+            provider.get("base_url").and_then(|v| v.as_str()),
+            Some("http://100.75.29.71:8080/v1")
+        );
+    }
+
+    #[test]
+    fn backfill_restores_template_model_provider_id() {
         let mut live_settings = json!({
             "auth": {},
             "config": r#"model_provider = "vendor_beta"
@@ -2029,14 +2915,53 @@ wire_api = "responses"
 
         assert_eq!(
             parsed.get("model_provider").and_then(|v| v.as_str()),
-            Some("vendor_beta")
+            Some("custom")
         );
         assert!(
             parsed
                 .get("model_providers")
-                .and_then(|v| v.get("vendor_beta"))
+                .and_then(|v| v.get("custom"))
                 .is_some(),
-            "backfill should not rewrite user-selected provider tables"
+            "backfill should restore the provider-specific table key from the stored template"
+        );
+    }
+
+    #[test]
+    fn restore_backfill_rewrites_stable_provider_without_table_to_template_provider() {
+        let live = r#"model_provider = "ccswitch"
+model = "gpt-5.4"
+"#;
+        let template = r#"model_provider = "OpenAI"
+model = "gpt-5.4"
+"#;
+
+        let result = restore_codex_backfill_model_provider_id(live, template).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("OpenAI"),
+            "backfill must not persist a dangling ccswitch model_provider"
+        );
+        assert!(
+            !result.contains("ccswitch"),
+            "invalid stable provider label should be removed when no matching table exists"
+        );
+    }
+
+    #[test]
+    fn normalize_live_config_rewrites_dangling_stable_provider_to_openai() {
+        let target = r#"model_provider = "ccswitch"
+model = "gpt-5.4"
+"#;
+
+        let result = normalize_codex_live_config_model_provider_with_anchors(target, None).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai"),
+            "provider-driven live writes must not emit a missing ccswitch provider table"
         );
     }
 
@@ -2134,6 +3059,47 @@ model = "gpt-4"
             .and_then(|v| v.as_str())
             .expect("should set top-level base_url");
         assert_eq!(base_url, "https://fallback.api/v1");
+    }
+
+    #[test]
+    fn extract_codex_model_provider_reads_top_level_provider_key() {
+        let input = r#"model = "gpt-5.4"
+model_provider = "OpenAI"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+"#;
+
+        assert_eq!(
+            extract_codex_model_provider(input).as_deref(),
+            Some("OpenAI")
+        );
+    }
+
+    #[test]
+    fn extract_codex_model_provider_reads_selected_profile_provider_key() {
+        let input = r#"model = "gpt-5.4"
+model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "vendor_alpha"
+"#;
+
+        assert_eq!(
+            extract_codex_model_provider(input).as_deref(),
+            Some("vendor_alpha")
+        );
+    }
+
+    #[test]
+    fn extract_codex_model_reads_model_when_not_on_first_line() {
+        let input = r#"model_provider = "OpenAI"
+model = "gpt-5.4"
+review_model = "gpt-5.4"
+"#;
+
+        assert_eq!(extract_codex_model(input).as_deref(), Some("gpt-5.4"));
     }
 
     #[test]
@@ -2262,6 +3228,43 @@ wire_api = "responses"
             any_section.get("wire_api").and_then(|v| v.as_str()),
             Some("responses")
         );
+    }
+
+    #[test]
+    fn remove_base_url_if_uses_selected_profile_provider() {
+        let input = r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "local"
+
+[model_providers.openai]
+base_url = "https://api.openai.com/v1"
+
+[model_providers.local]
+base_url = "http://127.0.0.1:5000/v1"
+wire_api = "responses"
+"#;
+
+        let result =
+            remove_codex_toml_base_url_if(input, |url| url.starts_with("http://127.0.0.1"));
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        let local_base_url = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("local"))
+            .and_then(|v| v.get("base_url"));
+        assert!(
+            local_base_url.is_none(),
+            "cleanup should remove the local proxy URL from the selected profile provider"
+        );
+
+        let openai_base_url = parsed
+            .get("model_providers")
+            .and_then(|v| v.get("openai"))
+            .and_then(|v| v.get("base_url"))
+            .and_then(|v| v.as_str());
+        assert_eq!(openai_base_url, Some("https://api.openai.com/v1"));
     }
 
     #[test]

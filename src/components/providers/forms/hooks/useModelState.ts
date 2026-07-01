@@ -7,6 +7,7 @@ interface UseModelStateProps {
 
 export type ClaudeModelEnvField =
   | "ANTHROPIC_MODEL"
+  | "ANTHROPIC_REASONING_MODEL"
   | "ANTHROPIC_DEFAULT_HAIKU_MODEL"
   | "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"
   | "ANTHROPIC_DEFAULT_SONNET_MODEL"
@@ -43,6 +44,10 @@ function parseModelsFromConfig(settingsConfig: string) {
     const env = cfg?.env || {};
     const model =
       typeof env.ANTHROPIC_MODEL === "string" ? env.ANTHROPIC_MODEL : "";
+    const explicitReasoning =
+      typeof env.ANTHROPIC_REASONING_MODEL === "string"
+        ? env.ANTHROPIC_REASONING_MODEL
+        : "";
     const small =
       typeof env.ANTHROPIC_SMALL_FAST_MODEL === "string"
         ? env.ANTHROPIC_SMALL_FAST_MODEL
@@ -84,6 +89,7 @@ function parseModelsFromConfig(settingsConfig: string) {
 
     return {
       model,
+      reasoning: explicitReasoning || model,
       haiku,
       haikuName,
       sonnet,
@@ -96,6 +102,7 @@ function parseModelsFromConfig(settingsConfig: string) {
   } catch {
     return {
       model: "",
+      reasoning: "",
       haiku: "",
       haikuName: "",
       sonnet: "",
@@ -118,6 +125,7 @@ export function useModelState({
 }: UseModelStateProps) {
   const initial = useState(() => parseModelsFromConfig(settingsConfig))[0];
   const [claudeModel, setClaudeModel] = useState(initial.model);
+  const [reasoningModel, setReasoningModel] = useState(initial.reasoning);
   const [defaultHaikuModel, setDefaultHaikuModel] = useState(initial.haiku);
   const [defaultHaikuModelName, setDefaultHaikuModelName] = useState(
     initial.haikuName,
@@ -156,6 +164,7 @@ export function useModelState({
 
     const parsed = parseModelsFromConfig(settingsConfig);
     setClaudeModel(parsed.model);
+    setReasoningModel(parsed.reasoning);
     setDefaultHaikuModel(parsed.haiku);
     setDefaultHaikuModelName(parsed.haikuName);
     setDefaultSonnetModel(parsed.sonnet);
@@ -171,6 +180,7 @@ export function useModelState({
       isUserEditingRef.current = true;
 
       if (field === "ANTHROPIC_MODEL") setClaudeModel(value);
+      if (field === "ANTHROPIC_REASONING_MODEL") setReasoningModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL")
         setDefaultHaikuModel(value);
       if (field === "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
@@ -202,6 +212,7 @@ export function useModelState({
           delete env[field];
         }
         // 删除旧键
+        delete env["ANTHROPIC_REASONING_MODEL"];
         delete env["ANTHROPIC_SMALL_FAST_MODEL"];
 
         const updatedConfig = JSON.stringify(currentConfig, null, 2);
@@ -217,6 +228,8 @@ export function useModelState({
   return {
     claudeModel,
     setClaudeModel,
+    reasoningModel,
+    setReasoningModel,
     defaultHaikuModel,
     setDefaultHaikuModel,
     defaultHaikuModelName,

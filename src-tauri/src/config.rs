@@ -163,9 +163,31 @@ pub fn get_claude_mcp_path() -> PathBuf {
     get_default_claude_mcp_path()
 }
 
+/// 获取用户配置的 Claude MCP 文件路径，不跟随当前 provider-only profile。
+pub fn get_claude_configured_mcp_path() -> PathBuf {
+    if let Some(custom_dir) = crate::settings::get_claude_configured_override_dir() {
+        if let Some(path) = default_mcp_path_for_config_dir(&custom_dir) {
+            return path;
+        }
+        return derive_mcp_path_from_override(&custom_dir);
+    }
+    get_default_claude_mcp_path()
+}
+
 /// 获取 Claude Code 主配置文件路径
 pub fn get_claude_settings_path() -> PathBuf {
     let dir = get_claude_config_dir();
+    claude_settings_path_in_dir(&dir)
+}
+
+/// 获取用户配置/默认 Claude Code 主配置文件路径，不跟随当前 provider-only profile。
+pub fn get_claude_configured_settings_path() -> PathBuf {
+    let dir = crate::settings::get_claude_configured_override_dir()
+        .unwrap_or_else(|| get_home_dir().join(".claude"));
+    claude_settings_path_in_dir(&dir)
+}
+
+fn claude_settings_path_in_dir(dir: &Path) -> PathBuf {
     let settings = dir.join("settings.json");
     if settings.exists() {
         return settings;

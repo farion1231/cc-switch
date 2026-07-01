@@ -30,10 +30,8 @@ const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo"
 /// 优先级：meta.apiFormat > settings_config.api_format > openrouter_compat_mode > 默认 "anthropic"
 pub fn get_claude_api_format(provider: &Provider) -> &'static str {
     // 0) Codex OAuth 强制使用 openai_responses（不可被覆盖）
-    if let Some(meta) = provider.meta.as_ref() {
-        if meta.provider_type.as_deref() == Some("codex_oauth") {
-            return "openai_responses";
-        }
+    if provider.is_codex_oauth() {
+        return "openai_responses";
     }
 
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
@@ -95,6 +93,28 @@ fn is_reasoning_vendor_identifier(value: &str) -> bool {
         .any(|hint| value.contains(hint))
 }
 
+fn claude_settings_base_url_candidates(settings: &Value) -> [Option<&str>; 5] {
+    [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+        settings
+            .pointer("/apiEndpoint/url")
+            .and_then(|v| v.as_str()),
+    ]
+}
+
+fn claude_settings_base_url(settings: &Value) -> Option<&str> {
+    claude_settings_base_url_candidates(settings)
+        .into_iter()
+        .flatten()
+        .next()
+}
+
 fn should_normalize_anthropic_tool_thinking_history(
     provider: &Provider,
     body: &Value,
@@ -113,18 +133,10 @@ fn should_normalize_anthropic_tool_thinking_history(
     }
 
     let settings = &provider.settings_config;
-    [
-        settings
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str()),
-        settings.get("base_url").and_then(|v| v.as_str()),
-        settings.get("baseURL").and_then(|v| v.as_str()),
-        settings.get("apiEndpoint").and_then(|v| v.as_str()),
-    ]
-    .into_iter()
-    .flatten()
-    .any(is_reasoning_vendor_identifier)
+    claude_settings_base_url_candidates(settings)
+        .into_iter()
+        .flatten()
+        .any(is_reasoning_vendor_identifier)
 }
 
 /// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
@@ -152,13 +164,7 @@ const DEEPSEEK_OFFICIAL_ANTHROPIC_URL: &str = "https://api.deepseek.com/anthropi
 /// Anthropic-compatible endpoint.
 fn is_deepseek_official_anthropic_endpoint(provider: &Provider) -> bool {
     let settings = &provider.settings_config;
-    let base_url = settings
-        .get("env")
-        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-        .and_then(|v| v.as_str())
-        .or_else(|| settings.get("base_url").and_then(|v| v.as_str()))
-        .or_else(|| settings.get("baseURL").and_then(|v| v.as_str()))
-        .or_else(|| settings.get("apiEndpoint").and_then(|v| v.as_str()));
+    let base_url = claude_settings_base_url(settings);
 
     base_url.map(|u| u.trim_end_matches('/')) == Some(DEEPSEEK_OFFICIAL_ANTHROPIC_URL)
 }
@@ -311,15 +317,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
     }
 
     let settings = &provider.settings_config;
-    let base_urls = [
-        settings
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str()),
-        settings.get("base_url").and_then(|v| v.as_str()),
-        settings.get("baseURL").and_then(|v| v.as_str()),
-        settings.get("apiEndpoint").and_then(|v| v.as_str()),
-    ];
+    let base_urls = claude_settings_base_url_candidates(settings);
 
     base_urls
         .into_iter()
@@ -483,12 +481,7 @@ impl ClaudeAdapter {
 
     /// 检测是否为 Codex OAuth 供应商（ChatGPT Plus/Pro 反代）
     fn is_codex_oauth(&self, provider: &Provider) -> bool {
-        if let Some(meta) = provider.meta.as_ref() {
-            if meta.provider_type.as_deref() == Some("codex_oauth") {
-                return true;
-            }
-        }
-        false
+        provider.is_codex_oauth()
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -669,35 +662,7 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok("https://chatgpt.com/backend-api/codex".to_string());
         }
 
-        // 1. 从 env 中获取
-        if let Some(env) = provider.settings_config.get("env") {
-            if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
-                return Ok(url.trim_end_matches('/').to_string());
-            }
-        }
-
-        // 2. 尝试直接获取
-        if let Some(url) = provider
-            .settings_config
-            .get("base_url")
-            .and_then(|v| v.as_str())
-        {
-            return Ok(url.trim_end_matches('/').to_string());
-        }
-
-        if let Some(url) = provider
-            .settings_config
-            .get("baseURL")
-            .and_then(|v| v.as_str())
-        {
-            return Ok(url.trim_end_matches('/').to_string());
-        }
-
-        if let Some(url) = provider
-            .settings_config
-            .get("apiEndpoint")
-            .and_then(|v| v.as_str())
-        {
+        if let Some(url) = claude_settings_base_url(&provider.settings_config) {
             return Ok(url.trim_end_matches('/').to_string());
         }
 
@@ -1002,6 +967,19 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_base_url_from_api_endpoint_object() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiEndpoint": {
+                "url": "https://api.example.com/anthropic/"
+            }
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://api.example.com/anthropic");
+    }
+
+    #[test]
     fn test_extract_auth_anthropic_auth_token_uses_claude_auth_strategy() {
         // ANTHROPIC_AUTH_TOKEN 在 Anthropic SDK 里语义就是 Authorization: Bearer，
         // 因此走 ClaudeAuth strategy 而不是 Anthropic（x-api-key）。
@@ -1180,6 +1158,23 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-proxy-key");
         assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
+    }
+
+    #[test]
+    fn test_base_url_codex_oauth_uses_oauth_adapter_path() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+            }
+        }));
+
+        assert_eq!(get_claude_api_format(&provider), "openai_responses");
+        assert_eq!(adapter.provider_type(&provider), ProviderType::CodexOAuth);
+        assert!(adapter.needs_transform(&provider));
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::CodexOAuth);
     }
 
     /// Regression: a Gemini OAuth credential JSON that carries only a

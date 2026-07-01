@@ -38,6 +38,7 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
+use crate::provider::Provider;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -287,12 +288,7 @@ async fn handle_claude_transform(
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
-    let is_codex_oauth = ctx
-        .provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("codex_oauth");
+    let is_codex_oauth = claude_transform_provider_is_codex_oauth(&ctx.provider);
     // Codex OAuth 会把 openai_responses 响应强制升级为 SSE，即使客户端发的是 stream:false。
     // should_use_claude_transform_streaming 默认会把这个组合路由到流式转换器——虽然能避免
     // JSON parse 报 422，但会让非流客户端收到 text/event-stream，违反 Anthropic 非流语义。
@@ -560,6 +556,10 @@ async fn handle_claude_transform(
         log::error!("[Claude] 构建响应失败: {e}");
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+fn claude_transform_provider_is_codex_oauth(provider: &Provider) -> bool {
+    provider.is_codex_oauth()
 }
 
 fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
@@ -2044,11 +2044,12 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
+        body_looks_like_sse, body_snippet, chat_sse_to_response_value,
+        claude_transform_provider_is_codex_oauth, codex_proxy_error_json,
         responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
         upstream_body_parse_error,
     };
-    use crate::proxy::ProxyError;
+    use crate::{provider::Provider, proxy::ProxyError};
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
@@ -2581,6 +2582,22 @@ data: [DONE]\n\n";
             "openai_responses",
             true,
         ));
+    }
+
+    #[test]
+    fn claude_transform_detects_codex_oauth_from_base_url_fallback() {
+        let provider = Provider::with_id(
+            "imported-codex-oauth".to_string(),
+            "Imported Codex OAuth".to_string(),
+            serde_json::json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+
+        assert!(claude_transform_provider_is_codex_oauth(&provider));
     }
 
     #[test]

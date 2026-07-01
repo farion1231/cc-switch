@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_mcp_path};
+use crate::config::{atomic_write, get_claude_configured_mcp_path};
 use crate::error::AppError;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
@@ -98,7 +98,7 @@ pub struct McpStatus {
 }
 
 fn user_config_path() -> PathBuf {
-    get_claude_mcp_path()
+    get_claude_configured_mcp_path()
 }
 
 fn read_json_value(path: &Path) -> Result<Value, AppError> {
@@ -326,11 +326,17 @@ pub fn validate_command_in_path(cmd: &str) -> Result<bool, AppError> {
 /// 读取 ~/.claude.json 中的 mcpServers 映射
 pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>, AppError> {
     let path = user_config_path();
+    read_mcp_servers_map_from_path(&path)
+}
+
+pub(crate) fn read_mcp_servers_map_from_path(
+    path: &Path,
+) -> Result<std::collections::HashMap<String, Value>, AppError> {
     if !path.exists() {
         return Ok(std::collections::HashMap::new());
     }
 
-    let root = read_json_value(&path)?;
+    let root = read_json_value(path)?;
     let servers = root
         .get("mcpServers")
         .and_then(|v| v.as_object())
@@ -346,15 +352,22 @@ pub fn set_mcp_servers_map(
     servers: &std::collections::HashMap<String, Value>,
 ) -> Result<(), AppError> {
     let path = user_config_path();
+    set_mcp_servers_map_at_path(&path, servers)
+}
+
+pub(crate) fn set_mcp_servers_map_at_path(
+    path: &Path,
+    servers: &std::collections::HashMap<String, Value>,
+) -> Result<(), AppError> {
     let mut root = if path.exists() {
-        read_json_value(&path)?
+        read_json_value(path)?
     } else {
         serde_json::json!({})
     };
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
-    let is_wsl_target = is_wsl_path(&path);
+    let is_wsl_target = is_wsl_path(path);
     if is_wsl_target {
         log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
     }
@@ -399,7 +412,7 @@ pub fn set_mcp_servers_map(
         obj.insert("mcpServers".into(), Value::Object(out));
     }
 
-    write_json_value(&path, &root)?;
+    write_json_value(path, &root)?;
     Ok(())
 }
 
@@ -407,6 +420,43 @@ pub fn set_mcp_servers_map(
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::env;
+    use tempfile::TempDir;
+
+    struct TempHome {
+        dir: TempDir,
+        original_test_home: Option<String>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("create temp home");
+            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            crate::settings::reload_settings().expect("reload settings");
+
+            Self {
+                dir,
+                original_test_home,
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            let _ = crate::settings::update_settings(crate::settings::AppSettings::default());
+            match &self.original_test_home {
+                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
 
     /// 测试 Windows 命令包装功能
     /// 由于使用条件编译，在非 Windows 平台上测试的是空函数
