@@ -715,10 +715,9 @@ mod tests {
         // 端点/模型（provider-specific 非机密）也应剥掉
         assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
         assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
-        assert!(
-            env.and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
-                .is_none()
-        );
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .is_none());
 
         // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
         assert_eq!(
