@@ -1301,6 +1301,15 @@ impl Database {
                 "0.50",
                 "6.25",
             ),
+            // Claude Sonnet 5（list 价，与 Sonnet 4.6 一致；促销 $2/$10 至 2026-08-31 不入表）
+            (
+                "claude-sonnet-5",
+                "Claude Sonnet 5",
+                "3",
+                "15",
+                "0.30",
+                "3.75",
+            ),
             // Claude 4.7 系列
             (
                 "claude-opus-4-7",
