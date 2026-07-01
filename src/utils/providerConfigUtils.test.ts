@@ -260,9 +260,16 @@ memories = true
     );
 
     const state = extractCodexMemoriesModels(step2);
-    expect(state?.extractModel).toBe("new-model");
-    expect(state?.consolidationModel).toBe("new-model");
-    expect(state?.featuresMemories).toBe(true);
+    expect(state).not.toBeNull();
+    // 用 `!` + as 双重担保: state 在 expect 后已断言非 null, 强制类型为非空对象
+    const s = state as {
+      extractModel?: string;
+      consolidationModel?: string;
+      featuresMemories?: boolean;
+    };
+    expect(s.extractModel).toBe("new-model");
+    expect(s.consolidationModel).toBe("new-model");
+    expect(s.featuresMemories).toBe(true);
     expect(step2).toContain(`generate_memories = true`);
   });
 
@@ -285,5 +292,31 @@ memories = true
       "deepseek-v4-pro",
     );
     expect(step2).toBe(step1);
+  });
+
+  // ----- 设计意图锁定：cc-switch 统一管理 [features].memories，-----
+  // ----- 用户设的 false 也视为"由 cc-switch 接管"，切到关时一并清掉。 -----
+
+  it("extract treats explicit features.memories = false as 'not enabled'", () => {
+    // 即使 features.memories 显式为 false, 也应被视同开关关闭
+    // ——和「未启用」合并为同一个状态。这是 cc-switch 反推 memoriesEnabled
+    // 的契约前提；不能因 false 而误判为启用。
+    const input = `[features]
+memories = false
+`;
+    expect(extractCodexMemoriesModels(input)).toBeNull();
+  });
+
+  it("toggle-off removes explicit features.memories = false (cc-switch fully owns this key)", () => {
+    // 设计文档化：cc-switch 主动管理 [features].memories 这个 key,
+    // 不论值是 true 还是 false。用户手写的 false 也会被 toggle 关闭
+    // 时一并清掉——这是为了避免「两个管理权」造成的歧义。
+    const input = `[features]
+memories = false
+web_search = "live"
+`;
+    const result = setCodexMemoriesSection(input, false, "", "");
+    expect(result).not.toMatch(/^\s*memories\s*=\s*(true|false)\s*$/m);
+    expect(result).toContain(`web_search = "live"`);
   });
 });
