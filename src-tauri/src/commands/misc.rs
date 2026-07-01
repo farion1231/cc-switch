@@ -3190,8 +3190,15 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    // .bat content. Two non-obvious requirements for cmd.exe on Windows:
+    //   1. CRLF line endings — the default GBK codepage misparses LF files
+    //      (fixed in a83f00a5).
+    //   2. `chcp 65001 >nul` up front — the .bat is written as UTF-8 bytes,
+    //      but cmd reads as GBK by default. Non-ASCII cwd paths (e.g.
+    //      Chinese characters) get garbled, and `cd /d` then fails with
+    //      "系统找不到指定的路径" even though the directory exists.
     let content = format!(
-        "@echo off\r\n{cwd_command}\r\necho Using provider-specific claude config:\r\necho {}\r\nclaude --settings \"{}\"\r\ndel \"{}\" >nul 2>&1\r\ndel \"%~f0\" >nul 2>&1\r\n",
+        "@echo off\r\nchcp 65001 >nul\r\n{cwd_command}\r\necho Using provider-specific claude config:\r\necho {}\r\nclaude --settings \"{}\"\r\ndel \"{}\" >nul 2>&1\r\ndel \"%~f0\" >nul 2>&1\r\n",
         config_path_for_batch,
         config_path_for_batch,
         config_path_for_batch,
