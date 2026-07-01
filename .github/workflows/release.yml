@@ -106,7 +106,7 @@ jobs:
 
       - name: Setup pnpm cache
         if: runner.os != 'Windows' || matrix.arch != 'arm64'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
