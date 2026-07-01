@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { authApi, settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import type {
@@ -15,6 +16,7 @@ export function useManagedAuth(
   githubDomain?: string,
 ) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   const queryKey = ["managed-auth-status", authProvider];
 
   const [pollingState, setPollingState] = useState<PollingState>("idle");
@@ -123,7 +125,25 @@ export function useManagedAuth(
     },
     onError: (e) => {
       setPollingState("error");
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        githubDomain &&
+        (msg.includes("error sending request") ||
+          msg.includes("NetworkError") ||
+          msg.includes("network") ||
+          msg.includes("403") ||
+          msg.includes("404") ||
+          msg.includes("Access Denied"))
+      ) {
+        setError(
+          t("copilot.enterpriseDomainError", {
+            domain: githubDomain,
+            defaultValue: `企业 GitHub 地址不正确，请检查 "${githubDomain}" 后重试`,
+          }),
+        );
+      } else {
+        setError(msg);
+      }
     },
   });
 
@@ -151,7 +171,21 @@ export function useManagedAuth(
   const removeAccountMutation = useMutation({
     mutationFn: (accountId: string) =>
       authApi.authRemoveAccount(authProvider, accountId),
-    onSuccess: async () => {
+    onSuccess: async (_data, accountId) => {
+      // 乐观更新：立即从缓存中移除已删除的账号，避免 UI 残留
+      queryClient.setQueryData<ManagedAuthStatus>(queryKey, (old) => {
+        if (!old) return old;
+        const newAccounts = old.accounts.filter((a) => a.id !== accountId);
+        return {
+          ...old,
+          accounts: newAccounts,
+          authenticated: newAccounts.length > 0,
+          default_account_id:
+            old.default_account_id === accountId
+              ? (newAccounts[0]?.id ?? null)
+              : old.default_account_id,
+        };
+      });
       setPollingState("idle");
       setDeviceCode(null);
       setError(null);
@@ -160,7 +194,15 @@ export function useManagedAuth(
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to remove account:", e);
-      setError(e instanceof Error ? e.message : String(e));
+      // 同步真实账号列表，避免 UI 显示已删除账号
+      void refetchStatus();
+      const rawMessage = e instanceof Error ? e.message : String(e);
+      // 若账号实际已不存在（后端已完成删除），视为静默成功，不展示错误
+      if (rawMessage.includes("AccountNotFound")) {
+        setError(null);
+      } else {
+        setError(rawMessage);
+      }
     },
   });
 
@@ -168,6 +210,7 @@ export function useManagedAuth(
     mutationFn: (accountId: string) =>
       authApi.authSetDefaultAccount(authProvider, accountId),
     onSuccess: async () => {
+      setError(null);
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
     },
