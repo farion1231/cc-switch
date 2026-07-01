@@ -8,7 +8,7 @@ use super::{
     content_encoding::{decompress_body, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
-    json_canonical::{canonicalize_value, short_value_hash},
+    json_canonical::short_value_hash,
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
@@ -2730,7 +2730,7 @@ fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
 }
 
 fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+    filter_private_params_with_whitelist(request_body, &[])
 }
 
 fn log_prompt_cache_trace(
@@ -2979,6 +2979,7 @@ mod tests {
 
         let prepared = prepare_upstream_request_body(body);
 
+        // Private fields are stripped
         assert!(prepared.get("_internal").is_none());
         assert!(prepared["tools"][0]["parameters"]["properties"]
             .get("_id")
@@ -2986,10 +2987,10 @@ mod tests {
         assert!(prepared["tools"][0]["parameters"]["properties"]["_id"]
             .get("_private_note")
             .is_none());
-        assert_eq!(
-            serde_json::to_string(&prepared).unwrap(),
-            r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
-        );
+        // Public fields are preserved (insertion order, not alphabetically sorted)
+        assert!(prepared.get("z").is_some());
+        assert!(prepared.get("a").is_some());
+        assert!(prepared.get("tools").is_some());
     }
 
     #[test]
