@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -733,9 +734,8 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const [selected, setSelected] = useState<Set<string>>(
-    new Set(skills.map((s) => s.directory)),
-  );
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedApps, setSelectedApps] = useState<
     Record<string, ImportSkillSelection["apps"]>
   >(() =>
@@ -754,6 +754,36 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
     ),
   );
 
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredSkills = useMemo(() => {
+    if (!normalizedSearchQuery) return skills;
+
+    return skills.filter((skill) => {
+      const haystack = [
+        skill.name,
+        skill.description,
+        skill.directory,
+        skill.path,
+        ...skill.foundIn,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedSearchQuery);
+    });
+  }, [normalizedSearchQuery, skills]);
+
+  const filteredDirectories = useMemo(
+    () => filteredSkills.map((skill) => skill.directory),
+    [filteredSkills],
+  );
+
+  const hasFilteredSkills = filteredDirectories.length > 0;
+  const areFilteredSkillsSelected =
+    hasFilteredSkills &&
+    filteredDirectories.every((directory) => selected.has(directory));
+
   const toggleSelect = (directory: string) => {
     const newSelected = new Set(selected);
     if (newSelected.has(directory)) {
@@ -762,6 +792,20 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
       newSelected.add(directory);
     }
     setSelected(newSelected);
+  };
+
+  const toggleFilteredSelection = () => {
+    setSelected((prev) => {
+      const nextSelected = new Set(prev);
+      if (areFilteredSkillsSelected) {
+        filteredDirectories.forEach((directory) =>
+          nextSelected.delete(directory),
+        );
+      } else {
+        filteredDirectories.forEach((directory) => nextSelected.add(directory));
+      }
+      return nextSelected;
+    });
   };
 
   const handleImport = () => {
@@ -789,65 +833,93 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
             {t("skills.importDescription")}
           </p>
 
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+            <Input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={t("skills.importSearchPlaceholder")}
+              aria-label={t("skills.importSearchAriaLabel")}
+              className="h-10"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={toggleFilteredSelection}
+              disabled={!hasFilteredSkills || isImporting}
+              className="h-10 shrink-0"
+            >
+              {areFilteredSkillsSelected
+                ? t("skills.importDeselectAll")
+                : t("skills.importSelectAll")}
+            </Button>
+          </div>
+
           <div className="flex-1 overflow-y-auto space-y-2 mb-4">
-            {skills.map((skill) => (
-              <div
-                key={skill.directory}
-                className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(skill.directory)}
-                  onChange={() => toggleSelect(skill.directory)}
-                  className="mt-1"
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium">{skill.name}</div>
-                  {skill.description && (
-                    <div className="text-sm text-muted-foreground line-clamp-1">
-                      {skill.description}
-                    </div>
-                  )}
-                  <div className="mt-2">
-                    <AppToggleGroup
-                      apps={
-                        selectedApps[skill.directory] ?? {
-                          claude: false,
-                          codex: false,
-                          gemini: false,
-                          opencode: false,
-                          openclaw: false,
-                          hermes: false,
+            {filteredSkills.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                {t("skills.importNoResults")}
+              </div>
+            ) : (
+              filteredSkills.map((skill) => (
+                <div
+                  key={skill.directory}
+                  className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(skill.directory)}
+                    onChange={() => toggleSelect(skill.directory)}
+                    className="mt-1"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium">{skill.name}</div>
+                    {skill.description && (
+                      <div className="text-sm text-muted-foreground line-clamp-1">
+                        {skill.description}
+                      </div>
+                    )}
+                    <div className="mt-2">
+                      <AppToggleGroup
+                        apps={
+                          selectedApps[skill.directory] ?? {
+                            claude: false,
+                            codex: false,
+                            gemini: false,
+                            opencode: false,
+                            openclaw: false,
+                            hermes: false,
+                          }
                         }
-                      }
-                      onToggle={(app, enabled) => {
-                        setSelectedApps((prev) => ({
-                          ...prev,
-                          [skill.directory]: {
-                            ...(prev[skill.directory] ?? {
-                              claude: false,
-                              codex: false,
-                              gemini: false,
-                              opencode: false,
-                              openclaw: false,
-                              hermes: false,
-                            }),
-                            [app]: enabled,
-                          },
-                        }));
-                      }}
-                      appIds={SKILLS_APP_IDS}
-                    />
-                  </div>
-                  <div
-                    className="text-xs text-muted-foreground/50 mt-1 truncate"
-                    title={skill.path}
-                  >
-                    {skill.path}
+                        onToggle={(app, enabled) => {
+                          setSelectedApps((prev) => ({
+                            ...prev,
+                            [skill.directory]: {
+                              ...(prev[skill.directory] ?? {
+                                claude: false,
+                                codex: false,
+                                gemini: false,
+                                opencode: false,
+                                openclaw: false,
+                                hermes: false,
+                              }),
+                              [app]: enabled,
+                            },
+                          }));
+                        }}
+                        appIds={SKILLS_APP_IDS}
+                      />
+                    </div>
+                    <div
+                      className="text-xs text-muted-foreground/50 mt-1 truncate"
+                      title={skill.path}
+                    >
+                      {skill.path}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
 
           <div className="flex justify-end gap-3">
