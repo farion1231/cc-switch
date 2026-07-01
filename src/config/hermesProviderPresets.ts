@@ -424,8 +424,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           context_length: 1000000,
         },
         {
-          id: "anthropic/claude-sonnet-4-6",
-          name: "Claude Sonnet 4.6",
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
           context_length: 1000000,
         },
         {
@@ -834,7 +834,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "anthropic/claude-opus-4.8", name: "Claude Opus 4.8" },
-        { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+        { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
       ],
     },
     category: "aggregator",
@@ -923,7 +923,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -951,8 +951,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
           context_length: 1000000,
         },
         {
-          id: "claude-sonnet-4-6",
-          name: "Claude Sonnet 4.6",
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
           context_length: 1000000,
         },
         {
@@ -1051,7 +1051,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1075,7 +1075,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1091,7 +1091,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { default: "claude-sonnet-4-6", provider: "claudecn" },
+      model: { default: "claude-sonnet-5", provider: "claudecn" },
     },
   },
   {
@@ -1105,7 +1105,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1121,7 +1121,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       },
     },
     suggestedDefaults: {
-      model: { default: "claude-sonnet-4-6", provider: "runapi" },
+      model: { default: "claude-sonnet-5", provider: "runapi" },
     },
   },
   {
@@ -1135,7 +1135,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1159,7 +1159,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1183,7 +1183,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1207,7 +1207,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1231,7 +1231,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1299,7 +1299,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1323,7 +1323,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1347,7 +1347,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
       ],
     },
@@ -1428,7 +1428,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       api_mode: "anthropic_messages",
       models: [
         { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-        { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
         {
           id: "claude-haiku-4-5-20251001",
           name: "Claude Haiku 4.5",

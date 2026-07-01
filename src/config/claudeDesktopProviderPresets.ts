@@ -32,7 +32,7 @@ export interface ClaudeDesktopRoutePreset {
  * `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
  */
 export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
-  sonnet: "claude-sonnet-4-6",
+  sonnet: "claude-sonnet-5",
   opus: "claude-opus-4-8",
   fable: "claude-fable-5",
   haiku: "claude-haiku-4-5",
@@ -163,7 +163,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
     ),
@@ -375,8 +375,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     providerType: "github_copilot",
     requiresOAuth: true,
     modelRoutes: brandedRoutes(
-      "claude-sonnet-4.6",
-      "claude-sonnet-4.6",
+      "claude-sonnet-5",
+      "claude-sonnet-5",
       "claude-haiku-4.5",
     ),
     icon: "github",
@@ -651,7 +651,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
     ),
@@ -1014,7 +1014,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
       true,
@@ -1031,7 +1031,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
       true,

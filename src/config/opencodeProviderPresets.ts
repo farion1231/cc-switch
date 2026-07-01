@@ -156,8 +156,8 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
     },
     {
-      id: "global.anthropic.claude-sonnet-4-6",
-      name: "Claude Sonnet 4.6",
+      id: "global.anthropic.claude-sonnet-5",
+      name: "Claude Sonnet 5",
       contextLimit: 1000000,
       outputLimit: 64000,
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
@@ -294,7 +294,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
-        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
       },
     },
     category: "aggregator",
@@ -1229,7 +1229,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1257,7 +1257,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
         "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1284,7 +1284,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1312,7 +1312,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
         "anthropic/claude-opus-4.8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1340,7 +1340,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "anthropic/claude-sonnet-5": { name: "Claude Sonnet 5" },
         "openai/gpt-5.3-codex": { name: "GPT-5.3 Codex" },
         "openai/gpt-5.2": { name: "GPT-5.2" },
         "google/gemini-3.5-flash": {
@@ -1426,7 +1426,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-opus-4-8": { name: "claude-opus-4-8" },
-        "claude-sonnet-4-6": { name: "claude-sonnet-4-6" },
+        "claude-sonnet-5": { name: "claude-sonnet-5" },
         "claude-haiku-4-5-20251001": { name: "claude-haiku-4-5-20251001" },
       },
     },
@@ -1454,7 +1454,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1484,7 +1484,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
       },
     },
@@ -1595,7 +1595,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1625,7 +1625,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1684,7 +1684,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4.8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1714,7 +1714,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
       },
@@ -1744,7 +1744,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
         "claude-haiku-4-5": { name: "Claude Haiku 4.5" },
       },
@@ -1774,7 +1774,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1804,7 +1804,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         setCacheKey: true,
       },
       models: {
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
       },
     },
@@ -1835,7 +1835,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
       },
     },
     category: "third_party",
@@ -1865,7 +1865,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "claude-opus-4-8": { name: "Claude Opus 4.8" },
-        "claude-sonnet-4-6": { name: "Claude Sonnet 4.6" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
       },
     },
     category: "third_party",
@@ -1925,8 +1925,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "global.anthropic.claude-opus-4-8": { name: "Claude Opus 4.8" },
-        "global.anthropic.claude-sonnet-4-6": {
-          name: "Claude Sonnet 4.6",
+        "global.anthropic.claude-sonnet-5": {
+          name: "Claude Sonnet 5",
         },
         "global.anthropic.claude-haiku-4-5-20251001-v1:0": {
           name: "Claude Haiku 4.5",
