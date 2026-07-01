@@ -1973,6 +1973,18 @@ fn quote_path_if_spaced(p: &str) -> String {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+fn with_bin_dir_on_path(bin_path: &str, command: String) -> String {
+    // Anchored npm paths are absolute, but npm itself uses `/usr/bin/env node`;
+    // GUI-launched apps often miss nvm/fnm/mise/Homebrew node dirs in PATH.
+    let dir = parent_dir(bin_path);
+    if dir.is_empty() {
+        command
+    } else {
+        format!("PATH={}:$PATH {command}", shell_single_quote(&dir))
+    }
+}
+
 /// 锚定路径走 `.bat` 文件且**被 `call` 调用**,需要为 batch 特殊字符做两层防御:
 ///
 /// **(1) `%` 经历两轮 percent expansion → 用 4 个 `%` 转义**。.bat 中字面 `%` 的
@@ -2085,6 +2097,17 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
     official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
 }
 
+#[cfg(not(target_os = "windows"))]
+fn should_run_with_node_bin_on_path(bin_path: &str, real_target: &str) -> bool {
+    if brew_formula_from_path(real_target).is_some() {
+        return false;
+    }
+    matches!(
+        infer_install_source(Path::new(bin_path)),
+        "nvm" | "fnm" | "mise" | "homebrew"
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", win_quote_path_for_batch(bin_path)))
@@ -2156,11 +2179,11 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
         return None;
     }
     let npm = sibling_bin(bin_path, "npm")?;
-    let npm = quote_path_if_spaced(&npm);
+    let npm_command = quote_path_if_spaced(&npm);
     let pkg = "@openai/codex";
-    Some(format!(
-        "{npm} uninstall -g {pkg} || true; {npm} i -g {pkg}@latest"
-    ))
+    let uninstall = with_bin_dir_on_path(&npm, format!("{npm_command} uninstall -g {pkg}"));
+    let install = with_bin_dir_on_path(&npm, format!("{npm_command} i -g {pkg}@latest"));
+    Some(format!("{uninstall} || true; {install}"))
 }
 
 /// Windows 暂不做平台分发自愈：Windows 上 codex 的破坏模式不同（EPERM 文件锁 / 版本 bump
@@ -2201,7 +2224,10 @@ fn package_manager_anchored_command_from_paths(
         _ => return None,
     }
     let npm = sibling_bin(bin_path, "npm")?;
-    Some(format!("{} i -g {pkg}@latest", quote_path_if_spaced(&npm)))
+    Some(with_bin_dir_on_path(
+        &npm,
+        format!("{} i -g {pkg}@latest", quote_path_if_spaced(&npm)),
+    ))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -2248,7 +2274,10 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return package_command;
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
-        let update = anchored_official_update_command(tool, bin_path)?;
+        let mut update = anchored_official_update_command(tool, bin_path)?;
+        if should_run_with_node_bin_on_path(bin_path, real_target) {
+            update = with_bin_dir_on_path(bin_path, update);
+        }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
             None => update,
@@ -4350,7 +4379,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
                 )
             );
         }
@@ -4367,7 +4396,23 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+            );
+        }
+
+        #[test]
+        fn claude_nvm_update_chain_runs_with_node_bin_on_path() {
+            // npm's launcher and Claude Code's postinstall use `/usr/bin/env node`.
+            // GUI-launched apps often miss nvm's bin dir in PATH, so both the
+            // self-update attempt and npm fallback must run with that dir prepended.
+            let cmd = anchored_command_from_paths(
+                "claude",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/claude",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/claude update || PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @anthropic-ai/claude-code@latest")
             );
         }
 
@@ -4382,7 +4427,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/opt/homebrew/bin/openclaw update --yes || /opt/homebrew/bin/npm i -g openclaw@latest")
+                Some("PATH='/opt/homebrew/bin':$PATH /opt/homebrew/bin/openclaw update --yes || PATH='/opt/homebrew/bin':$PATH /opt/homebrew/bin/npm i -g openclaw@latest")
             );
         }
 
@@ -4509,7 +4554,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                    "PATH='/Users/me/.local/share/fnm_multishells/12345_abc/bin':$PATH /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
             );
         }
@@ -4523,7 +4568,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+                Some("PATH='/Users/my name/.nvm/versions/node/v22/bin':$PATH '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
             );
         }
 
@@ -4630,19 +4675,19 @@ mod tests {
             broken.runnable = false;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
         #[test]
-        fn codex_runnable_uses_plain_npm_not_self_heal() {
-            // 正常（runnable=true）的 codex 升级：锚定 npm，既不重装、也不跑会假成功
-            // 掩盖损坏的 `codex update`。
+        fn codex_runnable_uses_path_scoped_npm_not_self_heal() {
+            // 正常（runnable=true）的 codex 升级：锚定 npm 并补足 sibling node PATH，
+            // 既不重装、也不跑会假成功掩盖损坏的 `codex update`。
             let healthy = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
             let cmd = installs_anchored_command("codex", &[healthy]);
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("uninstall"));
         }
