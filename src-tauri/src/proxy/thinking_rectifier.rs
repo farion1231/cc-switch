@@ -17,6 +17,10 @@ pub struct RectifyResult {
     pub removed_redacted_thinking_blocks: usize,
     /// 移除的 signature 字段数量
     pub removed_signature_fields: usize,
+    /// 调整的顶层 thinking 字段数量（删除或禁用）
+    pub rewritten_top_level_thinking_fields: usize,
+    /// 移除的顶层 effort 字段数量
+    pub removed_effort_fields: usize,
 }
 
 /// 检测是否需要触发 thinking 签名整流器
@@ -97,7 +101,13 @@ pub fn should_rectify_thinking_signature(
         return true;
     }
 
-    // 场景7: 非法请求（与 CCH 对齐，按 invalid request 统一兜底）
+    // 场景7: 第三方 Anthropic 兼容接口不支持 thinking + tool_choice 组合
+    // 错误示例: "Thinking mode does not support this tool_choice"
+    if is_thinking_tool_choice_incompatibility(Some(msg)) {
+        return true;
+    }
+
+    // 场景8: 非法请求（与 CCH 对齐，按 invalid request 统一兜底）
     if lower.contains("非法请求")
         || lower.contains("illegal request")
         || lower.contains("invalid request")
@@ -108,11 +118,21 @@ pub fn should_rectify_thinking_signature(
     false
 }
 
+pub fn is_thinking_tool_choice_incompatibility(error_message: Option<&str>) -> bool {
+    let Some(msg) = error_message else {
+        return false;
+    };
+    let lower = msg.to_lowercase();
+    lower.contains("thinking")
+        && lower.contains("tool_choice")
+        && (lower.contains("does not support") || lower.contains("not support"))
+}
+
 /// 对 Anthropic 请求体做最小侵入整流
 ///
 /// - 移除 messages[*].content 中的 thinking/redacted_thinking block
 /// - 移除非 thinking block 上遗留的 signature 字段
-/// - 特定条件下删除顶层 thinking 字段
+/// - 特定条件下删除或禁用顶层 thinking 字段
 ///
 /// 注意：该函数会原地修改 body 对象
 pub fn rectify_anthropic_request(body: &mut Value) -> RectifyResult {
@@ -171,21 +191,75 @@ pub fn rectify_anthropic_request(body: &mut Value) -> RectifyResult {
         }
     }
 
-    // 兜底处理：thinking 启用 + 工具调用链路中最后一条 assistant 消息未以 thinking 开头
-    let messages_snapshot: Vec<Value> = body
-        .get("messages")
-        .and_then(|m| m.as_array())
-        .map(|a| a.to_vec())
-        .unwrap_or_default();
-
-    if should_remove_top_level_thinking(body, &messages_snapshot) {
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("thinking");
-            result.applied = true;
-        }
-    }
+    remove_top_level_tool_choice_thinking_conflict(body, &mut result);
 
     result
+}
+
+fn remove_top_level_tool_choice_thinking_conflict(body: &mut Value, result: &mut RectifyResult) {
+    let has_incompatible_tool_choice = has_thinking_incompatible_tool_choice(body);
+    if !has_incompatible_tool_choice {
+        let messages_snapshot: Vec<Value> = body
+            .get("messages")
+            .and_then(|m| m.as_array())
+            .map(|a| a.to_vec())
+            .unwrap_or_default();
+
+        if should_remove_top_level_thinking(body, &messages_snapshot) {
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("thinking");
+                result.rewritten_top_level_thinking_fields += 1;
+                result.applied = true;
+            }
+        }
+        return;
+    }
+
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+
+    if obj.get("thinking") != Some(&serde_json::json!({ "type": "disabled" })) {
+        obj.insert(
+            "thinking".to_string(),
+            serde_json::json!({ "type": "disabled" }),
+        );
+        result.rewritten_top_level_thinking_fields += 1;
+        result.applied = true;
+    }
+    if obj.remove("reasoning_effort").is_some() {
+        result.removed_effort_fields += 1;
+        result.applied = true;
+    }
+
+    let mut remove_output_config = false;
+    if let Some(output_config) = obj.get_mut("output_config").and_then(Value::as_object_mut) {
+        if output_config.remove("effort").is_some() {
+            result.removed_effort_fields += 1;
+            result.applied = true;
+        }
+        remove_output_config = output_config.is_empty();
+    }
+    if remove_output_config {
+        obj.remove("output_config");
+    }
+}
+
+fn has_thinking_incompatible_tool_choice(body: &Value) -> bool {
+    let Some(tool_choice) = body.get("tool_choice") else {
+        return false;
+    };
+
+    match tool_choice {
+        Value::String(value) => value != "none",
+        Value::Object(obj) => obj
+            .get("type")
+            .and_then(Value::as_str)
+            .map(|tool_type| tool_type != "none")
+            .unwrap_or(true),
+        Value::Null => false,
+        _ => true,
+    }
 }
 
 /// 判断是否需要删除顶层 thinking 字段
@@ -448,6 +522,69 @@ mod tests {
     }
 
     #[test]
+    fn test_rectify_tool_choice_thinking_conflict_disables_top_level_thinking() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "thinking": { "type": "auto" },
+            "tool_choice": { "type": "auto" },
+            "output_config": { "effort": "max" },
+            "reasoning_effort": "high",
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "extract refs" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.rewritten_top_level_thinking_fields, 1);
+        assert_eq!(result.removed_effort_fields, 2);
+        assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("output_config").is_none());
+        assert_eq!(body["tool_choice"], json!({ "type": "auto" }));
+    }
+
+    #[test]
+    fn test_rectify_tool_choice_thinking_conflict_adds_disabled_thinking() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "tool_choice": { "type": "auto" },
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "extract refs" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.rewritten_top_level_thinking_fields, 1);
+        assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+        assert_eq!(body["tool_choice"], json!({ "type": "auto" }));
+    }
+
+    #[test]
+    fn test_rectify_tool_choice_none_does_not_disable_thinking() {
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "thinking": { "type": "adaptive" },
+            "tool_choice": { "type": "none" },
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "hello" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(body["thinking"], json!({ "type": "adaptive" }));
+        assert_eq!(body["tool_choice"], json!({ "type": "none" }));
+    }
+
+    #[test]
     fn test_rectify_no_change_when_no_issues() {
         let mut body = json!({
             "model": "claude-test",
@@ -527,6 +664,14 @@ mod tests {
         ));
         assert!(should_rectify_thinking_signature(
             Some("invalid request: malformed JSON"),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_thinking_tool_choice_incompatibility() {
+        assert!(should_rectify_thinking_signature(
+            Some("Thinking mode does not support this tool_choice"),
             &enabled_config()
         ));
     }

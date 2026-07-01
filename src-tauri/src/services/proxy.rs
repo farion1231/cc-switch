@@ -497,6 +497,14 @@ impl ProxyService {
         Ok(true)
     }
 
+    /// Ensure the local proxy is running and return the Anthropic-compatible
+    /// base URL that external clients can connect to.
+    pub async fn ensure_running_and_get_proxy_url(&self) -> Result<String, String> {
+        self.start().await?;
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+        Ok(proxy_url)
+    }
+
     /// 启动代理服务器（带 Live 配置接管）
     pub async fn start_with_takeover(&self) -> Result<ProxyServerInfo, String> {
         // 1. 备份各应用的 Live 配置
