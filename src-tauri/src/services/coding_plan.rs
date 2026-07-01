@@ -407,16 +407,14 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
     };
 
     // 个人版老端点(向后兼容绝大多数个人用户)
-    let personal_url =
-        format!("https://{api_domain}/v1/api/openplatform/coding_plan/remains");
+    let personal_url = format!("https://{api_domain}/v1/api/openplatform/coding_plan/remains");
     let result = query_minimax_endpoint(&client, &personal_url, api_key).await;
     if result.success && !result.tiers.is_empty() {
         return result;
     }
 
     // 团队版新端点(team-seat 用户兜底)
-    let team_url =
-        format!("https://{api_domain}/v1/api/openplatform/charge/token_plan/usage");
+    let team_url = format!("https://{api_domain}/v1/api/openplatform/charge/token_plan/usage");
     query_minimax_endpoint(&client, &team_url, api_key).await
 }
 
