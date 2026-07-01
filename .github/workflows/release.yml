@@ -273,6 +273,42 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
 
+      - name: Verify AppImage symlinks
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "=== Verifying $appimage ==="
+            "$appimage" --appimage-extract
+
+            # Check .DirIcon symlink
+            if [ -L squashfs-root/.DirIcon ]; then
+              TARGET=$(readlink squashfs-root/.DirIcon)
+              if [[ "$TARGET" == /* ]]; then
+                echo "❌ .DirIcon uses absolute path: $TARGET"
+                exit 1
+              fi
+              echo "✅ .DirIcon uses relative path: $TARGET"
+            else
+              echo "⚠️ .DirIcon is not a symlink"
+            fi
+
+            # Check .desktop file Icon path
+            DESKTOP_FILE=$(find squashfs-root -name "*.desktop" -type f | head -1 || true)
+            if [ -n "$DESKTOP_FILE" ]; then
+              if grep -q "Icon=/" "$DESKTOP_FILE"; then
+                echo "❌ .desktop file contains absolute Icon path"
+                exit 1
+              fi
+              echo "✅ .desktop file uses relative Icon path"
+            fi
+
+            rm -rf squashfs-root
+          done
+          echo "=== AppImage symlink verification passed ==="
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
