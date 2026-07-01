@@ -13,6 +13,17 @@ use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+const CC_SWITCH_CODEX_CONFIG_HEADER_START: &str = "# [CC Switch Codex Config Instructions]";
+const CC_SWITCH_CODEX_CONFIG_HEADER_END: &str = "# [End CC Switch Codex Config Instructions]";
+const CC_SWITCH_CODEX_CONFIG_HEADER_BODY: &str = r#"# This config file is managed by CC Switch.
+# When modifying existing settings, confirm whether the changes should also be synced to CC Switch Common Config.
+# When adding new settings, confirm whether they should also be added to CC Switch Common Config.
+# If you are an AI agent asked to modify this config, stop and ask the user before changing it.
+# Learn how CC Switch Common Config works:
+# https://github.com/farion1231/cc-switch/blob/main/docs/release-notes/v3.12.0-en.md#common-config-runtime-overlay
+# If the user allows you to modify CC Switch config, follow:
+# https://github.com/farion1231/cc-switch/blob/main/docs/user-manual/en/5-faq/5.1-config-files.md
+"#;
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
@@ -224,6 +235,7 @@ pub fn write_codex_live_atomic(
     write_json_file(&auth_path, auth)?;
 
     // 第二步：写 config.toml（失败则回滚 auth.json）
+    let cfg_text = with_codex_config_header(&cfg_text);
     if let Err(e) = write_text_file(&config_path, &cfg_text) {
         // 回滚 auth.json
         if let Some(bytes) = old_auth {
@@ -235,6 +247,49 @@ pub fn write_codex_live_atomic(
     }
 
     Ok(())
+}
+
+fn strip_codex_config_header(config_text: &str) -> String {
+    let Some(start) = config_text.find(CC_SWITCH_CODEX_CONFIG_HEADER_START) else {
+        return config_text.to_string();
+    };
+    let Some(end_offset) = config_text[start..].find(CC_SWITCH_CODEX_CONFIG_HEADER_END) else {
+        return config_text.to_string();
+    };
+
+    let mut end = start + end_offset + CC_SWITCH_CODEX_CONFIG_HEADER_END.len();
+    if config_text[end..].starts_with("\r\n") {
+        end += 2;
+    } else if config_text[end..].starts_with('\n') {
+        end += 1;
+    }
+
+    let before = config_text[..start].trim_end();
+    let after = config_text[end..].trim_start_matches(['\r', '\n']);
+
+    match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => after.to_string(),
+        (false, true) => format!("{before}\n"),
+        (false, false) => format!("{before}\n{after}"),
+    }
+}
+
+fn codex_config_header() -> String {
+    format!(
+        "{CC_SWITCH_CODEX_CONFIG_HEADER_START}\n{CC_SWITCH_CODEX_CONFIG_HEADER_BODY}{CC_SWITCH_CODEX_CONFIG_HEADER_END}\n"
+    )
+}
+
+fn with_codex_config_header(config_text: &str) -> String {
+    if config_text.trim().is_empty() {
+        return String::new();
+    }
+    let config_text = strip_codex_config_header(config_text);
+    if config_text.trim().is_empty() {
+        return String::new();
+    }
+    format!("{}\n{config_text}", codex_config_header())
 }
 
 /// 读取 `~/.codex/config.toml`，若不存在返回空字符串
@@ -259,7 +314,7 @@ pub fn validate_config_toml(text: &str) -> Result<(), AppError> {
 
 /// 读取并校验 `~/.codex/config.toml`，返回文本（可能为空）
 pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
-    let s = read_codex_config_text()?;
+    let s = strip_codex_config_header(&read_codex_config_text()?);
     validate_config_toml(&s)?;
     Ok(s)
 }
@@ -296,6 +351,7 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
         toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
     }
 
+    let cfg_text = with_codex_config_header(&cfg_text);
     write_text_file(&config_path, &cfg_text)
 }
 
@@ -2981,5 +3037,24 @@ model_catalog_json = "cc-switch-model-catalog.json"
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
         );
+    }
+
+    #[test]
+    fn codex_config_header_warns_about_common_config_sync_once() {
+        let input = "model = \"gpt-5\"\n";
+        let header = codex_config_header();
+        let once = with_codex_config_header(input);
+        let twice = with_codex_config_header(&once);
+        let edited_notice = format!(
+            "{CC_SWITCH_CODEX_CONFIG_HEADER_START}\n# user edited this notice\n{CC_SWITCH_CODEX_CONFIG_HEADER_END}\n\n{input}"
+        );
+
+        assert_eq!(once, twice);
+        assert!(once.starts_with(&header));
+        assert!(once.contains(CC_SWITCH_CODEX_CONFIG_HEADER_START));
+        assert!(once.contains(CC_SWITCH_CODEX_CONFIG_HEADER_END));
+        assert_eq!(once.matches(header.as_str()).count(), 1);
+        assert!(once.ends_with(input));
+        assert_eq!(strip_codex_config_header(&edited_notice), input);
     }
 }
