@@ -418,6 +418,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["mistral"],
     defaultColor: "#FF7000",
   },
+  nekocode: {
+    name: "nekocode",
+    displayName: "NekoCode",
+    category: "ai-provider",
+    keywords: ["nekocode", "neko", "aggregator", "relay", "gateway", "gpt"],
+    defaultColor: "#A64BC4",
+  },
   newapi: {
     name: "newapi",
     displayName: "newapi",

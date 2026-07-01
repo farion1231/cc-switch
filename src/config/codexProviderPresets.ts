@@ -377,6 +377,22 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "code0",
   },
   {
+    name: "NekoCode",
+    websiteUrl: "https://nekocode.ai",
+    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "nekocode",
+      "https://nekocode.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://nekocode.ai/v1"],
+    isPartner: true,
+    partnerPromotionKey: "nekocode",
+    icon: "nekocode",
+  },
+  {
     name: "Azure OpenAI",
     websiteUrl:
       "https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/codex",
