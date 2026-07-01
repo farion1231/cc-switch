@@ -444,6 +444,13 @@ impl Database {
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
+                    11 => {
+                        log::info!(
+                            "迁移数据库从 v11 到 v12（补齐 codex 官方供应商的 providerType）"
+                        );
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1267,6 +1274,77 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12：补齐 codex 官方供应商的 `providerType: "codex_oauth"`
+    ///
+    /// 旧版本（v11 前）通过 codex 预设创建的 "OpenAI Official" 供应商缺少
+    /// `providerType`，导致 ProviderCard 走 CLI 凭据路径（SubscriptionQuotaFooter）
+    /// 而非 OAuth 路径（CodexOauthQuotaFooter），在 Keychain 条目过期或缺失时
+    /// 显示"会话已过期"且无法消除 (#2157)。
+    ///
+    /// 迁移仅对 `app_type = 'codex'`、`category = 'official'` 且 `providerType`
+    /// 缺失的行打补丁，不触碰 authBinding（用户可稍后在设置中绑定 ChatGPT 账户）。
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "providers")? {
+            log::info!("v11 -> v12：providers 表不存在，跳过");
+            return Ok(());
+        }
+
+        // category 列在 v0→v1 添加；测试从 v4 直接迁移时可能不存在，此时回退到全表扫描
+        let has_category_col = Self::has_column(conn, "providers", "category").unwrap_or(false);
+
+        let mut stmt = if has_category_col {
+            conn.prepare(
+                "SELECT id, meta FROM providers WHERE app_type = 'codex' AND category = 'official'",
+            )
+        } else {
+            conn.prepare("SELECT id, meta FROM providers WHERE app_type = 'codex'")
+        }
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut updates = Vec::new();
+        for row in rows {
+            let (id, meta_str) = row.map_err(|e| AppError::Database(e.to_string()))?;
+
+            let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&meta_str) else {
+                continue;
+            };
+
+            // 仅补齐缺失的 providerType
+            if meta.get("providerType").is_some() {
+                continue;
+            }
+
+            // 当 category 列不存在时（测试从 v4 直迁），回退到 meta.category 检查
+            if !has_category_col
+                && meta.get("category").and_then(|v| v.as_str()) != Some("official")
+            {
+                continue;
+            }
+
+            meta["providerType"] = serde_json::json!("codex_oauth");
+            let new_meta =
+                serde_json::to_string(&meta).map_err(|e| AppError::Database(e.to_string()))?;
+            updates.push((id, new_meta));
+        }
+
+        for (id, new_meta) in updates {
+            conn.execute(
+                "UPDATE providers SET meta = ?1 WHERE id = ?2 AND app_type = 'codex'",
+                rusqlite::params![new_meta, id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        log::info!("v11 -> v12 迁移完成：已补齐 codex 官方供应商的 providerType");
         Ok(())
     }
 

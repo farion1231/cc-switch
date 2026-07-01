@@ -32,6 +32,10 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
+  // OAuth / Copilot 类型标识，用于路由到对应的 QuotaFooter
+  providerType?: "github_copilot" | "codex_oauth";
+  // 是否需要 OAuth 登录（在表单中展示 CodexOAuthSection）
+  requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
@@ -107,6 +111,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
+    providerType: "codex_oauth",
+    requiresOAuth: true,
     auth: {},
     config: ``,
     theme: {
