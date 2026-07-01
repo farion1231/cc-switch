@@ -1086,6 +1086,12 @@ disable_response_storage = true
         db.save_live_backup("claude-desktop", "{}")
             .await
             .expect("seed live backup");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("use ephemeral proxy port");
         {
             let mut config = db
                 .get_proxy_config_for_app("claude-desktop")
@@ -1097,7 +1103,7 @@ disable_response_storage = true
                 .expect("update app proxy config");
         }
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -1145,7 +1151,10 @@ disable_response_storage = true
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!(
+                "http://127.0.0.1:{}/claude-desktop",
+                proxy_info.port
+            )),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));

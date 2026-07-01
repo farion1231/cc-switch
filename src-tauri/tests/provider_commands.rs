@@ -275,9 +275,8 @@ command = "echo"
                 "Latest".to_string(),
                 json!({
                     "auth": {"OPENAI_API_KEY": "fresh-key"},
-                    "config": r#"[mcp_servers.latest]
-type = "stdio"
-command = "say"
+                    "config": r#"model_provider = "openai-compatible"
+base_url = "https://api.example.com/v1"
 "#
                 }),
                 None,
@@ -360,11 +359,11 @@ command = "say"
     // 供应商配置应该包含在 live 文件中
     // 注意：live 文件还会包含 MCP 同步后的内容
     assert!(
-        config_text.contains("mcp_servers.latest"),
+        config_text.contains("https://api.example.com/v1"),
         "live file should contain provider's original config"
     );
     assert!(
-        new_config_text.contains("mcp_servers.latest"),
+        new_config_text.contains("https://api.example.com/v1"),
         "provider snapshot should contain provider's original config"
     );
 
