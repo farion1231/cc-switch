@@ -519,9 +519,49 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         .and_then(|c| c.as_array())
         .ok_or_else(|| ProxyError::TransformError("No choices in response".to_string()))?;
 
-    let choice = choices
-        .first()
-        .ok_or_else(|| ProxyError::TransformError("Empty choices array".to_string()))?;
+    // OpenAI spec: usage-only responses may have an empty choices array.
+    // Return a minimal Anthropic message with extracted usage.
+    if choices.is_empty() {
+        let usage = body.get("usage").cloned().unwrap_or(json!({}));
+        let input_tokens = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let output_tokens = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        let mut usage_json = json!({
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        });
+        if let Some(cached) = usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            usage_json["cache_read_input_tokens"] = json!(cached);
+        }
+        if let Some(v) = usage.get("cache_read_input_tokens") {
+            usage_json["cache_read_input_tokens"] = v.clone();
+        }
+        if let Some(v) = usage.get("cache_creation_input_tokens") {
+            usage_json["cache_creation_input_tokens"] = v.clone();
+        }
+
+        return Ok(json!({
+            "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": body.get("model").and_then(|m| m.as_str()).unwrap_or(""),
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": usage_json
+        }));
+    }
+
+    let choice = choices.first().unwrap();
 
     let message = choice
         .get("message")
@@ -1725,5 +1765,47 @@ mod tests {
             run_tool_choice(json!({"type": "tool", "name": "search"})),
             json!({"type": "function", "function": {"name": "search"}}),
         );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_empty_choices_usage_only() {
+        let input = json!({
+            "id": "chatcmpl-usage-only",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "qwen3.6-plus",
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["type"], "message");
+        assert_eq!(result["role"], "assistant");
+        assert_eq!(result["content"], json!([]));
+        assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(result["usage"]["input_tokens"], 10);
+        assert_eq!(result["usage"]["output_tokens"], 20);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_empty_choices_with_cache_tokens() {
+        let input = json!({
+            "id": "chatcmpl-cached",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "qwen3.6-plus",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+                "prompt_tokens_details": {"cached_tokens": 80}
+            }
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["usage"]["input_tokens"], 100);
+        assert_eq!(result["usage"]["output_tokens"], 50);
+        assert_eq!(result["usage"]["cache_read_input_tokens"], 80);
     }
 }

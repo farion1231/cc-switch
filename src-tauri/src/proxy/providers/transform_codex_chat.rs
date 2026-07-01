@@ -1243,9 +1243,26 @@ pub(crate) fn chat_completion_to_response_with_context(
         .get("choices")
         .and_then(|v| v.as_array())
         .ok_or_else(|| ProxyError::TransformError("No choices in chat response".to_string()))?;
-    let choice = choices
-        .first()
-        .ok_or_else(|| ProxyError::TransformError("Empty choices in chat response".to_string()))?;
+
+    // OpenAI spec: usage-only responses may have an empty choices array.
+    // Return a minimal Responses object with extracted usage.
+    if choices.is_empty() {
+        let response_id = response_id_from_chat_id(body.get("id").and_then(|v| v.as_str()));
+        let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
+        let created_at = body.get("created").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        return Ok(json!({
+            "id": response_id,
+            "object": "response",
+            "created_at": created_at,
+            "status": "completed",
+            "model": model,
+            "output": [],
+            "usage": chat_usage_to_responses_usage(body.get("usage"))
+        }));
+    }
+
+    let choice = choices.first().unwrap();
     let message = choice
         .get("message")
         .ok_or_else(|| ProxyError::TransformError("No message in chat choice".to_string()))?;
@@ -3294,5 +3311,23 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn test_chat_completion_to_response_empty_choices_usage_only() {
+        let input = json!({
+            "id": "chatcmpl-usage-only",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "qwen3.6-plus",
+            "choices": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        });
+
+        let result = chat_completion_to_response(input).unwrap();
+        assert_eq!(result["object"], "response");
+        assert_eq!(result["status"], "completed");
+        assert_eq!(result["output"], json!([]));
+        assert_eq!(result["model"], "qwen3.6-plus");
     }
 }
