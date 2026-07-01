@@ -118,6 +118,90 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#00A67E",
   },
   {
+    name: "OpenCode Go",
+    websiteUrl: "https://opencode.ai/docs/go",
+    apiKeyUrl: "https://opencode.ai/auth",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "opencode_go",
+      "https://opencode.ai/zen/go/v1",
+      "deepseek-v4-flash",
+    ),
+    endpointCandidates: ["https://opencode.ai/zen/go/v1"],
+    apiFormat: "openai_chat",
+    // OpenCode Go 走 /chat/completions 通路、已实测可用的模型。
+    // 不写死 codexChatReasoning：让 cc-switch 按 model 名自动推断每个厂商的 reasoning
+    // 参数（deepseek/glm/kimi/mimo -> thinking、qwen -> enable_thinking、minimax -> reasoning_split）。
+    // 仅 /messages 的模型（如 qwen3.7-max）暂不纳入，留待 Responses->Messages 路由 PR。
+    modelCatalog: modelCatalog([
+      {
+        model: "deepseek-v4-flash",
+        displayName: "DeepSeek V4 Flash",
+        contextWindow: 1000000,
+      },
+      {
+        model: "deepseek-v4-pro",
+        displayName: "DeepSeek V4 Pro",
+        contextWindow: 1000000,
+      },
+      { model: "glm-5.2", displayName: "GLM-5.2", contextWindow: 1000000 },
+      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 200000 },
+      { model: "glm-5", displayName: "GLM-5", contextWindow: 200000 },
+      {
+        model: "kimi-k2.7-code",
+        displayName: "Kimi K2.7 Code",
+        contextWindow: 262144,
+      },
+      { model: "kimi-k2.6", displayName: "Kimi K2.6", contextWindow: 262144 },
+      { model: "kimi-k2.5", displayName: "Kimi K2.5", contextWindow: 262144 },
+      {
+        model: "mimo-v2.5-pro",
+        displayName: "MiMo V2.5 Pro",
+        contextWindow: 1048576,
+      },
+      { model: "mimo-v2.5", displayName: "MiMo V2.5", contextWindow: 1000000 },
+      {
+        model: "mimo-v2-pro",
+        displayName: "MiMo V2 Pro",
+        contextWindow: 1048576,
+      },
+      {
+        model: "mimo-v2-omni",
+        displayName: "MiMo V2 Omni",
+        contextWindow: 262144,
+      },
+      {
+        model: "qwen3.7-plus",
+        displayName: "Qwen3.7 Plus",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3.6-plus",
+        displayName: "Qwen3.6 Plus",
+        contextWindow: 1000000,
+      },
+      {
+        model: "qwen3.5-plus",
+        displayName: "Qwen3.5 Plus",
+        contextWindow: 262144,
+      },
+      { model: "minimax-m3", displayName: "MiniMax M3", contextWindow: 512000 },
+      {
+        model: "minimax-m2.7",
+        displayName: "MiniMax M2.7",
+        contextWindow: 204800,
+      },
+      {
+        model: "minimax-m2.5",
+        displayName: "MiniMax M2.5",
+        contextWindow: 204800,
+      },
+    ]),
+    category: "aggregator",
+    icon: "opencode",
+    iconColor: "#211E1E",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
