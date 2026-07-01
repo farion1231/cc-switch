@@ -1445,11 +1445,15 @@ fn opencode_extra_search_paths(
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        vec![
-            dir.join(format!("{tool}.cmd")),
-            dir.join(format!("{tool}.exe")),
-            dir.join(tool),
-        ]
+        let cmd = dir.join(format!("{tool}.cmd"));
+        let exe = dir.join(format!("{tool}.exe"));
+        let plain = dir.join(tool);
+        let has_windows_entry = cmd.is_file() || exe.is_file();
+        let mut candidates = vec![cmd, exe];
+        if !has_windows_entry {
+            candidates.push(plain);
+        }
+        candidates
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1645,6 +1649,34 @@ fn run_windows_tool_version_command(
         .output()
 }
 
+#[cfg(target_os = "windows")]
+fn probe_windows_tool_path(tool_path: &Path, new_path: &str) -> ShellProbe {
+    match run_windows_tool_version_command(tool_path, new_path) {
+        Ok(out) if out.status.success() => {
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            let raw = if stdout.is_empty() { &stderr } else { &stdout };
+            if raw.is_empty() {
+                ShellProbe::NotFound(NOT_INSTALLED.to_string())
+            } else {
+                ShellProbe::Found(extract_version(raw))
+            }
+        }
+        Ok(out) => {
+            let stdout = decode_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            let detail = if stderr.is_empty() { stdout } else { stderr };
+            let detail = detail.trim();
+            if detail.is_empty() {
+                ShellProbe::FoundButFailed(NOT_INSTALLED.to_string())
+            } else {
+                ShellProbe::FoundButFailed(last_lines(detail, 4))
+            }
+        }
+        Err(e) => ShellProbe::FoundButFailed(e.to_string()),
+    }
+}
+
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
 fn scan_cli_version(tool: &str) -> ShellProbe {
     #[cfg(not(target_os = "windows"))]
@@ -1654,6 +1686,19 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
     let current_path = std::env::var_os("PATH")
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    if let Some(default_path) = resolve_path_default(tool) {
+        let default_path_env = default_path
+            .parent()
+            .map(|dir| format!("{};{}", dir.display(), current_path))
+            .unwrap_or_else(|| current_path.clone());
+        match probe_windows_tool_path(&default_path, &default_path_env) {
+            found @ ShellProbe::Found(_) => return found,
+            broken @ ShellProbe::FoundButFailed(_) => return broken,
+            ShellProbe::NotFound(_) => {}
+        }
+    }
 
     // 记录"可执行文件存在、但 `--version` 非零退出"时的首个诊断信息。
     // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
@@ -1673,29 +1718,37 @@ fn scan_cli_version(tool: &str) -> ShellProbe {
             }
 
             #[cfg(target_os = "windows")]
-            let output = run_windows_tool_version_command(&tool_path, &new_path);
+            {
+                match probe_windows_tool_path(&tool_path, &new_path) {
+                    ShellProbe::Found(version) => return ShellProbe::Found(version),
+                    ShellProbe::FoundButFailed(detail) if exec_diagnostic.is_none() => {
+                        exec_diagnostic = Some(detail);
+                    }
+                    _ => {}
+                }
+            }
 
             #[cfg(not(target_os = "windows"))]
-            let output = {
-                Command::new(&tool_path)
+            {
+                let output = Command::new(&tool_path)
                     .arg("--version")
                     .env("PATH", &new_path)
-                    .output()
-            };
+                    .output();
 
-            if let Ok(out) = output {
-                let stdout = decode_command_output(&out.stdout).trim().to_string();
-                let stderr = decode_command_output(&out.stderr).trim().to_string();
-                if out.status.success() {
-                    let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                    if !raw.is_empty() {
-                        return ShellProbe::Found(extract_version(raw));
-                    }
-                } else if exec_diagnostic.is_none() {
-                    let detail = if stderr.is_empty() { stdout } else { stderr };
-                    let detail = detail.trim();
-                    if !detail.is_empty() {
-                        exec_diagnostic = Some(last_lines(detail, 4));
+                if let Ok(out) = output {
+                    let stdout = decode_command_output(&out.stdout).trim().to_string();
+                    let stderr = decode_command_output(&out.stderr).trim().to_string();
+                    if out.status.success() {
+                        let raw = if stdout.is_empty() { &stderr } else { &stdout };
+                        if !raw.is_empty() {
+                            return ShellProbe::Found(extract_version(raw));
+                        }
+                    } else if exec_diagnostic.is_none() {
+                        let detail = if stderr.is_empty() { stdout } else { stderr };
+                        let detail = detail.trim();
+                        if !detail.is_empty() {
+                            exec_diagnostic = Some(last_lines(detail, 4));
+                        }
                     }
                 }
             }
@@ -1806,22 +1859,18 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-    let out = Command::new("cmd")
-        .args(["/C", &format!("where {tool}")])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        if should_skip_cli_path_env_dir(&dir) {
+            continue;
+        }
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if candidate.is_file() {
+                return std::fs::canonicalize(&candidate).ok();
+            }
+        }
     }
-    let raw = decode_command_output(&out.stdout);
-    let first = raw.lines().next()?.trim();
-    if first.is_empty() {
-        return None;
-    }
-    std::fs::canonicalize(first).ok()
+    None
 }
 
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
@@ -5049,18 +5098,68 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn tool_executable_candidates_windows_includes_cmd_exe_and_plain_name() {
-        let dir = PathBuf::from("C:\\tools");
-        let candidates = tool_executable_candidates("opencode", &dir);
+    fn tool_executable_candidates_windows_skips_plain_shim_when_cmd_exists() {
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let plain = temp.path().join("opencode");
+        let cmd = temp.path().join("opencode.cmd");
+        std::fs::write(&plain, "").expect("plain shim should be written");
+        std::fs::write(&cmd, "").expect("cmd shim should be written");
+
+        let candidates = tool_executable_candidates("opencode", temp.path());
 
         assert_eq!(
             candidates,
             vec![
-                PathBuf::from("C:\\tools\\opencode.cmd"),
-                PathBuf::from("C:\\tools\\opencode.exe"),
-                PathBuf::from("C:\\tools\\opencode"),
+                temp.path().join("opencode.cmd"),
+                temp.path().join("opencode.exe"),
             ]
         );
+        assert!(
+            !candidates.contains(&plain),
+            "extensionless npm/POSIX shim should not be counted beside .cmd"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[serial_test::serial]
+    fn windows_path_default_prefers_cmd_over_extensionless_shim() {
+        struct EnvGuard {
+            key: &'static str,
+            value: Option<std::ffi::OsString>,
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.value.as_ref() {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let tool = format!("ccswitch_probe_cli_{}", std::process::id());
+        let plain = temp.path().join(&tool);
+        let cmd = temp.path().join(format!("{tool}.cmd"));
+        std::fs::write(&plain, "").expect("plain shim should be written");
+        std::fs::write(&cmd, "@echo off\r\n").expect("cmd shim should be written");
+
+        let original_path = std::env::var_os("PATH");
+        let _guard = EnvGuard {
+            key: "PATH",
+            value: original_path.clone(),
+        };
+        let mut path_entries = vec![temp.path().to_path_buf()];
+        if let Some(original) = original_path {
+            path_entries.extend(std::env::split_paths(&original));
+        }
+        let path = std::env::join_paths(path_entries).expect("PATH should be joinable");
+        std::env::set_var("PATH", path);
+
+        let resolved = resolve_path_default(&tool).expect("default path should resolve");
+        let expected = std::fs::canonicalize(&cmd).expect("cmd shim should canonicalize");
+
+        assert_eq!(resolved, expected);
     }
 
     #[test]
