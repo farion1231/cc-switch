@@ -40,7 +40,8 @@
     "deleting": "刪除中...",
     "auto": "自動",
     "enabled": "已啟用",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "dismiss": "忽略"
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
@@ -1595,7 +1596,10 @@
     "fieldExtra": "• extra: 字串，擴充欄位，可自由補充需要展示的文字",
     "tip1": "• 變數 {{apiKey}} 和 {{baseUrl}} 會自動替換",
     "tip2": "• extractor 函式在沙盒環境中執行，支援 ES2020+ 語法",
-    "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式"
+    "tip3": "• 整個設定必須用 () 包覆，形成物件實字運算式",
+    "codingPlanSuggestTitle": "該供應商的請求地址匹配 Coding Plan 供應商。儲存的腳本使用的是不進行 AK/SK 簽名的通用模板。",
+    "codingPlanSuggestBody": "切換到 Coding Plan 模板可以透過專屬的原生 API 進行查詢，該 API 自動處理 AK/SK 簽名。之前儲存的腳本會在您再次點擊儲存時被覆蓋。",
+    "codingPlanSwitch": "切換到 Coding Plan"
   },
   "dbUpgrade": {
     "title": "資料庫版本過新",

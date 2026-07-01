@@ -40,6 +40,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 命中 Coding Plan（`/api/coding`）与 Agent Plan（`/api/plan`）两类入口。
         // DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐额度，不在此命中。
         // 两种路径同源火山方舟账号，使用同一份 AK/SK 查询额度（issue #4808）。
+        // 控制面走 GetAFPUsage → GetCodingPlanUsage fallback。
         Some(CodingPlanProvider::Volcengine)
     } else {
         None
@@ -1195,12 +1196,100 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers,
-        parse_zhipu_token_tiers, volcengine_canonical_query, volcengine_is_auth_error_code,
-        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
-        CodingPlanProvider, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        detect_provider, get_coding_plan_quota, parse_afp_tiers, parse_coding_plan_tiers,
+        parse_minimax_tiers, parse_zhipu_token_tiers, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_quota_base, CodingPlanProvider, TIER_FIVE_HOUR,
+        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    /// 模拟 UsageScriptModal"测试"按钮调用的入口——Tauri 命令 `get_coding_plan_quota`
+    /// 之后调用 `services::coding_plan::get_coding_plan_quota`。AK/SK 是假的，
+    /// 这里只验证：路由到 Volcengine、签名流程跑通、最终因为凭据无效产生 Auth
+    /// 错误（而不是 "Invalid request URL"）。如果这里返回的是 Auth 错误，
+    /// 说明前端的"无效的请求 URL"问题来自 modal 模板选择，不是后端。
+    #[tokio::test]
+    async fn volcengine_coding_plan_routes_to_volcengine_native_path() {
+        let result = get_coding_plan_quota(
+            "https://ark.cn-beijing.volces.com/api/coding",
+            "ark-fake-token",
+            Some("FAKE_AK"),
+            Some("FAKE_SK"),
+        )
+        .await;
+
+        // 不管具体的实现细节——这条断言确保三件事：
+        //   1. /api/coding 被识别为 Volcengine
+        //   2. URL 构造绝对可达 open.volcengineapi.com（不是相对 URL）
+        //   3. 鉴权可执行到 OpenAPI 网关
+        // 假 SK 会让网关返回 401 / Signature 错误，所以这里期望 Tauri 命令把鉴权错
+        // 装成 Quota{success=false,error=Some(...)} 而不是直接抛 Err。
+        let quota = result.expect("命令层应返回 Ok(SubscriptionQuota)，而不是顶层 Err");
+        assert!(
+            !quota.success,
+            "凭据无效应导致 success=false，但得到: {:?}",
+            quota,
+        );
+        let err = quota
+            .error
+            .as_deref()
+            .unwrap_or("(no error message)");
+        assert!(
+            err.contains("Authentication")
+                || err.contains("Signature")
+                || err.contains("AccessKey")
+                || err.contains("HTTP 4")
+                || err.contains("AccessDenied")
+                || err.contains("API error")
+                || err.contains("Network error"),
+            "预期鉴权/API/网络 错误，实际: {err}",
+        );
+        assert!(
+            !err.contains("Invalid request URL"),
+            "不应再出现 reqwest 'relative URL' 错误：{err}",
+        );
+    }
+
+    /// Agent Plan（`/api/plan`）与 Coding Plan 同源火山方舟账号，走同一份
+    /// AK/SK 控制面签名流程（GetAFPUsage → GetCodingPlanUsage fallback）。
+    /// 验证：detect_provider 返回 Volcengine → get_coding_plan_quota 走 AK/SK
+    /// 签名路径，假凭据产生 Auth/API 错误（而非 "Unknown provider" 或
+    /// "Invalid request URL"）。
+    #[tokio::test]
+    async fn volcengine_agentplan_routes_to_volcengine_native_path() {
+        let result = get_coding_plan_quota(
+            "https://ark.cn-beijing.volces.com/api/plan",
+            "fake-inference-api-key",
+            Some("FAKE_AK"),
+            Some("FAKE_SK"),
+        )
+        .await
+        .expect("命令层应返回 Ok");
+
+        // Agent Plan 走 AK/SK 签名路径，假凭据会触发鉴权/API 错误。
+        assert!(!result.success, "凭据无效应导致 success=false");
+        let err = result.error.as_deref().unwrap_or("(no error message)");
+        assert!(
+            err.contains("Authentication")
+                || err.contains("Signature")
+                || err.contains("AccessKey")
+                || err.contains("HTTP 4")
+                || err.contains("AccessDenied")
+                || err.contains("API error")
+                || err.contains("Network error"),
+            "预期鉴权/API/网络 错误，实际: {err}",
+        );
+        // 不应是 "Unknown provider"——Agent Plan 应被识别为 Volcengine。
+        assert!(
+            !err.contains("Unknown coding plan provider"),
+            "Agent Plan 应被识别为 Volcengine，不是 unknown：{err}",
+        );
+        assert!(
+            !err.contains("Invalid request URL"),
+            "不应出现 reqwest 'relative URL' 错误：{err}",
+        );
+    }
 
     #[test]
     fn zhipu_new_plan_two_tiers_sorted_by_reset_time() {
@@ -1745,6 +1834,8 @@ mod tests {
         // 形如 `ark.cn-beijing.volces.com/api/coding[/v3]`（Coding Plan）或
         // `ark.cn-beijing.volces.com/api/plan[/v3]`（Agent Plan），均应识别为
         // Volcengine，以便用量查询走 AK/SK 签名流程。
+        // 后端 query_volcengine 先探 GetAFPUsage（Agent Plan），再 fallback
+        // GetCodingPlanUsage（Coding Plan）。
         // 注：海外 BytePlus（ark.ap-southeast.bytepluses.com）的 detection
         // 在本变更前/后均不在 volces.com 匹配范围内，超出本 issue 范围。
         assert!(matches!(
@@ -1766,6 +1857,10 @@ mod tests {
         // 大小写不敏感：与前端 RegExp 一致。
         assert!(matches!(
             detect_provider("HTTPS://ARK.CN-BEIJING.VOLCES.COM/API/PLAN"),
+            Some(CodingPlanProvider::Volcengine)
+        ));
+        assert!(matches!(
+            detect_provider("HTTPS://ARK.CN-BEIJING.VOLCES.COM/API/CODING"),
             Some(CodingPlanProvider::Volcengine)
         ));
     }

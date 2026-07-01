@@ -40,7 +40,8 @@
     "deleting": "削除中...",
     "auto": "自動",
     "enabled": "有効",
-    "notSet": "未設定"
+    "notSet": "未設定",
+    "dismiss": "無視する"
   },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
@@ -1623,7 +1624,10 @@
     "fieldExtra": "• extra: String。自由記述の追加テキスト",
     "tip1": "• 変数 {{apiKey}} と {{baseUrl}} は自動で置換されます",
     "tip2": "• 抽出関数はサンドボックスで実行され、ES2020+ の構文を使えます",
-    "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください"
+    "tip3": "• 全体を () で囲み、オブジェクトリテラル式にしてください",
+    "codingPlanSuggestTitle": "このプロバイダーの baseUrl は Coding Plan ベンダーと一致します。保存されたスクリプトは、AK/SK 署名を行わない汎用テンプレートを使用しています。",
+    "codingPlanSuggestBody": "Coding Plan テンプレートに切り替えると、AK/SK 署名を処理する専用のネイティブ API を介してクエリがルーティングされます。以前保存されたスクリプトは、再度保存を押すまでディスクに保持されます。",
+    "codingPlanSwitch": "Coding Plan に切り替える"
   },
   "dbUpgrade": {
     "title": "データベースのバージョンが新しすぎます",

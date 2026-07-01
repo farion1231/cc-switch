@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -28,6 +28,8 @@ import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
 import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
+  extractBaseUrlFromProvider,
+  isStaleJsScriptForCodingPlan,
 } from "@/config/codingPlanProviders";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
 
@@ -53,9 +55,11 @@ const generatePresetTemplates = (
 ): Record<string, string> => ({
   [TEMPLATE_TYPES.CUSTOM]: `({
   request: {
-    url: "",
+    url: "{{baseUrl}}",
     method: "GET",
-    headers: {}
+    headers: {
+      "Authorization": "Bearer {{apiKey}}"
+    }
   },
   extractor: function(response) {
     return {
@@ -222,64 +226,47 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       baseUrl: string | undefined;
     } => {
       try {
-        const config = provider.settingsConfig;
-        if (!config) return { apiKey: undefined, baseUrl: undefined };
-
-        // 处理不同应用的配置格式
-        if (appId === "claude" || appId === "claude-desktop") {
-          // Claude / Claude Desktop: { env: { ANTHROPIC_AUTH_TOKEN | ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL } }
-          // Key fallbacks mirror the backend resolver (Provider::resolve_usage_credentials).
-          const env = (config as any).env || {};
-          return {
-            apiKey:
+        const config = typeof provider.settingsConfig === "string"
+          ? (() => { try { return JSON.parse(provider.settingsConfig); } catch { return undefined; } })()
+          : provider.settingsConfig;
+        const baseUrl = extractBaseUrlFromProvider(appId, provider);
+        
+        let apiKey: string | undefined;
+        if (config) {
+          if (appId === "claude" || appId === "claude-desktop") {
+            const env = (config as any).env || {};
+            apiKey =
               env.ANTHROPIC_AUTH_TOKEN ||
               env.ANTHROPIC_API_KEY ||
               env.OPENROUTER_API_KEY ||
-              env.GOOGLE_API_KEY,
-            baseUrl: env.ANTHROPIC_BASE_URL,
-          };
-        } else if (appId === "codex") {
-          // Codex: { auth: { OPENAI_API_KEY }, config: TOML string with base_url }
-          const auth = (config as any).auth || {};
-          const configToml = (config as any).config || "";
-          const apiKey =
-            typeof auth.OPENAI_API_KEY === "string" &&
-            auth.OPENAI_API_KEY.trim()
-              ? auth.OPENAI_API_KEY
-              : extractCodexExperimentalBearerToken(configToml);
-          return {
-            apiKey,
-            baseUrl: extractCodexBaseUrl(configToml),
-          };
-        } else if (appId === "gemini") {
-          // Gemini: { env: { GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL } }
-          // Key fallback mirrors the backend resolver (Provider::resolve_usage_credentials).
-          const env = (config as any).env || {};
-          return {
-            apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
-            baseUrl: env.GOOGLE_GEMINI_BASE_URL,
-          };
-        } else if (appId === "hermes") {
-          // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
-          return {
-            apiKey: (config as any).api_key,
-            baseUrl: (config as any).base_url,
-          };
-        } else if (appId === "openclaw") {
-          // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
-          return {
-            apiKey: (config as any).apiKey,
-            baseUrl: (config as any).baseUrl,
-          };
-        } else if (appId === "opencode") {
-          // OpenCode (OMO): 凭据嵌在 options.{baseURL, apiKey}（SDK options 对象）
-          const options = (config as any).options || {};
-          return {
-            apiKey: options.apiKey,
-            baseUrl: options.baseURL,
-          };
+              env.GOOGLE_API_KEY;
+          } else if (appId === "codex") {
+            const auth = (config as any).auth || {};
+            const configToml = (config as any).config || "";
+            apiKey =
+              typeof auth.OPENAI_API_KEY === "string" &&
+              auth.OPENAI_API_KEY.trim()
+                ? auth.OPENAI_API_KEY
+                : extractCodexExperimentalBearerToken(configToml);
+          } else if (appId === "gemini") {
+            const env = (config as any).env || {};
+            apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+          } else if (appId === "hermes") {
+            apiKey = (config as any).api_key;
+          } else if (appId === "openclaw") {
+            apiKey = (config as any).apiKey;
+          } else if (appId === "opencode") {
+            const options = (config as any).options || {};
+            apiKey = options.apiKey;
+          }
         }
-        return { apiKey: undefined, baseUrl: undefined };
+
+        // 回退到顶层字段
+        if (!apiKey) {
+          apiKey = (provider as any).apiKey || (provider as any).auth_token;
+        }
+
+        return { apiKey, baseUrl };
       } catch (error) {
         console.error("Failed to extract provider credentials:", error);
         return { apiKey: undefined, baseUrl: undefined };
@@ -323,7 +310,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
     const autoDetected = detectCodingPlanProvider(providerCredentials.baseUrl);
     if (autoDetected) {
-      return createUsageScript({ codingPlanProvider: autoDetected });
+      // 新建供应商时直接落 token_plan，Rust 端走专用 `coding_plan::get_coding_plan_quota`
+      // （AK/SK SigV4 鉴权），无需也不应走 JS 模板路径——后者会因为 {{baseUrl}} 为空
+      // 抛 "Invalid request URL: relative URL without a base"（issue #4808 回归点）。
+      return createUsageScript({
+        codingPlanProvider: autoDetected,
+        templateType: TEMPLATE_TYPES.TOKEN_PLAN,
+      });
     }
 
     if (detectBalanceProvider(providerCredentials.baseUrl)) {
@@ -403,6 +396,25 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT) {
         return TEMPLATE_TYPES.GITHUB_COPILOT;
       }
+      // 基线修复：baseUrl 命中 Coding Plan（volcengine 等）时优先选 TOKEN_PLAN。
+      // 历史供应商：templateType 是 JS 模板（general/newapi/custom），但 baseUrl 现在
+      // 匹配 Coding Plan；旧的 JS 模板会因为 {{baseUrl}} 为空在测试时报
+      // "Invalid request URL: relative URL without a base"（issue #4808 回归点）。
+      // 本会话内默认改回 TOKEN_PLAN（不写盘）；用户可点 Dismiss 保留旧模板，
+      // 或点 Banner 里"切换到 Coding Plan"才持久化到 selectedTemplate + script。
+      // 完全新供应商（saved script 不存在或 templateType 未设）的代码路径在下方
+      // "新配置：如果 URL 匹配 Coding Plan 供应商"的兜底里。
+      // 注意：这一步不改 `script.templateType`（要等用户主动接受），仅影响本次 UI
+      // 操作 handleTest/handleSave 走哪条路径。规则共用 `isStaleJsScriptForCodingPlan`，
+      // 与下方 staleScriptSuggestion useEffect 用同一份判定，避免互相漂移。
+      if (
+        isStaleJsScriptForCodingPlan(
+          existingScript?.templateType || (existingScript ? TEMPLATE_TYPES.GENERAL : undefined),
+          providerCredentials.baseUrl,
+        )
+      ) {
+        return TEMPLATE_TYPES.TOKEN_PLAN;
+      }
       // 优先使用保存的 templateType
       if (
         existingScript?.templateType &&
@@ -439,6 +451,86 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
+
+  // 历史供应商检测：baseUrl 命中 Coding Plan 但 saved templateType 是 JS 模板，
+  // 提示用户切到原生 token_plan 避免后续 Test 走 JS 路径报
+  // "Invalid request URL: relative URL without a base"（issue #4808 回归点）。
+  // 仅当 modal 启用时才显示——避免在用户尚未决定启用用量查询时打扰。
+  const [staleScriptSuggestion, setStaleScriptSuggestion] = useState(false);
+  useEffect(() => {
+    const savedType = provider.meta?.usage_script?.templateType;
+    const hasSavedScript = Boolean(provider.meta?.usage_script);
+    setStaleScriptSuggestion(
+      Boolean(
+        script.enabled &&
+          isStaleJsScriptForCodingPlan(
+            savedType || (hasSavedScript ? TEMPLATE_TYPES.GENERAL : undefined),
+            providerCredentials.baseUrl,
+          ),
+      ),
+    );
+  }, [
+    script.enabled,
+    provider.meta?.usage_script?.templateType,
+    provider.meta?.usage_script,
+    providerCredentials.baseUrl,
+  ]);
+
+  // 模态打开时把内部状态重置回 provider 的 saved 值。
+  // useState 的 lazy initializer 只在首次挂载跑一次，模态在父组件的
+  // useLastValidValue 包装下会持续挂载（关闭时不卸载），key 又只用了
+  // provider.id——同一供应商再次打开时不会重新挂载，selectedTemplate /
+  // script 就会停留在用户上一次手动点的模板（最常见的是 Custom），覆盖
+  // 我们在 initializer 里写的 baseUrl→TOKEN_PLAN 路由逻辑，Test 时
+  // 走 JS 路径抛 "Invalid request URL: relative URL without a base"。
+  // 用 isOpen 的 false→true 跳变作为信号重新派生即可，避免 mount/unmount
+  // 破坏 Dialog 的关闭动画与焦点恢复。
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen || wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    const savedScript = provider.meta?.usage_script;
+    if (savedScript) {
+      setScript(createUsageScript(savedScript));
+    }
+    // 重新派生 selectedTemplate：复用下方模板选择器的同一套规则
+    // （isStaleJsScriptForCodingPlan / saved templateType / coding plan 检测）。
+    const baseUrl = providerCredentials.baseUrl;
+    const savedType = provider.meta?.usage_script?.templateType;
+    const hasSavedScript = Boolean(provider.meta?.usage_script);
+    if (isStaleJsScriptForCodingPlan(savedType || (hasSavedScript ? TEMPLATE_TYPES.GENERAL : undefined), baseUrl)) {
+      setSelectedTemplate(TEMPLATE_TYPES.TOKEN_PLAN);
+    } else if (savedType) {
+      setSelectedTemplate(savedType);
+    } else if (detectCodingPlanProvider(baseUrl)) {
+      setSelectedTemplate(TEMPLATE_TYPES.TOKEN_PLAN);
+    } else {
+      setSelectedTemplate(TEMPLATE_TYPES.GENERAL);
+    }
+  }, [isOpen, provider.id, provider.meta?.usage_script, providerCredentials.baseUrl]);
+
+  // 模态关闭时复位 ref，下次打开时再走一次重置路径
+  useEffect(() => {
+    if (!isOpen) wasOpenRef.current = false;
+  }, [isOpen]);
+
+  const handleAcceptSuggestion = () => {
+    // 用户接受：把 selectedTemplate 与 script.templateType 一并升级到 TOKEN_PLAN。
+    // 真正持久化要等用户再点 Save（selectedTemplate 通过 handleSave 写入 scriptWithTemplate）。
+    const detected = detectCodingPlanProvider(providerCredentials.baseUrl);
+    setSelectedTemplate(TEMPLATE_TYPES.TOKEN_PLAN);
+    setScript({
+      ...script,
+      templateType: TEMPLATE_TYPES.TOKEN_PLAN,
+      codingPlanProvider: script.codingPlanProvider || detected || undefined,
+      // 清掉 JS 模板残留字段；ZenMux 仍然保留用户手填的 baseUrl/apiKey
+      // （handleUsePreset 的 TOKEN_PLAN 分支已经会读 codingPlanProvider 决定是
+      // 否保留，见下方 handleUsePreset 实现）。
+      code: "",
+    });
+    setStaleScriptSuggestion(false);
+  };
+  const handleDismissSuggestion = () => setStaleScriptSuggestion(false);
 
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
@@ -854,6 +946,41 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       {script.enabled && (
         <div className="space-y-6">
+          {/* 历史供应商检测：saved templateType 是 JS 模板但 baseUrl 匹配 Coding Plan
+              → 提示升级到原生 token_plan（Rust 端走 SigV4 鉴权），避免
+              `{{baseUrl}}` 为空时 `"Invalid request URL: relative URL without a base"`。 */}
+          {staleScriptSuggestion && (
+            <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-2">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                {t("usageScript.codingPlanSuggestTitle") ||
+                  "This provider's baseUrl matches a Coding Plan vendor. The saved script uses a generic template that doesn't sign the AK/SK request."}
+              </p>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                {t("usageScript.codingPlanSuggestBody") ||
+                  "Switching to the Coding Plan template routes the query through the dedicated native API, which handles AK/SK signing. The previously saved script is kept on disk until you press Save again."}
+              </p>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  className="bg-amber-600 text-white hover:bg-amber-700"
+                  onClick={handleAcceptSuggestion}
+                >
+                  {t("usageScript.codingPlanSwitch") || "Switch to Coding Plan"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleDismissSuggestion}
+                >
+                  {t("common.dismiss") || "Dismiss"}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* 预设模板选择 */}
           <div className="space-y-4 glass rounded-xl border border-white/10 p-6">
             <Label className="text-base font-medium">

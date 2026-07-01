@@ -40,7 +40,8 @@
     "deleting": "Deleting...",
     "auto": "Auto",
     "enabled": "Enabled",
-    "notSet": "Not Set"
+    "notSet": "Not Set",
+    "dismiss": "Dismiss"
   },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
@@ -1623,7 +1624,10 @@
     "fieldExtra": "• extra: String, custom display text",
     "tip1": "• Variables {{apiKey}} and {{baseUrl}} are automatically replaced",
     "tip2": "• Extractor function runs in sandbox environment, supports ES2020+ syntax",
-    "tip3": "• Entire config must be wrapped in () to form object literal expression"
+    "tip3": "• Entire config must be wrapped in () to form object literal expression",
+    "codingPlanSuggestTitle": "This provider's baseUrl matches a Coding Plan vendor. The saved script uses a generic template that doesn't sign the AK/SK request.",
+    "codingPlanSuggestBody": "Switching to the Coding Plan template routes the query through the dedicated native API, which handles AK/SK signing. The previously saved script is kept on disk until you press Save again.",
+    "codingPlanSwitch": "Switch to Coding Plan"
   },
   "dbUpgrade": {
     "title": "Database version is too new",
