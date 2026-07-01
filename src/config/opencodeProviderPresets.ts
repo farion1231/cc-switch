@@ -3111,6 +3111,82 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "SiliconFlow",
+    family: "siliconflow",
+    regionKey: "cn",
+    websiteUrl: "https://siliconflow.cn",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SiliconFlow",
+      options: {
+        baseURL: "https://api.siliconflow.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "deepseek-ai/DeepSeek-V4-Flash": {
+          name: "DeepSeek V4 Flash",
+          reasoning: true,
+          limit: { context: 1048576 },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#6E29F6",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SiliconFlow en",
+    family: "siliconflow",
+    regionKey: "intl",
+    websiteUrl: "https://siliconflow.com",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "SiliconFlow en",
+      options: {
+        baseURL: "https://api.siliconflow.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "MiniMaxAI/MiniMax-M3": {
+          name: "MiniMax M3",
+          reasoning: true,
+          limit: { context: 1048576 },
+        },
+        "deepseek-ai/DeepSeek-V4.1-Flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          limit: { context: 1048576 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "AiHubMix",
     websiteUrl: "https://aihubmix.com",
     apiKeyUrl: "https://aihubmix.com",

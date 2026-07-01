@@ -4,6 +4,12 @@ import {
   opencodeNpmPackages,
   OPENCODE_PRESET_MODEL_VARIANTS,
 } from "@/config/opencodeProviderPresets";
+import { openclawProviderPresets } from "@/config/openclawProviderPresets";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  groupPresetRows,
+  presetVersionLayout,
+} from "@/components/providers/forms/presetGroups";
 
 describe("AWS Bedrock OpenCode Provider Presets", () => {
   it("should include @ai-sdk/amazon-bedrock in npm packages", () => {
@@ -159,5 +165,64 @@ describe("OpenCode preset reasoning flags", () => {
         expect(model.reasoning, `${preset} / ${id}`).not.toBe(true);
       }
     }
+  });
+});
+
+describe("SiliconFlow OpenCode provider presets", () => {
+  it.each(["SiliconFlow", "SiliconFlow en"])(
+    "%s includes the current Codex preset models at the matching endpoint",
+    (name) => {
+      const preset = opencodeProviderPresets.find(
+        (item) => item.name === name,
+      )!;
+      const openclaw = openclawProviderPresets.find(
+        (item) => item.name === name,
+      )!;
+      const codex = codexProviderPresets.find((item) => item.name === name)!;
+
+      expect(preset).toBeDefined();
+      expect(openclaw).toBeDefined();
+      expect(codex).toBeDefined();
+      expect(preset.settingsConfig.npm).toBe("@ai-sdk/openai-compatible");
+      expect(preset.settingsConfig.options.baseURL).toBe(
+        openclaw.settingsConfig.baseUrl,
+      );
+      expect(preset.settingsConfig.options.apiKey).toBe("");
+      const codexModels = codex.modelCatalog ?? [];
+      expect(codexModels.length).toBeGreaterThan(0);
+      expect(Object.keys(preset.settingsConfig.models)).toEqual(
+        expect.arrayContaining(codexModels.map((model) => model.model)),
+      );
+      for (const model of codexModels) {
+        expect(preset.settingsConfig.models[model.model].limit?.context).toBe(
+          model.contextWindow,
+        );
+        expect(preset.settingsConfig.models[model.model].reasoning).toBe(true);
+      }
+      expect(preset.category).toBe("aggregator");
+      expect(preset.partnerPromotionKey).toBe(openclaw.partnerPromotionKey);
+      expect(preset.icon).toBe(openclaw.icon);
+    },
+  );
+
+  it("groups both regions into one provider with a region selector", () => {
+    const entries = opencodeProviderPresets.map((preset, index) => ({
+      id: `opencode-${index}`,
+      preset,
+    }));
+    const rows = groupPresetRows(entries).filter((row) =>
+      row.versions.some(({ preset }) => preset.name.startsWith("SiliconFlow")),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].family).toBe("siliconflow");
+    expect(rows[0].versions.map(({ preset }) => preset.regionKey)).toEqual([
+      "cn",
+      "intl",
+    ]);
+    expect(presetVersionLayout(rows[0].versions)).toEqual({
+      kind: "single",
+      dimension: "region",
+    });
   });
 });
