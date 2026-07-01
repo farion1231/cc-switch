@@ -170,6 +170,11 @@ impl Provider {
                     .get("apiEndpoint")
                     .and_then(Value::as_str)
             })
+            .or_else(|| {
+                self.settings_config
+                    .pointer("/apiEndpoint/url")
+                    .and_then(Value::as_str)
+            })
     }
 
     fn claude_base_url_contains(&self, needle: &str) -> bool {
@@ -1243,6 +1248,19 @@ mod tests {
         );
         assert!(codex_endpoint.is_codex_oauth());
         assert!(codex_endpoint.uses_managed_account_auth());
+
+        let codex_object_endpoint = Provider::with_id(
+            "codex-object-endpoint".to_string(),
+            "Codex Object Endpoint".to_string(),
+            json!({
+                "apiEndpoint": {
+                    "url": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(codex_object_endpoint.is_codex_oauth());
+        assert!(codex_object_endpoint.uses_managed_account_auth());
 
         let relay_with_codex_path_in_query = Provider::with_id(
             "codex-relay".to_string(),
