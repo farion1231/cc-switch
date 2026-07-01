@@ -583,6 +583,7 @@ fn append_responses_input_as_chat_messages(
         &mut last_assistant_index,
     );
     backfill_tool_call_reasoning_placeholders(messages);
+    strip_historical_reasoning_content(messages);
     Ok(())
 }
 
@@ -841,6 +842,37 @@ fn attach_pending_reasoning_to_assistant(
 
     if let Some(obj) = message.as_object_mut() {
         append_reasoning_content(obj, &reasoning);
+    }
+}
+
+
+/// Strip `reasoning_content` from all assistant messages except the last one.
+///
+/// When converting Responses API input to Chat Completions messages, historical
+/// `reasoning` items are faithfully written into the corresponding assistant
+/// messages. The Responses API does not count reasoning against the context
+/// window, but Chat Completions providers (DeepSeek, kimi, etc.) do. For
+/// reasoning-heavy models such as DeepSeek-v4-pro, each turn can produce 30K-80K
+/// tokens of thinking, so preserving reasoning from every historical turn quickly
+/// exceeds the model's context limit (e.g. 1M tokens after just 2 turns).
+///
+/// This function keeps `reasoning_content` only on the *last* assistant message
+/// (the one that immediately precedes the current user input) and strips it from
+/// all earlier assistant messages. The historical reasoning is internal monologue
+/// that was already consumed and provides no additional value to the model.
+
+fn strip_historical_reasoning_content(messages: &mut [Value]) {
+    let last_assistant_index = messages
+        .iter()
+        .rposition(|msg| msg.get("role").and_then(|v| v.as_str()) == Some("assistant"));
+    let Some(last_idx) = last_assistant_index else { return; };
+
+    for (i, msg) in messages.iter_mut().enumerate() {
+        if i != last_idx {
+            if let Some(obj) = msg.as_object_mut() {
+                obj.remove("reasoning_content");
+            }
+        }
     }
 }
 
