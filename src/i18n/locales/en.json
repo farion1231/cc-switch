@@ -869,7 +869,11 @@
       "defaultCostMultiplierRequired": "Default multiplier is required",
       "defaultCostMultiplierInvalid": "Invalid multiplier format"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "usageDisplayOrder": "Usage Display Order",
+    "usageDisplayOrderHint": "Choose whether to show remaining quota first or used quota first in usage displays.",
+    "usageDisplayRemainingFirst": "Remaining First",
+    "usageDisplayUsedFirst": "Used First"
   },
   "apps": {
     "claude": "Claude",
@@ -2903,6 +2907,8 @@
     "expired": "Session expired",
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "usedShort": "Used",
+    "remainingShort": "Left"
   }
 }

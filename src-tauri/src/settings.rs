@@ -397,6 +397,9 @@ pub struct AppSettings {
     pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 用量显示顺序："remaining-first"（默认）或 "used-first"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_display_order: Option<String>,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -510,6 +513,7 @@ impl Default for AppSettings {
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
             language: None,
+            usage_display_order: None,
             visible_apps: None,
             claude_config_dir: None,
             codex_config_dir: None,
@@ -595,6 +599,13 @@ impl AppSettings {
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .map(|s| s.to_string());
+
+        self.usage_display_order = self
+            .usage_display_order
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| matches!(*s, "remaining-first" | "used-first"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
@@ -918,6 +929,22 @@ pub fn unify_codex_session_history() -> bool {
             e.into_inner()
         })
         .unify_codex_session_history
+}
+
+/// 用量是否采用“剩余优先”显示。
+///
+/// 设备级 UI 偏好：`None` / `"remaining-first"` 视为剩余优先（默认），
+/// `"used-first"` 为已用优先。与前端 `usageDisplayOrder` 默认值保持一致。
+pub fn usage_display_remaining_first() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .usage_display_order
+        .as_deref()
+        != Some("used-first")
 }
 
 // ===== 当前供应商管理函数 =====

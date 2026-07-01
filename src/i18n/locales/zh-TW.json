@@ -840,7 +840,11 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "usageDisplayOrder": "用量顯示順序",
+    "usageDisplayOrderHint": "選擇在用量顯示中優先顯示剩餘額度還是已用額度。",
+    "usageDisplayRemainingFirst": "剩餘優先",
+    "usageDisplayUsedFirst": "已用優先"
   },
   "apps": {
     "claude": "Claude",
@@ -2875,6 +2879,8 @@
     "expired": "工作階段已過期",
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
-    "refresh": "重新整理"
+    "refresh": "重新整理",
+    "usedShort": "已用",
+    "remainingShort": "剩餘"
   }
 }

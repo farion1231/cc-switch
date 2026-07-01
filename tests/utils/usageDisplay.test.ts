@@ -46,4 +46,31 @@ describe("formatUsageDataSummary", () => {
       ),
     ).toBe("Unauthorized");
   });
+
+  it("shows remaining before used by default", () => {
+    expect(
+      formatUsageDataSummary(
+        {
+          used: 40,
+          remaining: 60,
+          unit: "USD",
+        },
+        labels,
+      ),
+    ).toBe("Remaining: 60 USD / Used: 40 USD");
+  });
+
+  it("shows used before remaining when displayOrder is used-first", () => {
+    expect(
+      formatUsageDataSummary(
+        {
+          used: 40,
+          remaining: 60,
+          unit: "USD",
+        },
+        labels,
+        "used-first",
+      ),
+    ).toBe("Used: 40 USD / Remaining: 60 USD");
+  });
 });

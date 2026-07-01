@@ -2,7 +2,7 @@ import React from "react";
 import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
-import { useUsageQuery } from "@/lib/query/queries";
+import { useUsageQuery, useSettingsQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
 import { TierBadge } from "@/components/SubscriptionQuotaFooter";
 import type { QuotaTier } from "@/types/subscription";
@@ -52,6 +52,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   inline = false,
 }) => {
   const { t } = useTranslation();
+  const { data: settings } = useSettingsQuery();
+  const displayOrder = settings?.usageDisplayOrder ?? "remaining-first";
   const isTokenPlan =
     provider.meta?.usage_script?.templateType === "token_plan";
 
@@ -174,7 +176,12 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
                   </span>
                 )}
                 {tiers.map((tier, index) => (
-                  <TierBadge key={index} tier={tier} t={t} />
+                  <TierBadge
+                    key={index}
+                    tier={tier}
+                    t={t}
+                    displayOrder={displayOrder}
+                  />
                 ))}
               </>
             );
@@ -215,40 +222,46 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           </button>
         </div>
 
-        {/* 第二行：用量和剩余 */}
+        {/* 第二行：用量和剩余（顺序由 usageDisplayOrder 控制） */}
         <div className="flex items-center gap-2">
-          {/* 已用 */}
-          {firstUsage.used !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.used")}
-              </span>
-              <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
-                {firstUsage.used.toFixed(2)}
-              </span>
-            </div>
-          )}
+          {(() => {
+            const usedBlock =
+              firstUsage.used !== undefined ? (
+                <div key="used" className="flex items-center gap-0.5">
+                  <span className="text-gray-500 dark:text-gray-400">
+                    {t("usage.used")}
+                  </span>
+                  <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
+                    {firstUsage.used.toFixed(2)}
+                  </span>
+                </div>
+              ) : null;
 
-          {/* 剩余 */}
-          {firstUsage.remaining !== undefined && (
-            <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.remaining")}
-              </span>
-              <span
-                className={`font-semibold tabular-nums ${
-                  isExpired
-                    ? "text-red-500 dark:text-red-400"
-                    : firstUsage.remaining <
-                        (firstUsage.total || firstUsage.remaining) * 0.1
-                      ? "text-orange-500 dark:text-orange-400"
-                      : "text-green-600 dark:text-green-400"
-                }`}
-              >
-                {firstUsage.remaining.toFixed(2)}
-              </span>
-            </div>
-          )}
+            const remainingBlock =
+              firstUsage.remaining !== undefined ? (
+                <div key="remaining" className="flex items-center gap-0.5">
+                  <span className="text-gray-500 dark:text-gray-400">
+                    {t("usage.remaining")}
+                  </span>
+                  <span
+                    className={`font-semibold tabular-nums ${
+                      isExpired
+                        ? "text-red-500 dark:text-red-400"
+                        : firstUsage.remaining <
+                            (firstUsage.total || firstUsage.remaining) * 0.1
+                          ? "text-orange-500 dark:text-orange-400"
+                          : "text-green-600 dark:text-green-400"
+                    }`}
+                  >
+                    {firstUsage.remaining.toFixed(2)}
+                  </span>
+                </div>
+              ) : null;
+
+            return displayOrder === "used-first"
+              ? [usedBlock, remainingBlock]
+              : [remainingBlock, usedBlock];
+          })()}
 
           {/* 单位 */}
           {firstUsage.unit && (
@@ -300,7 +313,11 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
       {/* 套餐列表 */}
       <div className="flex flex-col gap-3">
         {usageDataList.map((usageData, index) => (
-          <UsagePlanItem key={index} data={usageData} />
+          <UsagePlanItem
+            key={index}
+            data={usageData}
+            displayOrder={displayOrder}
+          />
         ))}
       </div>
     </div>
@@ -310,7 +327,10 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 // ── 通用用量组件 ────────────────────────────────────────────
 
 // 单个套餐数据展示组件
-const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
+const UsagePlanItem: React.FC<{
+  data: UsageData;
+  displayOrder: "remaining-first" | "used-first";
+}> = ({ data, displayOrder }) => {
   const { t } = useTranslation();
   const {
     planName,
@@ -365,56 +385,73 @@ const UsagePlanItem: React.FC<{ data: UsageData }> = ({ data }) => {
         )}
       </div>
 
-      {/* 用量信息：45% */}
+      {/* 用量信息：45%（总额始终在前，已用/剩余顺序由 usageDisplayOrder 控制） */}
       <div
         className="flex items-center justify-end gap-2 text-xs flex-shrink-0"
         style={{ width: "45%" }}
       >
-        {/* 总额度 */}
-        {total !== undefined && (
-          <>
-            <span className="text-gray-500 dark:text-gray-400">
-              {t("usage.total")}
-            </span>
-            <span className="tabular-nums text-gray-600 dark:text-gray-400">
-              {total === -1 ? "∞" : total.toFixed(2)}
-            </span>
-            <span className="text-gray-400 dark:text-gray-600">|</span>
-          </>
-        )}
+        {(() => {
+          const totalBlock =
+            total !== undefined ? (
+              <React.Fragment key="total">
+                <span className="text-gray-500 dark:text-gray-400">
+                  {t("usage.total")}
+                </span>
+                <span className="tabular-nums text-gray-600 dark:text-gray-400">
+                  {total === -1 ? "∞" : total.toFixed(2)}
+                </span>
+              </React.Fragment>
+            ) : null;
 
-        {/* 已用额度 */}
-        {used !== undefined && (
-          <>
-            <span className="text-gray-500 dark:text-gray-400">
-              {t("usage.used")}
-            </span>
-            <span className="tabular-nums text-gray-600 dark:text-gray-400">
-              {used.toFixed(2)}
-            </span>
-            <span className="text-gray-400 dark:text-gray-600">|</span>
-          </>
-        )}
+          const usedBlock =
+            used !== undefined ? (
+              <React.Fragment key="used">
+                <span className="text-gray-500 dark:text-gray-400">
+                  {t("usage.used")}
+                </span>
+                <span className="tabular-nums text-gray-600 dark:text-gray-400">
+                  {used.toFixed(2)}
+                </span>
+              </React.Fragment>
+            ) : null;
 
-        {/* 剩余额度 - 突出显示 */}
-        {remaining !== undefined && (
-          <>
-            <span className="text-gray-500 dark:text-gray-400">
-              {t("usage.remaining")}
-            </span>
-            <span
-              className={`font-semibold tabular-nums ${
-                isExpired
-                  ? "text-red-500 dark:text-red-400"
-                  : remaining < (total || remaining) * 0.1
-                    ? "text-orange-500 dark:text-orange-400"
-                    : "text-green-600 dark:text-green-400"
-              }`}
-            >
-              {remaining.toFixed(2)}
-            </span>
-          </>
-        )}
+          const remainingBlock =
+            remaining !== undefined ? (
+              <React.Fragment key="remaining">
+                <span className="text-gray-500 dark:text-gray-400">
+                  {t("usage.remaining")}
+                </span>
+                <span
+                  className={`font-semibold tabular-nums ${
+                    isExpired
+                      ? "text-red-500 dark:text-red-400"
+                      : remaining < (total || remaining) * 0.1
+                        ? "text-orange-500 dark:text-orange-400"
+                        : "text-green-600 dark:text-green-400"
+                  }`}
+                >
+                  {remaining.toFixed(2)}
+                </span>
+              </React.Fragment>
+            ) : null;
+
+          const ordered = [
+            totalBlock,
+            ...(displayOrder === "used-first"
+              ? [usedBlock, remainingBlock]
+              : [remainingBlock, usedBlock]),
+          ].filter((block): block is React.ReactElement => block !== null);
+
+          // 使用分隔符连接各指标块
+          return ordered.map((block, index) => (
+            <React.Fragment key={index}>
+              {index > 0 && (
+                <span className="text-gray-400 dark:text-gray-600">|</span>
+              )}
+              {block}
+            </React.Fragment>
+          ));
+        })()}
 
         {unit && (
           <span className="text-gray-500 dark:text-gray-400">{unit}</span>
