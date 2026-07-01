@@ -61,6 +61,7 @@ import {
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   extractCodexWireApi,
+  setCodexMemoriesSection,
   setCodexWireApi,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
@@ -573,6 +574,7 @@ function ProviderFormFull({
     codexBaseUrl,
     codexCatalogModels,
     codexAuthError,
+    memoriesEnabled,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
@@ -1281,10 +1283,24 @@ function ProviderFormFull({
             : [];
         // Sync first catalog row's model into config.toml so Codex uses it as default
         if (normalizedCatalogModels.length > 0) {
+          const newModel = normalizedCatalogModels[0].model;
           normalizedCodexConfig = setCodexModelNameInConfig(
             normalizedCodexConfig,
-            normalizedCatalogModels[0].model,
+            newModel,
           );
+          // P2-1: 「启用 Codex 记忆功能」开关开启时，把新 model 同步到
+          // [memories].extract_model / [memories].consolidation_model，
+          // 避免出现「顶层 model 已变但 [memories] 仍指向旧 OpenAI 原生模型」
+          // 的 bug。setCodexMemoriesSection 内部对「值未变」有短路保护，
+          // 且对「两个 model 都为空」整体 no-op，所以这里安全无副作用。
+          if (memoriesEnabled && newModel.trim()) {
+            normalizedCodexConfig = setCodexMemoriesSection(
+              normalizedCodexConfig,
+              true,
+              newModel,
+              newModel,
+            );
+          }
         }
         const configObj = {
           auth: authJson,
@@ -2292,6 +2308,7 @@ function ProviderFormFull({
                 configError={codexConfigError}
                 onExtract={handleCodexExtract}
                 isExtracting={isCodexExtracting}
+                memoriesEnabled={memoriesEnabled}
               />
               {settingsConfigErrorField}
             </>

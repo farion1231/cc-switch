@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Codex `[memories]` Switch Crash on Custom Models**: When the active Codex provider's model is not exposed by the previously pinned `extract_model` / `consolidation_model` (e.g. user has `[memories] extract_model = "MiniMax-M3"` in `config.toml` and switches to a custom provider with `model = "deepseek-v4-pro"`), Codex's memory/chronicle backend errors because the model is unreachable. The Codex form now exposes a new 「启用 Codex 记忆功能」 checkbox in the `config.toml` editor row (leftmost of the four checkboxes). The toggle synchronizes three places: (1) writes the active `model` into `[memories].extract_model` and `[memories].consolidation_model`; (2) auto-writes `[features].memories = true` (the Codex feature flag that actually turns the memory feature on). The save path also re-syncs these three fields when the active model changes via the Model Mapping row (P2-1), so a stale `[memories]` model pointing to a no-longer-active OpenAI model can't reappear after a model switch. When unchecked, only those three keys are removed and other `[memories]` / `[features]` fields are preserved; empty tables are dropped. See <https://developers.openai.com/codex/memories> for the field semantics.
+
 ## [3.16.4] - 2026-06-27
 
 Development since v3.16.3 focuses on tightening the Codex proxy path — native OpenAI Responses migration for the major Chinese providers, a decoupled upstream-format selector, zstd request/error-body decompression, and a run of tool-call and OAuth-over-proxy fixes — alongside richer usage and pricing tooling (models.dev pricing import, Volcengine Ark coding/agent-plan quotas, live-tracking date ranges, GLM-5.2/Doubao Seed 2.1 pricing), new proxy and resilience capabilities (custom request header/body overrides, an in-app recovery screen for too-new databases, native Windows ARM64 builds), and a broad wave of preset and branding updates (the SubRouter and OpenCode Go subscriptions, the CTok→ETok rename, Kimi rebranding and prime-partner badges, and a Kimi K2.7 Code sponsor banner).
