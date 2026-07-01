@@ -17,12 +17,19 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
 const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
 const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // Keep hints lowercase; matching lowercases only the input value.
 const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
+static CLAUDE_CODE_CURRENT_DATE_RE: Lazy<regex::Regex> = Lazy::new(|| {
+    regex::Regex::new(
+        r"(# currentDate\r?\n)Today['\u{2019}\u{02bc}\u{02b9}]s date is (\d{4})[/-](\d{2})[/-](\d{2})\.(\r?\n|$)",
+    )
+    .expect("valid Claude Code currentDate regex")
+});
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -225,10 +232,48 @@ pub fn normalize_anthropic_messages_for_provider(
         return false;
     }
 
-    let mut changed =
-        normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
+    let mut changed = normalize_claude_code_current_date_track(body);
+    changed |= normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
     changed |= normalize_deepseek_thinking_disabled_strip_effort(body, provider);
     changed
+}
+
+fn normalize_claude_code_current_date_track(body: &mut Value) -> bool {
+    let Some(system) = body.get_mut("system") else {
+        return false;
+    };
+
+    match system {
+        Value::String(text) => normalize_claude_code_current_date_text(text),
+        Value::Array(blocks) => blocks
+            .iter_mut()
+            .filter_map(|block| {
+                if block.get("type").and_then(Value::as_str) != Some("text") {
+                    return None;
+                }
+                match block.get_mut("text") {
+                    Some(Value::String(text)) => Some(text),
+                    _ => None,
+                }
+            })
+            .fold(false, |changed, text| {
+                normalize_claude_code_current_date_text(text) || changed
+            }),
+        _ => false,
+    }
+}
+
+fn normalize_claude_code_current_date_text(text: &mut String) -> bool {
+    let normalized = CLAUDE_CODE_CURRENT_DATE_RE
+        .replace_all(text, "${1}Today's date is ${2}-${3}-${4}.${5}")
+        .into_owned();
+
+    if normalized == *text {
+        return false;
+    }
+
+    *text = normalized;
+    true
 }
 
 fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
@@ -2179,6 +2224,87 @@ mod tests {
         assert!(!changed);
         assert!(body.get("system").is_none());
         assert_eq!(body["messages"][0]["role"], "system");
+    }
+
+    #[test]
+    fn test_normalize_claude_code_current_date_track_string_system() {
+        let provider = create_provider(json!({}));
+        let mut body = json!({
+            "system": "# currentDate\nToday\u{2019}s date is 2026/06/30.\n\nKeep going.",
+            "messages": []
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        assert_eq!(
+            body["system"],
+            "# currentDate\nToday's date is 2026-06-30.\n\nKeep going."
+        );
+    }
+
+    #[test]
+    fn test_normalize_claude_code_current_date_track_system_array_variants() {
+        let provider = create_provider(json!({}));
+        let mut body = json!({
+            "system": [
+                { "type": "text", "text": "# currentDate\r\nToday\u{02bc}s date is 2026/06/30.\r\n" },
+                { "type": "text", "text": "# currentDate\nToday\u{02b9}s date is 2026-06-30.\n" },
+                { "type": "text", "text": "# currentDate\nToday's date is 2026/06/30.\n" }
+            ],
+            "messages": []
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        assert_eq!(
+            body["system"][0]["text"],
+            "# currentDate\r\nToday's date is 2026-06-30.\r\n"
+        );
+        assert_eq!(
+            body["system"][1]["text"],
+            "# currentDate\nToday's date is 2026-06-30.\n"
+        );
+        assert_eq!(
+            body["system"][2]["text"],
+            "# currentDate\nToday's date is 2026-06-30.\n"
+        );
+    }
+
+    #[test]
+    fn test_normalize_claude_code_current_date_track_ignores_non_marker_text() {
+        let provider = create_provider(json!({}));
+        let mut body = json!({
+            "system": "The user wrote Today\u{2019}s date is 2026/06/30.",
+            "messages": []
+        });
+
+        let changed = normalize_anthropic_messages_for_provider(&mut body, &provider, "anthropic");
+
+        assert!(!changed);
+        assert_eq!(
+            body["system"],
+            "The user wrote Today\u{2019}s date is 2026/06/30."
+        );
+    }
+
+    #[test]
+    fn test_normalize_claude_code_current_date_track_skips_non_anthropic_format() {
+        let provider = create_provider(json!({}));
+        let mut body = json!({
+            "system": "# currentDate\nToday\u{2019}s date is 2026/06/30.\n",
+            "messages": []
+        });
+
+        let changed =
+            normalize_anthropic_messages_for_provider(&mut body, &provider, "openai_chat");
+
+        assert!(!changed);
+        assert_eq!(
+            body["system"],
+            "# currentDate\nToday\u{2019}s date is 2026/06/30.\n"
+        );
     }
 
     #[test]
