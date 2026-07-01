@@ -49,6 +49,26 @@ describe("mergeProviderMeta", () => {
     });
   });
 
+  it("preserves customCliArgs when merging", () => {
+    const initial: ProviderMeta = {
+      customCliArgs: "--dangerously-skip-permissions",
+      custom_endpoints: {
+        "https://old.com": buildEndpoint("https://old.com"),
+      },
+    };
+
+    const result = mergeProviderMeta(initial, {
+      "https://new.com": buildEndpoint("https://new.com"),
+    });
+
+    expect(result).toEqual({
+      customCliArgs: "--dangerously-skip-permissions",
+      custom_endpoints: {
+        "https://new.com": buildEndpoint("https://new.com"),
+      },
+    });
+  });
+
   it("removes custom endpoints when result is empty but keeps other meta", () => {
     const initial: ProviderMeta = {
       usage_script: {

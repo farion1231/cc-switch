@@ -722,6 +722,12 @@
       "title": "優先ターミナル",
       "description": "ターミナルボタンをクリックした時に使用するターミナルアプリを選択",
       "fallbackHint": "選択したターミナルが利用できない場合、システムのデフォルトが使用されます",
+      "customCliArgs": {
+        "title": "カスタム CLI 引数",
+        "description": "ターミナルを開くときに起動コマンドに追加する引数",
+        "placeholder": "--dangerously-skip-permissions",
+        "hint": "複数の引数はスペースで区切ってください（例: --dangerously-skip-permissions --verbose）"
+      },
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -1243,7 +1249,10 @@
     "pricingModelSourceInherit": "グローバル設定を継承",
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
-    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択",
+    "customCliArgs": "カスタム CLI 引数",
+    "customCliArgsPlaceholder": "--dangerously-skip-permissions",
+    "customCliArgsHint": "ターミナルを開く際に起動コマンドに追加される引数。複数ある場合はスペースで区切ります。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
