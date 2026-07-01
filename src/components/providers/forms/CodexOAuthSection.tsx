@@ -68,7 +68,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const {
     accounts,
     defaultAccountId,
-    isLoadingStatus,
+    isStatusSuccess,
     hasAnyAccount,
     pollingState,
     deviceCode,
@@ -97,11 +97,15 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   };
 
   React.useEffect(() => {
+    // Only clear a bound account when the status query has *successfully*
+    // loaded and the account is genuinely gone. On a failed/pending query
+    // `accounts` is an empty array, which must not silently unbind the
+    // provider's managed account (that would corrupt the saved config).
     if (
       mode !== "select" ||
       !selectedAccountId ||
       !onAccountSelect ||
-      isLoadingStatus
+      !isStatusSuccess
     ) {
       return;
     }
@@ -109,7 +113,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     if (!accounts.some((account) => account.id === selectedAccountId)) {
       onAccountSelect(null);
     }
-  }, [accounts, isLoadingStatus, mode, onAccountSelect, selectedAccountId]);
+  }, [accounts, isStatusSuccess, mode, onAccountSelect, selectedAccountId]);
 
   const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
     e.stopPropagation();

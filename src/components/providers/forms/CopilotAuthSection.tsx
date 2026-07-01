@@ -71,7 +71,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     accounts,
     defaultAccountId,
     migrationError,
-    isLoadingStatus,
+    isStatusSuccess,
     hasAnyAccount,
     pollingState,
     deviceCode,
@@ -102,11 +102,14 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
   };
 
   React.useEffect(() => {
+    // Only clear a bound account once the status query has *successfully*
+    // loaded and the account is genuinely gone. A failed/pending query yields
+    // an empty `accounts` array, which must not silently unbind the provider.
     if (
       mode !== "select" ||
       !selectedAccountId ||
       !onAccountSelect ||
-      isLoadingStatus
+      !isStatusSuccess
     ) {
       return;
     }
@@ -114,7 +117,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     if (!accounts.some((account) => account.id === selectedAccountId)) {
       onAccountSelect(null);
     }
-  }, [accounts, isLoadingStatus, mode, onAccountSelect, selectedAccountId]);
+  }, [accounts, isStatusSuccess, mode, onAccountSelect, selectedAccountId]);
 
   // 处理移除账号
   const handleRemoveAccount = (accountId: string, e: React.MouseEvent) => {
