@@ -1479,6 +1479,38 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
 
                 <div>
+                  <strong>{t("usageScript.multiConfigFormat")}</strong>
+                  <pre className="mt-1 p-2 bg-black/20 text-foreground rounded border border-white/10 text-[10px] overflow-x-auto">
+                    {`({
+  requests: {
+    quota: {
+      url: "{{baseUrl}}/api/quota",
+      method: "GET",
+      headers: {
+        "Authorization": "Bearer {{apiKey}}"
+      }
+    },
+    usage: {
+      url: "{{baseUrl}}/api/usage",
+      method: "GET",
+      headers: {
+        "Authorization": "Bearer {{apiKey}}"
+      }
+    }
+  },
+  extractor: function(responses) {
+    return {
+      total: responses.quota.total,
+      used: responses.usage.used,
+      remaining: responses.quota.total - responses.usage.used,
+      unit: "USD"
+    };
+  }
+})`}
+                  </pre>
+                </div>
+
+                <div>
                   <strong>{t("usageScript.extractorFormat")}</strong>
                   <ul className="mt-1 space-y-0.5 ml-2">
                     <li>{t("usageScript.fieldIsValid")}</li>
