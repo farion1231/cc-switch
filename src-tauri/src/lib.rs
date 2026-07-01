@@ -749,8 +749,20 @@ pub fn run() {
                 }
             }
 
-            // 3. 导入 MCP 服务器配置（表空时触发）
-            if app_state.db.is_mcp_table_empty().unwrap_or(false) {
+            // Run sync preferences migration for existing users
+            if let Err(e) = crate::settings::run_sync_preferences_defaults_migration() {
+                log::warn!("Sync preferences migration failed: {e}");
+            }
+
+            // Clean existing Codex provider configs of MCP sections
+            if let Err(e) = run_strip_codex_mcp_sections_migration(&app_state.db) {
+                log::warn!("Codex MCP sections cleanup migration failed: {e}");
+            }
+
+            // 3. 导入 MCP 服务器配置（设置开启且表空时触发）
+            if !crate::settings::get_settings().auto_import_mcp_on_startup {
+                log::info!("MCP auto-import disabled by settings, skipping startup import");
+            } else if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
 
                 match crate::services::mcp::McpService::import_from_claude(&app_state) {
@@ -794,8 +806,10 @@ pub fn run() {
                 }
             }
 
-            // 4. 导入提示词文件（表空时触发）
-            if app_state.db.is_prompts_table_empty().unwrap_or(false) {
+            // 4. 导入提示词文件（设置开启且表空时触发）
+            if !crate::settings::get_settings().auto_import_prompts_on_startup {
+                log::info!("Prompt auto-import disabled by settings, skipping startup import");
+            } else if app_state.db.is_prompts_table_empty().unwrap_or(false) {
                 log::info!("Prompts table empty, importing from live configurations...");
 
                 for app in [
@@ -1071,11 +1085,9 @@ pub fn run() {
                     }
                 });
 
-                // Session log usage sync: 启动时同步一次，之后每 60 秒检查
+                // Session log usage sync: gated by settings
                 let db_for_session_sync = state.db.clone();
                 tauri::async_runtime::spawn(async move {
-                    const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
-
                     fn run_step<T>(name: &str, result: Result<T, crate::error::AppError>) {
                         if let Err(e) = result {
                             log::warn!("{name} failed: {e}");
@@ -1084,51 +1096,77 @@ pub fn run() {
 
                     let db = &db_for_session_sync;
 
-                    // 首次同步
-                    run_step(
-                        "Usage cost startup backfill",
-                        db.backfill_missing_usage_costs(),
-                    );
-                    run_step(
-                        "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
-                    );
-                    run_step(
-                        "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
-                    );
-                    run_step(
-                        "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
-                    );
-                    run_step(
-                        "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
-                    );
+                    // Initial sync (respects settings)
+                    {
+                        let s = crate::settings::get_settings();
+                        if s.session_usage_sync_enabled {
+                            run_step(
+                                "Usage cost startup backfill",
+                                db.backfill_missing_usage_costs(),
+                            );
+                            if s.session_usage_sync_claude {
+                                run_step(
+                                    "Session usage initial sync",
+                                    crate::services::session_usage::sync_claude_session_logs(db),
+                                );
+                            }
+                            if s.session_usage_sync_codex {
+                                run_step(
+                                    "Codex usage initial sync",
+                                    crate::services::session_usage_codex::sync_codex_usage(db),
+                                );
+                            }
+                            if s.session_usage_sync_gemini {
+                                run_step(
+                                    "Gemini usage initial sync",
+                                    crate::services::session_usage_gemini::sync_gemini_usage(db),
+                                );
+                            }
+                            if s.session_usage_sync_opencode {
+                                run_step(
+                                    "OpenCode usage initial sync",
+                                    crate::services::session_usage_opencode::sync_opencode_usage(db),
+                                );
+                            }
+                        } else {
+                            log::info!("Session usage sync disabled by settings");
+                        }
+                    }
 
-                    // 定期同步
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                        SESSION_SYNC_INTERVAL_SECS,
-                    ));
-                    interval.tick().await; // skip immediate first tick
+                    // Periodic sync with dynamic interval
                     loop {
-                        interval.tick().await;
-                        run_step(
-                            "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
-                        );
-                        run_step(
-                            "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
-                        );
-                        run_step(
-                            "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
-                        );
+                        let s = crate::settings::get_settings();
+                        let interval_secs = s.session_usage_sync_interval_secs.max(10);
+                        tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+
+                        let s = crate::settings::get_settings();
+                        if !s.session_usage_sync_enabled {
+                            continue;
+                        }
+                        if s.session_usage_sync_claude {
+                            run_step(
+                                "Session usage periodic sync",
+                                crate::services::session_usage::sync_claude_session_logs(db),
+                            );
+                        }
+                        if s.session_usage_sync_codex {
+                            run_step(
+                                "Codex usage periodic sync",
+                                crate::services::session_usage_codex::sync_codex_usage(db),
+                            );
+                        }
+                        if s.session_usage_sync_gemini {
+                            run_step(
+                                "Gemini usage periodic sync",
+                                crate::services::session_usage_gemini::sync_gemini_usage(db),
+                            );
+                        }
+                        if s.session_usage_sync_opencode {
+                            run_step(
+                                "OpenCode usage periodic sync",
+                                crate::services::session_usage_opencode::sync_opencode_usage(db),
+                            );
+                        }
                     }
                 });
             });
@@ -2048,6 +2086,48 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
     remove_tray_icon_before_exit(app_handle);
     destroy_single_instance_lock(app_handle);
     tauri::process::restart(&app_handle.env());
+}
+
+/// One-time migration: strip MCP sections from existing Codex provider configs.
+///
+/// Before the sanitizer (Tasks 8/9) was in place, Codex provider `settings_config["config"]`
+/// TOML could contain `[mcp_servers]` tables. This migration cleans those up so stored
+/// configs match the sanitized shape. Idempotent: `strip_mcp_sections_from_toml` on clean
+/// TOML is a no-op, and the migration marker prevents re-running.
+fn run_strip_codex_mcp_sections_migration(
+    db: &crate::database::Database,
+) -> Result<(), crate::error::AppError> {
+    if crate::settings::is_strip_codex_mcp_sections_migrated() {
+        return Ok(());
+    }
+
+    let providers = db.get_all_providers("codex")?;
+    let mut cleaned_count = 0usize;
+
+    for provider in providers.values() {
+        let Some(config_str) = provider
+            .settings_config
+            .get("config")
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let stripped = crate::services::provider::strip_mcp_sections_from_toml(config_str);
+        if stripped == config_str {
+            continue;
+        }
+        let mut updated_settings = provider.settings_config.clone();
+        updated_settings["config"] = serde_json::Value::String(stripped);
+        db.update_provider_settings_config("codex", &provider.id, &updated_settings)?;
+        cleaned_count += 1;
+        log::info!("Cleaned MCP sections from Codex provider: {}", provider.id);
+    }
+
+    crate::settings::mark_strip_codex_mcp_sections_migrated(cleaned_count)?;
+    log::info!(
+        "Codex MCP sections cleanup migration complete: {cleaned_count} provider(s) cleaned"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

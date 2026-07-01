@@ -84,6 +84,55 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     Ok(true)
 }
 
+/// Strip all `[mcp_servers]` and `[mcp_servers.*]` top-level tables from a Codex TOML config.
+/// Returns the cleaned TOML string. If parsing fails, returns the original string unchanged.
+pub fn strip_mcp_sections_from_toml(config_toml: &str) -> String {
+    let mut doc = match config_toml.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("Failed to parse TOML for MCP stripping, returning original: {e}");
+            return config_toml.to_string();
+        }
+    };
+
+    let root = doc.as_table_mut();
+    root.remove("mcp_servers");
+
+    // Clean up multiple empty lines left by removal
+    let mut cleaned = String::new();
+    let mut blank_run = 0usize;
+    for line in doc.to_string().lines() {
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run <= 1 {
+                cleaned.push('\n');
+            }
+            continue;
+        }
+        blank_run = 0;
+        cleaned.push_str(line);
+        cleaned.push('\n');
+    }
+
+    cleaned.trim().to_string()
+}
+
+/// Sanitize MCP sections from a Codex provider's `settings_config["config"]` field.
+/// No-op for non-Codex app types or when the `config` field is absent/non-string.
+/// The sanitizer is idempotent — calling it on already-clean config is a no-op.
+pub(crate) fn sanitize_codex_config_field(app_type: &AppType, settings: &mut Value) {
+    if !matches!(app_type, AppType::Codex) {
+        return;
+    }
+    let Some(config_str) = settings.get("config").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let cleaned = strip_mcp_sections_from_toml(config_str);
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("config".to_string(), Value::String(cleaned));
+    }
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -779,7 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+    fn extract_codex_common_config_strips_mcp_servers() {
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
 disable_response_storage = true
@@ -814,9 +863,56 @@ base_url = "http://localhost:8080"
             "should remove entire model_providers table"
         );
         assert!(
-            extracted.contains("http://localhost:8080"),
-            "should keep mcp_servers.* base_url"
+            !extracted.contains("[mcp_servers"),
+            "should strip mcp_servers table"
         );
+        assert!(
+            !extracted.contains("http://localhost:8080"),
+            "should strip mcp_servers content"
+        );
+        assert!(
+            extracted.contains("disable_response_storage"),
+            "should preserve non-provider, non-MCP settings"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_sections_removes_mcp_servers() {
+        let toml = r#"model = "gpt-4"
+
+[mcp_servers.server1]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server"]
+
+[mcp_servers.server2]
+command = "node"
+"#;
+        let result = strip_mcp_sections_from_toml(toml);
+        assert!(
+            !result.contains("[mcp_servers"),
+            "should strip all mcp_servers tables"
+        );
+        assert!(
+            result.contains("model = \"gpt-4\""),
+            "should preserve other settings"
+        );
+    }
+
+    #[test]
+    fn strip_mcp_sections_no_mcp_unchanged() {
+        let toml = r#"model = "gpt-4"
+disable_response_storage = true
+"#;
+        let result = strip_mcp_sections_from_toml(toml);
+        assert!(result.contains("model = \"gpt-4\""));
+        assert!(result.contains("disable_response_storage"));
+    }
+
+    #[test]
+    fn strip_mcp_sections_malformed_toml_returns_original() {
+        let toml = "this is not valid [[ toml";
+        let result = strip_mcp_sections_from_toml(toml);
+        assert_eq!(result, toml);
     }
 
     #[tokio::test]
@@ -990,6 +1086,12 @@ base_url = "http://localhost:8080"
         db.save_live_backup("claude-desktop", "{}")
             .await
             .expect("seed live backup");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("use ephemeral proxy port");
         {
             let mut config = db
                 .get_proxy_config_for_app("claude-desktop")
@@ -1001,7 +1103,7 @@ base_url = "http://localhost:8080"
                 .expect("update app proxy config");
         }
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -1049,7 +1151,10 @@ base_url = "http://localhost:8080"
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!(
+                "http://127.0.0.1:{}/claude-desktop",
+                proxy_info.port
+            )),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -1686,6 +1791,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        sanitize_codex_config_field(&app_type, &mut provider.settings_config);
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
@@ -1741,6 +1847,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        sanitize_codex_config_field(&app_type, &mut provider.settings_config);
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
@@ -1922,7 +2029,8 @@ impl ProviderService {
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // Sync MCP
+                // MCP sync must always run after provider writes — the Codex
+                // sanitizer strips [mcp_servers], so this re-adds DB-managed entries.
                 McpService::sync_all_enabled(state)?;
             }
         }
@@ -2297,7 +2405,8 @@ impl ProviderService {
             }
         }
 
-        // Sync MCP
+        // MCP sync must always run after provider writes — the Codex sanitizer
+        // strips [mcp_servers], so this re-adds DB-managed entries.
         McpService::sync_all_enabled(state)?;
 
         Ok(result)
@@ -2714,6 +2823,8 @@ impl ProviderService {
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+        // Remove MCP sections — MCP is managed by the MCP module, not provider config
+        root.remove("mcp_servers");
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();

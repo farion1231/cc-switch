@@ -10,7 +10,8 @@ use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, write_live_with_common_config,
+    build_effective_settings_with_common_config, sanitize_codex_config_field,
+    write_live_with_common_config,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -1175,10 +1176,14 @@ impl ProxyService {
         }
 
         // Codex
-        if let Ok(config) = self.read_codex_live() {
+        if let Ok(mut config) = self.read_codex_live() {
             if Self::live_has_proxy_placeholder_for_app(&AppType::Codex, &config) {
                 log::warn!("codex Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live");
             } else {
+                // Strip MCP sections — MCP is managed by the MCP module, not the
+                // provider config. Prevents old MCP entries from persisting in
+                // backup and reintroducing on restore.
+                sanitize_codex_config_field(&AppType::Codex, &mut config);
                 let json_str = serde_json::to_string(&config)
                     .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
                 self.db
@@ -1208,7 +1213,7 @@ impl ProxyService {
 
     /// 备份指定应用的 Live 配置（严格模式：目标配置不存在则返回错误）
     async fn backup_live_config_strict(&self, app_type: &AppType) -> Result<(), String> {
-        let (app_type_str, config) = match app_type {
+        let (app_type_str, mut config) = match app_type {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
@@ -1223,6 +1228,11 @@ impl ProxyService {
             );
             return Ok(());
         }
+
+        // Strip MCP sections from Codex config — MCP is managed by the MCP module,
+        // not the provider config. Prevents MCP from persisting in backup and
+        // reintroducing on restore.
+        sanitize_codex_config_field(app_type, &mut config);
 
         let json_str = serde_json::to_string(&config)
             .map_err(|e| format!("序列化 {app_type_str} 配置失败: {e}"))?;
@@ -1506,8 +1516,12 @@ impl ProxyService {
             }
             AppType::Codex => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("codex").await {
-                    let config: Value = serde_json::from_str(&backup.original_config)
+                    let mut config: Value = serde_json::from_str(&backup.original_config)
                         .map_err(|e| format!("解析 Codex 备份失败: {e}"))?;
+                    // Strip MCP sections — old backups (pre-sanitizer) may contain
+                    // `[mcp_servers.*]` tables that would reintroduce MCP into the
+                    // live config.toml on restore, triggering the resurrection bug.
+                    sanitize_codex_config_field(&AppType::Codex, &mut config);
                     self.write_codex_live(&config)?;
                     log::info!("Codex Live 配置已恢复");
                 }
@@ -1568,7 +1582,7 @@ impl ProxyService {
             .await
             .map_err(|e| format!("获取 {app_type_str} Live 备份失败: {e}"))?;
         if let Some(backup) = backup {
-            let config: Value = serde_json::from_str(&backup.original_config)
+            let mut config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
 
             // 备份若是代理占位符（异常历史：上次 stop 失败导致 Live 留在了代理状态，
@@ -1579,6 +1593,9 @@ impl ProxyService {
                     "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
                 );
             } else {
+                // Strip MCP sections from Codex backups — old backups may carry
+                // `[mcp_servers.*]` tables that would resurrect MCP on restore.
+                sanitize_codex_config_field(app_type, &mut config);
                 self.write_live_config_for_app(app_type, &config)?;
                 log::info!("{app_type_str} Live 配置已从备份恢复");
                 return Ok(());

@@ -524,6 +524,8 @@ mod tests {
                     migrated_state_rows: 7,
                     codex_config_dir: None,
                 }),
+                sync_preferences_defaults_v1: None,
+                strip_codex_mcp_sections_v1: None,
             }),
             ..AppSettings::default()
         };
@@ -577,6 +579,8 @@ mod tests {
                     migrated_state_rows: 2,
                     codex_config_dir: None,
                 }),
+                sync_preferences_defaults_v1: None,
+                strip_codex_mcp_sections_v1: None,
             }),
             ..AppSettings::default()
         };

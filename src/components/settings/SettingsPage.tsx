@@ -52,6 +52,7 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
+import { SyncAutomationSettings } from "@/components/settings/SyncAutomationSettings";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -275,6 +276,10 @@ export function SettingsPage({
                       }
                     />
                     <CodexAuthSettings
+                      settings={settings}
+                      onChange={handleAutoSave}
+                    />
+                    <SyncAutomationSettings
                       settings={settings}
                       onChange={handleAutoSave}
                     />
