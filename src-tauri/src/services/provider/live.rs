@@ -12,6 +12,7 @@ use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
+use crate::openclaw_config;
 use crate::provider::Provider;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
@@ -1513,7 +1514,63 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Imported OpenClaw provider '{id}' from live config");
     }
 
+    // Honor the user's live `agents.defaults.model.primary` by marking the
+    // matching provider as `is_current=1` in the database. Without this step
+    // every imported provider stays at `is_current=0`, so cc-switch cannot
+    // tell which one the gateway is actually using.
+    sync_openclaw_current_from_primary(state);
+
     Ok(imported)
+}
+
+/// Mark the OpenClaw provider matching `agents.defaults.model.primary`
+/// (`<provider>/<model>` form) as `is_current=1` in the database.
+///
+/// - If the primary points to a provider that isn't (yet) in the database,
+///   this is a no-op.
+/// - If `primary` is missing or malformed, every imported provider remains
+///   `is_current=0` (the previous, broken behavior).
+fn sync_openclaw_current_from_primary(state: &AppState) {
+    let primary_provider_id = match openclaw_config::get_default_model() {
+        Ok(Some(model)) => model
+            .primary
+            .split('/')
+            .next()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        Ok(None) => None,
+        Err(e) => {
+            log::warn!("OpenClaw live primary: failed to read default model: {e}");
+            None
+        }
+    };
+
+    let Some(pid) = primary_provider_id else {
+        log::debug!(
+            "OpenClaw live primary: no agents.defaults.model.primary; skipping is_current sync"
+        );
+        return;
+    };
+
+    match state.db.get_provider_ids("openclaw") {
+        Ok(ids) if ids.contains(&pid) => {
+            if let Err(e) = state.db.set_current_provider("openclaw", &pid) {
+                log::warn!("OpenClaw live primary: failed to mark '{pid}' as current: {e}");
+            } else {
+                log::info!(
+                    "OpenClaw live primary: marked '{pid}' as current (matches live primary)"
+                );
+            }
+        }
+        Ok(_) => {
+            log::debug!(
+                "OpenClaw live primary: '{pid}' is not an imported provider; is_current left untouched"
+            );
+        }
+        Err(e) => {
+            log::warn!("OpenClaw live primary: failed to query provider ids: {e}");
+        }
+    }
 }
 
 /// Import all providers from Hermes live config to database
