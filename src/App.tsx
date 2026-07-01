@@ -784,7 +784,11 @@ function App() {
 
   const handleOpenTerminal = async (provider: Provider) => {
     try {
-      const selectedDir = await settingsApi.pickDirectory();
+      const selectedDir = await settingsApi.pickDirectory({
+        title: t("provider.terminalWorkingDirectoryTitle", {
+          defaultValue: "选择终端工作目录",
+        }),
+      });
       if (!selectedDir) {
         return;
       }
@@ -794,7 +798,7 @@ function App() {
       });
       toast.success(
         t("provider.terminalOpened", {
-          defaultValue: "终端已打开",
+          defaultValue: "终端已在所选目录打开",
         }),
       );
     } catch (error) {

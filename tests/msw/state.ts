@@ -100,6 +100,17 @@ let settingsState: Settings = {
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
+let lastPickDirectoryRequest: {
+  defaultPath?: string;
+  default_path?: string;
+  title?: string;
+} | null = null;
+let lastOpenProviderTerminalRequest: {
+  providerId?: string;
+  provider_id?: string;
+  app?: AppId;
+  cwd?: string;
+} | null = null;
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
@@ -218,6 +229,8 @@ export const resetProviderState = () => {
     language: "zh",
   };
   appConfigDirOverride = null;
+  lastPickDirectoryRequest = null;
+  lastOpenProviderTerminalRequest = null;
   mcpConfigs = {
     claude: {
       sample: {
@@ -350,6 +363,30 @@ export const getAppConfigDirOverride = () => appConfigDirOverride;
 export const setAppConfigDirOverrideState = (value: string | null) => {
   appConfigDirOverride = value;
 };
+
+export const setLastPickDirectoryRequest = (
+  request: typeof lastPickDirectoryRequest,
+) => {
+  lastPickDirectoryRequest = deepClone(
+    request,
+  ) as typeof lastPickDirectoryRequest;
+};
+
+export const getLastPickDirectoryRequest = () =>
+  deepClone(lastPickDirectoryRequest) as typeof lastPickDirectoryRequest;
+
+export const setLastOpenProviderTerminalRequest = (
+  request: typeof lastOpenProviderTerminalRequest,
+) => {
+  lastOpenProviderTerminalRequest = deepClone(
+    request,
+  ) as typeof lastOpenProviderTerminalRequest;
+};
+
+export const getLastOpenProviderTerminalRequest = () =>
+  deepClone(
+    lastOpenProviderTerminalRequest,
+  ) as typeof lastOpenProviderTerminalRequest;
 
 export const getMcpConfig = (appType: AppId) => {
   const servers = deepClone(mcpConfigs[appType] ?? {}) as Record<
