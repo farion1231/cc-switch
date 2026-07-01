@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::config::get_claude_config_dir;
+use crate::config::{get_claude_config_dir, get_managed_profile_root};
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
@@ -15,18 +15,59 @@ use super::utils::{
 const PROVIDER_ID: &str = "claude";
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
+    let mut sessions = Vec::new();
+
+    // Scan default Claude config projects
     let root = get_claude_config_dir().join("projects");
     let mut files = Vec::new();
     collect_jsonl_files(&root, &mut files);
-
-    let mut sessions = Vec::new();
     for path in files {
-        if let Some(meta) = parse_session(&path) {
+        if let Some(mut meta) = parse_session(&path) {
+            meta.resume_command = Some(format!("claude --resume {}", meta.session_id));
             sessions.push(meta);
         }
     }
 
+    // Scan managed profile projects directories
+    let profile_root = get_managed_profile_root();
+    if profile_root.exists() {
+        if let Ok(entries) = std::fs::read_dir(&profile_root) {
+            for entry in entries.flatten() {
+                let profile_dir = entry.path();
+                if !profile_dir.is_dir() {
+                    continue;
+                }
+                let projects_dir = profile_dir.join("projects");
+                if !projects_dir.exists() {
+                    continue;
+                }
+                let mut profile_files = Vec::new();
+                collect_jsonl_files(&projects_dir, &mut profile_files);
+                for path in profile_files {
+                    if let Some(mut meta) = parse_session(&path) {
+                        meta.profile_dir = Some(profile_dir.to_string_lossy().to_string());
+                        meta.resume_command = Some(managed_profile_resume_command(
+                            &profile_dir,
+                            &meta.session_id,
+                        ));
+                        sessions.push(meta);
+                    }
+                }
+            }
+        }
+    }
+
     sessions
+}
+
+fn managed_profile_resume_command(profile_dir: &Path, session_id: &str) -> String {
+    let include_launcher_overlay =
+        crate::claude_profile::launcher_settings_overlay_path(profile_dir).is_file();
+    format!(
+        "{} --resume {}",
+        crate::claude_profile::launch_command_for_profile(profile_dir, include_launcher_overlay),
+        session_id
+    )
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -248,7 +289,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
-        resume_command: Some(format!("claude --resume {session_id}")),
+        resume_command: None, // Set by caller based on default vs managed profile
+        profile_dir: None,    // Set by caller for managed profile sessions
     })
 }
 
@@ -329,6 +371,41 @@ mod tests {
 
         assert!(!path.exists());
         assert!(!sidecar.exists());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn managed_profile_resume_command_quotes_profile_path() {
+        let command =
+            managed_profile_resume_command(Path::new("/tmp/profile O'Brien"), "session-123");
+
+        assert_eq!(
+            command,
+            "CLAUDE_CONFIG_DIR='/tmp/profile O'\"'\"'Brien' claude --resume session-123"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn managed_profile_resume_command_includes_launcher_overlay_when_present() {
+        let temp = tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profile");
+        std::fs::create_dir_all(&profile_dir).expect("create profile");
+        std::fs::write(
+            crate::claude_profile::launcher_settings_overlay_path(&profile_dir),
+            "{}",
+        )
+        .expect("write overlay");
+
+        let command = managed_profile_resume_command(&profile_dir, "session-123");
+        let profile = profile_dir.to_string_lossy();
+
+        assert_eq!(
+            command,
+            format!(
+                "CLAUDE_CONFIG_DIR='{profile}' claude --settings '{profile}/cc-switch-launcher-settings.json' --resume session-123"
+            )
+        );
     }
 
     #[test]
