@@ -132,13 +132,23 @@ jobs:
       - name: Prepare Tauri signing key
         shell: bash
         run: |
-          # 调试：检查 Secret 是否存在
+          # 如果 Secret 不存在（典型场景：fork 仓库），生成临时签名密钥保证 CI 跑通
+          # 注意：使用临时密钥签出的 .sig 无法被原仓库 pubkey 验证，install 可用但 auto-update 不可用
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
-            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
-            exit 1
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY Secret 不存在，生成临时签名密钥" >&2
+            KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
+            pnpm tauri signer generate -w "$KEY_PATH" --password=""
+            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
+            if [ -z "$KEY_B64" ]; then
+              echo "❌ 无法生成临时私钥" >&2
+              exit 1
+            fi
+            echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=" >> "$GITHUB_ENV"
+            echo "✅ 临时 Tauri signing key generated (auto-update will not work for these artifacts)"
+            exit 0
           fi
-          
+
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
           # 目标：提供正确的私钥“文件路径”给 Tauri CLI，避免内容解码歧义
           KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
