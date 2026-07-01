@@ -3475,17 +3475,6 @@ del \"%~f0\" >nul 2>&1
     )
 }
 
-#[cfg(any(not(target_os = "windows"), test))]
-fn build_shell_cd_command(cwd: Option<&Path>) -> String {
-    cwd.map(|dir| {
-        format!(
-            "cd {} || exit 1\n",
-            shell_single_quote(&dir.to_string_lossy())
-        )
-    })
-    .unwrap_or_default()
-}
-
 #[allow(dead_code)]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
