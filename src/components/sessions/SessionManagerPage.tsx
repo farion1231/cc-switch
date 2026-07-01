@@ -34,7 +34,6 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   Tooltip,
@@ -76,6 +75,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const sessionListScrollRef = useRef<HTMLDivElement | null>(null);
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
     null,
   );
@@ -146,6 +146,22 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     overscan: 5,
     gap: 12,
   });
+
+  const sessionListVirtualizer = useVirtualizer({
+    count: filteredSessions.length,
+    getScrollElement: () => sessionListScrollRef.current,
+    estimateSize: () => (selectionMode ? 92 : 80),
+    getItemKey: (index) => getSessionKey(filteredSessions[index]),
+    overscan: 12,
+    gap: 4,
+    initialRect: { width: 320, height: 720 },
+  });
+
+  useEffect(() => {
+    if (sessionListScrollRef.current) {
+      sessionListScrollRef.current.scrollTop = 0;
+    }
+  }, [providerFilter, search]);
 
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -771,8 +787,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                 )}
               </CardHeader>
               <CardContent className="flex-1 min-h-0 p-0">
-                <ScrollArea className="h-full">
-                  <div className="p-2">
+                <div
+                  ref={sessionListScrollRef}
+                  className="h-full overflow-y-auto"
+                >
+                  <div className="p-2 min-w-0">
                     {isLoading ? (
                       <div className="flex items-center justify-center py-12">
                         <RefreshCw className="size-5 animate-spin text-muted-foreground" />
@@ -785,34 +804,49 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-1">
-                        {filteredSessions.map((session) => {
+                      <div
+                        className="relative"
+                        style={{
+                          height: sessionListVirtualizer.getTotalSize(),
+                        }}
+                      >
+                        {sessionListVirtualizer.getVirtualItems().map((row) => {
+                          const session = filteredSessions[row.index];
                           const isSelected =
                             selectedKey !== null &&
                             getSessionKey(session) === selectedKey;
 
                           return (
-                            <SessionItem
-                              key={getSessionKey(session)}
-                              session={session}
-                              isSelected={isSelected}
-                              selectionMode={selectionMode}
-                              searchQuery={search}
-                              isChecked={selectedSessionKeys.has(
-                                getSessionKey(session),
-                              )}
-                              isCheckDisabled={!session.sourcePath}
-                              onSelect={setSelectedKey}
-                              onToggleChecked={(checked) =>
-                                toggleSessionChecked(session, checked)
-                              }
-                            />
+                            <div
+                              key={row.key}
+                              data-index={row.index}
+                              ref={sessionListVirtualizer.measureElement}
+                              className="absolute left-0 top-0 w-full"
+                              style={{
+                                transform: `translateY(${row.start}px)`,
+                              }}
+                            >
+                              <SessionItem
+                                session={session}
+                                isSelected={isSelected}
+                                selectionMode={selectionMode}
+                                searchQuery={search}
+                                isChecked={selectedSessionKeys.has(
+                                  getSessionKey(session),
+                                )}
+                                isCheckDisabled={!session.sourcePath}
+                                onSelect={setSelectedKey}
+                                onToggleChecked={(checked) =>
+                                  toggleSessionChecked(session, checked)
+                                }
+                              />
+                            </div>
                           );
                         })}
                       </div>
                     )}
                   </div>
-                </ScrollArea>
+                </div>
               </CardContent>
             </Card>
 

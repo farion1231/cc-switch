@@ -330,4 +330,27 @@ describe("SessionManagerPage", () => {
     });
     invalidateSpy.mockRestore();
   });
+
+  it("virtualizes long session lists instead of rendering every row", async () => {
+    const sessions = Array.from({ length: 500 }, (_, index) => ({
+      providerId: "codex",
+      sessionId: `bulk-session-${index}`,
+      title: `Bulk Session ${index}`,
+      summary: `Bulk summary ${index}`,
+      projectDir: "/mock/codex",
+      createdAt: index,
+      lastActiveAt: index,
+      sourcePath: `/mock/codex/bulk-session-${index}.jsonl`,
+      resumeCommand: `codex resume bulk-session-${index}`,
+    })) satisfies SessionMeta[];
+
+    setSessionFixtures(sessions, {});
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText("Bulk Session 499")).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByText("Bulk Session 0")).not.toBeInTheDocument();
+  });
 });
