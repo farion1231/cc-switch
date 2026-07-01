@@ -709,6 +709,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 {
                     let _ = window.set_skip_taskbar(false);
                 }
+                // Linux/Wayland: 窗口是 hide() 的，不是 minimized，
+                // 调 unminimize() 会触发 KWin 不必要的几何重算。
+                #[cfg(not(target_os = "linux"))]
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
