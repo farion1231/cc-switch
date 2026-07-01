@@ -7,12 +7,7 @@ import type { SettingsFormState } from "./useSettingsForm";
 
 export type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 type AppDirectoryKey =
-  | "claude"
-  | "codex"
-  | "gemini"
-  | "opencode"
-  | "openclaw"
-  | "hermes";
+  "claude" | "codex" | "gemini" | "opencode" | "openclaw" | "hermes";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {

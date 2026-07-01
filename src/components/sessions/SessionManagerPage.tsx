@@ -81,13 +81,7 @@ const SESSION_GROUP_EXPANSION_STORAGE_KEY =
   "cc-switch.sessionManager.groupExpansionState";
 
 type ProviderFilter =
-  | "all"
-  | "codex"
-  | "claude"
-  | "opencode"
-  | "openclaw"
-  | "gemini"
-  | "hermes";
+  "all" | "codex" | "claude" | "opencode" | "openclaw" | "gemini" | "hermes";
 
 type SessionListViewMode = "flat" | "grouped";
 
