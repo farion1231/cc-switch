@@ -243,9 +243,25 @@ function App() {
   const effectiveUsageProvider = useLastValidValue(usageProvider);
 
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLElement>(null);
+  const providerScrollContainerRef = useRef<HTMLDivElement>(null);
   const isToolbarCompact = useAutoCompact(toolbarRef);
 
   useUsageCacheBridge();
+
+  useEffect(() => {
+    if (currentView !== "providers") return;
+
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = 0;
+      mainScrollRef.current.scrollLeft = 0;
+    }
+
+    if (providerScrollContainerRef.current) {
+      providerScrollContainerRef.current.scrollTop = 0;
+      providerScrollContainerRef.current.scrollLeft = 0;
+    }
+  }, [activeApp, currentView]);
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
@@ -951,7 +967,10 @@ function App() {
         default:
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
+              <div
+                ref={providerScrollContainerRef}
+                className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1"
+              >
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeApp}
@@ -1021,7 +1040,7 @@ function App() {
       <AnimatePresence mode="wait">
         <motion.div
           key={currentView}
-          className="flex-1 min-h-0"
+          className="flex flex-1 min-h-0 flex-col"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -1548,7 +1567,10 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
+      <main
+        ref={mainScrollRef}
+        className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in"
+      >
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
           <OpenClawHealthBanner warnings={openclawHealthWarnings} />
         )}
