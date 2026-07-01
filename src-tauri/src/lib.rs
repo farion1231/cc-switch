@@ -269,6 +269,23 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
+            #[cfg(target_os = "linux")]
+            {
+                if window.label() == "main"
+                    && matches!(
+                        event,
+                        tauri::WindowEvent::Resized(_)
+                            | tauri::WindowEvent::ScaleFactorChanged { .. }
+                    )
+                {
+                    if let Some(webview_window) =
+                        window.app_handle().get_webview_window("main")
+                    {
+                        linux_fix::repaint_main_window_after_resize(webview_window);
+                    }
+                }
+            }
+
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
