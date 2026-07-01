@@ -2231,8 +2231,17 @@ impl ProviderService {
             }
         }
 
-        // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
+        // Additive mode apps skip setting is_current (no such concept).
+        // Hermes is additive for *live config* purposes (all providers coexist
+        // in custom_providers[]), but CCSwitch still needs to track which provider
+        // the user selected in the UI via settings.json + DB is_current so that
+        // the UI correctly highlights the active provider on next launch.
+        // Without this, switching between same-backend Hermes providers (e.g.
+        // deepseek flash → deepseek pro) updates config.yaml but leaves
+        // settings.currentProviderHermes and DB.is_current stale, causing a
+        // flip-flop loop where the UI reads the stale value and re-triggers the
+        // switch on the next interaction.
+        if !app_type.is_additive_mode() || matches!(app_type, AppType::Hermes) {
             // Update local settings (device-level, takes priority)
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
