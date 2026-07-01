@@ -2576,6 +2576,11 @@
       "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
   },
+  "claudeScience": {
+    "launch": "透過代理啟動 Claude Science",
+    "launchSuccess": "Claude Science 已透過本地代理啟動。",
+    "launchFailed": "啟動 Claude Science 失敗"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "服務位址",

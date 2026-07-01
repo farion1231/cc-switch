@@ -2575,6 +2575,11 @@
       "takeoverRequired": "先に {{app}} を引き継いでから、フェイルオーバーを有効にしてください"
     }
   },
+  "claudeScience": {
+    "launch": "プロキシ経由で Claude Science を起動",
+    "launchSuccess": "Claude Science をローカルプロキシ経由で起動しました。",
+    "launchFailed": "Claude Science の起動に失敗しました"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "サービスアドレス",
