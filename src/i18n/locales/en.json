@@ -2299,6 +2299,7 @@
     "haikuModel": "Haiku Model",
     "sonnetModel": "Sonnet Model",
     "opusModel": "Opus Model",
+    "apiFormat": "API Format / Routing",
     "multiModel": "Multi-Modal Model",
     "notes": "Notes",
     "import": "Import",
