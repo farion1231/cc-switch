@@ -32,11 +32,64 @@ use crate::{
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
-use std::sync::Arc;
+use std::process::Command;
+use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// 动态获取 Coding Agent 版本号（带缓存）
+fn get_agent_version(app_type: &AppType) -> String {
+    static CLAUDE_VER: OnceLock<String> = OnceLock::new();
+
+    let fetch = |cmd: &str, arg: &str, fallback: &str| -> String {
+        Command::new(cmd)
+            .arg(arg)
+            .output()
+            .ok()
+            .and_then(|o| {
+                let out = String::from_utf8_lossy(&o.stdout);
+                // 提取形如 x.y.z 的版本号（支持 1~4 段）
+                let re = regex::Regex::new(r"\d+(?:\.\d+){1,3}").ok()?;
+                re.find(out.trim()).map(|m| m.as_str().to_string())
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| fallback.to_string())
+    };
+
+    match app_type {
+        // Kimi whitelist 验证结果（curl 实测）：
+        // ✅ 有效: claude-cli/*, claude-code/*, Kilo-Code/*
+        // ❌ 无效: codex-cli/*, kimi-cli/*, openclaw/*
+        // Claude Code 本身发送 claude-cli/2.1.161，透传即可
+        AppType::Claude | AppType::ClaudeDesktop => {
+            let v = CLAUDE_VER.get_or_init(|| fetch("claude", "--version", "2.1.161"));
+            format!("claude-cli/{}", v)
+        }
+        // Codex 等非 whitelist agent 伪装成 Claude Code（使用已验证有效的 UA）
+        AppType::Codex => {
+            let v = CLAUDE_VER.get_or_init(|| fetch("claude", "--version", "2.1.161"));
+            format!("claude-cli/{}", v)
+        }
+        AppType::OpenCode => {
+            let v = CLAUDE_VER.get_or_init(|| fetch("claude", "--version", "2.1.161"));
+            format!("claude-cli/{}", v)
+        }
+        AppType::Gemini => {
+            let v = CLAUDE_VER.get_or_init(|| fetch("claude", "--version", "2.1.161"));
+            format!("claude-cli/{}", v)
+        }
+        AppType::Hermes => {
+            let v = CLAUDE_VER.get_or_init(|| fetch("claude", "--version", "2.1.161"));
+            format!("claude-cli/{}", v)
+        }
+        AppType::OpenClaw => {
+            let v = CLAUDE_VER.get_or_init(|| fetch("claude", "--version", "2.1.161"));
+            format!("claude-cli/{}", v)
+        }
+    }
+}
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -1858,6 +1911,28 @@ impl RequestForwarder {
         );
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
+
+        // Kimi 白名单绕过：强制覆盖 User-Agent 为真实 Coding Agent 版本
+        // 覆盖 Coding Plan (api.kimi.com) 和 Open Platform (api.moonshot.cn)
+        log::info!(
+            "[KimiUA-DEBUG] url={} contains_kimi={} contains_moonshot={}",
+            url,
+            url.contains("api.kimi.com"),
+            url.contains("api.moonshot.cn")
+        );
+        if url.contains("api.kimi.com") || url.contains("api.moonshot.cn") {
+            let ua = get_agent_version(app_type);
+            log::info!("[KimiUA] app_type={:?} injected_ua={}", app_type, ua);
+            match http::HeaderValue::from_str(&ua) {
+                Ok(hv) => {
+                    ordered_headers.insert(http::header::USER_AGENT, hv);
+                    log::info!("[KimiUA] User-Agent 注入成功");
+                }
+                Err(e) => {
+                    log::warn!("[KimiUA] User-Agent 解析失败: {} error={}", ua, e);
+                }
+            }
+        }
 
         // 输出请求信息日志
         let tag = adapter.name();
