@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ReactElement } from "react";
@@ -96,6 +96,34 @@ vi.mock("@/lib/query/failover", () => ({
   useRemoveFromFailoverQueue: () => ({ mutate: vi.fn() }),
   useReorderFailoverQueue: () => ({ mutate: vi.fn() }),
 }));
+
+// Stub the per-app takeover mutation so the routing guard's toggle ordering is
+// observable; settings get/save are stubbed to keep the auto-* flags false
+// (so the guard takes the confirm-dialog path) and avoid hitting the backend.
+const proxyMocks = vi.hoisted(() => ({ takeoverMutateAsync: vi.fn() }));
+
+vi.mock("@/lib/query/proxy", async () => {
+  const actual = await vi.importActual<any>("@/lib/query/proxy");
+  return {
+    ...actual,
+    useSetProxyTakeoverForApp: () => ({
+      mutateAsync: proxyMocks.takeoverMutateAsync,
+      isPending: false,
+    }),
+  };
+});
+
+vi.mock("@/lib/api/settings", async () => {
+  const actual = await vi.importActual<any>("@/lib/api/settings");
+  return {
+    ...actual,
+    settingsApi: {
+      ...actual.settingsApi,
+      get: vi.fn().mockResolvedValue({}),
+      save: vi.fn().mockResolvedValue(undefined),
+    },
+  };
+});
 
 function createProvider(overrides: Partial<Provider> = {}): Provider {
   return {
@@ -235,12 +263,12 @@ describe("ProviderList Component", () => {
     // Drag attributes from useSortable
     expect(
       providerCardRenderSpy.mock.calls[0][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("b");
     expect(
       providerCardRenderSpy.mock.calls[1][0].dragHandleProps?.attributes[
-      "data-dnd-id"
+        "data-dnd-id"
       ],
     ).toBe("a");
 
@@ -305,5 +333,225 @@ describe("ProviderList Component", () => {
     expect(
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
+  });
+
+  // The pure decision table is unit-tested elsewhere; these cover the wiring:
+  // toggle ordering, the ban-safety invariant (failed switch never enables
+  // takeover), and the in-flight flag being held across the awaited switch.
+  describe("routing auto-toggle guard", () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    const lastCardProps = () =>
+      providerCardRenderSpy.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+    beforeEach(() => {
+      proxyMocks.takeoverMutateAsync.mockReset().mockResolvedValue(undefined);
+    });
+
+    // Official under takeover: must disable routing BEFORE switching, and the
+    // switch must be awaited so the in-flight flag isn't released early.
+    it("disable path: disables takeover before switching, and holds in-flight until the switch resolves", async () => {
+      const calls: string[] = [];
+      proxyMocks.takeoverMutateAsync.mockImplementation(
+        async (args: { enabled: boolean }) => {
+          calls.push(`takeover:${args.enabled}`);
+        },
+      );
+      const official = createProvider({
+        id: "official",
+        name: "Official",
+        category: "official",
+        settingsConfig: {},
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [official],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const switchPromise = deferred<boolean>();
+      const onSwitch = vi.fn(() => {
+        calls.push("switch");
+        return switchPromise.promise;
+      });
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ official }}
+          currentProviderId=""
+          appId="claude"
+          isProxyTakeover
+          onSwitch={onSwitch}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("switch-official"));
+      const confirmBtn = await screen.findByRole("button", {
+        name: "关闭路由并切换",
+      });
+      await act(async () => {
+        fireEvent.click(confirmBtn);
+      });
+
+      expect(calls).toEqual(["takeover:false", "switch"]);
+      expect(onSwitch).toHaveBeenCalledWith(official, {
+        fromRoutingGuard: true,
+      });
+      // Switch still pending → guard stays in-flight (regression: missing await
+      // would let `finally` clear the flag here).
+      expect(lastCardProps().isRoutingSwitchPending).toBe(true);
+
+      // A second trigger while in-flight is ignored.
+      fireEvent.click(screen.getByTestId("switch-official"));
+      expect(calls).toEqual(["takeover:false", "switch"]);
+
+      await act(async () => {
+        switchPromise.resolve(true);
+      });
+      expect(lastCardProps().isRoutingSwitchPending).toBe(false);
+    });
+
+    // Official detection is the explicit category ONLY — an empty config (no
+    // base URL / key) must NOT be treated as official: it can't be told apart
+    // from a custom provider that just isn't filled in yet.
+    it("does not treat a category-less empty-config provider as official", async () => {
+      const incomplete = createProvider({
+        id: "incomplete",
+        name: "Incomplete",
+        settingsConfig: {},
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [incomplete],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const onSwitch = vi.fn(async () => true);
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ incomplete }}
+          currentProviderId=""
+          appId="claude"
+          isProxyTakeover
+          onSwitch={onSwitch}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("switch-incomplete"));
+      });
+
+      // Direct switch: no confirm dialog, no takeover toggle.
+      expect(
+        screen.queryByRole("button", { name: "关闭路由并切换" }),
+      ).toBeNull();
+      expect(proxyMocks.takeoverMutateAsync).not.toHaveBeenCalled();
+      expect(onSwitch).toHaveBeenCalledWith(incomplete);
+    });
+
+    // Needs-routing, not yet routed: must switch FIRST, then enable takeover —
+    // only when the switch reports success.
+    it("enable path: switches first, then enables takeover when the switch succeeds", async () => {
+      const calls: string[] = [];
+      proxyMocks.takeoverMutateAsync.mockImplementation(
+        async (args: { enabled: boolean }) => {
+          calls.push(`takeover:${args.enabled}`);
+        },
+      );
+      const routed = createProvider({
+        id: "routed",
+        name: "Routed",
+        settingsConfig: { env: { ANTHROPIC_BASE_URL: "https://example.com" } },
+        meta: { apiFormat: "openai_chat" } as Provider["meta"],
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [routed],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const onSwitch = vi.fn(async () => {
+        calls.push("switch");
+        return true;
+      });
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ routed }}
+          currentProviderId=""
+          appId="claude"
+          isProxyTakeover={false}
+          onSwitch={onSwitch}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("switch-routed"));
+      const confirmBtn = await screen.findByRole("button", {
+        name: "开启路由并启用",
+      });
+      await act(async () => {
+        fireEvent.click(confirmBtn);
+      });
+
+      expect(calls).toEqual(["switch", "takeover:true"]);
+    });
+
+    // Ban-safety: if the switch fails, takeover must NOT be enabled (otherwise an
+    // official provider could keep running under the proxy).
+    it("enable path: does not enable takeover when the switch fails", async () => {
+      const routed = createProvider({
+        id: "routed",
+        name: "Routed",
+        settingsConfig: { env: { ANTHROPIC_BASE_URL: "https://example.com" } },
+        meta: { apiFormat: "openai_chat" } as Provider["meta"],
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [routed],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      const onSwitch = vi.fn(async () => false);
+
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ routed }}
+          currentProviderId=""
+          appId="claude"
+          isProxyTakeover={false}
+          onSwitch={onSwitch}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("switch-routed"));
+      const confirmBtn = await screen.findByRole("button", {
+        name: "开启路由并启用",
+      });
+      await act(async () => {
+        fireEvent.click(confirmBtn);
+      });
+
+      expect(onSwitch).toHaveBeenCalledTimes(1);
+      expect(proxyMocks.takeoverMutateAsync).not.toHaveBeenCalled();
+    });
   });
 });

@@ -110,7 +110,6 @@
     "currentlyUsing": "Currently Using",
     "enable": "Enable",
     "inUse": "In Use",
-    "blockedByProxyHint": "Can't switch to an official provider while proxy takeover is active",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
@@ -173,21 +172,19 @@
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
       }
-    }
+    },
+    "needsRouting": "Needs Routing"
   },
   "claudeCode": {
-    "needsRouting": "Needs Routing",
     "noRoutingSupport": "No Routing Support"
   },
   "codex": {
-    "needsRouting": "Needs Routing",
     "noRoutingSupport": "No Routing Support"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop official providers use the built-in 1P sign-in. No API key or endpoint URL is required.",
     "mode": "Model handling",
     "modeDirect": "Direct",
-    "modeProxy": "Requires routing",
     "modelMappingToggle": "Needs model mapping",
     "modelMappingOffHint": "Direct mode works only when the provider accepts Claude Desktop's three role IDs (claude-sonnet-* / claude-opus-* / claude-haiku-*); for any other model name (including legacy IDs like claude-3-5-sonnet-…), enable this switch to use mapping.",
     "modelMappingOnHint": "Claude Desktop only accepts the three role IDs claude-sonnet-* / claude-opus-* / claude-haiku-*. When enabled, CC Switch maps these three roles to your provider's actual models and keeps local routing running while in use.",
@@ -265,7 +262,15 @@
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
-    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing."
+    "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
+    "routingEnableFailed": "Switched to {{name}}, but failed to enable local routing — please enable it manually in the proxy panel",
+    "routingDisableFailed": "Failed to disable local routing; switch canceled",
+    "proxyReasonGeminiNative": "Uses the Gemini Native API format",
+    "routingAutoEnabled": "Switched to {{name}} with local routing automatically enabled",
+    "routingAutoEnabledRestart": "Switched to {{name}} with local routing automatically enabled — please restart the client to take effect",
+    "routingAutoDisabled": "Local routing has been automatically disabled for this app",
+    "routingAutoDisabledRestart": "Local routing has been automatically disabled — please restart the client to take effect",
+    "routingDisabledButSwitchFailed": "Local routing has been disabled, but the switch failed. The current provider requires local routing — please re-enable routing manually or retry the switch"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",
@@ -313,6 +318,20 @@
       "title": "About Common Config",
       "message": "The \"Common Config Snippet\" lets you share plugins, environment variables, and other settings across different providers — so they won't be lost when you switch.\n\nHow to use:\n① Edit a provider → click \"Edit Common Config\" → \"Extract from Editor\"\n② When creating a new provider, check \"Apply Common Config\" (enabled by default)\n\nIf you've newly installed plugins or hooks, re-extract the common config to keep them in sync.",
       "confirm": "Got it"
+    },
+    "routingEnable": {
+      "title": "Enable local routing and switch?",
+      "message": "This provider needs local routing to work.\nLocal routing will be enabled for the current app, then this provider will be activated.",
+      "confirm": "Enable routing & switch"
+    },
+    "routingDisable": {
+      "title": "Disable local routing and switch?",
+      "message": "This is an official direct-connection provider and cannot be used while local routing is active (it may get your account banned).\nLocal routing will be disabled for the current app, then this provider will be activated.",
+      "confirm": "Disable routing & switch"
+    },
+    "routing": {
+      "rememberEnable": "Always enable routing automatically from now on",
+      "rememberDisable": "Always disable routing automatically from now on"
     }
   },
   "settings": {
@@ -342,7 +361,11 @@
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
         "running": "Running",
-        "stopped": "Stopped"
+        "stopped": "Stopped",
+        "autoEnableForNeedsRouting": "Auto-enable routing for routing-required providers",
+        "autoEnableForNeedsRoutingDescription": "When enabling a provider that needs routing, automatically turn on local routing and switch — without confirming each time.",
+        "autoDisableForNoRouting": "Auto-disable routing when switching to official providers",
+        "autoDisableForNoRoutingDescription": "When enabled, switching to an official provider while routing is on will automatically disable local routing and switch — without a confirmation dialog."
       },
       "modelTest": {
         "title": "Model Test Config",

@@ -355,6 +355,10 @@ export interface Settings {
   silentStartup?: boolean;
   // 是否启用主页面本地代理功能（默认关闭）
   enableLocalProxy?: boolean;
+  // 切换到「需要路由」的 provider 且当前 app 未接管时，自动开启路由并切换（默认关闭，首次弹窗确认）
+  autoEnableForNeedsRouting?: boolean;
+  // 路由开启时切换到官方 provider 时，自动关闭路由并切换（默认关闭，opt-in）
+  autoDisableForNoRouting?: boolean;
   // User has confirmed the local proxy first-run notice
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice

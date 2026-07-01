@@ -360,6 +360,12 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// 切换到「需要路由」的 provider 且当前 app 未接管时，自动开启路由并切换（默认关闭，首次弹窗确认）
+    #[serde(default)]
+    pub auto_enable_for_needs_routing: bool,
+    /// 路由开启时切换到官方 provider 时，自动关闭路由并切换（默认关闭，opt-in）
+    #[serde(default)]
+    pub auto_disable_for_no_routing: bool,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -499,6 +505,8 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            auto_enable_for_needs_routing: false,
+            auto_disable_for_no_routing: false,
             proxy_confirmed: None,
             usage_confirmed: None,
             stream_check_confirmed: None,
@@ -1142,5 +1150,42 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn routing_auto_toggle_defaults_are_false() {
+        let settings = AppSettings::default();
+        assert!(!settings.auto_enable_for_needs_routing);
+        assert!(!settings.auto_disable_for_no_routing);
+    }
+
+    #[test]
+    fn routing_auto_toggle_deserializes_to_false_when_keys_omitted() {
+        // A settings JSON that omits both new keys must still deserialize
+        // successfully and yield false (proves `#[serde(default)]`).
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "showInTray": true,
+            "enableLocalProxy": true
+        }))
+        .expect("settings without routing auto-toggle keys should deserialize");
+
+        assert!(!settings.auto_enable_for_needs_routing);
+        assert!(!settings.auto_disable_for_no_routing);
+    }
+
+    #[test]
+    fn routing_auto_toggle_round_trips_camel_case() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "autoEnableForNeedsRouting": true,
+            "autoDisableForNoRouting": true
+        }))
+        .expect("camelCase routing auto-toggle keys should deserialize");
+
+        assert!(settings.auto_enable_for_needs_routing);
+        assert!(settings.auto_disable_for_no_routing);
+
+        let json = serde_json::to_value(&settings).expect("serialize settings");
+        assert_eq!(json["autoEnableForNeedsRouting"], serde_json::json!(true));
+        assert_eq!(json["autoDisableForNoRouting"], serde_json::json!(true));
     }
 }
