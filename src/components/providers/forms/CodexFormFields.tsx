@@ -16,6 +16,13 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   ChevronDown,
@@ -39,6 +46,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexChatEffortValueMode,
   ProviderCategory,
 } from "@/types";
 
@@ -258,6 +266,19 @@ export function CodexFormFields({
         effortParam: checked
           ? (codexChatReasoning.effortParam ?? "reasoning_effort")
           : "none",
+      });
+    },
+    [codexChatReasoning, onCodexChatReasoningChange],
+  );
+
+  const handleEffortValueModeChange = useCallback(
+    (value: CodexChatEffortValueMode) => {
+      if (!onCodexChatReasoningChange) return;
+      onCodexChatReasoningChange({
+        ...codexChatReasoning,
+        supportsEffort: true,
+        supportsThinking: true,
+        effortValueMode: value,
       });
     },
     [codexChatReasoning, onCodexChatReasoningChange],
@@ -702,6 +723,48 @@ export function CodexFormFields({
                   onBodyJsonChange={onLocalProxyBodyOverrideChange}
                 />
               </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+              <div className="space-y-1">
+                <FormLabel>
+                  {t("codexConfig.effortValueModeLabel", {
+                    defaultValue: "思考深度模式",
+                  })}
+                </FormLabel>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("codexConfig.effortValueModeHint", {
+                    defaultValue:
+                      "选择思考深度值的发送模式。DeepSeek 强制发送 max 深度触发最大思考量；OpenRouter 使用归一化枚举；低-高范围适合需要动态调整的场景。",
+                  })}
+                </p>
+              </div>
+              <Select
+                value={codexChatReasoning.effortValueMode ?? "passthrough"}
+                onValueChange={handleEffortValueModeChange}
+              >
+                <SelectTrigger className="w-[200px]" id="codex-effort-value-mode">
+                  <SelectValue
+                    placeholder={t("codexConfig.effortValueModePlaceholder", {
+                      defaultValue: "选择思考深度模式",
+                    })}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="passthrough">
+                    {t("codexConfig.effortPassthrough", { defaultValue: "直通模式" })}
+                  </SelectItem>
+                  <SelectItem value="low_high">
+                    {t("codexConfig.effortLowHigh", { defaultValue: "低-高范围" })}
+                  </SelectItem>
+                  <SelectItem value="deepseek">
+                    {t("codexConfig.effortDeepseek", { defaultValue: "DeepSeek强制最大思考深度" })}
+                  </SelectItem>
+                  <SelectItem value="openrouter">
+                    {t("codexConfig.effortOpenrouter", { defaultValue: "OpenRouter" })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </CollapsibleContent>
         </Collapsible>
