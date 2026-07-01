@@ -157,10 +157,10 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "ark_agentplan",
-      "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "https://ark.cn-beijing.volces.com/api/plan/v3",
       "ark-code-latest",
     ),
-    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/coding/v3"],
+    endpointCandidates: ["https://ark.cn-beijing.volces.com/api/plan/v3"],
     apiFormat: "openai_chat",
     modelCatalog: modelCatalog([
       {

@@ -133,7 +133,7 @@ export const providerPresets: ProviderPreset[] = [
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/coding",
+        ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/plan",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_MODEL: "ark-code-latest",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "ark-code-latest",

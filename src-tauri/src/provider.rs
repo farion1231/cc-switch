@@ -187,7 +187,14 @@ impl Provider {
             // Listed explicitly (not `_`) so a new AppType fails to compile here.
             AppType::Claude | AppType::ClaudeDesktop => {
                 let env = settings.get("env");
-                let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
+                let mut base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
+                if base_url.is_empty() {
+                    base_url = str_at(settings.get("baseUrl"));
+                }
+                if base_url.is_empty() {
+                    base_url = str_at(settings.get("base_url"));
+                }
+                
                 let api_key = first_non_empty(
                     env,
                     &[
@@ -197,6 +204,11 @@ impl Provider {
                         "GOOGLE_API_KEY",
                     ],
                 );
+                let api_key = if api_key.is_empty() {
+                    str_at(settings.get("apiKey"))
+                } else {
+                    api_key
+                };
                 (base_url, api_key)
             }
         };

@@ -2,10 +2,10 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CC Switch",
   "version": "3.16.4",
-  "identifier": "com.ccswitch.desktop",
+  "identifier": "com.ccswitch.desktop.dev",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:3001",
     "beforeDevCommand": "pnpm run dev:renderer",
     "beforeBuildCommand": "pnpm run build:renderer"
   },

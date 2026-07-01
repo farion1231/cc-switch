@@ -40,7 +40,8 @@
     "deleting": "删除中...",
     "auto": "自动",
     "enabled": "已开启",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "dismiss": "忽略"
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
@@ -1624,7 +1625,10 @@
     "fieldExtra": "• extra: 字符串，扩展字段，可自由补充需要展示的文本",
     "tip1": "• 变量 {{apiKey}} 和 {{baseUrl}} 会自动替换",
     "tip2": "• extractor 函数在沙箱环境中执行，支持 ES2020+ 语法",
-    "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式"
+    "tip3": "• 整个配置必须用 () 包裹，形成对象字面量表达式",
+    "codingPlanSuggestTitle": "该供应商的请求地址匹配 Coding Plan 供应商。保存的脚本使用的是不进行 AK/SK 签名的通用模板。",
+    "codingPlanSuggestBody": "切换到 Coding Plan 模板可以通过专属的原生 API 进行查询，该 API 自动处理 AK/SK 签名。之前保存的脚本会在您再次点击保存时被覆盖。",
+    "codingPlanSwitch": "切换到 Coding Plan"
   },
   "dbUpgrade": {
     "title": "数据库版本过新",
