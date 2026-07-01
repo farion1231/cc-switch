@@ -1082,29 +1082,44 @@ pub fn run() {
                         }
                     }
 
+                    fn should_skip_automatic_session_sync(phase: &str) -> bool {
+                        if crate::services::session_usage::is_claude_session_owner_running() {
+                            log::debug!(
+                                "[SESSION-SYNC] skipping {phase} automatic session usage sync while Claude is running"
+                            );
+                            return true;
+                        }
+
+                        false
+                    }
+
                     let db = &db_for_session_sync;
+                    let mut usage_cost_backfill_done = false;
 
                     // 首次同步
-                    run_step(
-                        "Usage cost startup backfill",
-                        db.backfill_missing_usage_costs(),
-                    );
-                    run_step(
-                        "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
-                    );
-                    run_step(
-                        "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
-                    );
-                    run_step(
-                        "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
-                    );
-                    run_step(
-                        "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
-                    );
+                    if !should_skip_automatic_session_sync("initial") {
+                        usage_cost_backfill_done = true;
+                        run_step(
+                            "Usage cost startup backfill",
+                            db.backfill_missing_usage_costs(),
+                        );
+                        run_step(
+                            "Session usage initial sync",
+                            crate::services::session_usage::sync_claude_session_logs_auto(db),
+                        );
+                        run_step(
+                            "Codex usage initial sync",
+                            crate::services::session_usage_codex::sync_codex_usage_auto(db),
+                        );
+                        run_step(
+                            "Gemini usage initial sync",
+                            crate::services::session_usage_gemini::sync_gemini_usage_auto(db),
+                        );
+                        run_step(
+                            "OpenCode usage initial sync",
+                            crate::services::session_usage_opencode::sync_opencode_usage_auto(db),
+                        );
+                    }
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1113,21 +1128,33 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
+                        if should_skip_automatic_session_sync("periodic") {
+                            continue;
+                        }
+
+                        if !usage_cost_backfill_done {
+                            usage_cost_backfill_done = true;
+                            run_step(
+                                "Usage cost startup backfill",
+                                db.backfill_missing_usage_costs(),
+                            );
+                        }
+
                         run_step(
                             "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
+                            crate::services::session_usage::sync_claude_session_logs_auto(db),
                         );
                         run_step(
                             "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
+                            crate::services::session_usage_codex::sync_codex_usage_auto(db),
                         );
                         run_step(
                             "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
+                            crate::services::session_usage_gemini::sync_gemini_usage_auto(db),
                         );
                         run_step(
                             "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
+                            crate::services::session_usage_opencode::sync_opencode_usage_auto(db),
                         );
                     }
                 });

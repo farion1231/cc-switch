@@ -22,7 +22,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::process::Command;
+use std::time::{Duration, SystemTime};
 
 /// 同步结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +44,9 @@ pub struct DataSourceSummary {
     pub total_cost_usd: String,
 }
 
+/// Background sync should only import transcripts that have stopped changing.
+pub(crate) const DEFAULT_AUTO_SYNC_MIN_FILE_AGE: Duration = Duration::from_secs(300);
+
 /// 从 JSONL 中解析出的 assistant 消息使用数据
 #[derive(Debug)]
 struct ParsedAssistantUsage {
@@ -59,6 +63,29 @@ struct ParsedAssistantUsage {
 
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_claude_session_logs_with_min_file_age(db, None)
+}
+
+pub fn sync_claude_session_logs_auto(db: &Database) -> Result<SessionSyncResult, AppError> {
+    if is_claude_session_owner_running() {
+        log::debug!(
+            "[SESSION-SYNC] skipping automatic Claude session sync while Claude is running"
+        );
+        return Ok(SessionSyncResult {
+            imported: 0,
+            skipped: 0,
+            files_scanned: 0,
+            errors: vec![],
+        });
+    }
+
+    sync_claude_session_logs_with_min_file_age(db, Some(DEFAULT_AUTO_SYNC_MIN_FILE_AGE))
+}
+
+fn sync_claude_session_logs_with_min_file_age(
+    db: &Database,
+    min_file_age: Option<Duration>,
+) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
     if !projects_dir.exists() {
         return Ok(SessionSyncResult {
@@ -82,7 +109,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file(db, file_path, min_file_age) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -179,13 +206,27 @@ fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
-fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+fn sync_single_file(
+    db: &Database,
+    file_path: &Path,
+    min_file_age: Option<Duration>,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let file_modified = metadata_modified_nanos(&metadata);
+
+    if let Some(min_age) = min_file_age {
+        if is_recently_modified(&metadata, min_age) {
+            log::debug!(
+                "[SESSION-SYNC] skipping active Claude transcript: {}",
+                file_path.display()
+            );
+            return Ok((0, 0));
+        }
+    }
 
     // 检查同步状态
     let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
@@ -382,6 +423,95 @@ pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+/// Returns true when a file is too new for conservative background sync.
+pub(crate) fn is_recently_modified(metadata: &fs::Metadata, min_age: Duration) -> bool {
+    match metadata.modified() {
+        Ok(modified) => match SystemTime::now().duration_since(modified) {
+            Ok(age) => age < min_age,
+            Err(_) => true,
+        },
+        Err(_) => true,
+    }
+}
+
+pub(crate) fn is_claude_session_owner_running() -> bool {
+    process_snapshot()
+        .as_deref()
+        .map(contains_claude_process_marker)
+        .unwrap_or(false)
+}
+
+fn contains_claude_process_marker(snapshot: &str) -> bool {
+    snapshot.lines().any(process_line_matches_claude_owner)
+}
+
+fn process_line_matches_claude_owner(line: &str) -> bool {
+    let normalized = line.replace('\\', "/").to_ascii_lowercase();
+
+    if normalized.contains("claude desktop")
+        || normalized.contains("anthropicclaude")
+        || normalized.contains("@anthropic-ai/claude-code")
+        || normalized.contains("anthropic-ai/claude-code")
+        || normalized.contains("claude-code")
+    {
+        return true;
+    }
+
+    normalized
+        .split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',' || c == ';')
+        .any(|token| {
+            token == "claude"
+                || token == "claude.exe"
+                || token.ends_with("/claude")
+                || token.ends_with("/claude.exe")
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn process_snapshot() -> Option<String> {
+    command_output(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+        ],
+    )
+    .or_else(|| command_output("tasklist.exe", &["/fo", "csv", "/nh"]))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_snapshot() -> Option<String> {
+    command_output("ps", &["-axo", "comm=,args="])
+}
+
+fn command_output(program: &str, args: &[&str]) -> Option<String> {
+    let mut command = Command::new(program);
+    command.args(args);
+    hide_command_window(&mut command);
+
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn hide_command_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_command_window(_command: &mut Command) {}
+
 /// 更新 session_log_sync 表中某条目的同步进度。
 ///
 /// Shared by all session_usage_* parsers.
@@ -564,6 +694,26 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_process_marker_detects_desktop_and_cli() {
+        assert!(contains_claude_process_marker(
+            r#"C:\Users\alice\AppData\Local\AnthropicClaude\Claude.exe" --type=renderer"#
+        ));
+        assert!(contains_claude_process_marker(
+            r#"node.exe C:\Users\alice\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js"#
+        ));
+        assert!(contains_claude_process_marker(
+            "/usr/local/bin/claude --dangerously-skip-permissions"
+        ));
+    }
+
+    #[test]
+    fn claude_process_marker_ignores_unrelated_processes() {
+        assert!(!contains_claude_process_marker(
+            "cc-switch.exe\nnode.exe C:\\projects\\other-tool\\index.js"
+        ));
+    }
 
     #[test]
     fn test_parse_usage_from_jsonl_line() {
@@ -771,7 +921,7 @@ mod tests {
         let empty = r#"{"type":"assistant","message":{"id":"msg_empty","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:24Z","sessionId":"session-wf"}"#;
         fs::write(&file, format!("{billable}\n{empty}\n")).unwrap();
 
-        let (imported, _skipped) = sync_single_file(&db, &file)?;
+        let (imported, _skipped) = sync_single_file(&db, &file, None)?;
         assert_eq!(
             imported, 1,
             "有 cache 成本但无 stop_reason 的 message 必须被导入"
