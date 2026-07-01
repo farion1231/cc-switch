@@ -2165,6 +2165,10 @@ fn provider_service_switch_claude_preserves_common_config_fields() {
         Some("node /home/u/.claude/plugins/cache/hud/dist/index.js"),
         "statusLine should be preserved when switching providers"
     );
+    // `model` (the top-level field, not env.ANTHROPIC_MODEL) is treated as
+    // common config because it is absent from both ENV_EXCLUDES and
+    // TOP_LEVEL_EXCLUDES in `extract_claude_common_config`. If #1682
+    // reclassifies model as provider-specific, this assertion must change.
     assert_eq!(
         live_after.get("model").and_then(|m| m.as_str()),
         Some("claude-sonnet-4-5"),
@@ -2265,20 +2269,22 @@ fn provider_service_switch_claude_syncs_common_config_snippet() {
     ProviderService::switch(&state, AppType::Claude, "provider-b")
         .expect("switch provider should succeed");
 
-    // After switch, the DB snippet should have been re-synced from live, so it
-    // reflects the up-to-date (versioned) claude-hud path and no longer carries
-    // the stale path.
+    // After switch, the DB snippet should have been re-synced from live: the
+    // statusLine command must equal the up-to-date (versioned) path, which also
+    // rules out the stale path lingering anywhere in the snippet.
     let snippet = state
         .db
         .get_config_snippet(AppType::Claude.as_str())
         .expect("get config snippet")
         .unwrap_or_default();
-    assert!(
-        snippet.contains(live_new_path),
-        "DB common_config_claude should be re-synced to the live (versioned) path, got: {snippet}"
-    );
-    assert!(
-        !snippet.contains(stale_path),
-        "DB common_config_claude should no longer carry the stale path, got: {snippet}"
+    let snippet_json: serde_json::Value =
+        serde_json::from_str(&snippet).expect("DB snippet should be valid JSON");
+    assert_eq!(
+        snippet_json
+            .get("statusLine")
+            .and_then(|s| s.get("command"))
+            .and_then(|c| c.as_str()),
+        Some(live_new_path),
+        "DB common_config_claude statusLine should be re-synced to the live (versioned) path, got: {snippet}"
     );
 }
