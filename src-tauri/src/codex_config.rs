@@ -6,7 +6,9 @@ use crate::config::{
     write_json_file, write_text_file,
 };
 use crate::error::AppError;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::process::Command;
 use toml_edit::DocumentMut;
@@ -94,6 +96,14 @@ fn codex_native_gateway_rejects_web_search(config_text: &str) -> bool {
     false
 }
 const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
+const CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME: &str = "codex_managed_oauth_live_auth.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodexManagedOAuthLiveAuthMarker {
+    version: u32,
+    account_id: String,
+    access_token_sha256: String,
+}
 
 /// Which Codex tool surface the generated model catalog should target.
 ///
@@ -146,6 +156,204 @@ pub fn get_codex_config_dir() -> PathBuf {
 /// 获取 Codex auth.json 路径
 pub fn get_codex_auth_path() -> PathBuf {
     get_codex_config_dir().join("auth.json")
+}
+
+fn get_codex_managed_oauth_live_auth_marker_path() -> PathBuf {
+    crate::config::get_app_config_dir().join(CODEX_MANAGED_OAUTH_LIVE_AUTH_MARKER_FILENAME)
+}
+
+fn sha256_hex(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+/// 从 live/备份的 Codex `auth` 中提取 `(account_id, access_token)`，用于 marker 记录/比对。
+///
+/// 仅接受 ChatGPT 登录形状（`auth_mode == "chatgpt"`、`OPENAI_API_KEY` 可清空）。
+/// 托管账号写入的完整 bundle 会额外带 `tokens.refresh_token` 与顶层 `last_refresh`，
+/// 这里一并容忍，从而能对完整 bundle 记录/比对指纹（marker 靠 account_id +
+/// access_token 哈希识别「我们写的那一份」，与用户原生登录区分开）。
+fn extract_codex_managed_oauth_auth(auth: &Value) -> Option<(String, String)> {
+    let auth_obj = auth.as_object()?;
+
+    if auth_obj.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "auth_mode" | "OPENAI_API_KEY" | "tokens" | "last_refresh"
+        )
+    }) {
+        return None;
+    }
+
+    if auth.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
+        return None;
+    }
+
+    let api_key_is_clearable = auth
+        .get("OPENAI_API_KEY")
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+    if !api_key_is_clearable {
+        return None;
+    }
+
+    let tokens = auth.get("tokens").and_then(|value| value.as_object())?;
+
+    if tokens.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "access_token" | "account_id" | "id_token" | "refresh_token"
+        )
+    }) {
+        return None;
+    }
+
+    let account_id = tokens
+        .get("account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let access_token = tokens
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?;
+
+    Some((account_id.to_string(), access_token.to_string()))
+}
+
+pub fn record_codex_managed_oauth_live_auth(auth: &Value) -> Result<(), AppError> {
+    let Some((account_id, access_token)) = extract_codex_managed_oauth_auth(auth) else {
+        return Ok(());
+    };
+
+    let marker = CodexManagedOAuthLiveAuthMarker {
+        version: 1,
+        account_id,
+        access_token_sha256: sha256_hex(&access_token),
+    };
+    crate::config::write_json_file(&get_codex_managed_oauth_live_auth_marker_path(), &marker)
+}
+
+pub fn codex_auth_matches_recorded_managed_oauth(
+    auth: &Value,
+    account_id: &str,
+) -> Result<bool, AppError> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return Ok(false);
+    }
+
+    let Some((auth_account_id, access_token)) = extract_codex_managed_oauth_auth(auth) else {
+        return Ok(false);
+    };
+    if auth_account_id != account_id {
+        return Ok(false);
+    }
+
+    let marker_path = get_codex_managed_oauth_live_auth_marker_path();
+    let marker: CodexManagedOAuthLiveAuthMarker = match read_json_file(&marker_path) {
+        Ok(marker) => marker,
+        Err(err) => {
+            log::warn!(
+                "Failed to read Codex managed OAuth auth marker at {}: {err}",
+                marker_path.display()
+            );
+            return Ok(false);
+        }
+    };
+
+    Ok(marker.version == 1
+        && marker.account_id == account_id
+        && marker.access_token_sha256 == sha256_hex(&access_token))
+}
+
+/// 切走托管 provider 时删除其残留在 `~/.codex/auth.json` 的**由本应用写入的**托管登录。
+///
+/// 仅当 live auth 与最近一次记录的 marker（account_id + access_token 指纹）匹配时才删除，
+/// 从而绝不误删用户自己 `codex login` 的原生登录。
+pub fn clear_codex_live_auth_for_managed_account(account_id: &str) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    if auth_path.exists() {
+        let auth: Value = read_json_file(&auth_path)?;
+        if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
+            return Ok(());
+        }
+        delete_file(&auth_path)?;
+        let _ = delete_file(&get_codex_managed_oauth_live_auth_marker_path());
+    }
+    Ok(())
+}
+
+/// 判断给定的 Codex `auth`（来自 live auth.json 或 Live 备份）是否是「属于
+/// `account_id` 的 ChatGPT 托管登录」。
+///
+/// 托管账号写入的是**完整可刷新 bundle**，与原生浏览器登录形状一致（都含
+/// refresh_token），且 Codex CLI 会轮换 token 使旧的 access_token 指纹失效，因此
+/// 无法再凭形状/哈希区分。这里采用**基于内容的 account_id 判定**：只要是 chatgpt
+/// 模式、且 `tokens.account_id` 命中托管账号，即视为该账号的登录。对同一账号的原生
+/// 登录会被同等处理（同账号，无损）。
+///
+/// 用于 Live 备份剥离：避免把托管账号的可刷新 token 持久化进备份配置。
+pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) -> bool {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return false;
+    }
+    let Some(obj) = auth.as_object() else {
+        return false;
+    };
+    if obj.get("auth_mode").and_then(|value| value.as_str()) != Some("chatgpt") {
+        return false;
+    }
+    let api_key_clearable = obj
+        .get("OPENAI_API_KEY")
+        .is_none_or(|value| value.is_null() || value.as_str() == Some("PROXY_MANAGED"));
+    if !api_key_clearable {
+        return false;
+    }
+    obj.get("tokens")
+        .and_then(|tokens| tokens.as_object())
+        .and_then(|tokens| tokens.get("account_id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        == Some(account_id)
+}
+
+/// 读回 Codex CLI 当前 `~/.codex/auth.json` 中属于 `account_id` 的 refresh_token /
+/// id_token（仅当磁盘上的登录账号与之一致时）。
+///
+/// 用于切换回托管 provider 前，采纳 CLI 自行刷新时轮换出的最新 refresh_token，避免
+/// 用陈腐 token 覆盖 CLI 的有效登录（“裸跑 codex” 反复切换场景）。
+pub fn read_codex_live_auth_refresh_for_account(
+    account_id: &str,
+) -> Option<(String, Option<String>)> {
+    let account_id = account_id.trim();
+    if account_id.is_empty() {
+        return None;
+    }
+    let auth_path = get_codex_auth_path();
+    if !auth_path.exists() {
+        return None;
+    }
+    let auth: Value = read_json_file(&auth_path).ok()?;
+    // 仅在磁盘上确是「该 account_id 的 ChatGPT 登录」时才采纳其 refresh_token，
+    // 避免从非 chatgpt/异常 auth 里误取 token。
+    if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
+        return None;
+    }
+    let tokens = auth.get("tokens")?.as_object()?;
+    let refresh_token = tokens.get("refresh_token")?.as_str()?.trim().to_string();
+    if refresh_token.is_empty() {
+        return None;
+    }
+    let id_token = tokens
+        .get("id_token")
+        .and_then(|value| value.as_str())
+        .map(|token| token.to_string());
+    Some((refresh_token, id_token))
 }
 
 /// 获取 Codex config.toml 路径
@@ -1856,6 +2064,38 @@ base_url = "https://single.example.com/v1"
             err.to_string().contains("config.toml"),
             "error should explain missing config.toml, got: {err}"
         );
+    }
+
+    #[test]
+    fn managed_chatgpt_login_matched_by_account_id_including_full_refresh_bundle() {
+        // ① 之后托管写入的是含 refresh_token 的完整 bundle；备份剥离必须凭 account_id
+        // 认出它，避免把可刷新 token 持久化进 Live 备份。
+        let full_bundle = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "id_token": "id",
+                "access_token": "access",
+                "refresh_token": "refresh-secret",
+                "account_id": "acct-managed"
+            },
+            "last_refresh": "2026-01-02T03:04:05.000000000Z"
+        });
+        assert!(
+            codex_live_auth_is_managed_chatgpt_login(&full_bundle, "acct-managed"),
+            "a full refreshable bundle for the managed account must be recognized"
+        );
+        assert!(
+            !codex_live_auth_is_managed_chatgpt_login(&full_bundle, "acct-other"),
+            "a login for a different account must not match"
+        );
+
+        // 非 chatgpt 模式（API key）不应命中。
+        let api_key_auth = json!({ "OPENAI_API_KEY": "sk-live" });
+        assert!(!codex_live_auth_is_managed_chatgpt_login(
+            &api_key_auth,
+            "acct-managed"
+        ));
     }
 
     #[test]

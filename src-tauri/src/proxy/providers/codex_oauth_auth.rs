@@ -23,6 +23,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
@@ -47,6 +48,10 @@ const DEVICE_REDIRECT_URI: &str = "https://auth.openai.com/deviceauth/callback";
 
 /// Token 刷新提前量（毫秒）
 const TOKEN_REFRESH_BUFFER_MS: i64 = 60_000;
+
+/// OAuth token/device 端点的单请求超时。共享 HTTP client 默认 600s 超时是给
+/// 大模型流式响应用的，对认证请求过长；网络卡住时应尽快失败而非长时间阻塞。
+const OAUTH_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Device Code 默认有效时长（秒），OpenAI 文档约定 15 分钟
 const DEVICE_CODE_DEFAULT_EXPIRES_IN: u64 = 900;
@@ -160,6 +165,10 @@ struct CachedAccessToken {
     token: String,
     /// 过期时间戳（毫秒）
     expires_at_ms: i64,
+    /// 获取（刷新）时间戳（毫秒）。用于写入托管 auth.json 的 `last_refresh`，
+    /// 使其如实反映 access_token 的真实获取时间，而非写盘时刻——否则 Codex CLI
+    /// 会误判一个旧 token 是刚刷新的。
+    obtained_at_ms: i64,
 }
 
 impl CachedAccessToken {
@@ -189,6 +198,10 @@ struct CodexAccountData {
     pub refresh_token: String,
     /// 认证时间戳（秒）
     pub authenticated_at: i64,
+    /// ChatGPT id_token（JWT，持久化）。用于让托管写入的 Codex auth.json
+    /// 与原生浏览器登录保持一致的 tokens 字段形状；刷新时若返回新值则更新。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_token: Option<String>,
 }
 
 /// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
@@ -204,6 +217,8 @@ impl From<&CodexAccountData> for GitHubAccount {
             avatar_url: None,
             authenticated_at: data.authenticated_at,
             github_domain: "github.com".to_string(),
+            // 旧账号（升级前登录）没有持久化 id_token，需重新登录补全
+            reauth_required: data.id_token.is_none(),
         }
     }
 }
@@ -219,6 +234,17 @@ struct CodexOAuthStore {
     default_account_id: Option<String>,
 }
 
+/// 写入托管 Codex `auth.json` 所需的完整可刷新 token 束。
+#[derive(Debug, Clone)]
+pub(crate) struct ManagedTokenBundle {
+    pub access_token: String,
+    pub id_token: Option<String>,
+    pub refresh_token: String,
+    /// access_token 的真实获取时间，RFC3339 纳秒精度 + `Z`（与原生 auth.json 的
+    /// `last_refresh` 形状一致）。反映 token 何时真正刷新，而非写盘时刻。
+    pub last_refresh: String,
+}
+
 /// Codex OAuth 认证管理器（多账号）
 pub struct CodexOAuthManager {
     accounts: Arc<RwLock<HashMap<String, CodexAccountData>>>,
@@ -231,6 +257,10 @@ pub struct CodexOAuthManager {
     /// 过期条目会在 start_device_flow 时被清理，防止放弃的登录流程导致无界增长
     pending_device_codes: Arc<RwLock<HashMap<String, PendingDeviceCode>>>,
     storage_path: PathBuf,
+    /// 持久化串行锁：`save_to_disk` 与 `clear_auth` 的「快照+写盘/删文件」都在此锁内
+    /// 完成。此前由外层 `RwLock<CodexOAuthManager>` 的写锁隐式串行化；去掉外层锁后
+    /// 需要它防止并发保存/清除交错，导致已删账号被旧快照复活。
+    storage_lock: Arc<Mutex<()>>,
 }
 
 impl CodexOAuthManager {
@@ -244,6 +274,7 @@ impl CodexOAuthManager {
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             pending_device_codes: Arc::new(RwLock::new(HashMap::new())),
             storage_path,
+            storage_lock: Arc::new(Mutex::new(())),
         };
 
         if let Err(e) = manager.load_from_disk_sync() {
@@ -266,6 +297,7 @@ impl CodexOAuthManager {
 
         let response = crate::proxy::http_client::get()
             .post(DEVICE_AUTH_USERCODE_URL)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
             .header("User-Agent", CODEX_USER_AGENT)
             .json(&serde_json::json!({ "client_id": CODEX_CLIENT_ID }))
@@ -348,6 +380,7 @@ impl CodexOAuthManager {
 
         let poll_response = crate::proxy::http_client::get()
             .post(DEVICE_AUTH_TOKEN_URL)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
             .header("User-Agent", CODEX_USER_AGENT)
             .json(&serde_json::json!({
@@ -402,21 +435,32 @@ impl CodexOAuthManager {
             CodexOAuthError::ParseError("无法从 token 中提取 account_id".to_string())
         })?;
 
-        // 缓存 access_token
-        {
-            let mut tokens_cache = self.access_tokens.write().await;
-            tokens_cache.insert(
-                account_id.clone(),
-                CachedAccessToken {
-                    token: tokens.access_token.clone(),
-                    expires_at_ms: compute_expires_at_ms(tokens.expires_in),
-                },
-            );
-        }
-
+        // 先落账号（写 accounts + 持久化），再按全局 accounts -> access_tokens 顺序、
+        // 在存在性确认下写 token 缓存，遵守「缓存条目只对应存在的账号」。
         let account = self
-            .add_account_internal(account_id, refresh_token, email)
+            .add_account_internal(
+                account_id.clone(),
+                refresh_token,
+                email,
+                // 空字符串视为缺失，避免写出空的 id_token
+                tokens.id_token.clone().filter(|t| !t.trim().is_empty()),
+            )
             .await?;
+
+        {
+            let accounts = self.accounts.read().await;
+            if accounts.contains_key(&account_id) {
+                let mut tokens_cache = self.access_tokens.write().await;
+                tokens_cache.insert(
+                    account_id.clone(),
+                    CachedAccessToken {
+                        token: tokens.access_token.clone(),
+                        expires_at_ms: compute_expires_at_ms(tokens.expires_in),
+                        obtained_at_ms: chrono::Utc::now().timestamp_millis(),
+                    },
+                );
+            }
+        }
 
         Ok(Some(account))
     }
@@ -429,6 +473,7 @@ impl CodexOAuthManager {
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
         let response = crate::proxy::http_client::get()
             .post(OAUTH_TOKEN_URL)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("User-Agent", CODEX_USER_AGENT)
             .form(&[
@@ -462,6 +507,7 @@ impl CodexOAuthManager {
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
         let response = crate::proxy::http_client::get()
             .post(OAUTH_TOKEN_URL)
+            .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("User-Agent", CODEX_USER_AGENT)
             .form(&[
@@ -498,12 +544,36 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
     ) -> Result<String, CodexOAuthError> {
-        // 先检查缓存
+        Ok(self.resolve_valid_cached_token(account_id).await?.token)
+    }
+
+    /// 解析账号的有效缓存 token（含真实获取时间），必要时刷新。
+    ///
+    /// 返回完整 `CachedAccessToken`，使 token 与其 `obtained_at_ms` 天然配套（写托管
+    /// auth.json 的 `last_refresh` 直接取用），避免分两次读缓存造成的错配。
+    ///
+    /// 并发正确性：统一按 `accounts -> access_tokens` 顺序加锁——读/写 token 缓存前都
+    /// 在 `accounts` 读锁下确认账号仍存在。配合 `remove_account`/`clear_auth` 在
+    /// `accounts` 写锁内原子清缓存，杜绝「已删账号的 token 被写回或被继续返回」。
+    ///
+    /// 已知未覆盖边界（ABA，极窄且可恢复）：若一次刷新已用旧 refresh_token 在飞（≤30s
+    /// 超时），期间同一 `account_id` 被 remove 后又重新登录，则旧刷新返回时可能把旧
+    /// generation 的 token 写进新账号。需要 generation/version 校验才能彻底关闭；因触发
+    /// 需要「刷新在飞窗口内 remove+重加同一账号」且结果可通过重新登录恢复，暂不引入。
+    async fn resolve_valid_cached_token(
+        &self,
+        account_id: &str,
+    ) -> Result<CachedAccessToken, CodexOAuthError> {
+        // 快路径：确认账号存在后读缓存
         {
+            let accounts = self.accounts.read().await;
+            if !accounts.contains_key(account_id) {
+                return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
+            }
             let tokens = self.access_tokens.read().await;
             if let Some(cached) = tokens.get(account_id) {
                 if !cached.is_expiring_soon() {
-                    return Ok(cached.token.clone());
+                    return Ok(cached.clone());
                 }
             }
         }
@@ -513,12 +583,16 @@ impl CodexOAuthManager {
         let refresh_lock = self.get_refresh_lock(account_id).await;
         let _guard = refresh_lock.lock().await;
 
-        // double-check
+        // double-check（同样在 accounts 读锁下）
         {
+            let accounts = self.accounts.read().await;
+            if !accounts.contains_key(account_id) {
+                return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
+            }
             let tokens = self.access_tokens.read().await;
             if let Some(cached) = tokens.get(account_id) {
                 if !cached.is_expiring_soon() {
-                    return Ok(cached.token.clone());
+                    return Ok(cached.clone());
                 }
             }
         }
@@ -533,33 +607,154 @@ impl CodexOAuthManager {
 
         let new_tokens = self.refresh_with_token(&refresh_token).await?;
 
-        // 如果服务端返回了新的 refresh_token，更新存储
-        if let Some(new_refresh) = new_tokens.refresh_token.clone() {
-            if new_refresh != refresh_token {
-                let mut accounts = self.accounts.write().await;
-                if let Some(account) = accounts.get_mut(account_id) {
-                    account.refresh_token = new_refresh;
+        // 如果服务端返回了新的 refresh_token 或 id_token，更新存储
+        let mut needs_save = false;
+        {
+            let mut accounts = self.accounts.write().await;
+            if let Some(account) = accounts.get_mut(account_id) {
+                if let Some(new_refresh) = new_tokens.refresh_token.clone() {
+                    if new_refresh != account.refresh_token {
+                        account.refresh_token = new_refresh;
+                        needs_save = true;
+                    }
                 }
-                drop(accounts);
-                self.save_to_disk().await?;
+                // 刷新使用 openid scope，正常会返回新 id_token；为空则视为缺失，
+                // 保留旧值而非覆盖（旧值的 claims 仍可用于账号/套餐显示）。
+                if let Some(new_id_token) = new_tokens
+                    .id_token
+                    .clone()
+                    .filter(|token| !token.trim().is_empty())
+                {
+                    if account.id_token.as_deref() != Some(new_id_token.as_str()) {
+                        account.id_token = Some(new_id_token);
+                        needs_save = true;
+                    }
+                }
             }
         }
-
-        let access_token = new_tokens.access_token.clone();
-        let expires_at_ms = compute_expires_at_ms(new_tokens.expires_in);
-
-        {
-            let mut tokens = self.access_tokens.write().await;
-            tokens.insert(
-                account_id.to_string(),
-                CachedAccessToken {
-                    token: access_token.clone(),
-                    expires_at_ms,
-                },
-            );
+        if needs_save {
+            self.save_to_disk().await?;
         }
 
-        Ok(access_token)
+        let cached = CachedAccessToken {
+            token: new_tokens.access_token.clone(),
+            expires_at_ms: compute_expires_at_ms(new_tokens.expires_in),
+            obtained_at_ms: chrono::Utc::now().timestamp_millis(),
+        };
+
+        // 在 accounts 读锁下确认账号仍存在，再写缓存：与 remove/clear（持 accounts
+        // 写锁并原子清缓存）互斥，杜绝把已删账号的 token 写回缓存。
+        {
+            let accounts = self.accounts.read().await;
+            if !accounts.contains_key(account_id) {
+                return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
+            }
+            let mut tokens = self.access_tokens.write().await;
+            tokens.insert(account_id.to_string(), cached.clone());
+        }
+
+        Ok(cached)
+    }
+
+    /// 获取指定账号的有效 access_token 与 id_token（必要时自动刷新）
+    ///
+    /// id_token 用于让托管写入的 Codex auth.json 与原生浏览器登录保持
+    /// 一致的 tokens 字段形状（仅托管绑定路径使用）。旧账号若无 id_token
+    /// 会返回 `None`，前端据此提示重新登录。
+    pub async fn get_valid_token_and_id_token_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<(String, Option<String>), CodexOAuthError> {
+        // 先确保 access_token 有效；刷新过程会顺带更新持久化的 id_token
+        let access_token = self.get_valid_token_for_account(account_id).await?;
+        let id_token = {
+            let accounts = self.accounts.read().await;
+            accounts.get(account_id).and_then(|a| a.id_token.clone())
+        };
+        Ok((access_token, id_token))
+    }
+
+    /// 获取写入托管 Codex `auth.json` 所需的完整可刷新 token 束
+    /// （access_token + id_token + refresh_token）。
+    ///
+    /// 与仅返回 access_token 不同：写入 Codex CLI 的 auth.json 必须携带
+    /// refresh_token，否则 CLI 在 access_token 过期后无法自刷新（详见托管直连
+    /// 场景 “裸跑 codex”）。
+    pub(crate) async fn get_valid_token_bundle_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<ManagedTokenBundle, CodexOAuthError> {
+        // access_token 与其获取时间来自同一次解析（缓存命中即同一条目、刷新即新铸），
+        // 天然配套，杜绝「旧 token + 新时间戳」的错配。
+        let cached = self.resolve_valid_cached_token(account_id).await?;
+        let last_refresh =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(cached.obtained_at_ms)
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        let (id_token, refresh_token) = {
+            let accounts = self.accounts.read().await;
+            let account = accounts
+                .get(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
+            (account.id_token.clone(), account.refresh_token.clone())
+        };
+        Ok(ManagedTokenBundle {
+            access_token: cached.token,
+            id_token,
+            refresh_token,
+            last_refresh,
+        })
+    }
+
+    /// 采纳（读回）Codex CLI 轮换后的 refresh_token / id_token。
+    ///
+    /// 托管账号以「完整 bundle」写入 auth.json 后，Codex CLI 会自行刷新并把新的
+    /// refresh_token 回写 auth.json。切换回该 provider 前调用本方法，把盘上的最新
+    /// refresh_token 采纳进本地存储，避免用陈腐 token 覆盖 CLI 的有效登录。
+    ///
+    /// 仅当账号确由本 manager 托管、且值确有变化时才更新并落盘；返回是否更新。
+    pub async fn adopt_account_refresh_token(
+        &self,
+        account_id: &str,
+        refresh_token: String,
+        id_token: Option<String>,
+    ) -> Result<bool, CodexOAuthError> {
+        let refresh_token = refresh_token.trim().to_string();
+        if refresh_token.is_empty() {
+            return Ok(false);
+        }
+        // 与该账号的刷新串行化：若一个 refresh 正持旧 refresh_token 在飞，避免它返回后
+        // 覆盖我们刚采纳的 CLI 轮换值。
+        let refresh_lock = self.get_refresh_lock(account_id).await;
+        let _guard = refresh_lock.lock().await;
+        let mut changed = false;
+        {
+            let mut accounts = self.accounts.write().await;
+            let Some(account) = accounts.get_mut(account_id) else {
+                // 不是本 manager 托管的账号：不接管、不落盘。
+                return Ok(false);
+            };
+            if account.refresh_token != refresh_token {
+                account.refresh_token = refresh_token;
+                changed = true;
+            }
+            if let Some(id_token) = id_token.filter(|token| !token.trim().is_empty()) {
+                if account.id_token.as_deref() != Some(id_token.as_str()) {
+                    account.id_token = Some(id_token);
+                    changed = true;
+                }
+            }
+            // 采纳了 CLI 轮换后的 refresh_token：与之配套的旧 access_token 可能已被
+            // 服务端提前失效。在同一 accounts 写锁内（accounts -> access_tokens 顺序）
+            // 清缓存，避免释放锁后被快路径读到旧 token；下次按新 refresh_token 重取。
+            if changed {
+                self.access_tokens.write().await.remove(account_id);
+            }
+        }
+        if changed {
+            self.save_to_disk().await?;
+        }
+        Ok(changed)
     }
 
     /// 获取默认账号的有效 token
@@ -589,15 +784,13 @@ impl CodexOAuthManager {
         log::info!("[CodexOAuth] 移除账号: {account_id}");
 
         {
+            // 在 accounts 写锁内原子清除该账号的 token 缓存（accounts -> access_tokens
+            // 顺序），确保不存在「账号已删但缓存仍在」的窗口。
             let mut accounts = self.accounts.write().await;
             if accounts.remove(account_id).is_none() {
                 return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
             }
-        }
-
-        {
-            let mut tokens = self.access_tokens.write().await;
-            tokens.remove(account_id);
+            self.access_tokens.write().await.remove(account_id);
         }
         {
             let mut locks = self.refresh_locks.write().await;
@@ -636,17 +829,20 @@ impl CodexOAuthManager {
     pub async fn clear_auth(&self) -> Result<(), CodexOAuthError> {
         log::info!("[CodexOAuth] 清除所有认证");
 
+        // 与 save_to_disk 共用持久化锁：确保「清内存 + 删文件」相对于并发保存原子，
+        // 不会被一个持有旧快照的 save 复活已清除的账号。
+        let _persist = self.storage_lock.lock().await;
+
         {
+            // 在 accounts 写锁内原子清除 accounts 与 token 缓存（accounts ->
+            // access_tokens 顺序），杜绝「账号已清但缓存仍在」及并发 refresh 回填。
             let mut accounts = self.accounts.write().await;
             accounts.clear();
+            self.access_tokens.write().await.clear();
         }
         {
             let mut default = self.default_account_id.write().await;
             *default = None;
-        }
-        {
-            let mut tokens = self.access_tokens.write().await;
-            tokens.clear();
         }
         {
             let mut locks = self.refresh_locks.write().await;
@@ -689,6 +885,34 @@ impl CodexOAuthManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) async fn add_test_account_with_access_token(
+        &self,
+        account_id: &str,
+        access_token: &str,
+        id_token: Option<&str>,
+    ) -> Result<(), CodexOAuthError> {
+        self.add_account_internal(
+            account_id.to_string(),
+            "test-refresh-token".to_string(),
+            Some(format!("{account_id}@example.test")),
+            id_token.map(|token| token.to_string()),
+        )
+        .await?;
+
+        let mut tokens = self.access_tokens.write().await;
+        tokens.insert(
+            account_id.to_string(),
+            CachedAccessToken {
+                token: access_token.to_string(),
+                expires_at_ms: chrono::Utc::now().timestamp_millis() + 3_600_000,
+                obtained_at_ms: chrono::Utc::now().timestamp_millis(),
+            },
+        );
+
+        Ok(())
+    }
+
     // ==================== 内部方法 ====================
 
     async fn add_account_internal(
@@ -696,6 +920,7 @@ impl CodexOAuthManager {
         account_id: String,
         refresh_token: String,
         email: Option<String>,
+        id_token: Option<String>,
     ) -> Result<GitHubAccount, CodexOAuthError> {
         let now = chrono::Utc::now().timestamp();
 
@@ -704,6 +929,7 @@ impl CodexOAuthManager {
             email,
             refresh_token,
             authenticated_at: now,
+            id_token,
         };
 
         let account = GitHubAccount::from(&data);
@@ -861,6 +1087,9 @@ impl CodexOAuthManager {
     }
 
     async fn save_to_disk(&self) -> Result<(), CodexOAuthError> {
+        // 串行化「快照 + 写盘」：在持久化锁内取快照，确保并发保存/清除不会用
+        // 陈旧快照覆盖，避免已删账号被复活。
+        let _persist = self.storage_lock.lock().await;
         let accounts = self.accounts.read().await.clone();
         let default = self.resolve_default_account_id().await;
 
@@ -1017,6 +1246,7 @@ mod tests {
         let expiring = CachedAccessToken {
             token: "t".to_string(),
             expires_at_ms: now + 30_000,
+            obtained_at_ms: now,
         };
         assert!(expiring.is_expiring_soon());
 
@@ -1024,6 +1254,7 @@ mod tests {
         let valid = CachedAccessToken {
             token: "t".to_string(),
             expires_at_ms: now + 3_600_000,
+            obtained_at_ms: now,
         };
         assert!(!valid.is_expiring_soon());
     }
@@ -1085,6 +1316,7 @@ mod tests {
                     "acc-123".to_string(),
                     "rt-secret".to_string(),
                     Some("user@example.com".to_string()),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1107,6 +1339,7 @@ mod tests {
                 "acc-123".to_string(),
                 "rt".to_string(),
                 Some("a@example.com".to_string()),
+                None,
             )
             .await
             .unwrap();
@@ -1115,6 +1348,7 @@ mod tests {
                 "acc-456".to_string(),
                 "rt2".to_string(),
                 Some("b@example.com".to_string()),
+                None,
             )
             .await
             .unwrap();
@@ -1123,5 +1357,52 @@ mod tests {
         let accounts = manager.list_accounts().await;
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].id, "acc-456");
+    }
+
+    #[tokio::test]
+    async fn adopt_account_refresh_token_syncs_rotated_value() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
+        manager
+            .add_test_account_with_access_token("acc-1", "access-cached", Some("id-1"))
+            .await
+            .unwrap();
+
+        // 采纳 Codex CLI 轮换后的 refresh_token / id_token。
+        let changed = manager
+            .adopt_account_refresh_token(
+                "acc-1",
+                "rotated-rt".to_string(),
+                Some("id-2".to_string()),
+            )
+            .await
+            .unwrap();
+        assert!(changed, "rotated refresh_token should be adopted");
+
+        // 存储里的 refresh_token / id_token 已更新为盘上（CLI 轮换后）的值。
+        {
+            let accounts = manager.accounts.read().await;
+            let account = accounts.get("acc-1").expect("account present");
+            assert_eq!(account.refresh_token, "rotated-rt");
+            assert_eq!(account.id_token.as_deref(), Some("id-2"));
+        }
+        // 采纳后清掉了该账号的缓存 access_token，以便下次按新 refresh_token 重取
+        // （因此这里不再用 get_valid_token_bundle_for_account 断言——它会触发联网刷新）。
+        assert!(
+            !manager.access_tokens.read().await.contains_key("acc-1"),
+            "adopt should invalidate the cached access token"
+        );
+
+        // 未知账号不接管。
+        assert!(!manager
+            .adopt_account_refresh_token("acc-unknown", "x".to_string(), None)
+            .await
+            .unwrap());
+
+        // 相同值不算变化。
+        assert!(!manager
+            .adopt_account_refresh_token("acc-1", "rotated-rt".to_string(), None)
+            .await
+            .unwrap());
     }
 }

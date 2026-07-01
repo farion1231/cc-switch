@@ -10,6 +10,8 @@ export interface ManagedAuthAccount {
   authenticated_at: number;
   is_default: boolean;
   github_domain: string;
+  /** 是否需要重新登录以补全缺失的凭据（Codex 旧账号缺少 id_token） */
+  reauth_required?: boolean;
 }
 
 export interface ManagedAuthStatus {

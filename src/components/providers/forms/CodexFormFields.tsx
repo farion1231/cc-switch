@@ -26,6 +26,7 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
+import { CodexOAuthSection } from "./CodexOAuthSection";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
@@ -41,6 +42,7 @@ import type {
   CodexChatReasoning,
   ProviderCategory,
 } from "@/types";
+import type { ManagedAuthProvider } from "@/lib/api";
 
 interface EndpointCandidate {
   url: string;
@@ -56,6 +58,11 @@ interface CodexFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
+  isCodexOauthPreset?: boolean;
+  selectedCodexAccountId?: string | null;
+  onCodexAccountSelect?: (accountId: string | null) => void;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
+  codexOauthNoneOptionLabel?: string;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -146,6 +153,11 @@ export function CodexFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
+  isCodexOauthPreset = false,
+  selectedCodexAccountId,
+  onCodexAccountSelect,
+  onManageAuthAccounts,
+  codexOauthNoneOptionLabel,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -346,26 +358,43 @@ export function CodexFormFields({
 
   return (
     <>
+      {/* Codex OAuth 账号选择 */}
+      {isCodexOauthPreset && (
+        <CodexOAuthSection
+          mode="select"
+          selectedAccountId={selectedCodexAccountId}
+          onAccountSelect={onCodexAccountSelect}
+          onManageAccounts={
+            onManageAuthAccounts
+              ? () => onManageAuthAccounts("codex_oauth")
+              : undefined
+          }
+          noneOptionLabel={codexOauthNoneOptionLabel}
+        />
+      )}
+
       {/* Codex API Key 输入框 */}
-      <ApiKeySection
-        id="codexApiKey"
-        label="API Key"
-        value={codexApiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-        placeholder={{
-          official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
-          }),
-          thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
-          }),
-        }}
-      />
+      {!isCodexOauthPreset && (
+        <ApiKeySection
+          id="codexApiKey"
+          label="API Key"
+          value={codexApiKey}
+          onChange={onApiKeyChange}
+          category={category}
+          shouldShowLink={shouldShowApiKeyLink}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
+          placeholder={{
+            official: t("providerForm.codexOfficialNoApiKey", {
+              defaultValue: "官方供应商无需 API Key",
+            }),
+            thirdParty: t("providerForm.codexApiKeyAutoFill", {
+              defaultValue: "输入 API Key，将自动填充到配置",
+            }),
+          }}
+        />
+      )}
 
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (

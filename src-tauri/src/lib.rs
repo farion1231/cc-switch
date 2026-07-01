@@ -979,13 +979,11 @@ pub fn run() {
 
             // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
             {
-                use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
                 use commands::CodexOAuthState;
-                use tokio::sync::RwLock;
 
-                let app_config_dir = crate::config::get_app_config_dir();
-                let codex_oauth_manager = CodexOAuthManager::new(app_config_dir);
-                app.manage(CodexOAuthState(Arc::new(RwLock::new(codex_oauth_manager))));
+                let codex_oauth_manager =
+                    app.state::<AppState>().codex_oauth_manager.clone();
+                app.manage(CodexOAuthState(codex_oauth_manager));
                 log::info!("✓ CodexOAuthManager initialized");
             }
 

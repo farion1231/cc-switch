@@ -30,6 +30,8 @@ export function useManagedAuth(
   const {
     data: authStatus,
     isLoading: isLoadingStatus,
+    isSuccess: isStatusSuccess,
+    isError: isStatusError,
     refetch: refetchStatus,
   } = useQuery<ManagedAuthStatus>({
     queryKey,
@@ -215,6 +217,10 @@ export function useManagedAuth(
   return {
     authStatus,
     isLoadingStatus,
+    // Distinguish "status loaded successfully" from "loading / failed" so
+    // callers don't treat a failed query's empty `accounts` as authoritative.
+    isStatusSuccess,
+    isStatusError,
     accounts,
     hasAnyAccount: accounts.length > 0,
     isAuthenticated: authStatus?.authenticated ?? false,

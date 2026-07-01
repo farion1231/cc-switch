@@ -6,11 +6,14 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, write_live_with_common_config,
+    build_effective_provider_for_live_with_codex_oauth_manager,
+    build_effective_settings_with_common_config,
+    write_live_with_common_config_for_codex_oauth_manager,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -54,6 +57,7 @@ enum ClaudeTakeoverAuthPolicy {
 #[derive(Clone)]
 pub struct ProxyService {
     db: Arc<Database>,
+    codex_oauth_manager: Arc<CodexOAuthManager>,
     server: Arc<RwLock<Option<ProxyServer>>>,
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
@@ -67,8 +71,19 @@ pub struct HotSwitchOutcome {
 
 impl ProxyService {
     pub fn new(db: Arc<Database>) -> Self {
+        let codex_oauth_manager =
+            Arc::new(CodexOAuthManager::new(crate::config::get_app_config_dir()));
+
+        Self::new_with_codex_oauth_manager(db, codex_oauth_manager)
+    }
+
+    pub fn new_with_codex_oauth_manager(
+        db: Arc<Database>,
+        codex_oauth_manager: Arc<CodexOAuthManager>,
+    ) -> Self {
         Self {
             db,
+            codex_oauth_manager,
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
             switch_locks: SwitchLockManager::new(),
@@ -1673,8 +1688,13 @@ impl ProxyService {
             return Ok(false);
         }
 
-        write_live_with_common_config(self.db.as_ref(), app_type, provider)
-            .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
+        write_live_with_common_config_for_codex_oauth_manager(
+            self.db.as_ref(),
+            app_type,
+            provider,
+            &self.codex_oauth_manager,
+        )
+        .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
 
         Ok(true)
     }
@@ -1998,7 +2018,18 @@ impl ProxyService {
         provider: &Provider,
     ) -> Result<(), String> {
         let _guard = self.switch_locks.lock_for_app(app_type).await;
-        self.update_live_backup_from_provider_inner(app_type, provider)
+        self.update_live_backup_from_provider_inner(app_type, provider, None)
+            .await
+    }
+
+    pub(crate) async fn update_live_backup_from_provider_clearing_codex_auth(
+        &self,
+        app_type: &str,
+        provider: &Provider,
+        account_id: &str,
+    ) -> Result<(), String> {
+        let _guard = self.switch_locks.lock_for_app(app_type).await;
+        self.update_live_backup_from_provider_inner(app_type, provider, Some(account_id))
             .await
     }
 
@@ -2007,12 +2038,23 @@ impl ProxyService {
         &self,
         app_type: &str,
         provider: &Provider,
+        clear_codex_auth_for_account: Option<&str>,
     ) -> Result<(), String> {
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("未知的应用类型: {app_type}"))?;
-        let mut effective_settings =
+        let mut effective_settings = if matches!(app_type_enum, AppType::Codex) {
+            build_effective_provider_for_live_with_codex_oauth_manager(
+                self.db.as_ref(),
+                &app_type_enum,
+                provider,
+                &self.codex_oauth_manager,
+            )
+            .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?
+            .settings_config
+        } else {
             build_effective_settings_with_common_config(self.db.as_ref(), &app_type_enum, provider)
-                .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
+                .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?
+        };
 
         if matches!(app_type_enum, AppType::Codex) {
             let existing_backup_value = self
@@ -2031,7 +2073,19 @@ impl ProxyService {
                     &mut effective_settings,
                     existing_value,
                 )?;
-                Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
+                if let Some(account_id) = clear_codex_auth_for_account {
+                    Self::clear_codex_auth_in_backup(
+                        &mut effective_settings,
+                        existing_value,
+                        account_id,
+                    )?;
+                } else {
+                    Self::preserve_codex_oauth_auth_in_backup(
+                        &mut effective_settings,
+                        existing_value,
+                        provider,
+                    )?;
+                }
             }
 
             // 统一会话开关：备份是接管释放时恢复 live 的来源，官方配置的
@@ -2065,6 +2119,19 @@ impl ProxyService {
             .save_live_backup(app_type, &backup_json)
             .await
             .map_err(|e| format!("更新 {app_type} 备份失败: {e}"))?;
+
+        if matches!(app_type_enum, AppType::Codex)
+            && provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .is_some()
+        {
+            if let Some(auth) = effective_settings.get("auth") {
+                crate::codex_config::record_codex_managed_oauth_live_auth(auth)
+                    .map_err(|e| format!("记录 Codex 托管认证标记失败: {e}"))?;
+            }
+        }
 
         log::info!("已更新 {app_type} Live 备份（热切换）");
         Ok(())
@@ -2122,7 +2189,7 @@ impl ProxyService {
             .map_err(|e| format!("更新本地当前供应商失败: {e}"))?;
 
         if should_sync_backup {
-            self.update_live_backup_from_provider_inner(app_type, &provider)
+            self.update_live_backup_from_provider_inner(app_type, &provider, None)
                 .await?;
 
             if matches!(app_type_enum, AppType::Claude) {
@@ -2236,11 +2303,47 @@ impl ProxyService {
         Ok(())
     }
 
+    fn clear_codex_auth_in_backup(
+        target_settings: &mut Value,
+        existing_backup: &Value,
+        account_id: &str,
+    ) -> Result<(), String> {
+        let Some(existing_auth) = existing_backup.get("auth") else {
+            return Ok(());
+        };
+        let Some(target_obj) = target_settings.as_object_mut() else {
+            return Err("Codex 备份必须是 JSON 对象".to_string());
+        };
+
+        // 仅当备份里的 auth 是**本应用写入的**托管登录（与 marker 指纹匹配）时才清空；
+        // 用户自己 `codex login` 的原生登录原样保留，以便接管结束后还原。
+        if crate::codex_config::codex_auth_matches_recorded_managed_oauth(existing_auth, account_id)
+            .map_err(|e| format!("检查 Codex 托管认证标记失败: {e}"))?
+        {
+            target_obj.insert("auth".to_string(), json!({}));
+            return Ok(());
+        }
+
+        target_obj.insert("auth".to_string(), existing_auth.clone());
+        Ok(())
+    }
+
     fn preserve_codex_oauth_auth_in_backup(
         target_settings: &mut Value,
         existing_backup: &Value,
+        provider: &Provider,
     ) -> Result<(), String> {
         if !crate::settings::preserve_codex_official_auth_on_switch() {
+            return Ok(());
+        }
+
+        if provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .map(|id| !id.trim().is_empty())
+            .unwrap_or(false)
+        {
             return Ok(());
         }
 
@@ -2718,7 +2821,7 @@ impl ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderMeta;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
@@ -4975,6 +5078,170 @@ base_url = "https://codex.example/v1"
         assert!(
             config.contains("disable_response_storage = true"),
             "common config should be applied into Codex restore backup"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_live_backup_from_provider_uses_managed_codex_oauth_binding_over_existing_oauth_backup(
+    ) {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            ..Default::default()
+        })
+        .expect("enable official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        service
+            .codex_oauth_manager
+            .add_test_account_with_access_token(
+                "acct-managed",
+                "managed-token",
+                Some("managed-id-token"),
+            )
+            .await
+            .expect("seed managed Codex OAuth account");
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": {
+                        "access_token": "old-native-token",
+                        "account_id": "acct-native"
+                    }
+                },
+                "config": ""
+            }))
+            .expect("serialize seed backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        service
+            .update_live_backup_from_provider("codex", &provider)
+            .await
+            .expect("update live backup");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+
+        assert_eq!(
+            stored
+                .pointer("/auth/tokens/access_token")
+                .and_then(|value| value.as_str()),
+            Some("managed-token"),
+            "explicit managed account binding must replace stale native OAuth backup auth"
+        );
+        assert_eq!(
+            stored
+                .pointer("/auth/tokens/account_id")
+                .and_then(|value| value.as_str()),
+            Some("acct-managed")
+        );
+        assert_eq!(
+            stored
+                .pointer("/auth/tokens/id_token")
+                .and_then(|value| value.as_str()),
+            Some("managed-id-token"),
+            "managed backup auth should carry the account id_token to match native login"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_live_backup_clearing_managed_codex_auth_preserves_native_backup_auth() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            ..Default::default()
+        })
+        .expect("enable official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let native_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": "native-token",
+                "account_id": "acct-managed"
+            }
+        });
+
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": native_auth,
+                "config": ""
+            }))
+            .expect("serialize seed backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        service
+            .update_live_backup_from_provider_clearing_codex_auth(
+                "codex",
+                &provider,
+                "acct-managed",
+            )
+            .await
+            .expect("update live backup");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+
+        assert_eq!(
+            stored.get("auth"),
+            Some(&native_auth),
+            "unbinding should not overwrite a later native Codex login in the backup"
         );
     }
 

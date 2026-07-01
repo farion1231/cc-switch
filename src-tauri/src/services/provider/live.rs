@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -13,6 +14,7 @@ use crate::config::{delete_file, get_claude_settings_path, read_json_file, write
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -506,14 +508,31 @@ pub(crate) fn build_effective_settings_with_common_config(
     Ok(effective_settings)
 }
 
-pub(crate) fn write_live_with_common_config(
-    db: &Database,
+pub(crate) fn write_live_with_common_config_for_state(
+    state: &AppState,
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
-    let mut effective_provider = provider.clone();
-    effective_provider.settings_config =
-        build_effective_settings_with_common_config(db, app_type, provider)?;
+    write_live_with_common_config_for_codex_oauth_manager(
+        state.db.as_ref(),
+        app_type,
+        provider,
+        &state.codex_oauth_manager,
+    )
+}
+
+pub(crate) fn write_live_with_common_config_for_codex_oauth_manager(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    codex_oauth_manager: &Arc<CodexOAuthManager>,
+) -> Result<(), AppError> {
+    let effective_provider = build_effective_provider_for_live_with_codex_oauth_manager(
+        db,
+        app_type,
+        provider,
+        codex_oauth_manager,
+    )?;
 
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
@@ -526,6 +545,142 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+pub(crate) fn build_effective_provider_for_live_with_codex_oauth_manager(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    codex_oauth_manager: &Arc<CodexOAuthManager>,
+) -> Result<Provider, AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, app_type, provider)?;
+    apply_codex_managed_oauth_auth(app_type, &mut effective_provider, Some(codex_oauth_manager))?;
+    Ok(effective_provider)
+}
+
+fn apply_codex_managed_oauth_auth(
+    app_type: &AppType,
+    provider: &mut Provider,
+    codex_oauth_manager: Option<&Arc<CodexOAuthManager>>,
+) -> Result<(), AppError> {
+    if !matches!(app_type, AppType::Codex) || provider.category.as_deref() != Some("official") {
+        return Ok(());
+    }
+
+    let Some(account_id) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+    else {
+        return Ok(());
+    };
+
+    let Some(manager) = codex_oauth_manager else {
+        return Err(AppError::Message(
+            "Codex OAuth 托管账号不可用，请重启应用后重试".to_string(),
+        ));
+    };
+
+    let auth = get_codex_managed_oauth_live_auth_value(manager.clone(), account_id.clone())?;
+
+    let Some(settings_obj) = provider.settings_config.as_object_mut() else {
+        return Err(AppError::Config(
+            "Codex 供应商配置必须是 JSON 对象".to_string(),
+        ));
+    };
+
+    settings_obj.insert("auth".to_string(), auth);
+    Ok(())
+}
+
+/// 构建写入托管 Codex `auth.json` 的完整可刷新 auth（含 refresh_token + last_refresh）。
+///
+/// 步骤：
+/// 1. **读回**：若 Codex CLI 已自行刷新并轮换 refresh_token，先采纳盘上最新值，避免
+///    用陈腐 refresh_token 覆盖 CLI 的有效登录（反复切换场景）。
+/// 2. 取有效 token 束（必要时刷新 access_token）。
+/// 3. 按原生浏览器登录形状生成完整 auth。
+///
+/// 不再持有外层锁：manager 内部按账号加锁刷新，网络阻塞不会波及其他账号操作或
+/// token 读取。
+fn get_codex_managed_oauth_live_auth_value(
+    manager: Arc<CodexOAuthManager>,
+    account_id: String,
+) -> Result<Value, AppError> {
+    std::thread::spawn(move || {
+        tauri::async_runtime::block_on(async move {
+            if let Some((refresh_token, id_token)) =
+                crate::codex_config::read_codex_live_auth_refresh_for_account(&account_id)
+            {
+                if let Err(err) = manager
+                    .adopt_account_refresh_token(&account_id, refresh_token, id_token)
+                    .await
+                {
+                    log::warn!(
+                        "读回 Codex CLI 轮换后的 refresh_token 失败（account={account_id}）: {err}"
+                    );
+                }
+            }
+
+            let bundle = manager
+                .get_valid_token_bundle_for_account(&account_id)
+                .await
+                .map_err(|err| {
+                    format!(
+                        "Codex OAuth 账号 {account_id} 认证失败，请重新登录 ChatGPT 账号: {err}"
+                    )
+                })?;
+
+            Ok::<Value, String>(codex_managed_oauth_live_auth(
+                &account_id,
+                &bundle.access_token,
+                bundle.id_token.as_deref(),
+                &bundle.refresh_token,
+                &bundle.last_refresh,
+            ))
+        })
+    })
+    .join()
+    .map_err(|_| AppError::Message("Codex OAuth token 获取线程异常退出".to_string()))?
+    .map_err(AppError::Message)
+}
+
+pub(crate) fn codex_managed_oauth_live_auth(
+    account_id: &str,
+    access_token: &str,
+    id_token: Option<&str>,
+    refresh_token: &str,
+    last_refresh: &str,
+) -> Value {
+    // 与原生 Codex 浏览器登录的形状对齐：tokens 字段顺序 id_token、access_token、
+    // refresh_token、account_id，并带顶层 last_refresh。**必须**包含 refresh_token，
+    // 否则 Codex CLI 在 access_token 过期后无法自刷新（“裸跑 codex” 会静默失效）。
+    let mut tokens = serde_json::Map::new();
+    if let Some(id_token) = id_token {
+        tokens.insert("id_token".to_string(), Value::String(id_token.to_string()));
+    }
+    tokens.insert(
+        "access_token".to_string(),
+        Value::String(access_token.to_string()),
+    );
+    tokens.insert(
+        "refresh_token".to_string(),
+        Value::String(refresh_token.to_string()),
+    );
+    tokens.insert(
+        "account_id".to_string(),
+        Value::String(account_id.to_string()),
+    );
+    json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": Value::Object(tokens),
+        "last_refresh": last_refresh,
+    })
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
@@ -596,6 +751,8 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    strip_codex_managed_oauth_auth_for_backfill(provider, &mut settings);
+
     // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
     // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
     if provider.category.as_deref() == Some("official") {
@@ -623,6 +780,40 @@ fn restore_live_settings_for_provider_backfill(
     }
 
     settings
+}
+
+/// 回填（backfill）托管 Codex 官方 provider 时，剥离 live 的 `auth`。
+///
+/// 托管 provider 的存储配置**永远不应**持久化真实 OAuth token：token 由
+/// `CodexOAuthManager` 按账号集中保管，provider 配置只保留绑定与占位 auth。
+///
+/// 因此无论 live 里当前是什么（我们写入的托管 auth、被 CLI 轮换过的 token、
+/// 还是用户自己浏览器登录的原生 auth，后者含真实 access/refresh_token），
+/// 都统一替换为 provider 存储的占位 auth，避免把真实凭据回填进 DB 配置。
+fn strip_codex_managed_oauth_auth_for_backfill(provider: &Provider, settings: &mut Value) {
+    let is_managed = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+        .is_some();
+    if !is_managed {
+        return;
+    }
+
+    // live 里没有 auth 就无需处理。
+    if settings.get("auth").is_none() {
+        return;
+    }
+
+    let stored_auth = provider
+        .settings_config
+        .get("auth")
+        .filter(|auth| auth.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Some(obj) = settings.as_object_mut() {
+        obj.insert("auth".to_string(), stored_auth);
+    }
 }
 
 pub(crate) fn normalize_provider_common_config_for_storage(
@@ -774,6 +965,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 config_str,
                 profile,
             )?;
+            if provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .is_some()
+            {
+                crate::codex_config::record_codex_managed_oauth_live_auth(auth)?;
+            }
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -905,7 +1104,7 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
             continue;
         }
 
-        if let Err(e) = write_live_with_common_config(state.db.as_ref(), app_type, provider) {
+        if let Err(e) = write_live_with_common_config_for_state(state, app_type, provider) {
             log::warn!(
                 "Failed to sync {:?} provider '{}' to live: {e}",
                 app_type,
@@ -935,7 +1134,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            write_live_with_common_config_for_state(state, app_type, provider)?;
         }
     }
 
@@ -971,7 +1170,7 @@ fn sync_current_provider_for_app_respecting_takeover(
     // that normal provider sync must not rewrite the managed live file.
     if has_live_backup || live_taken_over {
         if matches!(app_type, AppType::ClaudeDesktop) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            write_live_with_common_config_for_state(state, app_type, provider)?;
         } else {
             futures::executor::block_on(
                 state
@@ -983,7 +1182,7 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     }
 
-    write_live_with_common_config(state.db.as_ref(), app_type, provider)
+    write_live_with_common_config_for_state(state, app_type, provider)
 }
 
 /// Sync current provider to live configuration
@@ -1606,6 +1805,7 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
     use serde_json::json;
 
     #[test]
@@ -1650,6 +1850,249 @@ mod tests {
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_managed_oauth_live_auth_matches_codex_cli_shape() {
+        assert_eq!(
+            codex_managed_oauth_live_auth(
+                "acct-managed",
+                "access-token",
+                Some("id-token"),
+                "refresh-token",
+                "2026-01-02T03:04:05.000000000Z",
+            ),
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "id-token",
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct-managed"
+                },
+                "last_refresh": "2026-01-02T03:04:05.000000000Z"
+            }),
+            "managed live auth must carry refresh_token + last_refresh so the Codex CLI can self-refresh"
+        );
+    }
+
+    #[test]
+    fn codex_managed_oauth_live_auth_without_id_token_omits_it() {
+        assert_eq!(
+            codex_managed_oauth_live_auth(
+                "acct-managed",
+                "access-token",
+                None,
+                "refresh-token",
+                "2026-01-02T03:04:05.000000000Z",
+            ),
+            json!({
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct-managed"
+                },
+                "last_refresh": "2026-01-02T03:04:05.000000000Z"
+            }),
+            "without a stored id_token the field is omitted rather than written as null"
+        );
+    }
+
+    #[test]
+    fn codex_official_managed_oauth_binding_replaces_auth_with_selected_account_token() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
+        tauri::async_runtime::block_on(async {
+            manager
+                .add_test_account_with_access_token(
+                    "acct-managed",
+                    "managed-token",
+                    Some("managed-id-token"),
+                )
+                .await
+                .expect("seed managed account");
+        });
+
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "stale-key"
+                },
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        apply_codex_managed_oauth_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("apply managed OAuth auth");
+
+        // last_refresh 是写入时刻的时间戳（非确定），因此逐字段断言而非整体等值。
+        let auth = provider.settings_config.get("auth").expect("auth written");
+        assert_eq!(
+            auth.get("auth_mode").and_then(|v| v.as_str()),
+            Some("chatgpt")
+        );
+        assert!(auth.get("OPENAI_API_KEY").is_some_and(|v| v.is_null()));
+        let tokens = auth
+            .get("tokens")
+            .and_then(|v| v.as_object())
+            .expect("tokens object");
+        assert_eq!(
+            tokens.get("account_id").and_then(|v| v.as_str()),
+            Some("acct-managed")
+        );
+        assert_eq!(
+            tokens.get("access_token").and_then(|v| v.as_str()),
+            Some("managed-token")
+        );
+        assert_eq!(
+            tokens.get("id_token").and_then(|v| v.as_str()),
+            Some("managed-id-token")
+        );
+        assert_eq!(
+            tokens.get("refresh_token").and_then(|v| v.as_str()),
+            Some("test-refresh-token"),
+            "managed live auth must carry the account's refresh_token so the Codex CLI can self-refresh"
+        );
+        assert!(
+            auth.get("last_refresh")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.ends_with('Z')),
+            "managed live auth must include an RFC3339 last_refresh timestamp"
+        );
+    }
+
+    #[test]
+    fn codex_official_without_binding_does_not_fall_back_to_managed_default_account() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CodexOAuthManager::new(temp.path().to_path_buf()));
+        tauri::async_runtime::block_on(async {
+            manager
+                .add_test_account_with_access_token("acct-managed", "managed-token", None)
+                .await
+                .expect("seed managed account");
+        });
+
+        let original_auth = json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": {
+                "access_token": "native-codex-token",
+                "account_id": "acct-native"
+            }
+        });
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": original_auth.clone(),
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        apply_codex_managed_oauth_auth(&AppType::Codex, &mut provider, Some(&manager))
+            .expect("no binding should be a no-op");
+
+        assert_eq!(
+            provider.settings_config.get("auth"),
+            Some(&original_auth),
+            "unbound official providers must keep native Codex auth instead of using the managed default account"
+        );
+    }
+
+    #[test]
+    fn backfill_never_persists_native_tokens_into_managed_provider_config() {
+        // 托管 provider 的存储配置以占位 auth 表示；但 live 里此刻是用户自己
+        // 浏览器登录的原生 auth（含真实 refresh_token）。backfill 必须把 live
+        // auth 换回存储占位，绝不把原生 access/refresh_token 回填进 DB 配置。
+        let mut provider = Provider::with_id(
+            "openai-official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("codex_oauth".to_string()),
+                account_id: Some("acct-managed".to_string()),
+            }),
+            ..Default::default()
+        });
+
+        let mut live_settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": null,
+                "tokens": {
+                    "id_token": "native-id",
+                    "access_token": "native-access-secret",
+                    "refresh_token": "native-refresh-secret",
+                    "account_id": "acct-native"
+                },
+                "last_refresh": "2026-01-01T00:00:00Z"
+            },
+            "config": ""
+        });
+
+        strip_codex_managed_oauth_auth_for_backfill(&provider, &mut live_settings);
+
+        assert_eq!(
+            live_settings.get("auth"),
+            Some(&json!({})),
+            "managed provider backfill must reset live auth to the stored placeholder"
+        );
+        let serialized = live_settings.to_string();
+        assert!(
+            !serialized.contains("native-refresh-secret"),
+            "native refresh_token must not leak into a managed provider's backfilled config"
+        );
+        assert!(
+            !serialized.contains("native-access-secret"),
+            "native access_token must not leak into a managed provider's backfilled config"
+        );
+    }
+
+    #[test]
+    fn backfill_leaves_non_managed_provider_auth_untouched() {
+        // 非托管 provider 不受此剥离影响：其 auth 就该原样保留。
+        let mut provider = Provider::with_id(
+            "custom".to_string(),
+            "Custom".to_string(),
+            json!({ "auth": { "OPENAI_API_KEY": "user-key" }, "config": "" }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        let mut live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "user-key" },
+            "config": ""
+        });
+        let before = live_settings.clone();
+        strip_codex_managed_oauth_auth_for_backfill(&provider, &mut live_settings);
+        assert_eq!(
+            live_settings, before,
+            "non-managed provider auth must be left untouched by managed-oauth backfill stripping"
+        );
     }
 
     #[test]

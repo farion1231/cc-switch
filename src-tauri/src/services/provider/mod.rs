@@ -30,9 +30,11 @@ pub use live::{
 // Internal re-exports (pub(crate))
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
+    build_effective_provider_for_live_with_codex_oauth_manager,
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
     provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    sync_current_provider_for_app_to_live, write_live_with_common_config_for_codex_oauth_manager,
+    write_live_with_common_config_for_state,
 };
 
 // Internal re-exports
@@ -80,7 +82,7 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
         return Ok(true);
     }
 
-    live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    live::write_live_with_common_config_for_state(state, &AppType::Codex, provider)?;
     Ok(true)
 }
 
@@ -101,9 +103,9 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta, UsageScript};
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::provider::{ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -1264,6 +1266,159 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn switch_from_managed_codex_official_to_unbound_clears_live_without_backfilling_token() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+            tauri::async_runtime::block_on(async {
+                state
+                    .codex_oauth_manager
+                    .add_test_account_with_access_token(
+                        "acct-managed",
+                        "managed-token",
+                        Some("managed-id-token"),
+                    )
+                    .await
+                    .expect("seed managed Codex OAuth account");
+            });
+
+            let mut managed = Provider::with_id(
+                "managed-official".to_string(),
+                "Managed Official".to_string(),
+                json!({
+                    "auth": {},
+                    "config": ""
+                }),
+                None,
+            );
+            managed.category = Some("official".to_string());
+            managed.meta = Some(ProviderMeta {
+                auth_binding: Some(AuthBinding {
+                    source: AuthBindingSource::ManagedAccount,
+                    auth_provider: Some("codex_oauth".to_string()),
+                    account_id: Some("acct-managed".to_string()),
+                }),
+                ..Default::default()
+            });
+
+            let mut unbound = Provider::with_id(
+                "unbound-official".to_string(),
+                "Unbound Official".to_string(),
+                json!({
+                    "auth": {},
+                    "config": ""
+                }),
+                None,
+            );
+            unbound.category = Some("official".to_string());
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &managed)
+                .expect("save managed provider");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &unbound)
+                .expect("save unbound provider");
+
+            ProviderService::switch(state, AppType::Codex, "managed-official")
+                .expect("switch to managed official");
+            let live_auth: Value = read_json_file(&crate::codex_config::get_codex_auth_path())
+                .expect("read managed live auth");
+            assert_eq!(
+                live_auth
+                    .pointer("/tokens/access_token")
+                    .and_then(Value::as_str),
+                Some("managed-token"),
+                "managed switch should write the selected ChatGPT token to live auth"
+            );
+
+            ProviderService::switch(state, AppType::Codex, "unbound-official")
+                .expect("switch to unbound official");
+
+            assert!(
+                !crate::codex_config::get_codex_auth_path().exists(),
+                "switching to an unbound official provider should clear the recorded managed live auth"
+            );
+
+            let saved_managed = state
+                .db
+                .get_provider_by_id("managed-official", AppType::Codex.as_str())
+                .expect("query managed provider")
+                .expect("managed provider should exist");
+            assert_eq!(
+                saved_managed.settings_config.get("auth"),
+                Some(&json!({})),
+                "switch-away backfill must not persist the managed access token into provider storage"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switch_to_managed_codex_official_with_unresolvable_account_keeps_current_unchanged() {
+        with_test_home(|state, _| {
+            crate::settings::reload_settings().expect("reload settings");
+
+            // 基线：一个普通第三方 provider，可正常切换，作为初始 current。
+            let mut baseline = Provider::with_id(
+                "baseline".to_string(),
+                "Baseline".to_string(),
+                json!({ "auth": { "OPENAI_API_KEY": "sk-baseline" }, "config": "" }),
+                None,
+            );
+            baseline.category = Some("custom".to_string());
+
+            // 托管 official provider，绑定一个 manager 中不存在的账号：切换预检
+            // 取 token 必然失败。
+            let mut managed = Provider::with_id(
+                "managed-official".to_string(),
+                "Managed Official".to_string(),
+                json!({ "auth": {}, "config": "" }),
+                None,
+            );
+            managed.category = Some("official".to_string());
+            managed.meta = Some(ProviderMeta {
+                auth_binding: Some(AuthBinding {
+                    source: AuthBindingSource::ManagedAccount,
+                    auth_provider: Some("codex_oauth".to_string()),
+                    account_id: Some("acct-missing".to_string()),
+                }),
+                ..Default::default()
+            });
+
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &baseline)
+                .expect("save baseline");
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &managed)
+                .expect("save managed");
+
+            ProviderService::switch(state, AppType::Codex, "baseline").expect("switch to baseline");
+
+            // 切到绑定了不存在账号的托管 provider：预检失败 → 返回 Err。
+            let result = ProviderService::switch(state, AppType::Codex, "managed-official");
+            assert!(
+                result.is_err(),
+                "switch must fail when the managed OAuth token cannot be resolved"
+            );
+
+            // current 必须仍是 baseline：预检在提交 current 之前失败，不留下
+            // 「DB/UI 指向新 provider、但 live 仍是旧 provider」的不一致状态。
+            let current =
+                crate::settings::get_effective_current_provider(&state.db, &AppType::Codex)
+                    .expect("read current");
+            assert_eq!(
+                current.as_deref(),
+                Some("baseline"),
+                "a failed managed switch must not move current off the previous provider"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let provider = opencode_provider("imported-opencode");
@@ -1547,6 +1702,57 @@ base_url = "http://localhost:8080"
 }
 
 impl ProviderService {
+    fn managed_codex_oauth_account_id(provider: &Provider) -> Option<String> {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+    }
+
+    /// 提交 current（settings/DB）前的预检：若目标是托管 Codex official provider，
+    /// 先解析一次有效 live 配置（会联网换取并缓存 token）。失败即返回 Err，从而避免
+    /// 留下「DB/UI 指向新 provider，但 live 仍是旧 provider」的不一致状态；后续真正
+    /// 写 live 会复用缓存的 token。非托管路径为空操作。
+    fn preflight_managed_codex_live(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        if matches!(app_type, AppType::Codex)
+            && Self::managed_codex_oauth_account_id(provider).is_some()
+        {
+            build_effective_provider_for_live_with_codex_oauth_manager(
+                state.db.as_ref(),
+                app_type,
+                provider,
+                &state.codex_oauth_manager,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn unbound_managed_codex_oauth_account_id(
+        app_type: &AppType,
+        existing_provider: Option<&Provider>,
+        provider: &Provider,
+    ) -> Option<String> {
+        if !matches!(app_type, AppType::Codex) || provider.category.as_deref() != Some("official") {
+            return None;
+        }
+
+        let existing_provider = existing_provider
+            .filter(|existing| existing.category.as_deref() == Some("official"))?;
+        let old_account_id = Self::managed_codex_oauth_account_id(existing_provider)?;
+
+        if Self::managed_codex_oauth_account_id(provider).is_some() {
+            return None;
+        }
+
+        Some(old_account_id)
+    }
+
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
@@ -1707,18 +1913,20 @@ impl ProviderService {
             if !add_to_live {
                 return Ok(true);
             }
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            write_live_with_common_config_for_state(state, &app_type, &provider)?;
             return Ok(true);
         }
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
         if current.is_none() {
+            // 预检托管 Codex token：失败则不将其设为 current（见 switch）。
+            Self::preflight_managed_codex_live(state, &app_type, &provider)?;
             // No current provider, set as current and sync
             state
                 .db
                 .set_current_provider(app_type.as_str(), &provider.id)?;
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            write_live_with_common_config_for_state(state, &app_type, &provider)?;
         }
 
         Ok(true)
@@ -1869,17 +2077,29 @@ impl ProviderService {
             if !live_config_managed {
                 return Ok(true);
             }
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            write_live_with_common_config_for_state(state, &app_type, &provider)?;
             return Ok(true);
         }
 
-        // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        let unbound_codex_managed_account_id = Self::unbound_managed_codex_oauth_account_id(
+            &app_type,
+            existing_provider.as_ref(),
+            &provider,
+        );
 
         // For other apps: Check if this is current provider (use effective current, not just DB)
         let effective_current =
             crate::settings::get_effective_current_provider(&state.db, &app_type)?;
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
+
+        // 编辑当前托管 Codex provider：写库前先预检 token（见 preflight_managed_codex_live），
+        // 失败则不落库、不改动 live，避免 DB 与 live 不一致。
+        if is_current {
+            Self::preflight_managed_codex_live(state, &app_type, &provider)?;
+        }
+
+        // Save to database
+        state.db.save_provider(app_type.as_str(), &provider)?;
 
         if is_current {
             // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
@@ -1900,14 +2120,32 @@ impl ProviderService {
 
             if should_sync_via_proxy {
                 if matches!(app_type, AppType::ClaudeDesktop) {
-                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                    write_live_with_common_config_for_state(state, &app_type, &provider)?;
                 } else {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .update_live_backup_from_provider(app_type.as_str(), &provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                    let update_backup_result =
+                        if let Some(account_id) = unbound_codex_managed_account_id.as_deref() {
+                            futures::executor::block_on(
+                                state
+                                    .proxy_service
+                                    .update_live_backup_from_provider_clearing_codex_auth(
+                                        app_type.as_str(),
+                                        &provider,
+                                        account_id,
+                                    ),
+                            )
+                        } else {
+                            futures::executor::block_on(
+                                state
+                                    .proxy_service
+                                    .update_live_backup_from_provider(app_type.as_str(), &provider),
+                            )
+                        };
+                    update_backup_result
+                        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+
+                    if let Some(account_id) = unbound_codex_managed_account_id.as_deref() {
+                        crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
+                    }
                 }
 
                 if matches!(app_type, AppType::Claude)
@@ -1921,7 +2159,10 @@ impl ProviderService {
                     .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
                 }
             } else {
-                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                write_live_with_common_config_for_state(state, &app_type, &provider)?;
+                if let Some(account_id) = unbound_codex_managed_account_id.as_deref() {
+                    crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
+                }
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
             }
@@ -2190,6 +2431,10 @@ impl ProviderService {
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
+        let current_managed_codex_account_id = current_id
+            .as_deref()
+            .and_then(|current_id| providers.get(current_id))
+            .and_then(Self::managed_codex_oauth_account_id);
 
         if let Some(current_id) = current_id {
             if current_id != id {
@@ -2231,6 +2476,9 @@ impl ProviderService {
             }
         }
 
+        // 提交 current 前预检托管 Codex token（见 preflight_managed_codex_live）。
+        Self::preflight_managed_codex_live(state, &app_type, provider)?;
+
         // Additive mode apps skip setting is_current (no such concept)
         if !app_type.is_additive_mode() {
             // Update local settings (device-level, takes priority)
@@ -2241,7 +2489,14 @@ impl ProviderService {
         }
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        write_live_with_common_config_for_state(state, &app_type, provider)?;
+        if matches!(app_type, AppType::Codex)
+            && Self::managed_codex_oauth_account_id(provider).is_none()
+        {
+            if let Some(account_id) = current_managed_codex_account_id.as_deref() {
+                crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
+            }
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
@@ -2341,7 +2596,7 @@ impl ProviderService {
         // here, not just proxy_config.enabled.
         if has_live_backup || live_taken_over {
             if matches!(app_type, AppType::ClaudeDesktop) {
-                write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+                write_live_with_common_config_for_state(state, &app_type, provider)?;
                 return Ok(());
             }
 

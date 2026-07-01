@@ -36,6 +36,8 @@ export interface CodexProviderPreset {
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
+  // Managed OAuth provider type
+  providerType?: "codex_oauth";
 }
 
 /**
@@ -107,12 +109,11 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
+    providerType: "codex_oauth",
     auth: {},
     config: ``,
     theme: {
       icon: "codex",
-      backgroundColor: "#1F2937", // gray-800
-      textColor: "#FFFFFF",
     },
     icon: "openai",
     iconColor: "#00A67E",

@@ -23,7 +23,6 @@ use super::{
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState};
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
 use crate::{
     app_config::AppType,
@@ -1484,8 +1483,7 @@ impl RequestForwarder {
             if auth.strategy == AuthStrategy::CodexOAuth {
                 if let Some(app_handle) = &self.app_handle {
                     let codex_state = app_handle.state::<CodexOAuthState>();
-                    let codex_auth: tokio::sync::RwLockReadGuard<'_, CodexOAuthManager> =
-                        codex_state.0.read().await;
+                    let codex_auth = &codex_state.0;
 
                     // 从 provider.meta 获取关联的 ChatGPT 账号 ID
                     let account_id = provider
