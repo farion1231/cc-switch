@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
 import { copyText } from "@/lib/clipboard";
+import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 
 interface CodexOAuthSectionProps {
   className?: string;
@@ -178,47 +179,50 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             {accounts.map((account) => (
               <div
                 key={account.id}
-                className="flex items-center justify-between p-2 rounded-md border bg-muted/30"
+                className="space-y-2 p-2 rounded-md border bg-muted/30"
               >
-                <div className="flex items-center gap-2">
-                  <User className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm font-medium">{account.login}</span>
-                  {defaultAccountId === account.id && (
-                    <Badge variant="secondary" className="text-xs">
-                      {t("codexOauth.defaultAccount", "默认")}
-                    </Badge>
-                  )}
-                  {selectedAccountId === account.id && (
-                    <Badge variant="outline" className="text-xs">
-                      {t("codexOauth.selected", "已选中")}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  {defaultAccountId !== account.id && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <User className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">{account.login}</span>
+                    {defaultAccountId === account.id && (
+                      <Badge variant="secondary" className="text-xs">
+                        {t("codexOauth.defaultAccount", "默认")}
+                      </Badge>
+                    )}
+                    {selectedAccountId === account.id && (
+                      <Badge variant="outline" className="text-xs">
+                        {t("codexOauth.selected", "已选中")}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {defaultAccountId !== account.id && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-muted-foreground"
+                        onClick={() => setDefaultAccount(account.id)}
+                        disabled={isSettingDefaultAccount}
+                      >
+                        {t("codexOauth.setAsDefault", "设为默认")}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-muted-foreground"
-                      onClick={() => setDefaultAccount(account.id)}
-                      disabled={isSettingDefaultAccount}
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                      onClick={(e) => handleRemoveAccount(account.id, e)}
+                      disabled={isRemovingAccount}
+                      title={t("codexOauth.removeAccount", "移除账号")}
                     >
-                      {t("codexOauth.setAsDefault", "设为默认")}
+                      <X className="h-4 w-4" />
                     </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-red-500"
-                    onClick={(e) => handleRemoveAccount(account.id, e)}
-                    disabled={isRemovingAccount}
-                    title={t("codexOauth.removeAccount", "移除账号")}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  </div>
                 </div>
+                <CodexOauthAccountQuota accountId={account.id} />
               </div>
             ))}
           </div>
