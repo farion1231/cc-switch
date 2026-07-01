@@ -1496,16 +1496,41 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
+    if category == Some("official") {
+        return write_codex_official_live_for_provider(auth, config_text);
+    }
 
-    if should_write_auth {
+    if !crate::settings::preserve_codex_official_auth_on_switch() {
         write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
         write_codex_live_config_atomic(Some(&live_config))
     }
+}
+
+fn write_codex_official_live_for_provider(
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
+    if codex_auth_has_login_material(auth) {
+        return write_codex_live_atomic(auth, config_text);
+    }
+
+    let auth_path = get_codex_auth_path();
+    if auth_path.exists() {
+        let mut live_auth: Value = read_json_file(&auth_path)?;
+        if let Some(live_auth_obj) = live_auth.as_object_mut() {
+            let has_stale_api_key = live_auth_obj
+                .get("OPENAI_API_KEY")
+                .is_some_and(|value| !value.is_null());
+            if has_stale_api_key {
+                live_auth_obj.remove("OPENAI_API_KEY");
+                return write_codex_live_atomic(&live_auth, config_text);
+            }
+        }
+    }
+
+    write_codex_live_config_atomic(config_text)
 }
 
 /// Build the live Codex config for provider switching.
@@ -1699,6 +1724,34 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use std::ffi::OsString;
+
+    struct TestHomeGuard {
+        _dir: tempfile::TempDir,
+        old_test_home: Option<OsString>,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("create temp home");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            Self {
+                _dir: dir,
+                old_test_home,
+            }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
 
     #[test]
     fn unified_session_bucket_injects_for_empty_official_config() {
@@ -1923,6 +1976,45 @@ experimental_bearer_token = "stale-table-key"
         assert!(
             !should_restore_codex_provider_token_for_backfill(Some("official"), &api_key_template),
             "official providers should never restore third-party bearer tokens"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn official_provider_empty_auth_clears_stale_live_api_key_without_dropping_oauth() {
+        let _guard = TestHomeGuard::new();
+        let auth_path = get_codex_auth_path();
+        fs::create_dir_all(auth_path.parent().unwrap()).expect("create codex dir");
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "oauth-access",
+                    "refresh_token": "oauth-refresh"
+                },
+                "OPENAI_API_KEY": "sk-stale"
+            }),
+        )
+        .expect("seed live auth");
+
+        write_codex_live_for_provider(Some("official"), &json!({}), Some("model = \"gpt-5\"\n"))
+            .expect("save official provider");
+
+        let saved_auth: Value = read_json_file(&auth_path).expect("read saved auth");
+        assert_eq!(
+            saved_auth
+                .pointer("/tokens/access_token")
+                .and_then(Value::as_str),
+            Some("oauth-access")
+        );
+        assert!(
+            saved_auth.get("OPENAI_API_KEY").is_none(),
+            "stale API key should be removed while OAuth tokens remain"
+        );
+        assert_eq!(
+            fs::read_to_string(get_codex_config_path()).expect("read saved config"),
+            "model = \"gpt-5\"\n"
         );
     }
 
