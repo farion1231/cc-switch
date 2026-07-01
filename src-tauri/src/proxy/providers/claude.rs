@@ -93,6 +93,28 @@ fn is_reasoning_vendor_identifier(value: &str) -> bool {
         .any(|hint| value.contains(hint))
 }
 
+fn claude_settings_base_url_candidates(settings: &Value) -> [Option<&str>; 5] {
+    [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str()),
+        settings.get("base_url").and_then(|v| v.as_str()),
+        settings.get("baseURL").and_then(|v| v.as_str()),
+        settings.get("apiEndpoint").and_then(|v| v.as_str()),
+        settings
+            .pointer("/apiEndpoint/url")
+            .and_then(|v| v.as_str()),
+    ]
+}
+
+fn claude_settings_base_url(settings: &Value) -> Option<&str> {
+    claude_settings_base_url_candidates(settings)
+        .into_iter()
+        .flatten()
+        .next()
+}
+
 fn should_normalize_anthropic_tool_thinking_history(
     provider: &Provider,
     body: &Value,
@@ -111,18 +133,10 @@ fn should_normalize_anthropic_tool_thinking_history(
     }
 
     let settings = &provider.settings_config;
-    [
-        settings
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str()),
-        settings.get("base_url").and_then(|v| v.as_str()),
-        settings.get("baseURL").and_then(|v| v.as_str()),
-        settings.get("apiEndpoint").and_then(|v| v.as_str()),
-    ]
-    .into_iter()
-    .flatten()
-    .any(is_reasoning_vendor_identifier)
+    claude_settings_base_url_candidates(settings)
+        .into_iter()
+        .flatten()
+        .any(is_reasoning_vendor_identifier)
 }
 
 /// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
@@ -150,13 +164,7 @@ const DEEPSEEK_OFFICIAL_ANTHROPIC_URL: &str = "https://api.deepseek.com/anthropi
 /// Anthropic-compatible endpoint.
 fn is_deepseek_official_anthropic_endpoint(provider: &Provider) -> bool {
     let settings = &provider.settings_config;
-    let base_url = settings
-        .get("env")
-        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-        .and_then(|v| v.as_str())
-        .or_else(|| settings.get("base_url").and_then(|v| v.as_str()))
-        .or_else(|| settings.get("baseURL").and_then(|v| v.as_str()))
-        .or_else(|| settings.get("apiEndpoint").and_then(|v| v.as_str()));
+    let base_url = claude_settings_base_url(settings);
 
     base_url.map(|u| u.trim_end_matches('/')) == Some(DEEPSEEK_OFFICIAL_ANTHROPIC_URL)
 }
@@ -309,15 +317,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
     }
 
     let settings = &provider.settings_config;
-    let base_urls = [
-        settings
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-            .and_then(|v| v.as_str()),
-        settings.get("base_url").and_then(|v| v.as_str()),
-        settings.get("baseURL").and_then(|v| v.as_str()),
-        settings.get("apiEndpoint").and_then(|v| v.as_str()),
-    ];
+    let base_urls = claude_settings_base_url_candidates(settings);
 
     base_urls
         .into_iter()
@@ -662,35 +662,7 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok("https://chatgpt.com/backend-api/codex".to_string());
         }
 
-        // 1. 从 env 中获取
-        if let Some(env) = provider.settings_config.get("env") {
-            if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
-                return Ok(url.trim_end_matches('/').to_string());
-            }
-        }
-
-        // 2. 尝试直接获取
-        if let Some(url) = provider
-            .settings_config
-            .get("base_url")
-            .and_then(|v| v.as_str())
-        {
-            return Ok(url.trim_end_matches('/').to_string());
-        }
-
-        if let Some(url) = provider
-            .settings_config
-            .get("baseURL")
-            .and_then(|v| v.as_str())
-        {
-            return Ok(url.trim_end_matches('/').to_string());
-        }
-
-        if let Some(url) = provider
-            .settings_config
-            .get("apiEndpoint")
-            .and_then(|v| v.as_str())
-        {
+        if let Some(url) = claude_settings_base_url(&provider.settings_config) {
             return Ok(url.trim_end_matches('/').to_string());
         }
 
@@ -992,6 +964,19 @@ mod tests {
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn test_extract_base_url_from_api_endpoint_object() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "apiEndpoint": {
+                "url": "https://api.example.com/anthropic/"
+            }
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://api.example.com/anthropic");
     }
 
     #[test]
