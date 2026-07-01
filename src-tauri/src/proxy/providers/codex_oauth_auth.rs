@@ -1379,14 +1379,19 @@ mod tests {
             .unwrap();
         assert!(changed, "rotated refresh_token should be adopted");
 
-        // 完整 bundle 反映新的 refresh_token；access_token 仍取自缓存（无需联网）。
-        let bundle = manager
-            .get_valid_token_bundle_for_account("acc-1")
-            .await
-            .unwrap();
-        assert_eq!(bundle.refresh_token, "rotated-rt");
-        assert_eq!(bundle.access_token, "access-cached");
-        assert_eq!(bundle.id_token.as_deref(), Some("id-2"));
+        // 存储里的 refresh_token / id_token 已更新为盘上（CLI 轮换后）的值。
+        {
+            let accounts = manager.accounts.read().await;
+            let account = accounts.get("acc-1").expect("account present");
+            assert_eq!(account.refresh_token, "rotated-rt");
+            assert_eq!(account.id_token.as_deref(), Some("id-2"));
+        }
+        // 采纳后清掉了该账号的缓存 access_token，以便下次按新 refresh_token 重取
+        // （因此这里不再用 get_valid_token_bundle_for_account 断言——它会触发联网刷新）。
+        assert!(
+            !manager.access_tokens.read().await.contains_key("acc-1"),
+            "adopt should invalidate the cached access token"
+        );
 
         // 未知账号不接管。
         assert!(!manager

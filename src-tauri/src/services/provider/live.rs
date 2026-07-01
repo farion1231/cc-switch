@@ -965,6 +965,14 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 config_str,
                 profile,
             )?;
+            if provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
+                .is_some()
+            {
+                crate::codex_config::record_codex_managed_oauth_live_auth(auth)?;
+            }
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly

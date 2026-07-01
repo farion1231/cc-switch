@@ -1711,27 +1711,6 @@ impl ProviderService {
             .filter(|id| !id.is_empty())
     }
 
-    /// 切走托管 Codex provider 时，清理其残留在 `~/.codex/auth.json` 的托管登录。
-    ///
-    /// 但**跳过**「新 provider 自身就写入了同一账号 ChatGPT 登录」的情况（例如非托管
-    /// 官方 provider 保存了该账号的原生登录）——那是它刚写入的有效 auth，不应误删。
-    fn clear_stale_managed_codex_live_auth(
-        new_provider: &Provider,
-        account_id: &str,
-    ) -> Result<(), AppError> {
-        let new_provider_owns_same_login =
-            new_provider
-                .settings_config
-                .get("auth")
-                .is_some_and(|auth| {
-                    crate::codex_config::codex_live_auth_is_managed_chatgpt_login(auth, account_id)
-                });
-        if new_provider_owns_same_login {
-            return Ok(());
-        }
-        crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
-    }
-
     /// 提交 current（settings/DB）前的预检：若目标是托管 Codex official provider，
     /// 先解析一次有效 live 配置（会联网换取并缓存 token）。失败即返回 Err，从而避免
     /// 留下「DB/UI 指向新 provider，但 live 仍是旧 provider」的不一致状态；后续真正
@@ -2165,7 +2144,7 @@ impl ProviderService {
                         .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
 
                     if let Some(account_id) = unbound_codex_managed_account_id.as_deref() {
-                        Self::clear_stale_managed_codex_live_auth(&provider, account_id)?;
+                        crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
                     }
                 }
 
@@ -2182,7 +2161,7 @@ impl ProviderService {
             } else {
                 write_live_with_common_config_for_state(state, &app_type, &provider)?;
                 if let Some(account_id) = unbound_codex_managed_account_id.as_deref() {
-                    Self::clear_stale_managed_codex_live_auth(&provider, account_id)?;
+                    crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
                 }
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
@@ -2515,7 +2494,7 @@ impl ProviderService {
             && Self::managed_codex_oauth_account_id(provider).is_none()
         {
             if let Some(account_id) = current_managed_codex_account_id.as_deref() {
-                Self::clear_stale_managed_codex_live_auth(provider, account_id)?;
+                crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
             }
         }
 
