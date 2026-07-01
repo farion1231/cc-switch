@@ -1148,7 +1148,8 @@
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "providerKeyStatusLoading": "Loading provider key status, please try again shortly"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -1156,6 +1157,8 @@
     "authenticated": "Authenticated as {{username}}",
     "notAuthenticated": "Not authenticated",
     "loginWithGitHub": "Login with GitHub",
+    "githubAccount": "GitHub account",
+    "manageAccounts": "Manage accounts",
     "loginRequired": "Please login to GitHub Copilot first",
     "waitingForAuth": "Waiting for authorization...",
     "enterCode": "Please enter the code in your browser:",
@@ -1193,6 +1196,8 @@
     "enterCode": "Enter the code in your browser:",
     "accountCount": "{{count}} account(s)",
     "selectAccount": "Select account",
+    "chatgptAccount": "ChatGPT account",
+    "manageAccounts": "Manage accounts",
     "selectAccountPlaceholder": "Choose a ChatGPT account",
     "useDefaultAccount": "Use default account",
     "noneOptionLabel": "Don't bind a managed account, use browser login",

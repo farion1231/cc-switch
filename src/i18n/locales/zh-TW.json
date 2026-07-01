@@ -1120,7 +1120,8 @@
     "fetchModelsAuthFailed": "API Key 無效或無權限",
     "fetchModelsNotSupported": "該供應商不支援取得模型清單",
     "fetchModelsEndpointNotFound": "未找到可用的模型清單端點，請檢查 Base URL 或確認供應商是否開放該 API",
-    "fetchModelsTimeout": "請求逾時，請檢查網路連線"
+    "fetchModelsTimeout": "請求逾時，請檢查網路連線",
+    "providerKeyStatusLoading": "正在載入供應商標識狀態，請稍後再試"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -1128,6 +1129,8 @@
     "authenticated": "已驗證: {{username}}",
     "notAuthenticated": "未驗證",
     "loginWithGitHub": "使用 GitHub 登入",
+    "githubAccount": "GitHub 帳號",
+    "manageAccounts": "管理帳號",
     "loginRequired": "請先登入 GitHub Copilot",
     "waitingForAuth": "等待授權中...",
     "enterCode": "請在瀏覽器中輸入驗證碼：",
@@ -1165,6 +1168,8 @@
     "enterCode": "請在瀏覽器中輸入以下驗證碼：",
     "accountCount": "{{count}} 個帳號",
     "selectAccount": "選擇帳號",
+    "chatgptAccount": "ChatGPT 帳號",
+    "manageAccounts": "管理帳號",
     "selectAccountPlaceholder": "選擇一個 ChatGPT 帳號",
     "useDefaultAccount": "使用預設帳號",
     "noneOptionLabel": "暫不綁定託管帳號，使用瀏覽器登入",

@@ -1148,7 +1148,8 @@
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
-    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
+    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+    "providerKeyStatusLoading": "プロバイダー識別状態を読み込み中です。しばらくしてからもう一度お試しください"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -1156,6 +1157,8 @@
     "authenticated": "認証済み: {{username}}",
     "notAuthenticated": "未認証",
     "loginWithGitHub": "GitHub でログイン",
+    "githubAccount": "GitHub アカウント",
+    "manageAccounts": "アカウント管理",
     "loginRequired": "先に GitHub Copilot にログインしてください",
     "waitingForAuth": "認証を待っています...",
     "enterCode": "ブラウザで以下のコードを入力してください：",
@@ -1193,6 +1196,8 @@
     "enterCode": "ブラウザで以下のコードを入力してください：",
     "accountCount": "{{count}} アカウント",
     "selectAccount": "アカウントを選択",
+    "chatgptAccount": "ChatGPT アカウント",
+    "manageAccounts": "アカウント管理",
     "selectAccountPlaceholder": "ChatGPT アカウントを選択",
     "useDefaultAccount": "デフォルトアカウントを使用",
     "noneOptionLabel": "管理アカウントをバインドせず、ブラウザでログイン",
