@@ -4,7 +4,9 @@ use tauri::{Emitter, State};
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{
+    ClaudeDesktopMode, Provider, UniversalProvider, UniversalProviderAppPermission,
+};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
@@ -762,7 +764,6 @@ pub fn update_providers_sort_order(
     ProviderService::update_sort_order(state.inner(), app_type, updates).map_err(|e| e.to_string())
 }
 
-use crate::provider::UniversalProvider;
 use std::collections::HashMap;
 use tauri::AppHandle;
 
@@ -873,27 +874,55 @@ pub fn copy_provider_to_apps(
         .get(&provider_id)
         .ok_or_else(|| format!("Provider {} not found in {}", provider_id, source_app))?;
 
+    // 从源供应商提取凭证（base_url + api_key），这是跨应用转换的中间表示
+    let (base_url, api_key) = source_provider.resolve_usage_credentials(&source_app_type);
+
+    if base_url.is_empty() && api_key.is_empty() {
+        return Err(format!(
+            "无法从源供应商提取 API Key 和 Base URL，可能是官方/OAuth 供应商，不支持跨应用复制"
+        ));
+    }
+
     let mut copied_count = 0;
 
     // 复制到每个目标应用
     for target_app in target_apps {
         let target_app_type = AppType::from_str(&target_app).map_err(|e| e.to_string())?;
 
-        // 生成新的 ID（避免冲突 - 使用完整 UUID）
+        // 同应用直接克隆（格式一致）
+        if target_app_type == source_app_type {
+            let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4());
+            let mut new_provider = source_provider.clone();
+            new_provider.id = new_id;
+            new_provider.created_at = Some(chrono::Utc::now().timestamp_millis());
+
+            match ProviderService::add(state.inner(), target_app_type, new_provider, false) {
+                Ok(_) => copied_count += 1,
+                Err(e) => eprintln!("Failed to copy provider to {}: {}", target_app, e),
+            }
+            continue;
+        }
+
+        // 跨应用：通过 UniversalProvider 中间表示做格式转换
         let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4());
-
-        // 克隆供应商配置
-        let mut new_provider = source_provider.clone();
-        new_provider.id = new_id;
-        new_provider.created_at = Some(chrono::Utc::now().timestamp_millis());
-
-        // 添加到目标应用
-        match ProviderService::add(
-            state.inner(),
-            target_app_type,
-            new_provider,
-            false, // 不自动添加到 live 配置
+        let new_provider = match build_converted_provider(
+            source_provider,
+            &target_app_type,
+            &base_url,
+            &api_key,
+            new_id,
         ) {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "Skipping copy to {}: target app type not supported for conversion",
+                    target_app
+                );
+                continue;
+            }
+        };
+
+        match ProviderService::add(state.inner(), target_app_type, new_provider, false) {
             Ok(_) => copied_count += 1,
             Err(e) => {
                 eprintln!("Failed to copy provider to {}: {}", target_app, e);
@@ -902,6 +931,102 @@ pub fn copy_provider_to_apps(
     }
 
     Ok(copied_count)
+}
+
+/// 将源供应商的凭证转换为目标应用的配置格式。
+/// 复用 UniversalProvider 的 to_xxx_provider 转换逻辑，保留元数据。
+/// OpenCode/OpenClaw/Hermes 不走 UniversalProvider，而是直接构造对应结构。
+fn build_converted_provider(
+    source: &Provider,
+    target_app: &AppType,
+    base_url: &str,
+    api_key: &str,
+    new_id: String,
+) -> Option<Provider> {
+    use serde_json::json;
+
+    // Claude / Codex / Gemini 走 UniversalProvider 中间表示复用现有转换
+    if matches!(
+        target_app,
+        AppType::Claude | AppType::ClaudeDesktop | AppType::Codex | AppType::Gemini
+    ) {
+        let mut universal = UniversalProvider::new(
+            new_id.clone(),
+            source.name.clone(),
+            "custom".to_string(),
+            base_url.to_string(),
+            api_key.to_string(),
+        );
+        match target_app {
+            AppType::Claude | AppType::ClaudeDesktop => {
+                universal.apps.claude = UniversalProviderAppPermission::Simple(true);
+            }
+            AppType::Codex => {
+                universal.apps.codex = UniversalProviderAppPermission::Simple(true);
+            }
+            AppType::Gemini => {
+                universal.apps.gemini = UniversalProviderAppPermission::Simple(true);
+            }
+            _ => return None,
+        }
+
+        let mut target = match target_app {
+            AppType::Claude | AppType::ClaudeDesktop => universal.to_claude_provider()?,
+            AppType::Codex => universal.to_codex_provider()?,
+            AppType::Gemini => universal.to_gemini_provider()?,
+            _ => return None,
+        };
+        apply_source_metadata(&mut target, source, new_id);
+        return Some(target);
+    }
+
+    // OpenCode: { npm, name, options: { baseURL, apiKey }, models: {} }
+    let settings_config = match target_app {
+        AppType::OpenCode => json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "name": source.name,
+            "options": {
+                "baseURL": base_url,
+                "apiKey": api_key
+            },
+            "models": {}
+        }),
+        // OpenClaw: { baseUrl, apiKey, api, models: [] }
+        AppType::OpenClaw => json!({
+            "baseUrl": base_url,
+            "apiKey": api_key,
+            "api": "openai-completions",
+            "models": []
+        }),
+        // Hermes: 扁平 snake_case { base_url, api_key, ... }
+        AppType::Hermes => json!({
+            "base_url": base_url,
+            "api_key": api_key,
+            "models": {}
+        }),
+        _ => return None,
+    };
+
+    let mut target = Provider::with_id(
+        new_id.clone(),
+        source.name.clone(),
+        settings_config,
+        source.website_url.clone(),
+    );
+    apply_source_metadata(&mut target, source, new_id);
+    Some(target)
+}
+
+/// 把源供应商的展示元数据复制到目标供应商上（不覆盖 settings_config）
+fn apply_source_metadata(target: &mut Provider, source: &Provider, new_id: String) {
+    target.id = new_id;
+    target.name = source.name.clone();
+    target.notes = source.notes.clone();
+    target.icon = source.icon.clone();
+    target.icon_color = source.icon_color.clone();
+    target.website_url = source.website_url.clone();
+    target.category = Some("custom".to_string());
+    target.created_at = Some(chrono::Utc::now().timestamp_millis());
 }
 
 // ============================================================================
