@@ -92,6 +92,14 @@ export const deeplinkApi = {
   },
 
   /**
+   * Take the last deep link request cached by Rust before the frontend was ready
+   * @returns A pending deep link request, or null when none exists
+   */
+  takePendingDeeplink: async (): Promise<DeepLinkImportRequest | null> => {
+    return invoke("take_pending_deeplink");
+  },
+
+  /**
    * Import a resource from a deep link request (unified handler)
    * @param request The deep link import request
    * @returns Import result based on resource type
