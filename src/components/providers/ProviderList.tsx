@@ -13,12 +13,10 @@ import {
   type CSSProperties,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X, Download } from "lucide-react";
+import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { save } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -35,7 +33,6 @@ import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import { CopyToAppsDialog } from "@/components/providers/CopyToAppsDialog";
-import { ImportExportDialog } from "@/components/providers/ImportExportDialog";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -187,9 +184,6 @@ export function ProviderList({
     provider: Provider | null;
   }>({ isOpen: false, provider: null });
 
-  // 导入导出对话框状态
-  const [importExportDialogOpen, setImportExportDialogOpen] = useState(false);
-
   const queryClient = useQueryClient();
 
   // 打开复制对话框
@@ -238,77 +232,6 @@ export function ProviderList({
       }
     },
     [appId, copyDialogState.provider, queryClient, t],
-  );
-
-  // 导出供应商配置
-  const handleExportProviders = useCallback(
-    async (providerIds: string[]) => {
-      try {
-        const jsonContent = await providersApi.exportProviders(appId, providerIds);
-
-        // 弹出「另存为」对话框让用户选择保存位置
-        const defaultName = `providers-${appId}-${new Date().toISOString().split("T")[0]}.json`;
-        const savePath = await save({
-          defaultPath: defaultName,
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-
-        // 用户取消选择
-        if (!savePath) return;
-
-        await invoke("write_text_file_to_path", {
-          path: savePath,
-          content: jsonContent,
-        });
-
-        toast.success(
-          t("provider.importExport.exportSuccess", {
-            defaultValue: `已导出 ${providerIds.length} 个供应商配置`,
-            count: providerIds.length,
-          }),
-        );
-      } catch (error) {
-        console.error("Failed to export providers:", error);
-        toast.error(
-          t("provider.importExport.exportError", {
-            defaultValue: "导出供应商配置失败",
-          }),
-        );
-      }
-    },
-    [appId, t],
-  );
-
-  // 导入供应商配置
-  const handleImportProviders = useCallback(
-    async (jsonContent: string) => {
-      try {
-        const count = await providersApi.importProviders(appId, jsonContent);
-
-        toast.success(
-          t("provider.importExport.importSuccess", {
-            defaultValue: `已导入 ${count} 个供应商配置`,
-            count,
-          }),
-        );
-
-        // 刷新供应商列表
-        queryClient.invalidateQueries({
-          queryKey: ["providers", appId],
-        });
-
-        setImportExportDialogOpen(false);
-      } catch (error) {
-        console.error("Failed to import providers:", error);
-        toast.error(
-          t("provider.importExport.importError", {
-            defaultValue: "导入供应商配置失败",
-          }),
-        );
-        throw error;
-      }
-    },
-    [appId, queryClient, t],
   );
 
   const handleToggleFailover = useCallback(
@@ -578,23 +501,6 @@ export function ProviderList({
 
   return (
     <div className="mt-4 space-y-4">
-      {/* 工具栏 */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setImportExportDialogOpen(true)}
-            className="gap-2"
-          >
-            <Download className="h-4 w-4" />
-            {t("provider.importExport.button", {
-              defaultValue: "导入/导出",
-            })}
-          </Button>
-        </div>
-      </div>
-
       {claudeDesktopStatusMessages.length > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
           <div className="flex items-center gap-2 font-medium">
@@ -694,16 +600,6 @@ export function ProviderList({
           onCopy={handleCopyToApps}
         />
       )}
-
-      {/* 导入导出对话框 */}
-      <ImportExportDialog
-        isOpen={importExportDialogOpen}
-        onClose={() => setImportExportDialogOpen(false)}
-        appId={appId}
-        providers={providers}
-        onExport={handleExportProviders}
-        onImport={handleImportProviders}
-      />
     </div>
   );
 }

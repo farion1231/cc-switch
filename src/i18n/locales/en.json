@@ -173,13 +173,20 @@
       "jsonContent": "Or paste JSON content",
       "jsonPlaceholder": "Paste exported JSON configuration...",
       "exportButton": "Export {{count}}",
+      "exportAll": "Export All",
       "importButton": "Import",
+      "appSelect": "Select App",
+      "appHint": "Export or import all provider configurations for the selected app (contains sensitive data like API Key and Base URL — keep it safe)",
       "exporting": "Exporting...",
       "importing": "Importing...",
       "exportSuccess": "Exported {{count}} provider configurations",
       "importSuccess": "Imported {{count}} provider configurations",
       "exportError": "Failed to export provider configurations",
-      "importError": "Failed to import provider configurations"
+      "importError": "Failed to import provider configurations",
+      "invalidFileType": "Please select a JSON file",
+      "fileTooLarge": "File too large, please select a file under 10MB",
+      "invalidJson": "Invalid JSON format",
+      "readError": "Failed to read file"
     },
     "copyToApps": {
       "success": "Successfully copied to {{count}} apps",
@@ -399,6 +406,10 @@
       "data": {
         "title": "Data Management",
         "description": "Import and export local configuration data"
+      },
+      "providerConfig": {
+        "title": "Provider Config Management",
+        "description": "Import/export provider configurations (API Key, Base URL, etc.) per app, for backup and cross-device migration"
       },
       "backup": {
         "title": "Backup & Restore",
