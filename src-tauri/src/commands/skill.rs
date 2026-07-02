@@ -130,6 +130,19 @@ pub async fn discover_available_skills(
         .map_err(|e| e.to_string())
 }
 
+/// 读取上次完整验证过的 Skills 发现缓存，不访问网络。
+#[tauri::command]
+pub fn load_cached_discoverable_skills(
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<DiscoverableSkill>, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    service
+        .0
+        .load_cached_discovery(&repos)
+        .map_err(|e| e.to_string())
+}
+
 /// 检查 Skills 更新
 #[tauri::command]
 pub async fn check_skill_updates(

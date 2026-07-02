@@ -175,6 +175,8 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [skillsDiscoverySource, setSkillsDiscoverySource] =
     useState<SkillsPageSource>("repos");
+  const [skillsDiscoveryRefreshing, setSkillsDiscoveryRefreshing] =
+    useState(false);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
@@ -913,6 +915,7 @@ function App() {
                 sharedFeatureApp === "openclaw" ? "claude" : sharedFeatureApp
               }
               onSourceChange={setSkillsDiscoverySource}
+              onRefreshingChange={setSkillsDiscoveryRefreshing}
             />
           );
         case "mcp":
@@ -1349,20 +1352,26 @@ function App() {
                 )}
                 {currentView === "skillsDiscovery" && (
                   <>
-                    {getSkillsPageHeaderActions(skillsDiscoverySource).map(
-                      ({ key, labelKey, Icon, execute }) => (
-                        <Button
-                          key={key}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => execute(skillsPageRef.current)}
-                          className="hover:bg-black/5 dark:hover:bg-white/5"
-                        >
-                          <Icon className="w-4 h-4 mr-2" />
-                          {t(labelKey)}
-                        </Button>
-                      ),
-                    )}
+                    {getSkillsPageHeaderActions(skillsDiscoverySource, {
+                      refreshingRepos: skillsDiscoveryRefreshing,
+                    }).map(({ key, labelKey, Icon, isBusy, execute }) => (
+                      <Button
+                        key={key}
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => execute(skillsPageRef.current)}
+                        disabled={isBusy}
+                        className="hover:bg-black/5 dark:hover:bg-white/5"
+                      >
+                        <Icon
+                          className={cn(
+                            "w-4 h-4 mr-2",
+                            isBusy && "animate-spin",
+                          )}
+                        />
+                        {t(labelKey)}
+                      </Button>
+                    ))}
                   </>
                 )}
                 {currentView === "providers" && (
