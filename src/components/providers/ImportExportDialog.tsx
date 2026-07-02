@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Download, Upload, FileJson } from "lucide-react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -90,10 +91,46 @@ export function ImportExportDialog({
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Validate file type
+    if (!file.name.endsWith('.json') && file.type !== 'application/json') {
+      toast.error(
+        t("provider.importExport.invalidFileType", {
+          defaultValue: "请选择 JSON 文件",
+        }),
+      );
+      return;
+    }
+
+    // Validate file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error(
+        t("provider.importExport.fileTooLarge", {
+          defaultValue: "文件过大，请选择小于 10MB 的文件",
+        }),
+      );
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
-      setImportJson(content);
+      try {
+        JSON.parse(content); // Validate JSON format
+        setImportJson(content);
+      } catch (error) {
+        toast.error(
+          t("provider.importExport.invalidJson", {
+            defaultValue: "无效的 JSON 格式",
+          }),
+        );
+      }
+    };
+    reader.onerror = () => {
+      toast.error(
+        t("provider.importExport.readError", {
+          defaultValue: "读取文件失败",
+        }),
+      );
     };
     reader.readAsText(file);
   };

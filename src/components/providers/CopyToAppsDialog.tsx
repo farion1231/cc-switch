@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Check } from "lucide-react";
+import { Copy } from "lucide-react";
 import {
   Dialog,
   DialogContent,
