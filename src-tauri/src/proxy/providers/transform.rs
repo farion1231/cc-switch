@@ -593,19 +593,22 @@ fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
     schema
 }
 
-/// 将 OpenAI 格式的 `usage` 映射为 Anthropic 格式的 usage 对象。
+/// Maps an OpenAI-format `usage` object into an Anthropic-format usage object.
 ///
-/// OpenAI `prompt_tokens` 含缓存命中，Anthropic `input_tokens` 不含 → 减去 cache_read 与
-/// cache_creation，使 input 成为 fresh input。本路径以 app_type="claude" 记账（calculator
-/// 不再扣减），若不减则缓存会被计入 input 与各 cache 桶两次。三桶互斥，恒等：
-/// input + cache_read + cache_creation == prompt_tokens（inclusive 上游）。
-/// 与流式 build_anthropic_usage_json (#2774) 及 transform_gemini 的 saturating_sub 对称。
-/// 最终 cache_read/cache_creation：直传字段优先于 OpenAI nested details。
-/// 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041：部分中转把
-/// 靠前字段硬编码为桩 0，真值只在低顺位字段），DeepSeek 文档化命中字段末位兜底。
+/// OpenAI `prompt_tokens` is cache-inclusive while Anthropic `input_tokens` is not, so
+/// cache_read and cache_creation are subtracted to make `input` fresh input. This path
+/// accounts under app_type="claude" (the calculator no longer subtracts); without the
+/// subtraction, cached tokens would be double-counted in both `input` and the cache
+/// buckets. The three buckets are mutually exclusive and satisfy the identity:
+/// input + cache_read + cache_creation == prompt_tokens (upstream is inclusive).
+/// Symmetric with streaming `build_anthropic_usage_json` (#2774) and transform_gemini's
+/// saturating_sub. Final cache_read and cache_creation prefer the top-level field over
+/// OpenAI nested details. Each cache_read candidate must be present and non-zero: an
+/// explicit 0 is treated as unreported and the search continues (#8041: some relays
+/// hardcode an earlier field to a stub 0, with the real value only in a later field).
+/// DeepSeek's documented cache-hit field is the last fallback.
 fn map_openai_usage_to_anthropic(usage: Option<&Value>) -> Value {
     let usage = usage.cloned().unwrap_or(json!({}));
-    // 每环要求「存在且非 0」：显式 0 按未上报处理继续向后找（#8041）。
     fn provided_nonzero(value: Option<&Value>) -> Option<u64> {
         value.and_then(Value::as_u64).filter(|tokens| *tokens > 0)
     }
@@ -648,10 +651,11 @@ fn map_openai_usage_to_anthropic(usage: Option<&Value>) -> Value {
     usage_json
 }
 
-/// 构造一个合法的空 content Anthropic 响应。
+/// Builds a valid empty-content Anthropic response.
 ///
-/// 用于上游返回成功但 `choices` 为空数组的场景（见 `openai_to_anthropic`）。
-/// 复用与主转换路径一致的 usage 映射，保证记账正确。
+/// Used when the upstream returns success but with an empty `choices` array
+/// (see `openai_to_anthropic`). Reuses the same usage mapping as the main
+/// conversion path to keep token accounting consistent.
 fn empty_anthropic_response(body: &Value) -> Value {
     let usage_json = map_openai_usage_to_anthropic(body.get("usage"));
     json!({
@@ -673,12 +677,14 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         .and_then(|c| c.as_array())
         .ok_or_else(|| ProxyError::TransformError("No choices in response".to_string()))?;
 
-    // 空 choices 是合法的上游成功响应，而非错误：例如 Claude Code auto-mode
-    // 分类器发送 max_tokens=1 请求时，GitHub Copilot 的 Claude 模型可能不产出任何
-    // 内容 token 而返回 `choices: []`（HTTP 200）。此前把它当 TransformError 抛出会
-    // 变成 422，导致 Claude Code 判定"分类器不可用"并锁死 auto mode 下的 Bash 等操作。
-    // 这里退化为一个合法的空 content Anthropic 响应（stop_reason=end_turn），
-    // 让客户端拿到 200 正常继续。usage 仍从上游透传以保证记账正确。
+    // An empty choices array is a legal successful upstream response, not an error:
+    // e.g. when Claude Code's auto-mode classifier sends a max_tokens=1 request,
+    // GitHub Copilot's Claude models may emit no content token and return
+    // `choices: []` (HTTP 200). Previously this was thrown as a TransformError and
+    // surfaced as 422, causing Claude Code to declare the classifier "unavailable"
+    // and block Bash and other actions in auto mode. Degrade to a valid empty-content
+    // Anthropic response (stop_reason=end_turn) so the client gets a 200 and proceeds.
+    // Usage is still passed through from upstream to keep accounting correct.
     let Some(choice) = choices.first() else {
         return Ok(empty_anthropic_response(&body));
     };
@@ -1560,10 +1566,11 @@ mod tests {
 
     #[test]
     fn test_openai_to_anthropic_empty_choices_returns_valid_empty_message() {
-        // 上游成功返回但 choices 为空（如 Claude Code auto-mode 分类器发送
-        // max_tokens=1，GitHub Copilot 的 Claude 模型不产出内容 token 时会返回
-        // `choices: []` 且 HTTP 200）。必须退化为合法的空 content 响应而非报错，
-        // 否则 Claude Code 判定"分类器不可用"并锁死 auto mode 下的 Bash 操作。
+        // Upstream succeeds but returns empty choices (e.g. Claude Code's auto-mode
+        // classifier sends max_tokens=1 and GitHub Copilot's Claude models emit no
+        // content token, returning `choices: []` with HTTP 200). This must degrade to
+        // a valid empty-content response instead of erroring, otherwise Claude Code
+        // declares the classifier "unavailable" and blocks Bash actions in auto mode.
         let input = json!({
             "id": "chatcmpl-empty",
             "object": "chat.completion",
@@ -1585,7 +1592,8 @@ mod tests {
 
     #[test]
     fn test_openai_to_anthropic_missing_choices_still_errors() {
-        // choices 字段完全缺失（而非空数组）是畸形响应，应保留报错语义。
+        // A completely missing choices field (as opposed to an empty array) is a
+        // malformed response and should retain the error semantics.
         let input = json!({
             "id": "chatcmpl-malformed",
             "object": "chat.completion",
