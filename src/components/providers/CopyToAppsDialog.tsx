@@ -92,7 +92,7 @@ export function CopyToAppsDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[480px]" zIndex="top">
         <DialogHeader>
           <DialogTitle>
             {t("provider.copyToApps.title", {

@@ -145,7 +145,10 @@ export function ImportExportDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
+      <DialogContent
+        className="sm:max-w-[600px] max-h-[80vh] flex flex-col"
+        zIndex="top"
+      >
         <DialogHeader>
           <DialogTitle>
             {t("provider.importExport.title", {
