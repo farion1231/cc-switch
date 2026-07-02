@@ -2807,6 +2807,7 @@ echo "{config_path}"
         "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
         "kitty" => launch_macos_open_app("kitty", &script_file, false),
         "ghostty" => launch_macos_ghostty(&script_file),
+        "otty" => launch_macos_otty(&script_file, cwd),
         "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
         "kaku" => launch_macos_open_app("Kaku", &script_file, true),
         _ => launch_macos_terminal_app(&script_file),
@@ -2988,6 +2989,86 @@ fn launch_macos_ghostty(script_file: &std::path::Path) -> Result<(), String> {
             launch_macos_open_app("Ghostty", script_file, true)
         }
     }
+}
+
+/// macOS: Otty.
+/// Otty's `open` subcommand is handled by the standalone `otty-cli` binary,
+/// not by the GUI binary launched through `open -na Otty --args`.
+#[cfg(target_os = "macos")]
+fn launch_macos_otty(
+    script_file: &std::path::Path,
+    cwd: Option<&std::path::Path>,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let otty_cli = find_macos_otty_cli().ok_or_else(|| {
+        "未找到 Otty CLI。请将 Otty 安装到 /Applications 或 ~/Applications。".to_string()
+    })?;
+
+    let output = Command::new(&otty_cli)
+        .args(build_macos_otty_args(script_file, cwd))
+        .output()
+        .map_err(|e| format!("启动 Otty 失败: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = decode_command_output(&output.stderr);
+        return Err(format!(
+            "Otty 启动失败 (exit code: {:?}): {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_otty_args(
+    script_file: &std::path::Path,
+    cwd: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut args = vec![
+        "open".to_string(),
+        "--quiet".to_string(),
+        "--command".to_string(),
+        build_macos_dash_c_command(script_file),
+    ];
+
+    if let Some(dir) = cwd {
+        args.push(dir.to_string_lossy().into_owned());
+    }
+
+    args
+}
+
+#[cfg(target_os = "macos")]
+fn find_macos_otty_cli() -> Option<std::path::PathBuf> {
+    macos_otty_cli_candidates()
+        .into_iter()
+        .find(|path| path.is_file() && is_executable_file(path))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_otty_cli_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![std::path::PathBuf::from(
+        "/Applications/Otty.app/Contents/MacOS/otty-cli",
+    )];
+
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(
+            std::path::PathBuf::from(home).join("Applications/Otty.app/Contents/MacOS/otty-cli"),
+        );
+    }
+
+    // "Install CLI" symlinks `otty` onto PATH; the in-bundle binary is `otty-cli`.
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("otty"));
+            candidates.push(dir.join("otty-cli"));
+        }
+    }
+
+    candidates
 }
 
 /// macOS: 使用 open -na 启动支持 --args 参数的终端（Alacritty/Kitty/WezTerm/Kaku）
@@ -3366,6 +3447,7 @@ read -r _
             "alacritty" => launch_macos_open_app("Alacritty", &script_file, true),
             "kitty" => launch_macos_open_app("kitty", &script_file, false),
             "ghostty" => launch_macos_ghostty(&script_file),
+            "otty" => launch_macos_otty(&script_file, None),
             "wezterm" => launch_macos_open_app("WezTerm", &script_file, true),
             "kaku" => launch_macos_open_app("Kaku", &script_file, true),
             _ => launch_macos_terminal_app(&script_file),
@@ -5270,6 +5352,40 @@ mod tests {
         // Spaces and single quotes must stay shell-safe too.
         let s2 = build_macos_dash_c_command(Path::new("/Users/me/it's dir/x.sh"));
         assert_eq!(s2, r#"exec sh '/Users/me/it'"'"'s dir/x.sh'"#);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_args_use_cli_open_command_string() {
+        let args = build_macos_otty_args(Path::new("/tmp/cc_switch_launcher_1.sh"), None);
+        assert_eq!(
+            args,
+            vec![
+                "open".to_string(),
+                "--quiet".to_string(),
+                "--command".to_string(),
+                "exec sh '/tmp/cc_switch_launcher_1.sh'".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_args_use_open_path_for_cwd() {
+        let args = build_macos_otty_args(
+            Path::new("/tmp/cc_switch_launcher_1.sh"),
+            Some(Path::new("/tmp/$(touch pwn)'project dir")),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "open".to_string(),
+                "--quiet".to_string(),
+                "--command".to_string(),
+                "exec sh '/tmp/cc_switch_launcher_1.sh'".to_string(),
+                "/tmp/$(touch pwn)'project dir".to_string(),
+            ]
+        );
     }
 
     /// AppleScript launchers need both shell-path quoting and AppleScript string quoting.

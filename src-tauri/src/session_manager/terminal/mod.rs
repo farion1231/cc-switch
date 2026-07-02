@@ -22,6 +22,8 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(target_os = "macos")]
+        "otty" => launch_otty(command, cwd),
         #[cfg(unix)]
         "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
@@ -274,6 +276,69 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn launch_otty(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    // Otty's GUI binary ignores the `open` subcommand via `open -na --args`, so
+    // drive its standalone CLI directly: `otty open [path] --command "<cmd>"`.
+    let otty_cli = find_otty_cli().ok_or_else(|| {
+        "Otty CLI not found. Install Otty to /Applications or ~/Applications.".to_string()
+    })?;
+
+    let status = Command::new(&otty_cli)
+        .args(build_otty_args(command, cwd))
+        .status()
+        .map_err(|e| format!("Failed to launch Otty: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Otty. Make sure it is installed.".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn build_otty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
+    let mut args = vec!["open".to_string(), "--quiet".to_string()];
+    args.push("--command".to_string());
+    args.push(command.to_string());
+
+    if let Some(dir) = cwd.filter(|dir| !dir.trim().is_empty()) {
+        args.push(dir.to_string());
+    }
+
+    args
+}
+
+#[cfg(target_os = "macos")]
+fn find_otty_cli() -> Option<std::path::PathBuf> {
+    otty_cli_candidates()
+        .into_iter()
+        .find(|path| path.is_file() && is_executable_file(path))
+}
+
+#[cfg(target_os = "macos")]
+fn otty_cli_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = vec![std::path::PathBuf::from(
+        "/Applications/Otty.app/Contents/MacOS/otty-cli",
+    )];
+
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(
+            std::path::PathBuf::from(home).join("Applications/Otty.app/Contents/MacOS/otty-cli"),
+        );
+    }
+
+    // "Install CLI" symlinks `otty` onto PATH; the in-bundle binary is `otty-cli`.
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("otty"));
+            candidates.push(dir.join("otty-cli"));
+        }
+    }
+
+    candidates
+}
+
 fn launch_custom(
     command: &str,
     cwd: Option<&str>,
@@ -316,12 +381,21 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 }
 
 fn shell_escape(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    format!("'{}'", value.replace('\'', r#"'"'"'"#))
 }
 
 fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+// Only the macOS Otty launcher uses this.
+#[cfg(target_os = "macos")]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -377,6 +451,37 @@ mod tests {
         );
 
         // Verify shell_escape works correctly for paths with spaces
-        assert_eq!(shell_escape(cwd), "\"/tmp/project dir\"");
+        assert_eq!(shell_escape(cwd), "'/tmp/project dir'");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn shell_command_single_quotes_cwd() {
+        assert_eq!(
+            build_shell_command("claude --resume abc-123", Some("/tmp/project dir")),
+            "cd '/tmp/project dir' && claude --resume abc-123"
+        );
+        assert_eq!(
+            build_shell_command("claude --resume abc-123", Some("/tmp/$(touch pwn)'x")),
+            r#"cd '/tmp/$(touch pwn)'"'"'x' && claude --resume abc-123"#
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn otty_passes_cwd_as_path_argument() {
+        assert_eq!(
+            build_otty_args(
+                "claude --resume abc-123",
+                Some("/tmp/$(touch pwn)'project dir")
+            ),
+            vec![
+                "open".to_string(),
+                "--quiet".to_string(),
+                "--command".to_string(),
+                "claude --resume abc-123".to_string(),
+                "/tmp/$(touch pwn)'project dir".to_string(),
+            ]
+        );
     }
 }
