@@ -273,6 +273,49 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm tauri build --bundles appimage,deb,rpm
 
+      - name: Fix AppImage .DirIcon symlink
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Workaround for tauri-apps/tauri#15110
+          ARCH=$(uname -m)
+          wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage" \
+            -O appimagetool
+          chmod +x appimagetool
+
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "Fixing $appimage..."
+            "$appimage" --appimage-extract
+            ln -sf CC\ Switch.png squashfs-root/.DirIcon
+            APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool --no-appstream squashfs-root "$appimage"
+            rm -rf squashfs-root
+          done
+
+          rm -f appimagetool
+
+      - name: Re-sign AppImage after repacking
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Re-sign the modified AppImage so updater .sig matches the new content
+          # See: https://github.com/tauri-apps/tauri/issues/15110
+          for appimage in src-tauri/target/release/bundle/appimage/*.AppImage; do
+            [ -f "$appimage" ] || continue
+            echo "Re-signing $appimage..."
+            # Remove old signature first
+            rm -f "${appimage}.sig"
+            # Re-sign using tauri signer
+            pnpm tauri signer sign \
+              -k "$TAURI_SIGNING_PRIVATE_KEY" \
+              ${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:+-p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"} \
+              "$appimage"
+            echo "✅ Re-signed: $appimage"
+            ls -la "${appimage}.sig" || echo "⚠️ No .sig file generated"
+          done
+
       - name: Prepare macOS Assets
         if: runner.os == 'macOS'
         shell: bash
