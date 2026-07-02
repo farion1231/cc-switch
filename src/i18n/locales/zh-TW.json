@@ -141,7 +141,16 @@
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
     "duplicate": "複製",
-    "copyToApps": "複製到其他應用程式",
+    "copyToApps": {
+      "title": "複製到其他應用程式",
+      "description": "將「{{name}}」的設定複製到選定的應用程式中",
+      "selectAll": "全選",
+      "selectedCount": "已選擇 {{count}} 個應用程式",
+      "copy": "複製到 {{count}} 個應用程式",
+      "copying": "複製中...",
+      "success": "已成功複製到 {{count}} 個應用程式",
+      "error": "複製供應商失敗"
+    },
     "sortUpdateFailed": "排序更新失敗",
     "configureUsage": "設定用量查詢",
     "officialPartner": "官方合作夥伴",

@@ -141,7 +141,16 @@
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
     "duplicate": "複製",
-    "copyToApps": "他のアプリにコピー",
+    "copyToApps": {
+      "title": "他のアプリにコピー",
+      "description": "「{{name}}」の設定を選択したアプリにコピーします",
+      "selectAll": "すべて選択",
+      "selectedCount": "{{count}} 個のアプリを選択中",
+      "copy": "{{count}} 個のアプリにコピー",
+      "copying": "コピー中...",
+      "success": "{{count}} 個のアプリにコピーしました",
+      "error": "プロバイダーのコピーに失敗しました"
+    },
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
     "officialPartner": "公式パートナー",
