@@ -779,13 +779,13 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.longcat.chat/openai/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "LongCat-Flash-Chat", name: "LongCat Flash Chat" }],
+      models: [{ id: "LongCat-2.0", name: "LongCat 2.0" }],
     },
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
     suggestedDefaults: {
-      model: { default: "LongCat-Flash-Chat", provider: "longcat" },
+      model: { default: "LongCat-2.0", provider: "longcat" },
     },
   },
   {
