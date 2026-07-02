@@ -638,7 +638,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
+    // 默认 aihubmix.com，api.inferera.com 作备用网关（同后端、同 Key）
+    endpointCandidates: [
+      "https://aihubmix.com",
+      "https://api.aihubmix.com",
+      "https://api.inferera.com",
+    ],
     icon: "aihubmix",
     iconColor: "#006FFB",
   },
