@@ -76,9 +76,14 @@ impl Provider {
             || self.claude_base_url_contains("githubcopilot.com")
     }
 
+    pub fn is_kiro(&self) -> bool {
+        self.provider_type() == Some("kiro") || self.claude_base_url_contains("kiro.dev")
+    }
+
     pub fn uses_managed_account_auth(&self) -> bool {
         self.is_github_copilot()
             || self.is_codex_oauth()
+            || self.is_kiro()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
@@ -1077,6 +1082,35 @@ mod tests {
             None,
         );
         assert!(codex_endpoint.uses_managed_account_auth());
+
+        // Kiro（AWS CodeWhisperer/Q）同样是托管 OAuth，须保留 PROXY_MANAGED token
+        let mut kiro = Provider::with_id(
+            "kiro".to_string(),
+            "Kiro".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        kiro.meta = Some(ProviderMeta {
+            provider_type: Some("kiro".to_string()),
+            ..Default::default()
+        });
+        assert!(kiro.is_kiro());
+        assert!(kiro.uses_managed_account_auth());
+        // 不是 Copilot → 保留 ANTHROPIC_AUTH_TOKEN
+        assert!(!kiro.is_github_copilot());
+
+        let kiro_endpoint = Provider::with_id(
+            "kiro-endpoint".to_string(),
+            "Kiro Endpoint".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://runtime.us-east-1.kiro.dev"
+                }
+            }),
+            None,
+        );
+        assert!(kiro_endpoint.is_kiro());
+        assert!(kiro_endpoint.uses_managed_account_auth());
 
         copilot.meta = Some(ProviderMeta {
             provider_type: Some("github_copilot".to_string()),

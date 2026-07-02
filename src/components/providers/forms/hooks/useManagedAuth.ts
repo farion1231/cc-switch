@@ -55,7 +55,13 @@ export function useManagedAuth(
   }, [stopPolling]);
 
   const startLoginMutation = useMutation({
-    mutationFn: () => authApi.authStartLogin(authProvider, githubDomain),
+    mutationFn: (args?: { startUrl?: string; region?: string }) =>
+      authApi.authStartLogin(
+        authProvider,
+        githubDomain,
+        args?.startUrl,
+        args?.region,
+      ),
     onSuccess: async (response) => {
       setDeviceCode(response);
       setPollingState("polling");
@@ -177,13 +183,16 @@ export function useManagedAuth(
     },
   });
 
-  const startAuth = useCallback(() => {
-    setPollingState("idle");
-    setDeviceCode(null);
-    setError(null);
-    stopPolling();
-    startLoginMutation.mutate();
-  }, [startLoginMutation, stopPolling]);
+  const startAuth = useCallback(
+    (args?: { startUrl?: string; region?: string }) => {
+      setPollingState("idle");
+      setDeviceCode(null);
+      setError(null);
+      stopPolling();
+      startLoginMutation.mutate(args);
+    },
+    [startLoginMutation, stopPolling],
+  );
 
   const cancelAuth = useCallback(() => {
     stopPolling();

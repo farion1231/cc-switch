@@ -328,6 +328,10 @@ async fn handle_claude_transform(
                 Some(ctx.session_id.clone()),
                 tool_schema_hints.clone(),
             )))
+        } else if api_format == "kiro" {
+            Box::new(Box::pin(
+                super::providers::streaming_kiro::create_anthropic_sse_stream_from_kiro(stream),
+            ))
         } else {
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
@@ -430,7 +434,19 @@ async fn handle_claude_transform(
 
     let body_str = String::from_utf8_lossy(&body_bytes);
 
-    let upstream_response: Value = if aggregate_codex_oauth_responses_sse {
+    // Kiro 上游返回 application/vnd.amazon.eventstream（非 JSON）。对于非流式
+    // 客户端，在此将整个 eventstream 聚合成单个 Anthropic Messages JSON，后面
+    // api_format=="kiro" 的转换器分支会原样透传（已是 Anthropic 格式）。
+    let upstream_response: Value = if api_format == "kiro" {
+        super::providers::streaming_kiro::kiro_eventstream_to_anthropic_response(&body_bytes)
+            .map_err(|msg| {
+                log::error!("[Kiro] 上游 eventstream 返回错误事件: {msg}, body: {body_str}");
+                ProxyError::TransformError(format!(
+                    "Kiro upstream error: {msg} {}",
+                    body_diagnostics_suffix(&response_headers, &body_str)
+                ))
+            })?
+    } else if aggregate_codex_oauth_responses_sse {
         responses_sse_to_response_value(&body_str)?
     } else {
         match serde_json::from_slice(&body_bytes) {
@@ -469,7 +485,10 @@ async fn handle_claude_transform(
     };
 
     // 根据 api_format 选择非流式转换器
-    let anthropic_response = if api_format == "openai_responses" {
+    let anthropic_response = if api_format == "kiro" {
+        // Kiro 已在上方聚合成 Anthropic Messages JSON，原样透传
+        Ok(upstream_response)
+    } else if api_format == "openai_responses" {
         transform_responses::responses_to_anthropic(upstream_response)
     } else if api_format == "gemini_native" {
         transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
@@ -1410,7 +1429,12 @@ fn should_use_claude_transform_streaming(
     api_format: &str,
     is_codex_oauth: bool,
 ) -> bool {
-    requested_streaming || upstream_is_sse || (is_codex_oauth && api_format == "openai_responses")
+    // Kiro 上游始终返回 application/vnd.amazon.eventstream（非 text/event-stream，
+    // is_sse() 识别不了）。当客户端请求流式时走 Kiro 流式转换器；
+    // 非流式请求则在下方的非流式路径里聚合 Kiro eventstream 为单个 JSON。
+    requested_streaming
+        || (upstream_is_sse && api_format != "kiro")
+        || (is_codex_oauth && api_format == "openai_responses")
 }
 
 /// 把 OpenAI Responses SSE 流聚合成一个完整的 Responses JSON 对象，供下游转成 Anthropic

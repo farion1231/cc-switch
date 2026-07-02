@@ -327,7 +327,8 @@
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts",
+      "kiroDescription": "Manage Kiro accounts"
     },
     "advanced": {
       "configDir": {
@@ -1150,7 +1151,9 @@
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "apiFormatKiro": "Kiro (AWS CodeWhisperer)",
+    "apiFormatHintKiro": "Kiro provider uses a fixed Kiro format (AWS CodeWhisperer) and cannot be changed."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -1208,6 +1211,34 @@
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
     "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+  },
+  "kiro": {
+    "authStatus": "Kiro Auth Status",
+    "accountCount": "{{count}} account(s)",
+    "notAuthenticated": "Not authenticated",
+    "selectAccount": "Select Kiro Account",
+    "selectAccountPlaceholder": "Select a Kiro account",
+    "useDefaultAccount": "Use default account",
+    "loggedInAccounts": "Logged in accounts",
+    "defaultAccount": "Default",
+    "selected": "Selected",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "loginWithSocial": "Log in via Google / GitHub Web",
+    "addAnotherBuilderId": "Add another AWS Builder ID account",
+    "loginWithBuilderId": "Log in with AWS Builder ID",
+    "loginWithIdc": "Log in with IAM Identity Center",
+    "startUrl": "IAM Start URL",
+    "region": "Region",
+    "importLocalCreds": "Import credentials from kiro-cli / Kiro IDE",
+    "waitingForAuth": "Waiting for Kiro authorization...",
+    "enterCodeKiro": "Verify the following code in your browser:",
+    "copyCode": "Copy code",
+    "retry": "Retry",
+    "logoutAll": "Logout all Kiro accounts",
+    "searchRegion": "Search or input region...",
+    "noRegionMatch": "No matching regions",
+    "useCustomRegion": "Use custom region \"{{region}}\""
   },
   "endpointTest": {
     "title": "API Endpoint Management",

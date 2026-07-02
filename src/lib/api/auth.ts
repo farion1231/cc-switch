@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ManagedAuthProvider = "github_copilot" | "codex_oauth";
+export type ManagedAuthProvider = "github_copilot" | "codex_oauth" | "kiro";
 
 export interface ManagedAuthAccount {
   id: string;
@@ -32,10 +32,14 @@ export interface ManagedAuthDeviceCodeResponse {
 export async function authStartLogin(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
+  startUrl?: string,
+  region?: string,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
     githubDomain: githubDomain || null,
+    startUrl: startUrl || null,
+    region: region || null,
   });
 }
 
@@ -95,6 +99,37 @@ export async function authLogout(
   });
 }
 
+/**
+ * Kiro 社交登录（Google / GitHub）。
+ * 该调用会打开浏览器并阻塞直到用户完成登录或超时。
+ */
+export async function authKiroSocialLogin(
+  provider?: "google" | "github",
+): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("auth_kiro_social_login", {
+    provider: provider || null,
+  });
+}
+
+/**
+ * Kiro 主动导入本地 kiro-cli / kiro-ide 凭证（仅在点击时读取）。
+ * 返回本次新导入的账号列表。
+ */
+export async function authKiroImportDynamic(): Promise<ManagedAuthAccount[]> {
+  return invoke<ManagedAuthAccount[]>("auth_kiro_import_dynamic", {});
+}
+
+/**
+ * 使用 KIRO_API_KEY（ksk_ 格式）登录 Kiro。
+ */
+export async function authKiroApiKeyLogin(
+  apiKey: string,
+): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("auth_kiro_api_key_login", {
+    apiKey,
+  });
+}
+
 export const authApi = {
   authStartLogin,
   authPollForAccount,
@@ -103,4 +138,7 @@ export const authApi = {
   authRemoveAccount,
   authSetDefaultAccount,
   authLogout,
+  authKiroSocialLogin,
+  authKiroImportDynamic,
+  authKiroApiKeyLogin,
 };
