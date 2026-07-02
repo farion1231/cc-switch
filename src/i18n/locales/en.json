@@ -1435,7 +1435,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "antigravity": "Antigravity"
     },
     "rawInputLabel": "Raw",
     "dataSources": "Data Sources",
@@ -1445,7 +1446,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
       "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session"
+      "opencode_session": "OpenCode Session",
+      "antigravity_session": "Antigravity Session DB"
     },
     "sessionSync": {
       "trigger": "Sync session logs",

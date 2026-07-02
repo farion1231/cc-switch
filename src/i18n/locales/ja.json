@@ -1435,7 +1435,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "antigravity": "Antigravity"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1445,7 +1446,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション"
+      "opencode_session": "OpenCode セッション",
+      "antigravity_session": "Antigravity セッションDB"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",

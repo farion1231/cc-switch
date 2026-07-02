@@ -1435,7 +1435,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "antigravity": "Antigravity"
     },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
@@ -1445,7 +1446,8 @@
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
+      "opencode_session": "OpenCode 会话日志",
+      "antigravity_session": "Antigravity 会话数据库"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
