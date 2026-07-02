@@ -11,20 +11,56 @@ import type { CodexCatalogModel } from "@/types";
 interface UseCodexConfigStateProps {
   initialData?: {
     settingsConfig?: Record<string, unknown>;
+    category?: string;
   };
 }
 
-// auth.json 缺 OPENAI_API_KEY 时回退到 config.toml 的 experimental_bearer_token
-// (Mobile 兼容形态：保留 ChatGPT 登录态但用第三方 token)
-function pickCodexApiKey(
+// 第三方 Codex 在保留官方登录态时，真实 provider token 会落在 config.toml 的
+// experimental_bearer_token；官方 provider 仍以 auth.json 为准。
+function codexAuthApiKey(
   authObj: { OPENAI_API_KEY?: unknown } | null | undefined,
-  configText: string,
 ): string {
   if (authObj && typeof authObj.OPENAI_API_KEY === "string") {
-    const key = authObj.OPENAI_API_KEY;
-    if (key) return key;
+    return authObj.OPENAI_API_KEY;
   }
-  return extractCodexExperimentalBearerToken(configText) || "";
+  return "";
+}
+
+function shouldPreferCodexBearerToken(
+  category: string | undefined,
+  bearerToken: string | undefined,
+): bearerToken is string {
+  return category !== "official" && !!bearerToken;
+}
+
+export function pickCodexApiKey(
+  authObj: { OPENAI_API_KEY?: unknown } | null | undefined,
+  configText: string,
+  category?: string,
+): string {
+  const bearerToken = extractCodexExperimentalBearerToken(configText);
+  if (shouldPreferCodexBearerToken(category, bearerToken)) {
+    return bearerToken;
+  }
+  return codexAuthApiKey(authObj) || bearerToken || "";
+}
+
+export function normalizeCodexAuthForSave(
+  authObj: Record<string, unknown>,
+  configText: string,
+  category?: string,
+): Record<string, unknown> {
+  const bearerToken = extractCodexExperimentalBearerToken(configText);
+  if (!shouldPreferCodexBearerToken(category, bearerToken)) {
+    return authObj;
+  }
+  if (authObj.OPENAI_API_KEY === bearerToken) {
+    return authObj;
+  }
+  return {
+    ...authObj,
+    OPENAI_API_KEY: bearerToken,
+  };
 }
 
 /**
@@ -50,7 +86,17 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     const config = initialData.settingsConfig;
     if (typeof config === "object" && config !== null) {
       // 设置 auth.json
-      const auth = (config as any).auth || {};
+      const rawAuth = (config as any).auth || {};
+      const auth =
+        rawAuth && typeof rawAuth === "object" && !Array.isArray(rawAuth)
+          ? normalizeCodexAuthForSave(
+              rawAuth as Record<string, unknown>,
+              typeof (config as any).config === "string"
+                ? (config as any).config
+                : "",
+              initialData.category,
+            )
+          : {};
       setCodexAuthState(JSON.stringify(auth, null, 2));
 
       // 设置 config.toml
@@ -120,7 +166,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
         setCodexBaseUrl(initialBaseUrl);
       }
 
-      setCodexApiKey(pickCodexApiKey(auth, configStr));
+      setCodexApiKey(pickCodexApiKey(auth, configStr, initialData.category));
     }
   }, [initialData]);
 
@@ -151,9 +197,24 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
     } catch {
       parsed = null;
     }
-    const extractedKey = pickCodexApiKey(parsed, codexConfig);
+    const extractedKey = pickCodexApiKey(
+      parsed,
+      codexConfig,
+      initialData?.category,
+    );
     setCodexApiKey((prev) => (prev === extractedKey ? prev : extractedKey));
-  }, [codexAuth, codexConfig]);
+
+    if (parsed) {
+      const normalized = normalizeCodexAuthForSave(
+        parsed as Record<string, unknown>,
+        codexConfig,
+        initialData?.category,
+      );
+      if (normalized !== parsed) {
+        setCodexAuthState(JSON.stringify(normalized, null, 2));
+      }
+    }
+  }, [codexAuth, codexConfig, initialData?.category]);
 
   // 验证 Codex Auth JSON
   const validateCodexAuth = useCallback((value: string): string => {
@@ -250,7 +311,12 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       config: string,
       modelCatalogModels: CodexCatalogModel[] = [],
     ) => {
-      const authString = JSON.stringify(auth, null, 2);
+      const normalizedAuth = normalizeCodexAuthForSave(
+        auth,
+        config,
+        initialData?.category,
+      );
+      const authString = JSON.stringify(normalizedAuth, null, 2);
       setCodexAuth(authString);
       setCodexConfig(config);
       setCodexCatalogModels(modelCatalogModels);
@@ -258,9 +324,16 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
       const baseUrl = extractCodexBaseUrl(config);
       setCodexBaseUrl(baseUrl || "");
 
-      setCodexApiKey(pickCodexApiKey(auth, config));
+      setCodexApiKey(
+        pickCodexApiKey(normalizedAuth, config, initialData?.category),
+      );
     },
-    [setCodexAuth, setCodexConfig, setCodexCatalogModels],
+    [
+      setCodexAuth,
+      setCodexConfig,
+      setCodexCatalogModels,
+      initialData?.category,
+    ],
   );
 
   return {
