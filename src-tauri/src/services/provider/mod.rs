@@ -209,6 +209,7 @@ mod tests {
         let old_home = std::env::var_os("HOME");
         std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
         std::env::set_var("HOME", temp.path());
+        crate::settings::reload_settings().expect("reload settings for test home");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
@@ -222,6 +223,7 @@ mod tests {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
         }
+        crate::settings::reload_settings().expect("restore settings after test home");
 
         result
     }
@@ -286,6 +288,15 @@ mod tests {
             ..Default::default()
         });
         provider
+    }
+
+    fn hide_openclaw_app() {
+        let mut settings = crate::settings::AppSettings::default();
+        settings.visible_apps = Some(crate::settings::VisibleApps {
+            openclaw: false,
+            ..Default::default()
+        });
+        crate::settings::update_settings(settings).expect("hide openclaw");
     }
 
     fn openclaw_provider(id: &str) -> Provider {
@@ -1264,6 +1275,36 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn sync_current_provider_for_app_skips_hidden_openclaw_live_sync() {
+        with_test_home(|state, _| {
+            hide_openclaw_app();
+
+            let mut provider = openclaw_provider("hidden-openclaw-reset");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed hidden openclaw provider in db");
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
+                .expect("sync hidden openclaw providers");
+
+            let live_providers =
+                crate::openclaw_config::get_providers().expect("read openclaw providers");
+            assert!(
+                !live_providers.contains_key(&provider.id),
+                "hidden OpenClaw should not restore database providers to live config"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let provider = opencode_provider("imported-opencode");
@@ -1320,6 +1361,37 @@ base_url = "http://localhost:8080"
                     .and_then(|meta| meta.live_config_managed),
                 Some(true),
                 "providers imported from live should be treated as live-managed"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_openclaw_providers_from_live_skips_hidden_openclaw() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("hidden-imported-openclaw");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            crate::openclaw_config::set_provider(&provider.id, provider.settings_config.clone())
+                .expect("seed openclaw live provider");
+
+            hide_openclaw_app();
+
+            let imported = import_openclaw_providers_from_live(state)
+                .expect("import hidden openclaw providers from live");
+            assert_eq!(imported, 0);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .expect("query hidden imported openclaw provider");
+            assert!(
+                saved.is_none(),
+                "hidden OpenClaw should not import live providers into the database"
             );
         });
     }

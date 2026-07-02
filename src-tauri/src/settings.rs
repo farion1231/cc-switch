@@ -708,6 +708,14 @@ pub fn get_settings() -> AppSettings {
         .clone()
 }
 
+pub fn is_app_visible(app_type: &AppType) -> bool {
+    let settings = get_settings();
+    settings.visible_apps.as_ref().map_or_else(
+        || VisibleApps::default().is_visible(app_type),
+        |visible| visible.is_visible(app_type),
+    )
+}
+
 pub fn get_settings_for_frontend() -> AppSettings {
     let mut settings = get_settings();
     if let Some(sync) = &mut settings.webdav_sync {
