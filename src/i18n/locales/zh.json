@@ -141,7 +141,16 @@
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
     "duplicate": "复制",
-    "copyToApps": "复制到其他应用",
+    "copyToApps": {
+      "title": "复制到其他应用",
+      "description": "将 \"{{name}}\" 的配置复制到选定的应用中",
+      "selectAll": "全选",
+      "selectedCount": "已选择 {{count}} 个应用",
+      "copy": "复制到 {{count}} 个应用",
+      "copying": "复制中...",
+      "success": "已成功复制到 {{count}} 个应用",
+      "error": "复制供应商失败"
+    },
     "sortUpdateFailed": "排序更新失败",
     "configureUsage": "配置用量查询",
     "officialPartner": "官方合作伙伴",

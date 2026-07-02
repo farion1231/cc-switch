@@ -141,7 +141,16 @@
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
     "duplicate": "Duplicate",
-    "copyToApps": "Copy to other apps",
+    "copyToApps": {
+      "title": "Copy to Other Apps",
+      "description": "Copy \"{{name}}\" configuration to selected apps",
+      "selectAll": "Select All",
+      "selectedCount": "{{count}} apps selected",
+      "copy": "Copy to {{count}} apps",
+      "copying": "Copying...",
+      "success": "Successfully copied to {{count}} apps",
+      "error": "Failed to copy provider"
+    },
     "sortUpdateFailed": "Failed to update sort order",
     "configureUsage": "Configure usage query",
     "officialPartner": "Official Partner",

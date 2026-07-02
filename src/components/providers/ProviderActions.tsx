@@ -313,7 +313,7 @@ export function ProviderActions({
             size="icon"
             variant="ghost"
             onClick={onCopyToApps}
-            title={t("provider.copyToApps", {
+            title={t("provider.copyToApps.title", {
               defaultValue: "复制到其他应用",
             })}
             className={iconButtonClass}
