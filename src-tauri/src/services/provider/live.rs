@@ -609,6 +609,19 @@ fn restore_live_settings_for_provider_backfill(
         }
     }
 
+    // Codex CLI 运行时写入的 `[mcp_servers.<id>.tools.<tool>]` 授权只属于 live，
+    // backfill 进 DB 前必须剥离，否则 provider stored config 会积累 stale runtime
+    // 状态（让“编辑通用配置”冒出 runtime `tools.*`，也给 live 写入埋下脏 DB）。
+    // 这与 `ConfigService::sync_codex_live` 的 backfill 剥离保持一致，确保
+    // provider switch 与 common-config save 两个 backfill 入口都不把 runtime
+    // 子表写进 DB——live 才是 runtime 子表的唯一权威。
+    if let Some(config_text) = settings.get("config").and_then(Value::as_str) {
+        let stripped = crate::mcp::strip_codex_runtime_subtables(config_text);
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(stripped));
+        }
+    }
+
     // `modelCatalog` is a cc-switch–private field whose SSOT is the DB. Live's
     // `config.toml` only carries a lossy projection (`model_catalog_json` →
     // generated catalog file) that proxy takeover/restore cycles and Codex.app

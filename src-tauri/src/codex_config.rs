@@ -1473,6 +1473,29 @@ pub fn strip_codex_unified_session_bucket_from_settings(
     Ok(())
 }
 
+/// 在 Codex live 写入之前从现有 `~/.codex/config.toml` 中抢救出 cc-switch 不知道的
+/// 运行时子表（典型为 `[mcp_servers.<id>.tools.<tool>]`），把它们合并进即将写入的
+/// 新文本。详细语义见 `mcp::codex::merge_codex_runtime_subtables`。
+///
+/// 最佳努力（best-effort）：旧文件不存在时按空 live 处理，读失败时返回
+/// `new_text` 的拷贝，绝不阻断底层写入。
+///
+/// 注意：read-then-write 不是原子的。若 Codex CLI 在本函数读取旧 live 之后、
+/// 底层 atomic 写入之前并发写入 `config.toml`，那次写入的 runtime 变更会被本次
+/// 覆盖丢失。对单用户桌面场景可接受，故不额外加锁。
+fn preserve_runtime_codex_mcp_state(new_text: &str) -> String {
+    let live_path = get_codex_config_path();
+    let old_text = if live_path.exists() {
+        match std::fs::read_to_string(&live_path) {
+            Ok(text) => text,
+            Err(_) => return new_text.to_string(),
+        }
+    } else {
+        String::new()
+    };
+    crate::mcp::merge_codex_runtime_subtables(new_text, &old_text)
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
@@ -1486,6 +1509,7 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    // Layer 1：统一会话开关开启时，官方配置在落盘前注入共享的 custom 路由。
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
             Some(inject_codex_unified_session_bucket(
@@ -1495,6 +1519,13 @@ pub fn write_codex_live_for_provider(
             None
         };
     let config_text = unified_official_config.as_deref().or(config_text);
+
+    // Layer 2：provider 驱动的 live 写入前，把旧 live 中 cc-switch 不管辖的 runtime
+    // 子表（典型 [mcp_servers.<id>.tools.<tool>]）合并进新文本。仅作用于 provider
+    // 写入路径；byte-for-byte restore 走裸 write_codex_live_atomic，不受影响。
+    // 作用在 Layer 1 注入后的文本上，确保两层变换都落到最终写盘内容。
+    let preserved = config_text.map(preserve_runtime_codex_mcp_state);
+    let config_text = preserved.as_deref();
 
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
