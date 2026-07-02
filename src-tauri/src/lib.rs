@@ -906,6 +906,30 @@ pub fn run() {
                             crate::tray::refresh_all_usage_in_tray(&app).await;
                         });
                     }
+                    // Windows: 双击托盘图标 → 切换窗口显示/隐藏
+                    #[cfg(target_os = "windows")]
+                    TrayIconEvent::DoubleClick { .. } => {
+                        let app = tray.app_handle();
+                        if crate::lightweight::is_lightweight_mode() {
+                            // 轻量模式：双击不执行任何操作
+                            log::debug!("轻量模式下双击托盘，不执行操作");
+                        } else if let Some(window) = app.get_webview_window("main") {
+                            if window.is_visible().unwrap_or(false) {
+                                // 窗口可见：隐藏窗口
+                                let _ = window.hide();
+                                let _ = window.set_skip_taskbar(true);
+                            } else {
+                                // 窗口存在但隐藏：显示窗口
+                                let _ = window.set_skip_taskbar(false);
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        } else {
+                            // 无窗口：打开主窗口
+                            tray::handle_tray_menu_event(app, "show_main");
+                        }
+                    }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
@@ -2017,6 +2041,12 @@ fn window_state_flags() -> StateFlags {
 /// 当前应用的退出路径会拦截 `ExitRequested` 并最终直接 `std::process::exit(0)`，
 /// 这里需要在真正结束进程前手动落盘，避免 window-state 插件的默认退出钩子被绕过。
 pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
+    // 检查主窗口是否仍然有效，避免在窗口已销毁时调用 save_window_state
+    // 触发 PostMessage 失败错误 (ERROR_INVALID_WINDOW_HANDLE / 0x80070578)
+    if app_handle.get_webview_window("main").is_none() {
+        log::debug!("主窗口已不存在，跳过保存窗口状态");
+        return;
+    }
     if let Err(err) = app_handle.save_window_state(window_state_flags()) {
         log::error!("退出前保存窗口状态失败: {err}");
     } else {
