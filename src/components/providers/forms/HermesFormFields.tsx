@@ -330,7 +330,9 @@ export function HermesFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
-        category={category}
+        // Hermes 没有 OAuth-only 的免 key 官方供应商：即便是 official 预设
+        // （如 Nous Research）也需用户自填 key，故不让 official 禁用输入框。
+        category={category === "official" ? undefined : category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
@@ -415,7 +417,7 @@ export function HermesFormFields({
                           handleModelChange(index, "id", e.target.value)
                         }
                         placeholder={t("hermes.form.modelIdPlaceholder", {
-                          defaultValue: "anthropic/claude-opus-4-7",
+                          defaultValue: "anthropic/claude-opus-4-8",
                         })}
                         className="flex-1"
                       />
@@ -471,7 +473,7 @@ export function HermesFormFields({
                         handleModelChange(index, "name", e.target.value)
                       }
                       placeholder={t("hermes.form.modelNamePlaceholder", {
-                        defaultValue: "Claude Opus 4.7",
+                        defaultValue: "Claude Opus 4.8",
                       })}
                     />
                   </div>

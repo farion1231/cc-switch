@@ -380,7 +380,7 @@ mod tests {
 # Comment line
 GOOGLE_GEMINI_BASE_URL=https://example.com
 GEMINI_API_KEY=sk-test123
-GEMINI_MODEL=gemini-3-pro-preview
+GEMINI_MODEL=gemini-3.5-flash
 
 # Another comment
 "#;
@@ -395,7 +395,7 @@ GEMINI_MODEL=gemini-3-pro-preview
         assert_eq!(map.get("GEMINI_API_KEY"), Some(&"sk-test123".to_string()));
         assert_eq!(
             map.get("GEMINI_MODEL"),
-            Some(&"gemini-3-pro-preview".to_string())
+            Some(&"gemini-3.5-flash".to_string())
         );
     }
 
@@ -403,15 +403,12 @@ GEMINI_MODEL=gemini-3-pro-preview
     fn test_serialize_env_file() {
         let mut map = HashMap::new();
         map.insert("GEMINI_API_KEY".to_string(), "sk-test".to_string());
-        map.insert(
-            "GEMINI_MODEL".to_string(),
-            "gemini-3-pro-preview".to_string(),
-        );
+        map.insert("GEMINI_MODEL".to_string(), "gemini-3.5-flash".to_string());
 
         let content = serialize_env_file(&map);
 
         assert!(content.contains("GEMINI_API_KEY=sk-test"));
-        assert!(content.contains("GEMINI_MODEL=gemini-3-pro-preview"));
+        assert!(content.contains("GEMINI_MODEL=gemini-3.5-flash"));
     }
 
     #[test]
@@ -435,7 +432,7 @@ GEMINI_MODEL=gemini-3-pro-preview
 # Comment line
 GOOGLE_GEMINI_BASE_URL=https://example.com
 GEMINI_API_KEY=sk-test123
-GEMINI_MODEL=gemini-3-pro-preview
+GEMINI_MODEL=gemini-3.5-flash
 
 # Another comment
 "#;
@@ -452,7 +449,7 @@ GEMINI_MODEL=gemini-3-pro-preview
         assert_eq!(map.get("GEMINI_API_KEY"), Some(&"sk-test123".to_string()));
         assert_eq!(
             map.get("GEMINI_MODEL"),
-            Some(&"gemini-3-pro-preview".to_string())
+            Some(&"gemini-3.5-flash".to_string())
         );
     }
 
@@ -619,7 +616,7 @@ KEY_WITH-DASH=value";
         let settings = serde_json::json!({
             "env": {
                 "GEMINI_API_KEY": "sk-test123",
-                "GEMINI_MODEL": "gemini-3-pro-preview"
+                "GEMINI_MODEL": "gemini-3.5-flash"
             }
         });
 
@@ -632,7 +629,7 @@ KEY_WITH-DASH=value";
         // 测试缺少 API Key 的非空配置在基本验证中可以通过（用户稍后填写）
         let settings = serde_json::json!({
             "env": {
-                "GEMINI_MODEL": "gemini-3-pro-preview"
+                "GEMINI_MODEL": "gemini-3.5-flash"
             }
         });
 

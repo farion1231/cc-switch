@@ -9,8 +9,12 @@
 //! a direct (non-proxied) CLI request.
 
 use super::{
-    failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
-    provider_router::ProviderRouter, providers::gemini_shadow::GeminiShadowStore, types::*,
+    failover_switch::FailoverSwitchManager,
+    handlers,
+    log_codes::srv as log_srv,
+    provider_router::ProviderRouter,
+    providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    types::*,
     ProxyError,
 };
 use crate::database::Database;
@@ -38,6 +42,8 @@ pub struct ProxyState {
     pub provider_router: Arc<ProviderRouter>,
     /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
     pub gemini_shadow: Arc<GeminiShadowStore>,
+    /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
+    pub codex_chat_history: Arc<CodexChatHistoryStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -72,6 +78,7 @@ impl ProxyServer {
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
         };
@@ -105,11 +112,15 @@ impl ProxyServer {
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        let actual_port = local_addr.port();
 
-        log::info!("[{}] 代理服务器启动于 {addr}", log_srv::STARTED);
+        log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
         // 更新全局代理端口，用于系统代理检测
-        crate::proxy::http_client::set_proxy_port(self.config.listen_port);
+        crate::proxy::http_client::set_proxy_port(actual_port);
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -118,7 +129,7 @@ impl ProxyServer {
         let mut status = self.state.status.write().await;
         status.running = true;
         status.address = self.config.listen_address.clone();
-        status.port = self.config.listen_port;
+        status.port = actual_port;
         drop(status);
 
         // 记录启动时间
@@ -206,7 +217,7 @@ impl ProxyServer {
 
         Ok(ProxyServerInfo {
             address: self.config.listen_address.clone(),
-            port: self.config.listen_port,
+            port: actual_port,
             started_at: chrono::Utc::now().to_rfc3339(),
         })
     }
@@ -308,6 +319,9 @@ impl ProxyServer {
                 "/codex/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
+            // OpenAI Models API (Codex CLI reachability check)
+            .route("/models", get(handlers::handle_models))
+            .route("/v1/models", get(handlers::handle_models))
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
             .route("/responses", post(handlers::handle_responses))
             .route("/v1/responses", post(handlers::handle_responses))
