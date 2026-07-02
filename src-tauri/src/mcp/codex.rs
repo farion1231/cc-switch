@@ -338,8 +338,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
 
     // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
     let new_text = doc.to_string();
-    let path = crate::codex_config::get_codex_config_path();
-    crate::config::write_text_file(&path, &new_text)?;
+    crate::codex_config::write_codex_live_config_atomic(Some(&new_text))?;
     Ok(())
 }
 
@@ -396,7 +395,7 @@ pub fn sync_single_server_to_codex(
 
     // 写回文件
     let new_text = doc.to_string();
-    crate::config::write_text_file(&config_path, &new_text)?;
+    crate::codex_config::write_codex_live_config_atomic(Some(&new_text))?;
 
     Ok(())
 }
@@ -441,7 +440,7 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
 
     // 写回文件
     let new_text = doc.to_string();
-    crate::config::write_text_file(&config_path, &new_text)?;
+    crate::codex_config::write_codex_live_config_atomic(Some(&new_text))?;
 
     Ok(())
 }
@@ -677,4 +676,67 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
     }
 
     Ok(t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::collections::HashMap;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                std::env::set_var(self.key, previous);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn sync_enabled_to_codex_preserves_managed_header() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let _home = EnvVarGuard::set("CC_SWITCH_TEST_HOME", temp_home.path());
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        crate::codex_config::write_codex_live_config_atomic(Some("model = \"gpt-5\"\n"))
+            .expect("write codex config");
+
+        let mut config = MultiAppConfig::default();
+        let mut servers = HashMap::new();
+        servers.insert(
+            "local".to_string(),
+            json!({
+                "enabled": true,
+                "server": {
+                    "type": "stdio",
+                    "command": "node"
+                }
+            }),
+        );
+        config.mcp.codex = McpConfig { servers };
+
+        sync_enabled_to_codex(&config).expect("sync codex mcp");
+
+        let text = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read codex config");
+        assert!(text.starts_with("# [CC Switch Codex Config Instructions]"));
+        assert!(text.contains("model = \"gpt-5\""));
+        assert!(text.contains("[mcp_servers.local]"));
+    }
 }
