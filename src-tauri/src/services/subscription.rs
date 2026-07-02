@@ -325,13 +325,14 @@ const KNOWN_TIERS: &[&str] = &[
 ];
 
 /// 查询 Claude 官方订阅额度
-async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
+pub(crate) async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
     let client = crate::proxy::http_client::get();
 
     let resp = client
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {access_token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
+        .header("User-Agent", "claude-code/2.0.0")
         .header("Accept", "application/json")
         .timeout(std::time::Duration::from_secs(15))
         .send()

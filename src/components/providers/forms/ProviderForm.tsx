@@ -534,6 +534,12 @@ function ProviderFormFull({
   // Codex OAuth 认证状态（ChatGPT Plus/Pro 反代）
   const { isAuthenticated: isCodexOauthAuthenticated } = useCodexOauth();
 
+  // 选中的 Claude 官方账号快照 ID（多账号支持）
+  const [selectedClaudeOfficialAccountId, setSelectedClaudeOfficialAccountId] =
+    useState<string | null>(() =>
+      resolveManagedAccountId(initialData?.meta, "claude_official"),
+    );
+
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -1259,9 +1265,18 @@ function ProviderFormFull({
       templatePreset?.providerType === "github_copilot" ||
       initialData?.meta?.providerType === "github_copilot" ||
       baseUrl.includes("githubcopilot.com");
+    const isClaudeOfficialProvider =
+      templatePreset?.providerType === "claude_official" ||
+      initialData?.meta?.providerType === "claude_official";
     const isCodexOauthProvider =
       templatePreset?.providerType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
+
+    const claudeOfficialAccountId = selectedClaudeOfficialAccountId?.trim();
+    if (isClaudeOfficialProvider && !claudeOfficialAccountId) {
+      toast.error("请先保存并选择一个 Claude 官方账号快照");
+      return;
+    }
 
     let settingsConfig: string;
 
@@ -1450,19 +1465,25 @@ function ProviderFormFull({
       claudeDesktopMode: undefined,
       // 保存 providerType（用于识别 Copilot / Codex OAuth 等特殊供应商）
       providerType,
-      authBinding: isCopilotProvider
+      authBinding: isClaudeOfficialProvider
         ? {
             source: "managed_account",
-            authProvider: "github_copilot",
-            accountId: selectedGitHubAccountId ?? undefined,
+            authProvider: "claude_official",
+            accountId: claudeOfficialAccountId,
           }
-        : isCodexOauthProvider
+        : isCopilotProvider
           ? {
               source: "managed_account",
-              authProvider: "codex_oauth",
-              accountId: selectedCodexAccountId ?? undefined,
+              authProvider: "github_copilot",
+              accountId: selectedGitHubAccountId ?? undefined,
             }
-          : undefined,
+          : isCodexOauthProvider
+            ? {
+                source: "managed_account",
+                authProvider: "codex_oauth",
+                accountId: selectedCodexAccountId ?? undefined,
+              }
+            : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -2049,6 +2070,10 @@ function ProviderFormFull({
               websiteUrl={claudeWebsiteUrl}
               isPartner={isClaudePartner}
               partnerPromotionKey={claudePartnerPromotionKey}
+              isClaudeOfficialPreset={
+                templatePreset?.providerType === "claude_official" ||
+                initialData?.meta?.providerType === "claude_official"
+              }
               isCopilotPreset={
                 templatePreset?.providerType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
@@ -2060,6 +2085,8 @@ function ProviderFormFull({
               }
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
+                templatePreset?.providerType === "claude_official" ||
+                initialData?.meta?.providerType === "claude_official" ||
                 templatePreset?.providerType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com") ||
@@ -2067,6 +2094,8 @@ function ProviderFormFull({
                 initialData?.meta?.providerType === "codex_oauth"
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
+              selectedClaudeOfficialAccountId={selectedClaudeOfficialAccountId}
+              onClaudeOfficialAccountSelect={setSelectedClaudeOfficialAccountId}
               selectedGitHubAccountId={selectedGitHubAccountId}
               onGitHubAccountSelect={setSelectedGitHubAccountId}
               isCodexOauthAuthenticated={isCodexOauthAuthenticated}

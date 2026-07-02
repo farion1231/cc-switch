@@ -741,6 +741,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Claude => {
             let path = get_claude_settings_path();
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let warnings = crate::claude_official_accounts::activate_provider_account(provider)?;
+            if !warnings.is_empty() {
+                log::warn!(
+                    "Claude official account activation completed with warnings: {}",
+                    warnings.join(",")
+                );
+            }
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {

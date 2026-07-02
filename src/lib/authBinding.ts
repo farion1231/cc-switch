@@ -10,11 +10,13 @@ export function resolveManagedAccountId(
     binding?.source === "managed_account" &&
     binding.authProvider === authProvider
   ) {
-    return binding.accountId ?? null;
+    const accountId = binding.accountId?.trim();
+    return accountId ? accountId : null;
   }
 
   if (authProvider === "github_copilot") {
-    return meta?.githubAccountId ?? null;
+    const accountId = meta?.githubAccountId?.trim();
+    return accountId ? accountId : null;
   }
 
   return null;

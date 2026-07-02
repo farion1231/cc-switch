@@ -545,12 +545,22 @@ impl ProviderMeta {
             if binding.source == AuthBindingSource::ManagedAccount
                 && binding.auth_provider.as_deref() == Some(auth_provider)
             {
-                return binding.account_id.clone();
+                return binding
+                    .account_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|account_id| !account_id.is_empty())
+                    .map(ToString::to_string);
             }
         }
 
         if auth_provider == "github_copilot" {
-            return self.github_account_id.clone();
+            return self
+                .github_account_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|account_id| !account_id.is_empty())
+                .map(ToString::to_string);
         }
 
         None

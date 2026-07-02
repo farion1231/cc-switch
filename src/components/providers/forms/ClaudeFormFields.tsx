@@ -36,6 +36,7 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
+import { ClaudeOfficialAuthSection } from "./ClaudeOfficialAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -82,9 +83,12 @@ interface ClaudeFormFieldsProps {
   partnerPromotionKey?: string;
 
   // GitHub Copilot OAuth
+  isClaudeOfficialPreset?: boolean;
   isCopilotPreset?: boolean;
   usesOAuth?: boolean;
   isCopilotAuthenticated?: boolean;
+  selectedClaudeOfficialAccountId?: string | null;
+  onClaudeOfficialAccountSelect?: (accountId: string | null) => void;
   /** 当前选中的 GitHub 账号 ID（多账号支持） */
   selectedGitHubAccountId?: string | null;
   /** GitHub 账号选择回调（多账号支持） */
@@ -162,9 +166,12 @@ export function ClaudeFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
+  isClaudeOfficialPreset,
   isCopilotPreset,
   usesOAuth,
   isCopilotAuthenticated,
+  selectedClaudeOfficialAccountId,
+  onClaudeOfficialAccountSelect,
   selectedGitHubAccountId,
   onGitHubAccountSelect,
   isCodexOauthPreset,
@@ -587,6 +594,14 @@ export function ClaudeFormFields({
 
   return (
     <>
+      {/* Claude Official 本地账号快照 */}
+      {isClaudeOfficialPreset && (
+        <ClaudeOfficialAuthSection
+          selectedAccountId={selectedClaudeOfficialAccountId}
+          onAccountSelect={onClaudeOfficialAccountSelect}
+        />
+      )}
+
       {/* GitHub Copilot OAuth 认证 */}
       {isCopilotPreset && (
         <CopilotAuthSection
