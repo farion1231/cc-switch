@@ -676,8 +676,12 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_API_KEY: "",
       },
     },
-    // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
-    endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
+    // 请求地址候选（用于地址管理/测速）：默认 aihubmix.com，api.inferera.com 作备用网关（同后端、同 Key）
+    endpointCandidates: [
+      "https://aihubmix.com",
+      "https://api.aihubmix.com",
+      "https://api.inferera.com",
+    ],
     category: "aggregator",
     icon: "aihubmix",
     iconColor: "#006FFB",

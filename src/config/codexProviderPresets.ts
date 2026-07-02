@@ -1059,9 +1059,11 @@ requires_openai_auth = true`,
       "https://aihubmix.com/v1",
       "gpt-5.5",
     ),
+    // 默认 aihubmix.com，api.inferera.com 作备用网关（同后端、同 Key）
     endpointCandidates: [
       "https://aihubmix.com/v1",
       "https://api.aihubmix.com/v1",
+      "https://api.inferera.com/v1",
     ],
   },
   {
