@@ -1,5 +1,6 @@
 import { createRef } from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
@@ -116,5 +117,41 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+
+    const skillCheckbox = screen.getAllByRole("checkbox")[1];
+    expect(skillCheckbox).not.toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "skills.importSelected" }),
+    ).toBeDisabled();
+  });
+
+  it("selects and clears all skills from the select all checkbox", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<UnifiedSkillsPanelHandle>();
+
+    render(
+      <UnifiedSkillsPanel
+        ref={ref}
+        onOpenDiscovery={() => {}}
+        currentApp="claude"
+      />,
+    );
+
+    await act(async () => {
+      await ref.current?.openImport();
+    });
+
+    const selectAllCheckbox = await screen.findByRole("checkbox", {
+      name: "skills.selectAll",
+    });
+    const skillCheckbox = screen.getAllByRole("checkbox")[1];
+
+    await user.click(selectAllCheckbox);
+    expect(selectAllCheckbox).toBeChecked();
+    expect(skillCheckbox).toBeChecked();
+
+    await user.click(selectAllCheckbox);
+    expect(selectAllCheckbox).not.toBeChecked();
+    expect(skillCheckbox).not.toBeChecked();
   });
 });
