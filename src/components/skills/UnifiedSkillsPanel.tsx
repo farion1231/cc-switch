@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  CheckSquare,
   Sparkles,
   Trash2,
   ExternalLink,
@@ -9,6 +10,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
@@ -79,6 +81,12 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [isBatchUninstalling, setIsBatchUninstalling] = useState(false);
+  const batchUninstallingRef = useRef(false);
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -102,6 +110,16 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+
+  const selectedSkills = useMemo(() => {
+    if (!skills) return [];
+    return skills.filter((skill) => selectedSkillIds.has(skill.id));
+  }, [selectedSkillIds, skills]);
+
+  const allSkillsSelected =
+    skills && skills.length > 0
+      ? skills.every((skill) => selectedSkillIds.has(skill.id))
+      : false;
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -166,6 +184,97 @@ const UnifiedSkillsPanel = React.forwardRef<
           });
         } catch (error) {
           toast.error(t("common.error"), { description: String(error) });
+        }
+      },
+    });
+  };
+
+  const handleToggleSelectionMode = () => {
+    setSelectionMode((current) => {
+      if (current) {
+        setSelectedSkillIds(new Set());
+      }
+      return !current;
+    });
+  };
+
+  const handleToggleSkillSelection = (skillId: string) => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current);
+      if (next.has(skillId)) {
+        next.delete(skillId);
+      } else {
+        next.add(skillId);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    if (!skills) return;
+    setSelectedSkillIds(
+      allSkillsSelected ? new Set() : new Set(skills.map((skill) => skill.id)),
+    );
+  };
+
+  const handleBatchUninstall = () => {
+    if (selectedSkills.length === 0) return;
+
+    const targets = selectedSkills;
+    setConfirmDialog({
+      isOpen: true,
+      title: t("skills.batchUninstallConfirmTitle"),
+      message: t("skills.batchUninstallConfirm", { count: targets.length }),
+      confirmText: t("skills.batchUninstallConfirmAction"),
+      variant: "destructive",
+      onConfirm: async () => {
+        if (batchUninstallingRef.current) return;
+        batchUninstallingRef.current = true;
+        setIsBatchUninstalling(true);
+        let successCount = 0;
+        let failedCount = 0;
+
+        try {
+          for (const skill of targets) {
+            try {
+              const installName =
+                skill.directory.split(/[/\\]/).pop()?.toLowerCase() ||
+                skill.directory.toLowerCase();
+              const skillKey = `${installName}:${skill.repoOwner?.toLowerCase() || ""}:${skill.repoName?.toLowerCase() || ""}`;
+
+              await uninstallMutation.mutateAsync({
+                id: skill.id,
+                skillKey,
+              });
+              successCount++;
+            } catch (error) {
+              failedCount++;
+              console.error("Batch uninstall skill failed:", skill.id, error);
+            }
+          }
+
+          setConfirmDialog(null);
+
+          if (successCount > 0) {
+            toast.success(
+              t("skills.batchUninstallSuccess", { count: successCount }),
+              {
+                closeButton: true,
+              },
+            );
+          }
+          if (failedCount > 0) {
+            toast.error(
+              t("skills.batchUninstallFailed", { count: failedCount }),
+            );
+          }
+          setSelectedSkillIds(new Set());
+          if (failedCount === 0) {
+            setSelectionMode(false);
+          }
+        } finally {
+          batchUninstallingRef.current = false;
+          setIsBatchUninstalling(false);
         }
       },
     });
@@ -397,10 +506,84 @@ const UnifiedSkillsPanel = React.forwardRef<
               ? t("skills.checkingUpdates")
               : t("skills.checkUpdates")}
           </Button>
+          <Button
+            type="button"
+            variant={selectionMode ? "outline" : "ghost"}
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={handleToggleSelectionMode}
+            disabled={
+              isBatchUninstalling ||
+              uninstallMutation.isPending ||
+              !skills ||
+              skills.length === 0
+            }
+          >
+            <CheckSquare size={12} />
+            {selectionMode
+              ? t("skills.exitBatchMode")
+              : t("skills.batchManage")}
+          </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
+      {selectionMode && skills && skills.length > 0 && (
+        <div className="mt-3 grid gap-3 rounded-md border bg-muted/40 px-3 py-2.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline" className="text-xs">
+              {t("skills.selectedCount", { count: selectedSkills.length })}
+            </Badge>
+            <span className="truncate">{t("skills.batchModeHint")}</span>
+          </div>
+          <div className="grid gap-3 min-[520px]:grid-cols-[minmax(0,1fr)_auto] min-[520px]:items-center">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2.5 text-xs whitespace-nowrap"
+                onClick={handleToggleSelectAll}
+              >
+                {allSkillsSelected
+                  ? t("skills.clearSelection")
+                  : t("skills.selectAll")}
+              </Button>
+              {selectedSkillIds.size > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs whitespace-nowrap"
+                  onClick={() => setSelectedSkillIds(new Set())}
+                >
+                  {t("skills.clearSelection")}
+                </Button>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              className="h-7 gap-1.5 px-2.5 whitespace-nowrap justify-self-start min-[520px]:justify-self-end"
+              onClick={handleBatchUninstall}
+              disabled={
+                isBatchUninstalling ||
+                uninstallMutation.isPending ||
+                selectedSkills.length === 0
+              }
+            >
+              {isBatchUninstalling ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Trash2 size={12} />
+              )}
+              {isBatchUninstalling
+                ? t("skills.batchUninstalling")
+                : t("skills.deleteSelected", { count: selectedSkills.length })}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24 mt-3">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("skills.loading")}
@@ -432,6 +615,9 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
+                  selectionMode={selectionMode}
+                  selected={selectedSkillIds.has(skill.id)}
+                  onToggleSelection={() => handleToggleSkillSelection(skill.id)}
                   isLast={index === skills.length - 1}
                 />
               ))}
@@ -485,6 +671,9 @@ interface InstalledSkillListItemProps {
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelection?: () => void;
   isLast?: boolean;
 }
 
@@ -495,6 +684,9 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   onToggleApp,
   onUninstall,
   onUpdate,
+  selectionMode = false,
+  selected = false,
+  onToggleSelection,
   isLast,
 }) => {
   const { t } = useTranslation();
@@ -517,6 +709,13 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
   return (
     <ListItemRow isLast={isLast}>
+      {selectionMode && (
+        <Checkbox
+          checked={selected}
+          onCheckedChange={onToggleSelection}
+          aria-label={t("skills.selectSkill", { name: skill.name })}
+        />
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="font-medium text-sm text-foreground truncate">
@@ -553,17 +752,19 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         )}
       </div>
 
-      <AppToggleGroup
-        apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
-        appIds={SKILLS_APP_IDS}
-      />
+      {!selectionMode && (
+        <AppToggleGroup
+          apps={skill.apps}
+          onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+          appIds={SKILLS_APP_IDS}
+        />
+      )}
 
       <div
         className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={hasUpdate ? { opacity: 1 } : undefined}
+        style={hasUpdate || selectionMode ? { opacity: 1 } : undefined}
       >
-        {hasUpdate && onUpdate && (
+        {hasUpdate && onUpdate && !selectionMode && (
           <Button
             type="button"
             variant="ghost"
@@ -580,16 +781,18 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             )}
           </Button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
-          onClick={onUninstall}
-          title={t("skills.uninstall")}
-        >
-          <Trash2 size={14} />
-        </Button>
+        {!selectionMode && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+            onClick={onUninstall}
+            title={t("skills.uninstall")}
+          >
+            <Trash2 size={14} />
+          </Button>
+        )}
       </div>
     </ListItemRow>
   );
