@@ -196,6 +196,25 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 跨应用复制供应商配置
+   * @param sourceApp 源应用
+   * @param providerId 供应商 ID
+   * @param targetApps 目标应用列表
+   * @returns 成功复制的数量
+   */
+  async copyToApps(
+    sourceApp: AppId,
+    providerId: string,
+    targetApps: AppId[],
+  ): Promise<number> {
+    return await invoke("copy_provider_to_apps", {
+      sourceApp,
+      providerId,
+      targetApps,
+    });
+  },
 };
 
 // ============================================================================

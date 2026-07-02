@@ -854,6 +854,57 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
 }
 
 // ============================================================================
+// 跨应用复制供应商
+// ============================================================================
+
+#[tauri::command]
+pub fn copy_provider_to_apps(
+    state: State<'_, AppState>,
+    source_app: String,
+    provider_id: String,
+    target_apps: Vec<String>,
+) -> Result<usize, String> {
+    let source_app_type = AppType::from_str(&source_app).map_err(|e| e.to_string())?;
+
+    // 获取源供应商
+    let providers = ProviderService::list(state.inner(), source_app_type.clone())
+        .map_err(|e| e.to_string())?;
+    let source_provider = providers
+        .get(&provider_id)
+        .ok_or_else(|| format!("Provider {} not found in {}", provider_id, source_app))?;
+
+    let mut copied_count = 0;
+
+    // 复制到每个目标应用
+    for target_app in target_apps {
+        let target_app_type = AppType::from_str(&target_app).map_err(|e| e.to_string())?;
+
+        // 生成新的 ID（避免冲突）
+        let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or(""));
+
+        // 克隆供应商配置
+        let mut new_provider = source_provider.clone();
+        new_provider.id = new_id;
+        new_provider.created_at = Some(chrono::Utc::now().timestamp_millis());
+
+        // 添加到目标应用
+        match ProviderService::add(
+            state.inner(),
+            target_app_type,
+            new_provider,
+            false, // 不自动添加到 live 配置
+        ) {
+            Ok(_) => copied_count += 1,
+            Err(e) => {
+                eprintln!("Failed to copy provider to {}: {}", target_app, e);
+            }
+        }
+    }
+
+    Ok(copied_count)
+}
+
+// ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
 

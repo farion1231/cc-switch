@@ -32,6 +32,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { CopyToAppsDialog } from "@/components/providers/CopyToAppsDialog";
 import {
   useAutoFailoverEnabled,
   useFailoverQueue,
@@ -175,6 +176,62 @@ export function ProviderList({
       return failoverQueue.some((item) => item.providerId === providerId);
     },
     [isFailoverModeActive, failoverQueue],
+  );
+
+  // 跨应用复制对话框状态
+  const [copyDialogState, setCopyDialogState] = useState<{
+    isOpen: boolean;
+    provider: Provider | null;
+  }>({ isOpen: false, provider: null });
+
+  const queryClient = useQueryClient();
+
+  // 打开复制对话框
+  const handleOpenCopyDialog = useCallback((provider: Provider) => {
+    setCopyDialogState({ isOpen: true, provider });
+  }, []);
+
+  // 关闭复制对话框
+  const handleCloseCopyDialog = useCallback(() => {
+    setCopyDialogState({ isOpen: false, provider: null });
+  }, []);
+
+  // 执行跨应用复制
+  const handleCopyToApps = useCallback(
+    async (targetApps: AppId[]) => {
+      if (!copyDialogState.provider) return;
+
+      try {
+        const count = await providersApi.copyToApps(
+          appId,
+          copyDialogState.provider.id,
+          targetApps,
+        );
+
+        toast.success(
+          t("provider.copyToApps.success", {
+            defaultValue: `已成功复制到 ${count} 个应用`,
+            count,
+          }),
+        );
+
+        // 刷新所有应用的供应商列表
+        targetApps.forEach((targetApp) => {
+          queryClient.invalidateQueries({
+            queryKey: ["providers", targetApp],
+          });
+        });
+      } catch (error) {
+        console.error("Failed to copy provider to apps:", error);
+        toast.error(
+          t("provider.copyToApps.error", {
+            defaultValue: "复制供应商失败",
+          }),
+        );
+        throw error;
+      }
+    },
+    [appId, copyDialogState.provider, queryClient, t],
   );
 
   const handleToggleFailover = useCallback(
@@ -532,6 +589,17 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+
+      {/* 跨应用复制对话框 */}
+      {copyDialogState.provider && (
+        <CopyToAppsDialog
+          isOpen={copyDialogState.isOpen}
+          onClose={handleCloseCopyDialog}
+          provider={copyDialogState.provider}
+          sourceApp={appId}
+          onCopy={handleCopyToApps}
+        />
+      )}
     </div>
   );
 }
@@ -626,6 +694,7 @@ function SortableProviderCard({
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
+        onCopyToApps={handleOpenCopyDialog}
         onConfigureUsage={
           onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
         }
