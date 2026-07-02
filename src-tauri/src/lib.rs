@@ -69,6 +69,97 @@ use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
+const SKILL_REPO_INITIALIZATION_PENDING_FILE: &str = "skills-default-repos.pending";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkillRepoInitializationPending {
+    None,
+    FreshInstall,
+    JsonMigration,
+}
+
+impl SkillRepoInitializationPending {
+    fn as_str(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::FreshInstall => Some("fresh-install"),
+            Self::JsonMigration => Some("json-migration"),
+        }
+    }
+
+    fn parse(value: &str) -> Self {
+        match value.trim() {
+            "fresh-install" => Self::FreshInstall,
+            "json-migration" => Self::JsonMigration,
+            _ => Self::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkillRepoStartupAction {
+    SeedDefaults,
+    MarkExisting,
+    MigrateJson,
+    Skip,
+}
+
+fn decide_skill_repo_startup(
+    database_existed: bool,
+    has_json: bool,
+    pending: SkillRepoInitializationPending,
+    initialized: bool,
+) -> SkillRepoStartupAction {
+    if initialized {
+        return SkillRepoStartupAction::Skip;
+    }
+
+    match pending {
+        SkillRepoInitializationPending::FreshInstall => SkillRepoStartupAction::SeedDefaults,
+        SkillRepoInitializationPending::JsonMigration if has_json => {
+            SkillRepoStartupAction::MigrateJson
+        }
+        SkillRepoInitializationPending::JsonMigration => SkillRepoStartupAction::MarkExisting,
+        SkillRepoInitializationPending::None if !database_existed && has_json => {
+            SkillRepoStartupAction::MigrateJson
+        }
+        SkillRepoInitializationPending::None if !database_existed => {
+            SkillRepoStartupAction::SeedDefaults
+        }
+        SkillRepoInitializationPending::None => SkillRepoStartupAction::MarkExisting,
+    }
+}
+
+fn load_skill_repo_initialization_pending(
+    path: &std::path::Path,
+) -> Result<SkillRepoInitializationPending, AppError> {
+    match std::fs::read_to_string(path) {
+        Ok(value) => Ok(SkillRepoInitializationPending::parse(&value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(SkillRepoInitializationPending::None)
+        }
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn persist_skill_repo_initialization_pending(
+    path: &std::path::Path,
+    pending: SkillRepoInitializationPending,
+) -> Result<(), AppError> {
+    let value = pending
+        .as_str()
+        .ok_or_else(|| AppError::Config("Cannot persist an empty pending state".to_string()))?;
+    crate::config::atomic_write(path, value.as_bytes())
+}
+
+fn clear_skill_repo_initialization_pending(path: &std::path::Path) -> Result<(), AppError> {
+    match std::fs::remove_file(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
     let app_id = app.config().identifier.clone();
@@ -374,14 +465,34 @@ pub fn run() {
             let app_config_dir = crate::config::get_app_config_dir();
             let db_path = app_config_dir.join("cc-switch.db");
             let json_path = app_config_dir.join("config.json");
+            let skill_repo_pending_path =
+                app_config_dir.join(SKILL_REPO_INITIALIZATION_PENDING_FILE);
 
             // 检查是否需要从 config.json 迁移到 SQLite
             let has_json = json_path.exists();
             let has_db = db_path.exists();
+            let mut skill_repo_pending =
+                load_skill_repo_initialization_pending(&skill_repo_pending_path)?;
+            if !has_db && skill_repo_pending == SkillRepoInitializationPending::None {
+                skill_repo_pending = if has_json {
+                    SkillRepoInitializationPending::JsonMigration
+                } else {
+                    SkillRepoInitializationPending::FreshInstall
+                };
+                // 必须在创建数据库之前落盘。若随后进程中断，下次启动仍能区分
+                // “未完成的新安装”与“已有数据库”，不会永久漏掉默认仓库。
+                persist_skill_repo_initialization_pending(
+                    &skill_repo_pending_path,
+                    skill_repo_pending,
+                )?;
+            }
 
-            // 如果需要迁移，先验证 config.json 是否可以加载（在创建数据库之前）
-            // 这样如果加载失败用户选择退出，数据库文件还没被创建，下次可以正常重试
-            let migration_config = if !has_db && has_json {
+            // JSON 迁移 pending 会跨启动保留，因此即使数据库已在上次失败启动中
+            // 创建，本次仍会重新加载旧配置并继续迁移。
+            let migration_config = if skill_repo_pending
+                == SkillRepoInitializationPending::JsonMigration
+                && has_json
+            {
                 log::info!("检测到旧版配置文件，验证配置文件...");
 
                 // 循环：支持用户重试加载配置文件
@@ -395,7 +506,7 @@ pub fn run() {
                             log::error!("加载旧配置文件失败: {e}");
                             // 弹出系统对话框让用户选择
                             if !show_migration_error_dialog(app.handle(), &e.to_string()) {
-                                // 用户选择退出（此时数据库还没创建，下次启动可以重试）
+                                // 用户选择退出（pending 已落盘，下次启动可以重试）
                                 log::info!("用户选择退出程序");
                                 std::process::exit(1);
                             }
@@ -459,26 +570,95 @@ pub fn run() {
                 }
             };
 
-            // 如果有预加载的配置，执行迁移
-            if let Some(config) = migration_config {
-                log::info!("开始执行数据迁移...");
+            let skill_repo_initialized = db.default_skill_repos_initialized()?;
+            let skill_repo_action = decide_skill_repo_startup(
+                has_db,
+                has_json,
+                skill_repo_pending,
+                skill_repo_initialized,
+            );
 
-                match db.migrate_from_json(&config) {
-                    Ok(_) => {
-                        log::info!("✓ 配置迁移成功");
-                        // 标记迁移成功，供前端显示 Toast
-                        crate::init_status::set_migration_success();
-                        // 归档旧配置文件（重命名而非删除，便于用户恢复）
-                        let archive_path = json_path.with_extension("json.migrated");
-                        if let Err(e) = std::fs::rename(&json_path, &archive_path) {
-                            log::warn!("归档旧配置文件失败: {e}");
-                        } else {
-                            log::info!("✓ 旧配置已归档为 config.json.migrated");
+            match skill_repo_action {
+                SkillRepoStartupAction::SeedDefaults => {
+                    match db.init_default_skill_repos(true) {
+                        Ok(count) => {
+                            if count > 0 {
+                                log::info!("✓ Initialized {count} default skill repositories");
+                            }
+                            if let Err(error) =
+                                clear_skill_repo_initialization_pending(&skill_repo_pending_path)
+                            {
+                                log::warn!(
+                                    "Failed to clear Skill repository pending marker: {error}"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!("✗ Failed to initialize default skill repos: {error}");
                         }
                     }
-                    Err(e) => {
-                        // 配置加载成功但迁移失败的情况极少（磁盘满等），仅记录日志
-                        log::error!("配置迁移失败: {e}，将从现有配置导入");
+                }
+                SkillRepoStartupAction::MigrateJson => {
+                    if let Some(config) = migration_config {
+                        log::info!("开始执行数据迁移...");
+                        match db.migrate_from_json_and_mark_skill_repos_initialized(&config) {
+                            Ok(_) => {
+                                log::info!("✓ 配置迁移成功");
+                                crate::init_status::set_migration_success();
+                                if let Err(error) =
+                                    clear_skill_repo_initialization_pending(
+                                        &skill_repo_pending_path,
+                                    )
+                                {
+                                    log::warn!(
+                                        "Failed to clear Skill repository pending marker: {error}"
+                                    );
+                                }
+                                let archive_path = json_path.with_extension("json.migrated");
+                                if let Err(error) = std::fs::rename(&json_path, &archive_path) {
+                                    // SQLite marker 已经提交，因此即使归档失败，下次启动
+                                    // 也不会重新迁移旧 JSON。
+                                    log::warn!("归档旧配置文件失败: {error}");
+                                } else {
+                                    log::info!("✓ 旧配置已归档为 config.json.migrated");
+                                }
+                            }
+                            Err(error) => {
+                                // 保留 JSON 与 pending 文件，下次启动继续迁移。
+                                log::error!("配置迁移失败: {error}；下次启动将重试");
+                            }
+                        }
+                    }
+                }
+                SkillRepoStartupAction::MarkExisting => {
+                    match db.init_default_skill_repos(false) {
+                        Ok(_) => {
+                            if skill_repo_pending != SkillRepoInitializationPending::None {
+                                if let Err(error) =
+                                    clear_skill_repo_initialization_pending(
+                                        &skill_repo_pending_path,
+                                    )
+                                {
+                                    log::warn!(
+                                        "Failed to clear Skill repository pending marker: {error}"
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!("✗ Failed to mark default skill repos initialized: {error}");
+                        }
+                    }
+                }
+                SkillRepoStartupAction::Skip => {
+                    if skill_repo_pending != SkillRepoInitializationPending::None {
+                        if let Err(error) =
+                            clear_skill_repo_initialization_pending(&skill_repo_pending_path)
+                        {
+                            log::warn!(
+                                "Failed to clear stale Skill repository pending marker: {error}"
+                            );
+                        }
                     }
                 }
             }
@@ -492,16 +672,7 @@ pub fn run() {
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
             // ============================================================
 
-            // 1. 初始化默认 Skills 仓库（已有内置检查：表非空则跳过）
-            match app_state.db.init_default_skill_repos() {
-                Ok(count) if count > 0 => {
-                    log::info!("✓ Initialized {count} default skill repositories");
-                }
-                Ok(_) => {} // 表非空，静默跳过
-                Err(e) => log::warn!("✗ Failed to initialize default skill repos: {e}"),
-            }
-
-            // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
+            // 1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
             // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
             match app_state.db.get_setting("skills_ssot_migration_pending") {
                 Ok(Some(flag)) if flag == "true" || flag == "1" => {
@@ -2052,7 +2223,49 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_exit_request, ExitRequestAction};
+    use super::{
+        classify_exit_request, decide_skill_repo_startup, ExitRequestAction,
+        SkillRepoInitializationPending, SkillRepoStartupAction,
+    };
+
+    #[test]
+    fn interrupted_fresh_install_still_seeds_default_skill_repositories() {
+        assert_eq!(
+            decide_skill_repo_startup(
+                true,
+                false,
+                SkillRepoInitializationPending::FreshInstall,
+                false,
+            ),
+            SkillRepoStartupAction::SeedDefaults
+        );
+    }
+
+    #[test]
+    fn failed_json_migration_does_not_mark_repository_initialization_complete() {
+        assert_eq!(
+            decide_skill_repo_startup(
+                true,
+                true,
+                SkillRepoInitializationPending::JsonMigration,
+                false,
+            ),
+            SkillRepoStartupAction::MigrateJson
+        );
+    }
+
+    #[test]
+    fn missing_json_after_pending_migration_marks_existing_installation() {
+        assert_eq!(
+            decide_skill_repo_startup(
+                true,
+                false,
+                SkillRepoInitializationPending::JsonMigration,
+                false,
+            ),
+            SkillRepoStartupAction::MarkExisting
+        );
+    }
 
     #[test]
     fn no_code_keeps_app_alive_in_tray() {

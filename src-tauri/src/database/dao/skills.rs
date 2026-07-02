@@ -7,7 +7,7 @@
 //! - 实际文件存储在 ~/.cc-switch/skills/，同步到各应用目录
 
 use crate::app_config::{InstalledSkill, SkillApps};
-use crate::database::{lock_conn, Database};
+use crate::database::{lock_conn, Database, DEFAULT_SKILL_REPOS_INITIALIZED_KEY};
 use crate::error::AppError;
 use crate::services::skill::SkillRepo;
 use indexmap::IndexMap;
@@ -232,32 +232,120 @@ impl Database {
         Ok(())
     }
 
-    /// 初始化默认的 Skill 仓库（启动时调用，补充缺失的默认仓库）
-    pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
-        // 获取已有仓库列表
-        let existing = self.get_skill_repos()?;
-        let existing_keys: std::collections::HashSet<(String, String)> = existing
-            .iter()
-            .map(|r| (r.owner.clone(), r.name.clone()))
-            .collect();
+    /// 一次性初始化默认的 Skill 仓库。
+    ///
+    /// 全新安装时由启动流程传入 `seed_defaults = true` 写入默认仓库；已有安装
+    /// 或 JSON 迁移只记录初始化标记，不补回缺失仓库，避免用户删除的内置仓库
+    /// 在重启后恢复。
+    pub fn init_default_skill_repos(&self, seed_defaults: bool) -> Result<usize, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let initialized: bool = tx
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM settings
+                    WHERE key = ?1 AND value IN ('true', '1')
+                )",
+                params![DEFAULT_SKILL_REPOS_INITIALIZED_KEY],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if initialized {
+            return Ok(0);
+        }
 
-        // 获取默认仓库列表
-        let default_store = crate::services::skill::SkillStore::default();
         let mut count = 0;
-
-        // 仅插入缺失的默认仓库
-        for repo in &default_store.repos {
-            let key = (repo.owner.clone(), repo.name.clone());
-            if !existing_keys.contains(&key) {
-                self.save_skill_repo(repo)?;
-                count += 1;
-                log::info!("补充默认 Skill 仓库: {}/{}", repo.owner, repo.name);
+        if seed_defaults {
+            for repo in &crate::services::skill::SkillStore::default().repos {
+                let inserted = tx
+                    .execute(
+                        "INSERT OR IGNORE INTO skill_repos
+                         (owner, name, branch, enabled) VALUES (?1, ?2, ?3, ?4)",
+                        params![repo.owner, repo.name, repo.branch, repo.enabled],
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                count += inserted;
+                if inserted > 0 {
+                    log::info!("初始化默认 Skill 仓库: {}/{}", repo.owner, repo.name);
+                }
             }
         }
 
-        if count > 0 {
-            log::info!("补充默认 Skill 仓库完成，新增 {count} 个");
-        }
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+            params![DEFAULT_SKILL_REPOS_INITIALIZED_KEY],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("默认 Skill 仓库初始化状态已记录，新增 {count} 个仓库");
         Ok(count)
+    }
+
+    pub fn default_skill_repos_initialized(&self) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM settings
+                WHERE key = ?1 AND value IN ('true', '1')
+            )",
+            params![DEFAULT_SKILL_REPOS_INITIALIZED_KEY],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod default_skill_repo_tests {
+    use crate::database::Database;
+    use crate::services::skill::SkillStore;
+
+    #[test]
+    fn deleted_default_repository_is_not_restored_on_later_startup() {
+        let db = Database::memory().expect("memory db");
+        let default_repo = SkillStore::default()
+            .repos
+            .into_iter()
+            .next()
+            .expect("default repository");
+
+        db.init_default_skill_repos(true)
+            .expect("initialize default repositories");
+        db.delete_skill_repo(&default_repo.owner, &default_repo.name)
+            .expect("delete default repository");
+
+        let inserted = db
+            .init_default_skill_repos(true)
+            .expect("repeat startup initialization");
+        let repositories = db.get_skill_repos().expect("list repositories");
+
+        assert_eq!(inserted, 0);
+        assert!(
+            repositories.iter().all(|repo| {
+                !(repo.owner == default_repo.owner && repo.name == default_repo.name)
+            }),
+            "a repository explicitly deleted by the user must stay deleted"
+        );
+    }
+
+    #[test]
+    fn existing_installation_is_marked_without_injecting_default_repositories() {
+        let db = Database::memory().expect("memory db");
+
+        let inserted = db
+            .init_default_skill_repos(false)
+            .expect("mark existing installation");
+
+        assert_eq!(inserted, 0);
+        assert!(db
+            .get_skill_repos()
+            .expect("list existing repositories")
+            .is_empty());
+        assert!(db
+            .default_skill_repos_initialized()
+            .expect("read initialization marker"));
     }
 }

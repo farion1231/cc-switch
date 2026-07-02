@@ -2,7 +2,7 @@
 //!
 //! 将旧版 config.json (MultiAppConfig) 数据迁移到 SQLite 数据库。
 
-use super::{lock_conn, to_json_string, Database};
+use super::{lock_conn, to_json_string, Database, DEFAULT_SKILL_REPOS_INITIALIZED_KEY};
 use crate::app_config::MultiAppConfig;
 use crate::error::AppError;
 use rusqlite::{params, Connection};
@@ -10,12 +10,43 @@ use rusqlite::{params, Connection};
 impl Database {
     /// 从 MultiAppConfig 迁移数据到数据库
     pub fn migrate_from_json(&self, config: &MultiAppConfig) -> Result<(), AppError> {
+        self.migrate_from_json_transaction(config, |_| Ok(()))
+    }
+
+    /// 迁移旧 JSON 配置，并在同一事务中记录默认 Skill 仓库已初始化。
+    pub fn migrate_from_json_and_mark_skill_repos_initialized(
+        &self,
+        config: &MultiAppConfig,
+    ) -> Result<(), AppError> {
+        self.migrate_from_json_transaction(config, |tx| {
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+                params![DEFAULT_SKILL_REPOS_INITIALIZED_KEY],
+            )
+            .map_err(|e| {
+                AppError::Database(format!(
+                    "Mark default Skill repositories initialized failed: {e}"
+                ))
+            })?;
+            Ok(())
+        })
+    }
+
+    fn migrate_from_json_transaction<F>(
+        &self,
+        config: &MultiAppConfig,
+        finalize: F,
+    ) -> Result<(), AppError>
+    where
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<(), AppError>,
+    {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         Self::migrate_from_json_tx(&tx, config)?;
+        finalize(&tx)?;
 
         tx.commit()
             .map_err(|e| AppError::Database(format!("Commit migration failed: {e}")))?;
@@ -241,5 +272,52 @@ impl Database {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::skill::SkillRepo;
+
+    fn config_with_repository() -> MultiAppConfig {
+        let mut config = MultiAppConfig::default();
+        config.skills.repos = vec![SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        }];
+        config
+    }
+
+    #[test]
+    fn migration_and_repository_initialization_marker_commit_together() {
+        let db = Database::memory().expect("memory database");
+
+        db.migrate_from_json_and_mark_skill_repos_initialized(&config_with_repository())
+            .expect("migrate configuration");
+
+        assert_eq!(db.get_skill_repos().expect("read repositories").len(), 1);
+        assert!(db
+            .default_skill_repos_initialized()
+            .expect("read initialization marker"));
+    }
+
+    #[test]
+    fn failed_migration_finalizer_rolls_back_imported_data() {
+        let db = Database::memory().expect("memory database");
+
+        let result = db.migrate_from_json_transaction(&config_with_repository(), |_tx| {
+            Err(AppError::Database(
+                "simulated marker write failure".to_string(),
+            ))
+        });
+
+        assert!(result.is_err());
+        assert!(db.get_skill_repos().expect("read repositories").is_empty());
+        assert!(!db
+            .default_skill_repos_initialized()
+            .expect("read initialization marker"));
     }
 }
