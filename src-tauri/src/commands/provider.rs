@@ -905,6 +905,81 @@ pub fn copy_provider_to_apps(
 }
 
 // ============================================================================
+// 供应商配置导入导出
+// ============================================================================
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ProviderExport {
+    pub version: String,
+    pub exported_at: i64,
+    pub app_type: String,
+    pub providers: Vec<Provider>,
+}
+
+#[tauri::command]
+pub fn export_providers(
+    state: State<'_, AppState>,
+    app: String,
+    provider_ids: Vec<String>,
+) -> Result<String, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let all_providers = ProviderService::list(state.inner(), app_type.clone())
+        .map_err(|e| e.to_string())?;
+
+    let providers: Vec<Provider> = provider_ids
+        .iter()
+        .filter_map(|id| all_providers.get(id).cloned())
+        .collect();
+
+    if providers.is_empty() {
+        return Err("No providers to export".to_string());
+    }
+
+    let export = ProviderExport {
+        version: "1.0".to_string(),
+        exported_at: chrono::Utc::now().timestamp_millis(),
+        app_type: app,
+        providers,
+    };
+
+    serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn import_providers(
+    state: State<'_, AppState>,
+    app: String,
+    json_content: String,
+) -> Result<usize, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let export: ProviderExport = serde_json::from_str(&json_content)
+        .map_err(|e| format!("Failed to parse import file: {}", e))?;
+
+    let mut imported_count = 0;
+
+    for mut provider in export.providers {
+        // 生成新的 ID 避免冲突
+        let new_id = format!("{}-imported-{}", provider.id, uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or(""));
+        provider.id = new_id;
+        provider.created_at = Some(chrono::Utc::now().timestamp_millis());
+
+        match ProviderService::add(
+            state.inner(),
+            app_type.clone(),
+            provider,
+            false, // 不自动添加到 live 配置
+        ) {
+            Ok(_) => imported_count += 1,
+            Err(e) => {
+                eprintln!("Failed to import provider: {}", e);
+            }
+        }
+    }
+
+    Ok(imported_count)
+}
+
+// ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================
 

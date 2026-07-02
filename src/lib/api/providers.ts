@@ -215,6 +215,38 @@ export const providersApi = {
       targetApps,
     });
   },
+
+  /**
+   * 导出供应商配置为 JSON
+   * @param appId 应用 ID
+   * @param providerIds 要导出的供应商 ID 列表
+   * @returns JSON 字符串
+   */
+  async exportProviders(
+    appId: AppId,
+    providerIds: string[],
+  ): Promise<string> {
+    return await invoke("export_providers", {
+      app: appId,
+      providerIds,
+    });
+  },
+
+  /**
+   * 从 JSON 导入供应商配置
+   * @param appId 应用 ID
+   * @param jsonContent JSON 字符串
+   * @returns 成功导入的数量
+   */
+  async importProviders(
+    appId: AppId,
+    jsonContent: string,
+  ): Promise<number> {
+    return await invoke("import_providers", {
+      app: appId,
+      jsonContent,
+    });
+  },
 };
 
 // ============================================================================
