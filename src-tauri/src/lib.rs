@@ -1420,6 +1420,9 @@ pub fn run() {
             commands::get_opencode_live_provider_ids,
             // Cross-app provider copy
             commands::copy_provider_to_apps,
+            // Provider import/export
+            commands::export_providers,
+            commands::import_providers,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
