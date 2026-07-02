@@ -13,11 +13,14 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+const batchUninstallMock = vi.fn();
+const batchToggleAppMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    warning: vi.fn(),
     info: vi.fn(),
   },
 }));
@@ -73,6 +76,14 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useBatchUninstallSkills: () => ({
+    mutateAsync: batchUninstallMock,
+    isPending: false,
+  }),
+  useBatchToggleSkillApp: () => ({
+    mutateAsync: batchToggleAppMock,
+    isPending: false,
+  }),
 }));
 
 describe("UnifiedSkillsPanel", () => {
@@ -94,6 +105,8 @@ describe("UnifiedSkillsPanel", () => {
     installFromZipMock.mockReset();
     deleteSkillBackupMock.mockReset();
     restoreSkillBackupMock.mockReset();
+    batchUninstallMock.mockReset();
+    batchToggleAppMock.mockReset();
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
@@ -115,6 +128,36 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("skills.import")).toBeInTheDocument();
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
+    });
+  });
+
+  describe("batch management", () => {
+    it("shows batch manage button", async () => {
+      render(
+        <UnifiedSkillsPanel
+          onOpenDiscovery={() => {}}
+          currentApp="claude"
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("skills.batchManage")).toBeInTheDocument();
+      });
+    });
+
+    it("enters selection mode when batch manage button is clicked", async () => {
+      render(
+        <UnifiedSkillsPanel
+          onOpenDiscovery={() => {}}
+          currentApp="claude"
+        />,
+      );
+      const batchBtn = screen.getByText("skills.batchManage");
+      await act(async () => {
+        batchBtn.click();
+      });
+      await waitFor(() => {
+        expect(screen.getByText("skills.batchManageExit")).toBeInTheDocument();
+      });
     });
   });
 });

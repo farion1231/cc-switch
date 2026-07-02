@@ -30,3 +30,6 @@ copilot-api
 CODEBUDDY.md
 .github
 mainWindow.js
+docs/superpowers/
+docs/task_result/
+.vsconfig

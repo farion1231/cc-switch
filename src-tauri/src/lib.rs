@@ -52,7 +52,7 @@ pub use mcp::{
 };
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
-    skill::{migrate_skills_to_ssot, ImportSkillSelection},
+    skill::{migrate_skills_to_ssot, BatchSkillRequest, BatchSkillResult, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
@@ -1320,8 +1320,10 @@ pub fn run() {
             commands::delete_skill_backup,
             commands::install_skill_unified,
             commands::uninstall_skill_unified,
+            commands::batch_uninstall_skills,
             commands::restore_skill_backup,
             commands::toggle_skill_app,
+            commands::batch_toggle_skill_app,
             commands::scan_unmanaged_skills,
             commands::import_skills_from_apps,
             commands::discover_available_skills,

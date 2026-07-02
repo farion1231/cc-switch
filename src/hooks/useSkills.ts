@@ -143,6 +143,15 @@ export function useUninstallSkill() {
           });
         },
       );
+
+      // 从 updates 缓存中移除已卸载的 skill
+      queryClient.setQueryData<SkillUpdateInfo[]>(
+        ["skills", "updates"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((u) => u.id !== _vars.id);
+        },
+      );
     },
   });
 }
@@ -326,6 +335,79 @@ export function useUpdateSkill() {
         (oldData) => {
           if (!oldData) return oldData;
           return oldData.filter((u) => u.id !== updatedSkill.id);
+        },
+      );
+    },
+  });
+}
+
+// ========== 批量操作 ==========
+
+/**
+ * 批量卸载 Skills
+ * 成功后直接更新缓存，移除已卸载的 skill
+ */
+export function useBatchUninstallSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => skillsApi.batchUninstall(ids),
+    onSuccess: (results) => {
+      const succeededIds = new Set(
+        results.filter((r) => r.success).map((r) => r.id),
+      );
+      // 从 installed 缓存中移除成功删除的 skill
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((s) => !succeededIds.has(s.id));
+        },
+      );
+      // 从 updates 缓存中移除已删除的 skill
+      queryClient.setQueryData<SkillUpdateInfo[]>(
+        ["skills", "updates"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.filter((u) => !succeededIds.has(u.id));
+        },
+      );
+      // 刷新 discoverable 缓存（已删除的 skill 应标记为未安装）
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    },
+  });
+}
+
+/**
+ * 批量切换 Skills 的应用启用状态
+ * 成功后乐观更新缓存，与 useBatchUninstallSkills 策略一致
+ */
+export function useBatchToggleSkillApp() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ids,
+      app,
+      enabled,
+    }: {
+      ids: string[];
+      app: AppId;
+      enabled: boolean;
+    }) => skillsApi.batchToggleApp(ids, app, enabled),
+    onSuccess: (results, { app, enabled }) => {
+      const succeededIds = new Set(
+        results.filter((r) => r.success).map((r) => r.id),
+      );
+      // 乐观更新 installed 缓存中成功切换的 skill 的 apps 状态
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return oldData.map((s) => {
+            if (succeededIds.has(s.id)) {
+              return { ...s, apps: { ...s.apps, [app]: enabled } };
+            }
+            return s;
+          });
         },
       );
     },
