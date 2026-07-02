@@ -354,6 +354,128 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_switch_codex_preserves_codex_desktop_owned_sections() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({ "OPENAI_API_KEY": "legacy-key" });
+    let live_config = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[plugins."superpowers@openai-api-curated"]
+enabled = true
+
+[marketplaces."openai-api-curated"]
+enabled = true
+
+[desktop]
+localeOverride = "zh-CN"
+
+[projects."/tmp/codex-workspace"]
+trust_level = "trusted"
+"#;
+    write_codex_live_atomic(&live_auth, Some(live_config)).expect("seed codex live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "old-provider".to_string();
+        manager.providers.insert(
+            "old-provider".to_string(),
+            Provider::with_id(
+                "old-provider".to_string(),
+                "RightCode".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "stale"},
+                    "config": live_config
+                }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "AiHubMix".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "fresh-key"},
+                    "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+                }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "new-provider")
+        .expect("switch provider should succeed");
+
+    let config_text =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    let parsed: toml::Value = toml::from_str(&config_text).expect("parse config.toml");
+
+    assert_eq!(
+        parsed.get("model_provider").and_then(|v| v.as_str()),
+        Some("aihubmix"),
+        "provider-owned routing must still switch to the selected provider"
+    );
+    assert_eq!(
+        parsed
+            .get("plugins")
+            .and_then(|v| v.get("superpowers@openai-api-curated"))
+            .and_then(|v| v.get("enabled"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "Codex Desktop plugin enablement should survive provider switching"
+    );
+    assert_eq!(
+        parsed
+            .get("marketplaces")
+            .and_then(|v| v.get("openai-api-curated"))
+            .and_then(|v| v.get("enabled"))
+            .and_then(|v| v.as_bool()),
+        Some(true),
+        "Codex Desktop marketplace config should survive provider switching"
+    );
+    assert_eq!(
+        parsed
+            .get("desktop")
+            .and_then(|v| v.get("localeOverride"))
+            .and_then(|v| v.as_str()),
+        Some("zh-CN"),
+        "Codex Desktop preferences should survive provider switching"
+    );
+    assert_eq!(
+        parsed
+            .get("projects")
+            .and_then(|v| v.get("/tmp/codex-workspace"))
+            .and_then(|v| v.get("trust_level"))
+            .and_then(|v| v.as_str()),
+        Some("trusted"),
+        "Codex project trust settings should survive provider switching"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
