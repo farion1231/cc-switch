@@ -407,12 +407,22 @@ pub fn transform_claude_request_for_api_format(
                 body,
                 preserve_reasoning_content,
             )?;
-            // Inject prompt_cache_key only if explicitly configured in meta
-            if let Some(key) = provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.prompt_cache_key.as_deref())
-            {
+            // 注入 prompt_cache_key 以提升缓存路由命中率。仅在以下两种情况注入，
+            // 避免向严格校验的 OpenAI 兼容服务（如 NVIDIA integrate API，见 #1919）
+            // 发送其不支持的字段而被 HTTP 400 拒绝：
+            //   1) 用户显式配置了 meta.prompt_cache_key（适用于任意 openai_chat provider）；
+            //   2) GitHub Copilot（first-party 端点，支持该字段）：使用会话派生 key，
+            //      使同一会话稳定路由到同一缓存分片，提升缓存命中率。
+            let cache_key_for_chat = if explicit_cache_key.is_some() || is_copilot {
+                cache_key
+            } else {
+                None
+            };
+            if let Some(key) = cache_key_for_chat {
+                log::debug!(
+                    "[Cache] OpenAI Chat prompt_cache_key source={cache_key_source}, provider={}, is_copilot={is_copilot}",
+                    provider.id
+                );
                 result["prompt_cache_key"] = serde_json::json!(key);
             }
             // 流式请求必须注入 stream_options.include_usage，否则 OpenAI 兼容上游
@@ -1947,6 +1957,70 @@ mod tests {
                 .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
+    }
+
+    // 回归（#1919）：Copilot Claude 模型走 openai_chat 时，应注入从
+    // metadata.user_id 派生的 session prompt_cache_key，使同一会话稳定命中缓存。
+    #[test]
+    fn test_transform_claude_request_for_api_format_copilot_openai_chat_injects_session_cache_key()
+    {
+        let provider = create_provider_with_meta(
+            json!({ "baseUrl": "https://api.githubcopilot.com", "env": {} }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            },
+        );
+        // Claude Code 风格会话标识：metadata.user_id 携带 _session_ 后缀
+        let body = json!({
+            "model": "claude-sonnet-4",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64,
+            "metadata": { "user_id": "user_abc_session_sess-XYZ-1234567890" }
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["prompt_cache_key"], "sess-XYZ-1234567890");
+    }
+
+    // 回归（#1919）：非 Copilot 的 openai_chat provider，即便有会话也不得注入
+    // prompt_cache_key，避免严格校验的 OpenAI 兼容服务（如 NVIDIA）返回 HTTP 400。
+    #[test]
+    fn test_transform_claude_request_for_api_format_non_copilot_openai_chat_omits_session_cache_key(
+    ) {
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://integrate.api.nvidia.com/v1",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "moonshotai/kimi-k2.5",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64
+        });
+
+        // 即使显式提供 session_id，非 Copilot 也不应注入 prompt_cache_key
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            Some("client-session-123"),
+            None,
+        )
+        .unwrap();
+
+        assert!(transformed.get("prompt_cache_key").is_none());
     }
 
     #[test]
