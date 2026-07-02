@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -762,6 +763,7 @@ impl SkillService {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            global_enabled: false,
         };
 
         // 保存到数据库
@@ -1100,6 +1102,7 @@ impl SkillService {
             installed_at: skill.installed_at,
             content_hash: new_hash,
             updated_at: chrono::Utc::now().timestamp(),
+            global_enabled: skill.global_enabled,
         };
 
         db.save_skill(&updated_skill)?;
@@ -1146,9 +1149,10 @@ impl SkillService {
         Ok(count)
     }
 
-    /// 迁移 Skill 存储位置（在两个 SSOT 目录间移动文件）
+    /// 迁移 Skill 存储位置（在两个 SSOT 目录间移动文件并重整）
     ///
     /// 安全策略：先移文件，后改设置。中途崩溃时设置仍指向旧目录。
+    /// 迁移完成后执行全量重整，确保两个目录最终与数据库状态一致。
     pub fn migrate_storage(
         db: &Arc<Database>,
         target: SkillStorageLocation,
@@ -1173,7 +1177,7 @@ impl SkillService {
         };
         fs::create_dir_all(&new_dir)?;
 
-        // 2. 逐个移动 skill 目录
+        // 2. 迁移数据库中已知的 skill 目录
         let skills = db.get_all_installed_skills()?;
         let mut result = MigrationResult {
             migrated_count: 0,
@@ -1212,7 +1216,12 @@ impl SkillService {
         // 3. 文件移动完成后才持久化设置
         crate::settings::set_skill_storage_location(target)?;
 
-        // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
+        // 4. 执行全量重整，清理旧 SSOT 中剩余的 stale 条目，刷新新模式需要的 symlink 布局
+        if let Err(e) = Self::reconcile_ssot_directories(db) {
+            result.errors.push(format!("reconcile failed: {e}"));
+        }
+
+        // 5. 刷新所有应用目录的 symlink（指向新 SSOT）
         for app in AppType::all() {
             let _ = Self::sync_to_app(db, &app);
         }
@@ -1355,6 +1364,18 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
+        let location = crate::settings::get_skill_storage_location();
+
+        // Unified 模式下，双扫描 Agent 无法独立控制
+        if location == SkillStorageLocation::Unified && app.scans_agents_skills_dir() {
+            return Err(anyhow::anyhow!(
+                "Unified 模式下，{} 原生扫描 ~/.agents/skills/，无法独立控制 Skill 开关 \
+                 (Cannot toggle {} individually in Unified mode)",
+                app.as_str(),
+                app.as_str()
+            ));
+        }
+
         // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
@@ -1378,6 +1399,299 @@ impl SkillService {
         Ok(())
     }
 
+    /// 切换 Skill 的全局启用状态（CcSwitch 模式）
+    ///
+    /// 启用时：根据 SyncMethod 配置将 skill 同步到 ~/.agents/skills/，
+    ///         使原生扫描该目录的 Agent 也能加载此 Skill
+    /// 禁用时：删除 ~/.agents/skills/ 下的对应条目
+    pub fn toggle_global(db: &Arc<Database>, id: &str, enabled: bool) -> Result<()> {
+        // Unified 模式下 SSOT 本身就是 ~/.agents/skills/，global 开关无意义；
+        // 若放行，sync 的 source 与 link_path 相同，会先删掉真实的 skill 目录。
+        let location = crate::settings::get_skill_storage_location();
+        if location == SkillStorageLocation::Unified {
+            return Err(anyhow!(
+                "Unified 模式下 ~/.agents/skills/ 本身即 SSOT，无需且不支持 global 开关"
+            ));
+        }
+
+        let skill = db
+            .get_installed_skill(id)?
+            .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
+
+        let agents_dir = dirs::home_dir()
+            .map(|h| h.join(".agents").join("skills"))
+            .ok_or_else(|| anyhow!("无法获取 HOME 目录"))?;
+
+        fs::create_dir_all(&agents_dir)?;
+
+        let dest = agents_dir.join(&skill.directory);
+
+        if enabled {
+            let ssot_dir = Self::get_ssot_dir()?;
+            let source = ssot_dir.join(&skill.directory);
+            if !source.exists() {
+                return Err(anyhow!(
+                    "Skill source directory not found: {}",
+                    source.display()
+                ));
+            }
+            Self::sync_skill_to_dir(&skill.directory, &dest)?;
+            log::info!("Skill {} 全局启用：同步到 {}", skill.name, dest.display());
+        } else {
+            if dest.exists() || Self::is_symlink(&dest) {
+                Self::remove_path(&dest)?;
+                log::info!("Skill {} 全局禁用：删除 {}", skill.name, dest.display());
+            }
+        }
+
+        db.update_skill_global_enabled(id, enabled)?;
+
+        Ok(())
+    }
+
+    /// 全量重整两个候选 SSOT 目录
+    ///
+    /// 该函数会对以下两个目录执行重整：
+    /// - ~/.cc-switch/skills/
+    /// - ~/.agents/skills/
+    ///
+    /// 重整逻辑：
+    /// 1. 扫描两个目录下的所有 skill 条目（包含 SKILL.md 的目录和指向 skill 的 symlink）
+    /// 2. 根据当前 SSOT 模式和数据库状态决定保留、删除、迁移或重建
+    /// 3. 重整完成后，对目标目录执行一次完整同步
+    pub fn reconcile_ssot_directories(db: &Arc<Database>) -> Result<()> {
+        let location = crate::settings::get_skill_storage_location();
+        let ssot_dir = Self::get_ssot_dir()?;
+
+        let agents_dir = match dirs::home_dir() {
+            Some(h) => h.join(".agents").join("skills"),
+            None => return Ok(()),
+        };
+
+        let skills = db.get_all_installed_skills()?;
+        let managed_dirs: HashSet<String> = skills.values().map(|s| s.directory.clone()).collect();
+
+        let ccswitch_dir = get_app_config_dir().join("skills");
+
+        // 确保两个目录都存在
+        fs::create_dir_all(&ccswitch_dir)?;
+        fs::create_dir_all(&agents_dir)?;
+
+        // 根据当前 SSOT 模式决定重整策略
+        match location {
+            SkillStorageLocation::CcSwitch => {
+                // CcSwitch 模式：~/.cc-switch/skills/ 是 SSOT
+                // ~/.agents/skills/ 应该只保留 global_enabled=true 的 symlink
+                Self::reconcile_ccswitch_mode(
+                    &ccswitch_dir,
+                    &agents_dir,
+                    &ssot_dir,
+                    &skills,
+                    &managed_dirs,
+                )?;
+            }
+            SkillStorageLocation::Unified => {
+                // Unified 模式：~/.agents/skills/ 是 SSOT
+                // ~/.cc-switch/skills/ 不应残留与当前状态冲突的 skill 目录或 symlink
+                Self::reconcile_unified_mode(
+                    &ccswitch_dir,
+                    &agents_dir,
+                    &ssot_dir,
+                    &skills,
+                    &managed_dirs,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// CcSwitch 模式下的重整
+    ///
+    /// - ~/.cc-switch/skills/ (SSOT): 保留所有数据库中的 skill 目录，清理不在数据库中的
+    /// - ~/.agents/skills/: 只保留 global_enabled=true 的 symlink 指向 SSOT
+    fn reconcile_ccswitch_mode(
+        ccswitch_dir: &Path,
+        agents_dir: &Path,
+        ssot_dir: &Path,
+        skills: &IndexMap<String, InstalledSkill>,
+        managed_dirs: &HashSet<String>,
+    ) -> Result<()> {
+        // 1. 重整 SSOT 目录 (~/.cc-switch/skills/)
+        // 删除不在数据库中的真实 skill 目录和指向 SSOT 的 symlink
+        if let Ok(entries) = fs::read_dir(ccswitch_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+
+                let is_managed = managed_dirs.contains(&dir_name);
+                let has_skill_md = path.join("SKILL.md").exists();
+                let is_skill_dir = has_skill_md && path.is_dir();
+                let is_ssot_symlink =
+                    path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
+
+                // 如果是 skill 目录但不在数据库中，删除
+                if is_skill_dir && !is_managed {
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 skill 目录: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                }
+                // 如果是指向 SSOT 的 symlink 但不在数据库中，删除
+                else if is_ssot_symlink && !is_managed {
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 symlink: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                }
+            }
+        }
+
+        // 2. 重整 ~/.agents/skills/ 目录
+        // 只保留 global_enabled=true 的 symlink
+        // 清理真实目录、非 SSOT symlink、以及 global_enabled=false 的 symlink
+        if let Ok(entries) = fs::read_dir(agents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+
+                let skill = skills.values().find(|s| s.directory == dir_name);
+                let is_global_enabled = skill.map(|s| s.global_enabled).unwrap_or(false);
+                let is_skill_dir = path.join("SKILL.md").exists() && path.is_dir();
+                let is_ssot_symlink =
+                    path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
+
+                // 真实 skill 目录：如果在 DB 中但 global_enabled=false，删除
+                // 不在 DB 中的不删除（可能是用户手动放置、尚未导入的 skill）
+                if is_skill_dir {
+                    if let Some(_s) = skill {
+                        if !is_global_enabled {
+                            log::info!("reconcile: 删除 agents_dir 中 global_enabled=false 的真实 skill 目录: {}", path.display());
+                            let _ = Self::remove_path(&path);
+                        }
+                    }
+                }
+                // SSOT symlink：如果 skill 不存在或 global_enabled=false，删除
+                else if is_ssot_symlink && !is_global_enabled {
+                    log::info!(
+                        "reconcile: 删除 agents_dir 中 global_enabled=false 的 symlink: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                }
+                // 其他文件/symlink：不处理，避免误删用户文件
+            }
+        }
+
+        // 3. 确保 global_enabled=true 的 skill 在 agents_dir 有正确的条目（按 SyncMethod）
+        for skill in skills.values() {
+            if !skill.global_enabled {
+                continue;
+            }
+            let dest = agents_dir.join(&skill.directory);
+            match Self::sync_skill_to_dir(&skill.directory, &dest) {
+                Ok(()) => log::info!("reconcile: 同步 global skill {}", dest.display()),
+                Err(e) => log::warn!("reconcile: 同步 global skill 失败 {}: {e}", dest.display()),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Unified 模式下的重整
+    ///
+    /// - ~/.agents/skills/ (SSOT): 保留所有数据库中的 skill 目录，清理不在数据库中的
+    /// - ~/.cc-switch/skills/: 不保留与当前状态冲突的 skill 目录或 symlink
+    fn reconcile_unified_mode(
+        ccswitch_dir: &Path,
+        agents_dir: &Path,
+        ssot_dir: &Path,
+        _skills: &IndexMap<String, InstalledSkill>,
+        managed_dirs: &HashSet<String>,
+    ) -> Result<()> {
+        // 1. 重整 SSOT 目录 (~/.agents/skills/)
+        // 删除不在数据库中的真实 skill 目录和指向 SSOT 的 symlink
+        if let Ok(entries) = fs::read_dir(agents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+
+                let is_managed = managed_dirs.contains(&dir_name);
+                let has_skill_md = path.join("SKILL.md").exists();
+                let is_skill_dir = has_skill_md && path.is_dir();
+                let is_ssot_symlink =
+                    path.is_symlink() && Self::is_symlink_to_ssot(&path, ssot_dir);
+
+                if is_skill_dir && !is_managed {
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 skill 目录: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                } else if is_ssot_symlink && !is_managed {
+                    log::info!(
+                        "reconcile: 删除 SSOT 中未管理的 symlink: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                }
+            }
+        }
+
+        // 2. 重整 ~/.cc-switch/skills/ 目录
+        // 清理所有 skill 目录和指向任一 SSOT 的 symlink（因为 Unified 模式下不应使用这里）
+        if let Ok(entries) = fs::read_dir(ccswitch_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+
+                let has_skill_md = path.join("SKILL.md").exists();
+                let is_skill_dir = has_skill_md && path.is_dir();
+                let is_ssot_symlink = path.is_symlink()
+                    && (Self::is_symlink_to_ssot(&path, ccswitch_dir)
+                        || Self::is_symlink_to_ssot(&path, agents_dir));
+
+                // 所有 skill 目录和指向 SSOT 的 symlink 都清理
+                if is_skill_dir || is_ssot_symlink {
+                    log::info!(
+                        "reconcile: 删除 ccswitch_dir 中冲突的条目: {}",
+                        path.display()
+                    );
+                    let _ = Self::remove_path(&path);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 自愈同步到 ~/.agents/skills/（增强版：全量对账两个候选 SSOT 目录）
+    ///
+    /// 根据数据库状态，对以下两个目录执行全量重整：
+    /// - ~/.cc-switch/skills/
+    /// - ~/.agents/skills/
+    ///
+    /// 重整逻辑：
+    /// - CcSwitch 模式：SSOT=~/.cc-switch/skills/，~/.agents/skills/ 只保留 global_enabled 的 symlink
+    /// - Unified 模式：SSOT=~/.agents/skills/，~/.cc-switch/skills/ 清理冲突条目
+    pub fn sync_to_agents_dir(db: &Arc<Database>) -> Result<()> {
+        Self::reconcile_ssot_directories(db)
+    }
+
     /// 扫描未管理的 Skills
     ///
     /// 扫描各应用目录，找出未被 CC Switch 管理的 Skills
@@ -1396,10 +1710,23 @@ impl SkillService {
             }
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
-            scan_sources.push((agents_dir, "agents".to_string()));
+            // 去重：如果 SSOT 就是 ~/.agents/skills/（Unified 模式），跳过单独扫描 agents 目录
+            if let Ok(ssot_dir) = Self::get_ssot_dir() {
+                if !Self::same_path(&ssot_dir, &agents_dir) {
+                    scan_sources.push((agents_dir, "agents".to_string()));
+                }
+            } else {
+                scan_sources.push((agents_dir, "agents".to_string()));
+            }
         }
         if let Ok(ssot_dir) = Self::get_ssot_dir() {
-            scan_sources.push((ssot_dir, "cc-switch".to_string()));
+            // 去重：如果 SSOT 已存在于 scan_sources 中，跳过重复添加
+            let already_has_ssot = scan_sources
+                .iter()
+                .any(|(d, _)| Self::same_path(d, &ssot_dir));
+            if !already_has_ssot {
+                scan_sources.push((ssot_dir, "cc-switch".to_string()));
+            }
         }
 
         let mut unmanaged: HashMap<String, UnmanagedSkill> = HashMap::new();
@@ -1444,6 +1771,7 @@ impl SkillService {
     /// 从应用目录导入 Skills
     ///
     /// 将未管理的 Skills 导入到 CC Switch 统一管理
+    /// 导入完成后触发全量重整，确保两个候选 SSOT 目录与数据库状态一致
     pub fn import_from_apps(
         db: &Arc<Database>,
         imports: Vec<ImportSkillSelection>,
@@ -1467,9 +1795,22 @@ impl SkillService {
             }
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
-            search_sources.push((agents_dir, "agents".to_string()));
+            // 去重：如果 SSOT 就是 ~/.agents/skills/（Unified 模式），跳过单独扫描 agents 目录
+            if let Ok(ssot_dir_ref) = Self::get_ssot_dir() {
+                if !Self::same_path(&ssot_dir_ref, &agents_dir) {
+                    search_sources.push((agents_dir, "agents".to_string()));
+                }
+            } else {
+                search_sources.push((agents_dir, "agents".to_string()));
+            }
         }
-        search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
+        // 去重：如果 SSOT 已存在于 search_sources 中，跳过重复添加
+        let already_has_ssot = search_sources
+            .iter()
+            .any(|(d, _)| Self::same_path(d, &ssot_dir));
+        if !already_has_ssot {
+            search_sources.push((ssot_dir.clone(), "cc-switch".to_string()));
+        }
 
         for selection in imports {
             let dir_name = selection.directory;
@@ -1499,11 +1840,41 @@ impl SkillService {
                 continue;
             }
 
-            // 复制到 SSOT
+            // 原子导入到 SSOT：先写入临时目录，再 rename 到目标位置
             let dest = ssot_dir.join(&dir_name);
-            if !dest.exists() {
-                Self::copy_dir_recursive(&source, &dest)?;
-            }
+            let did_import = if !dest.exists() {
+                // 同文件系统尝试 rename（原子操作），否则 temp copy + rename
+                if source
+                    .parent()
+                    .map(|p| p.starts_with(&ssot_dir))
+                    .unwrap_or(false)
+                {
+                    // 同一目录树：可直接 rename（原子操作）
+                    let _ = Self::remove_path(&dest);
+                    fs::rename(&source, &dest)?;
+                } else {
+                    // 跨文件系统或不同目录：临时目录 + rename
+                    let nonce = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos();
+                    let tmp = ssot_dir.join(format!(".{dir_name}.tmp-{}", nonce));
+                    if tmp.exists() || Self::is_symlink(&tmp) {
+                        Self::remove_path(&tmp)?;
+                    }
+                    if let Err(e) = Self::copy_dir_recursive(&source, &tmp) {
+                        let _ = Self::remove_path(&tmp);
+                        return Err(e);
+                    }
+                    fs::rename(&tmp, &dest)?;
+                }
+
+                // 成功后清理原文件（与 rename 同文件系统时原文件已消失，此处只处理跨文件系统残留）
+                let _ = Self::remove_path(&source);
+                true
+            } else {
+                false
+            };
 
             // 解析元数据
             let skill_md = dest.join("SKILL.md");
@@ -1534,12 +1905,27 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                global_enabled: false,
             };
 
             // 保存到数据库
             db.save_skill(&skill)?;
 
+            // 立即同步到 per-app 目录（跳过源所在目录，仅当本次真正写入 SSOT 时）
+            if did_import {
+                for app in AppType::all() {
+                    if skill.apps.is_enabled_for(&app) {
+                        let _ = Self::sync_to_app_dir(&skill.directory, &app);
+                    }
+                }
+            }
+
             imported.push(skill);
+        }
+
+        // 导入完成后触发全量重整，确保两个候选 SSOT 目录与数据库状态一致
+        if let Err(e) = Self::reconcile_ssot_directories(db) {
+            log::warn!("导入后重整失败: {}", e);
         }
 
         log::info!("成功导入 {} 个 Skills", imported.len());
@@ -1588,34 +1974,37 @@ impl SkillService {
             return Ok(());
         }
 
+        let app_dir = Self::get_app_skills_dir(app)?;
+        fs::create_dir_all(&app_dir)?;
+
+        let dest = app_dir.join(directory);
+        Self::sync_skill_to_dir(directory, &dest)
+    }
+
+    /// 将 SSOT 中的 skill 按当前 SyncMethod 写入到目标路径
+    fn sync_skill_to_dir(directory: &str, dest: &Path) -> Result<()> {
         let ssot_dir = Self::get_ssot_dir()?;
         let source = ssot_dir.join(directory);
 
         Self::validate_sync_source_dir(&source, directory)?;
 
-        let app_dir = Self::get_app_skills_dir(app)?;
-        fs::create_dir_all(&app_dir)?;
-
-        let dest = app_dir.join(directory);
-
         let sync_method = Self::get_sync_method();
 
         match sync_method {
             SyncMethod::Auto => {
-                if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, directory)?;
-                    log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
+                if dest.exists() && !Self::is_symlink(dest) {
+                    Self::replace_dest_with_copy(&source, dest, directory)?;
+                    log::debug!("Skill {directory} 已通过复制同步到 {}", dest.display());
                     return Ok(());
                 }
 
-                if Self::is_symlink(&dest) {
-                    Self::remove_path(&dest)?;
+                if Self::is_symlink(dest) {
+                    Self::remove_path(dest)?;
                 }
 
-                // 优先尝试 symlink
-                match Self::create_symlink(&source, &dest) {
+                match Self::create_symlink(&source, dest) {
                     Ok(()) => {
-                        log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
+                        log::debug!("Skill {directory} 已通过 symlink 同步到 {}", dest.display());
                         return Ok(());
                     }
                     Err(err) => {
@@ -1627,19 +2016,19 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
-                log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
+                Self::replace_dest_with_copy(&source, dest, directory)?;
+                log::debug!("Skill {directory} 已通过复制同步到 {}", dest.display());
             }
             SyncMethod::Symlink => {
-                if dest.exists() || Self::is_symlink(&dest) {
-                    Self::remove_path(&dest)?;
+                if dest.exists() || Self::is_symlink(dest) {
+                    Self::remove_path(dest)?;
                 }
-                Self::create_symlink(&source, &dest)?;
-                log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
+                log::debug!("Skill {directory} 已通过 symlink 同步到 {}", dest.display());
+                Self::create_symlink(&source, dest)?;
             }
             SyncMethod::Copy => {
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
-                log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
+                Self::replace_dest_with_copy(&source, dest, directory)?;
+                log::debug!("Skill {directory} 已通过复制同步到 {}", dest.display());
             }
         }
 
@@ -1727,6 +2116,13 @@ impl SkillService {
         Ok(())
     }
 
+    /// 比较两个路径是否指向同一个位置（规范化后比较）
+    fn same_path(a: &Path, b: &Path) -> bool {
+        let a_canonical = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+        let b_canonical = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+        a_canonical == b_canonical
+    }
+
     /// 判断路径是否为指向 SSOT 目录内的符号链接。
     fn is_symlink_to_ssot(path: &Path, ssot_dir: &Path) -> bool {
         if !Self::is_symlink(path) {
@@ -1774,6 +2170,12 @@ impl SkillService {
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
+        let location = crate::settings::get_skill_storage_location();
+        // Unified 模式下跳过双扫描 Agent（它们直接读取 ~/.agents/skills/）
+        if location == SkillStorageLocation::Unified && app.scans_agents_skills_dir() {
             return Ok(());
         }
 
@@ -2655,6 +3057,7 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                global_enabled: false,
             };
 
             // 保存到数据库
@@ -3042,6 +3445,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            global_enabled: false,
         };
 
         db.save_skill(&skill)?;

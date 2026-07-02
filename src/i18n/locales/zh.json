@@ -705,7 +705,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "技能存储在 ~/.cc-switch/skills/，由 CC Switch 统一管理并同步到各应用。",
-      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（Claude Code、Codex、Gemini CLI 等）可直接发现此目录中的技能。",
+      "unifiedHint": "技能存储在 ~/.agents/skills/，遵循 Agent Skills 开放标准。兼容的工具（OpenCode、Codex、Gemini CLI、OpenClaw 等）可直接发现此目录中的技能。",
       "confirmTitle": "迁移技能存储",
       "confirmMessage": "将移动 {{count}} 个技能到新位置，是否继续？",
       "migrationSuccess": "已成功迁移 {{count}} 个技能",
@@ -2272,7 +2272,10 @@
       "successSingle": "技能 {{name}} 已安装",
       "successMultiple": "成功安装 {{count}} 个技能",
       "noSkillsFound": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）"
-    }
+    },
+    "globalEnabled": "全局启用（通过 ~/.agents/skills/ 对所有 Agent 可见）",
+    "globalDisabled": "未全局启用（仅对显式启用的 Agent 可见）",
+    "lockedInUnified": "{{app}} 原生扫描 ~/.agents/skills/，在 Unified 模式下无法独立控制"
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",

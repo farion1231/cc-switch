@@ -6,10 +6,16 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
@@ -26,6 +32,7 @@ import {
   useUpdateSkill,
   type InstalledSkill,
   type SkillUpdateInfo,
+  useToggleSkillGlobal,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -43,6 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useSettings } from "@/hooks/useSettings";
 
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
@@ -88,6 +96,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useSkillBackups();
   const deleteBackupMutation = useDeleteSkillBackup();
   const toggleAppMutation = useToggleSkillApp();
+  const toggleGlobalMutation = useToggleSkillGlobal();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
   // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
@@ -102,6 +111,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const { settings } = useSettings();
+  const isCcSwitchMode = settings?.skillStorageLocation !== "unified";
+
+  const DUAL_SCAN_APPS: AppId[] = useMemo(
+    () => ["codex", "gemini", "opencode", "openclaw"],
+    [],
+  );
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -135,6 +151,14 @@ const UnifiedSkillsPanel = React.forwardRef<
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
       await toggleAppMutation.mutateAsync({ id, app, enabled });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleToggleGlobal = async (id: string, enabled: boolean) => {
+    try {
+      await toggleGlobalMutation.mutateAsync({ id, enabled });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
@@ -430,9 +454,12 @@ const UnifiedSkillsPanel = React.forwardRef<
                     updateSkillMutation.variables === skill.id
                   }
                   onToggleApp={handleToggleApp}
+                  onToggleGlobal={handleToggleGlobal}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
                   isLast={index === skills.length - 1}
+                  isCcSwitchMode={isCcSwitchMode}
+                  dualScanApps={DUAL_SCAN_APPS}
                 />
               ))}
             </div>
@@ -483,9 +510,12 @@ interface InstalledSkillListItemProps {
   hasUpdate?: boolean;
   isUpdating?: boolean;
   onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
+  onToggleGlobal: (id: string, enabled: boolean) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
   isLast?: boolean;
+  isCcSwitchMode?: boolean;
+  dualScanApps?: AppId[];
 }
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
@@ -493,9 +523,12 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   hasUpdate,
   isUpdating,
   onToggleApp,
+  onToggleGlobal,
   onUninstall,
   onUpdate,
   isLast,
+  isCcSwitchMode = false,
+  dualScanApps = [],
 }) => {
   const { t } = useTranslation();
 
@@ -553,10 +586,57 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         )}
       </div>
 
+      {isCcSwitchMode && (
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => onToggleGlobal(skill.id, !skill.globalEnabled)}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                  skill.globalEnabled
+                    ? "bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400"
+                    : "opacity-35 hover:opacity-70 text-muted-foreground"
+                }`}
+              >
+                <Globe size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>
+                {skill.globalEnabled
+                  ? t("skills.globalEnabled")
+                  : t("skills.globalDisabled")}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+
       <AppToggleGroup
         apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+        onToggle={(app, enabled) => {
+          const isLocked =
+            !isCcSwitchMode && dualScanApps.includes(app as AppId);
+          // In CcSwitch mode, dual-scan apps are locked if global is enabled
+          const isLockedInCcSwitch =
+            isCcSwitchMode &&
+            skill.globalEnabled &&
+            dualScanApps.includes(app as AppId);
+          if (isLocked || isLockedInCcSwitch) {
+            toast.info(t("skills.lockedInUnified", { app: app.toUpperCase() }));
+            return;
+          }
+          onToggleApp(skill.id, app, enabled);
+        }}
         appIds={SKILLS_APP_IDS}
+        lockedApps={
+          isCcSwitchMode
+            ? skill.globalEnabled
+              ? dualScanApps
+              : []
+            : dualScanApps
+        }
       />
 
       <div

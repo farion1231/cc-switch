@@ -705,7 +705,7 @@
       "ccSwitch": "CC Switch",
       "unified": "~/.agents/skills",
       "ccSwitchHint": "Skills are stored in ~/.cc-switch/skills/ and synced to each app via symlink or copy.",
-      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (Claude Code, Codex, Gemini CLI, etc.) discover skills here natively.",
+      "unifiedHint": "Skills are stored in ~/.agents/skills/, the Agent Skills open standard. Compatible tools (OpenCode, Codex, Gemini CLI, OpenClaw, etc.) discover skills here natively.",
       "confirmTitle": "Migrate Skill Storage",
       "confirmMessage": "{{count}} skill(s) will be moved to the new location. Continue?",
       "migrationSuccess": "Successfully migrated {{count}} skill(s)",
@@ -2272,7 +2272,10 @@
       "successSingle": "Skill {{name}} installed",
       "successMultiple": "Successfully installed {{count}} skills",
       "noSkillsFound": "No skills found in ZIP file (requires SKILL.md file)"
-    }
+    },
+    "globalEnabled": "Global (visible to all agents via ~/.agents/skills/)",
+    "globalDisabled": "Not global (only visible to explicitly enabled agents)",
+    "lockedInUnified": "{{app}} natively scans ~/.agents/skills/ and cannot be independently controlled in Unified mode"
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

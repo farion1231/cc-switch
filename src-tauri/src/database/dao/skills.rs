@@ -23,7 +23,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        enabled_hermes, installed_at, content_hash, updated_at
+                        enabled_hermes, installed_at, content_hash, updated_at, global_enabled
                  FROM skills ORDER BY name ASC",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -49,6 +49,7 @@ impl Database {
                     installed_at: row.get(13)?,
                     content_hash: row.get(14)?,
                     updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                    global_enabled: row.get::<_, bool>(16).unwrap_or(false),
                 })
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -68,7 +69,7 @@ impl Database {
             .prepare(
                 "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
                         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode,
-                        enabled_hermes, installed_at, content_hash, updated_at
+                        enabled_hermes, installed_at, content_hash, updated_at, global_enabled
                  FROM skills WHERE id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -93,6 +94,7 @@ impl Database {
                 installed_at: row.get(13)?,
                 content_hash: row.get(14)?,
                 updated_at: row.get::<_, i64>(15).unwrap_or(0),
+                global_enabled: row.get::<_, bool>(16).unwrap_or(false),
             })
         });
 
@@ -110,8 +112,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+              installed_at, content_hash, updated_at, global_enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 skill.id,
                 skill.name,
@@ -129,6 +131,7 @@ impl Database {
                 skill.installed_at,
                 skill.content_hash,
                 skill.updated_at,
+                skill.global_enabled,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -176,6 +179,22 @@ impl Database {
             .execute(
                 "UPDATE skills SET content_hash = ?1, updated_at = ?2 WHERE id = ?3",
                 params![content_hash, updated_at, id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected > 0)
+    }
+
+    /// 更新 Skill 的全局启用状态
+    pub fn update_skill_global_enabled(
+        &self,
+        id: &str,
+        global_enabled: bool,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE skills SET global_enabled = ?1 WHERE id = ?2",
+                params![global_enabled, id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

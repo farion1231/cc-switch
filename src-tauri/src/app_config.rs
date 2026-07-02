@@ -198,6 +198,9 @@ pub struct InstalledSkill {
     /// 最近更新时间（Unix 时间戳，0 = 从未更新）
     #[serde(default)]
     pub updated_at: i64,
+    /// 全局启用状态（CcSwitch 模式下写入 ~/.agents/skills/ 的开关）
+    #[serde(default)]
+    pub global_enabled: bool,
 }
 
 /// 未管理的 Skill（在应用目录中发现但未被 CC Switch 管理）
@@ -389,6 +392,17 @@ impl AppType {
             AppType::Hermes,
         ]
         .into_iter()
+    }
+
+    /// Check if this app natively scans ~/.agents/skills/
+    ///
+    /// These agents cannot be independently toggled in Unified mode because
+    /// they always load all skills from ~/.agents/skills/.
+    pub fn scans_agents_skills_dir(&self) -> bool {
+        matches!(
+            self,
+            AppType::OpenCode | AppType::Codex | AppType::Gemini | AppType::OpenClaw
+        )
     }
 }
 
