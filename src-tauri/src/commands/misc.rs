@@ -1571,6 +1571,26 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             std::path::PathBuf::from("C:\\Program Files\\nodejs"),
         );
         extend_windows_cli_manager_search_paths(&mut search_paths, &home);
+
+        // winget 安装的 CLI。winget 有两种导出方式：
+        // ① Links shim 模式：可执行 shim 集中在 `%LOCALAPPDATA%\Microsoft\WinGet\Links`，
+        //    winget 默认把该目录加进 PATH。
+        // ② 目录安装模式：每个包一个 `<publisher>_<source>` 子目录，包内直接放 .exe，
+        //    winget 把该 Packages 目录本身加进用户 PATH（而非 Links）。
+        // 两种模式都显式纳入搜索路径，避免依赖 GUI 进程是否继承到了用户级 PATH——
+        // Tauri GUI 应用启动时的 PATH 经常不含用户后加的 winget 条目。
+        if let Some(local_data) = dirs::data_local_dir() {
+            let winget_root = local_data.join("Microsoft").join("WinGet");
+            // ① Links shim 目录：直接作为 bin 目录加入。
+            push_unique_path(&mut search_paths, winget_root.join("Links"));
+            // ② Packages 模式：枚举每个 `<pkg>_<publisher>` 子目录，包内即 .exe 所在层。
+            //    遍历而非只盯 claude——未来其它工具发 winget 包时同样自动覆盖。
+            extend_existing_child_search_paths(
+                &mut search_paths,
+                &winget_root.join("Packages"),
+                None,
+            );
+        }
     }
 
     let fnm_base = home.join(".local/state/fnm_multishells");
