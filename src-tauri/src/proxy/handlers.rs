@@ -147,6 +147,26 @@ pub async fn handle_claude_desktop_models(
     Ok(Json(response))
 }
 
+/// 处理 `GET /v1/models`（OpenAI Models 列表 - Codex 桌面端在线刷新模型列表）
+///
+/// Codex CLI 通过注入的 `model_catalog_json` 离线读取模型列表，但桌面端只会
+/// 在线请求 `{base_url}/models`。代理此前没有为 Codex 注册该路由，导致桌面端
+/// 收到 404、模型列表刷新失败，只能把当前模型显示为「自定义」且无法切换。
+/// 这里用 provider 的 `modelCatalog` 合成与 CLI 一致的模型列表返回。
+pub async fn handle_codex_models(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, ProxyError> {
+    let providers = state
+        .provider_router
+        .select_providers("codex")
+        .await
+        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
+    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
+    let response = crate::codex_config::codex_models_list_response(&provider.settings_config)
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
+    Ok(Json(response))
+}
+
 async fn handle_messages_for_app(
     state: ProxyState,
     request: axum::extract::Request,
