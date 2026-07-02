@@ -221,7 +221,7 @@ export function ProviderConfigManagement({}: ProviderConfigManagementProps) {
             ? t("provider.importExport.exporting", {
                 defaultValue: "导出中...",
               })
-            : t("provider.importExport.exportButton", {
+            : t("provider.importExport.exportAll", {
                 defaultValue: "导出全部",
               })}
         </Button>
