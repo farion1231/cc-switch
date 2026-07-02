@@ -9,8 +9,13 @@ use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
 use crate::store::AppState;
 use crate::AppType;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::str::FromStr;
+
+const CODEX_OFFICIAL_NAME: &str = "OpenAI Official";
+const CODEX_OFFICIAL_HOMEPAGE: &str = "https://chatgpt.com/codex";
+const CODEX_OFFICIAL_ICON: &str = "openai";
+const CODEX_OFFICIAL_ICON_COLOR: &str = "#00A67E";
 
 /// Import a provider from a deep link request
 ///
@@ -41,46 +46,69 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
-    let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
-    })?;
+    // Parse app type before provider-specific validation so official-login
+    // providers can skip third-party API key / endpoint requirements.
+    let app_type = AppType::from_str(&app_str)
+        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
 
-    if api_key.is_empty() {
-        return Err(AppError::InvalidInput(
-            "API key cannot be empty".to_string(),
-        ));
+    let is_codex_official = codex_official_settings_from_request(&merged_request)?.is_some();
+
+    if !is_codex_official {
+        let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
+            AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
+        })?;
+
+        if api_key.is_empty() {
+            return Err(AppError::InvalidInput(
+                "API key cannot be empty".to_string(),
+            ));
+        }
+
+        // Get endpoint: supports comma-separated multiple URLs (first is primary)
+        merged_request.endpoint.as_ref().ok_or_else(|| {
+            AppError::InvalidInput(
+                "Endpoint is required (either in URL or config file)".to_string(),
+            )
+        })?;
     }
 
-    // Get endpoint: supports comma-separated multiple URLs (first is primary)
-    let endpoint_str = merged_request.endpoint.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("Endpoint is required (either in URL or config file)".to_string())
-    })?;
-
     // Parse endpoints: split by comma, first is primary
-    let all_endpoints: Vec<String> = endpoint_str
+    let all_endpoints: Vec<String> = merged_request
+        .endpoint
+        .as_deref()
+        .unwrap_or("")
         .split(',')
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty())
         .collect();
 
-    let primary_endpoint = all_endpoints
-        .first()
-        .ok_or_else(|| AppError::InvalidInput("Endpoint cannot be empty".to_string()))?;
+    let primary_endpoint = all_endpoints.first();
+
+    if !is_codex_official && primary_endpoint.is_none() {
+        return Err(AppError::InvalidInput(
+            "Endpoint cannot be empty".to_string(),
+        ));
+    }
 
     // Auto-infer homepage from endpoint if not provided
     if merged_request
         .homepage
         .as_ref()
-        .is_none_or(|s| s.is_empty())
+        .is_none_or(|s| s.trim().is_empty())
     {
-        merged_request.homepage = infer_homepage_from_endpoint(primary_endpoint);
+        merged_request.homepage =
+            primary_endpoint.and_then(|endpoint| infer_homepage_from_endpoint(endpoint));
+    }
+
+    if is_codex_official {
+        merged_request.homepage = Some(CODEX_OFFICIAL_HOMEPAGE.to_string());
     }
 
     let homepage = merged_request.homepage.as_ref().ok_or_else(|| {
         AppError::InvalidInput("Homepage is required (either in URL or config file)".to_string())
     })?;
 
-    if homepage.is_empty() {
+    if homepage.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "Homepage cannot be empty".to_string(),
         ));
@@ -91,12 +119,17 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'name' field for provider".to_string()))?;
 
-    // Parse app type
-    let app_type = AppType::from_str(&app_str)
-        .map_err(|_| AppError::InvalidInput(format!("Invalid app type: {app_str}")))?;
-
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
+    let codex_official_auth_to_write = if is_codex_official {
+        provider
+            .settings_config
+            .get("auth")
+            .filter(|auth| crate::codex_config::codex_auth_has_login_material(auth))
+            .cloned()
+    } else {
+        None
+    };
 
     // Generate a unique ID for the provider using timestamp + sanitized name
     let timestamp = chrono::Utc::now().timestamp_millis();
@@ -111,6 +144,10 @@ pub fn import_provider_from_deeplink(
 
     // Use ProviderService to add the provider
     ProviderService::add(state, app_type.clone(), provider, true)?;
+
+    if let Some(auth) = codex_official_auth_to_write {
+        crate::config::write_json_file(&crate::codex_config::get_codex_auth_path(), &auth)?;
+    }
 
     // Add extra endpoints as custom endpoints (skip first one as it's the primary)
     for ep in all_endpoints.iter().skip(1) {
@@ -141,14 +178,22 @@ pub(crate) fn build_provider_from_request(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<Provider, AppError> {
-    let settings_config = match app_type {
-        AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
-        AppType::Codex => build_codex_settings(request),
-        AppType::Gemini => build_gemini_settings(request),
-        AppType::OpenCode => build_opencode_settings(request),
-        AppType::OpenClaw => build_additive_app_settings(request),
-        AppType::Hermes => build_hermes_settings(request),
+    let (settings_config, category) = match app_type {
+        AppType::Claude | AppType::ClaudeDesktop => (build_claude_settings(request), None),
+        AppType::Codex => {
+            if let Some(settings) = codex_official_settings_from_request(request)? {
+                (settings, Some("official".to_string()))
+            } else {
+                (build_codex_settings(request), None)
+            }
+        }
+        AppType::Gemini => (build_gemini_settings(request), None),
+        AppType::OpenCode => (build_opencode_settings(request), None),
+        AppType::OpenClaw => (build_additive_app_settings(request), None),
+        AppType::Hermes => (build_hermes_settings(request), None),
     };
+    let is_codex_official =
+        matches!(app_type, AppType::Codex) && category.as_deref() == Some("official");
 
     // Build usage script configuration if provided
     let mut meta = build_provider_meta(request)?;
@@ -159,20 +204,153 @@ pub(crate) fn build_provider_from_request(
 
     let provider = Provider {
         id: String::new(), // Will be generated by caller
-        name: request.name.clone().unwrap_or_default(),
+        name: if is_codex_official {
+            CODEX_OFFICIAL_NAME.to_string()
+        } else {
+            request.name.clone().unwrap_or_default()
+        },
         settings_config,
-        website_url: request.homepage.clone(),
-        category: None,
+        website_url: if is_codex_official {
+            Some(CODEX_OFFICIAL_HOMEPAGE.to_string())
+        } else {
+            request.homepage.clone()
+        },
+        category,
         created_at: None,
         sort_index: None,
         notes: request.notes.clone(),
         meta,
-        icon: request.icon.clone(),
-        icon_color: None,
+        icon: if is_codex_official {
+            Some(CODEX_OFFICIAL_ICON.to_string())
+        } else {
+            request.icon.clone()
+        },
+        icon_color: is_codex_official.then(|| CODEX_OFFICIAL_ICON_COLOR.to_string()),
         in_failover_queue: false,
     };
 
     Ok(provider)
+}
+
+fn is_blank(value: Option<&str>) -> bool {
+    value.is_none_or(|s| s.trim().is_empty())
+}
+
+fn has_codex_official_identity(request: &DeepLinkImportRequest) -> bool {
+    request.app.as_deref() == Some("codex")
+        && request
+            .name
+            .as_deref()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case(CODEX_OFFICIAL_NAME))
+}
+
+fn codex_official_settings_from_request(
+    request: &DeepLinkImportRequest,
+) -> Result<Option<Value>, AppError> {
+    if !has_codex_official_identity(request) {
+        return Ok(None);
+    }
+
+    if !is_blank(request.endpoint.as_deref()) {
+        // A provider merely named "OpenAI Official" but carrying third-party
+        // endpoint settings should keep the normal deeplink path and validation.
+        return Ok(None);
+    }
+
+    if !is_blank(request.api_key.as_deref()) && is_blank(request.config.as_deref()) {
+        // Official auth.json material is imported through config.auth. A bare
+        // apiKey URL parameter still belongs to the custom-provider path.
+        return Ok(None);
+    }
+
+    let mut auth_settings = json!({});
+    let mut config_settings = String::new();
+
+    if let Some(config_b64) = request.config.as_deref().filter(|s| !s.trim().is_empty()) {
+        let decoded = decode_base64_param("config", config_b64)?;
+        let config_content = String::from_utf8(decoded)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in config: {e}")))?;
+
+        if request.config_format.as_deref().unwrap_or("json") != "json" {
+            return Err(AppError::localized(
+                "deeplink.codex_official.config_format",
+                "OpenAI Official Codex 深链配置必须使用 configFormat=json",
+                "OpenAI Official Codex config must use configFormat=json",
+            ));
+        }
+
+        let config_value: Value = serde_json::from_str(&config_content)
+            .map_err(|e| AppError::InvalidInput(format!("Invalid JSON config: {e}")))?;
+
+        let config_object = config_value.as_object().ok_or_else(|| {
+            AppError::localized(
+                "deeplink.codex_official.config_not_object",
+                "OpenAI Official Codex 配置必须是 JSON 对象",
+                "OpenAI Official Codex config must be a JSON object",
+            )
+        })?;
+
+        if config_object
+            .keys()
+            .any(|key| key.as_str() != "auth" && key.as_str() != "config")
+        {
+            return Err(AppError::localized(
+                "deeplink.codex_official.unknown_fields",
+                "OpenAI Official Codex 配置只能包含 auth 和 config 字段",
+                "OpenAI Official Codex config can only contain auth and config fields",
+            ));
+        }
+
+        if let Some(auth) = config_object.get("auth") {
+            let auth_object = auth.as_object().ok_or_else(|| {
+                AppError::localized(
+                    "deeplink.codex_official.auth_not_object",
+                    "OpenAI Official Codex 配置中的 auth 必须是对象",
+                    "OpenAI Official Codex config must have an object auth field",
+                )
+            })?;
+            auth_settings = Value::Object(auth_object.clone());
+        }
+
+        let config_text = match config_object.get("config") {
+            Some(Value::String(value)) => value.as_str(),
+            Some(Value::Null) | None => "",
+            Some(_) => {
+                return Err(AppError::localized(
+                    "deeplink.codex_official.config_not_string",
+                    "OpenAI Official Codex 配置中的 config 字段必须是字符串",
+                    "OpenAI Official Codex config field must be a string",
+                ))
+            }
+        };
+
+        if !config_text.trim().is_empty() {
+            config_text.parse::<toml::Value>().map_err(|e| {
+                AppError::InvalidInput(format!("Invalid TOML config for OpenAI Official: {e}"))
+            })?;
+            config_settings = config_text.to_string();
+        }
+    }
+
+    if !is_blank(request.model.as_deref()) {
+        return Err(AppError::localized(
+            "deeplink.codex_official.model_override",
+            "OpenAI Official Codex 深链不能包含模型覆盖",
+            "OpenAI Official Codex deeplink cannot include a model override",
+        ));
+    }
+
+    Ok(Some(codex_official_settings(
+        auth_settings,
+        config_settings,
+    )))
+}
+
+fn codex_official_settings(auth: Value, config: String) -> Value {
+    json!({
+        "auth": auth,
+        "config": config,
+    })
 }
 
 /// Get primary endpoint from request (first one if comma-separated)
@@ -596,6 +774,10 @@ pub fn parse_and_merge_config(
 
     match request.app.as_deref().unwrap_or("") {
         "claude" => merge_claude_config(&mut merged, &config_value)?,
+        "codex" if has_codex_official_identity(&merged) && is_blank(merged.endpoint.as_deref()) => {
+            merged.homepage = Some(CODEX_OFFICIAL_HOMEPAGE.to_string());
+            merged.icon = Some(CODEX_OFFICIAL_ICON.to_string());
+        }
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
