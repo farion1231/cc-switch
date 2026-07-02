@@ -75,6 +75,64 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
   },
   {
+    name: "Astraflow",
+    providerType: "astraflow",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: {
+      claude: {
+        model: "gpt-5.5",
+        haikuModel: "qwen3.7-max",
+        sonnetModel: "gpt-5.5",
+        opusModel: "claude-sonnet-4-6",
+      },
+      codex: {
+        model: "o4-mini",
+        reasoningEffort: "high",
+      },
+      gemini: {
+        model: "qwen3-embedding-8b",
+      },
+    },
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
+    name: "Astraflow CN",
+    providerType: "astraflow_cn",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: true,
+    },
+    defaultModels: {
+      claude: {
+        model: "qwen3.7-max",
+        haikuModel: "glm-5.1",
+        sonnetModel: "qwen3.7-max",
+        opusModel: "deepseek-v4-pro",
+      },
+      codex: {
+        model: "o4-mini",
+        reasoningEffort: "high",
+      },
+      gemini: {
+        model: "gemini-embedding-2",
+      },
+    },
+    websiteUrl: "https://astraflow.ucloud.cn",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (China endpoint)",
+  },
+  {
     name: "自定义网关",
     providerType: "custom_gateway",
     defaultApps: {

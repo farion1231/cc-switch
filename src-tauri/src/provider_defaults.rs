@@ -172,6 +172,13 @@ pub static DEFAULT_PROVIDER_ICONS: Lazy<HashMap<&'static str, ProviderIcon>> = L
         },
     );
     m.insert(
+        "ucloud",
+        ProviderIcon {
+            name: "ucloud",
+            color: "#0052D9",
+        },
+    );
+    m.insert(
         "cloudflare",
         ProviderIcon {
             name: "cloudflare",
