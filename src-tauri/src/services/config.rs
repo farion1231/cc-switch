@@ -165,6 +165,7 @@ impl ConfigService {
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             &provider.settings_config,
+            provider.meta.as_ref(),
             provider.category.as_deref(),
             auth,
             cfg_text,

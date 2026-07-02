@@ -6,6 +6,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexImageGenerationMode,
 } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
@@ -36,6 +37,10 @@ export interface CodexProviderPreset {
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
+  // Whether the upstream provider/group allows Codex image generation
+  supportsImageGeneration?: boolean;
+  // Codex image_generation handling mode
+  codexImageGenerationMode?: CodexImageGenerationMode;
 }
 
 /**

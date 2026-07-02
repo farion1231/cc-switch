@@ -1386,6 +1386,11 @@ impl RequestForwarder {
 
         if matches!(app_type, AppType::Codex) {
             self.apply_media_prevention(&mut request_body, provider);
+            suppress_codex_image_generation_for_provider(
+                provider,
+                &effective_endpoint,
+                &mut request_body,
+            );
         }
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
@@ -2733,6 +2738,128 @@ fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CodexImageGenerationMode {
+    Enabled,
+    Disabled,
+    Chat,
+    Passthrough,
+}
+
+fn codex_image_generation_mode_for_provider(provider: &Provider) -> CodexImageGenerationMode {
+    if let Some(mode) = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.codex_image_generation_mode.as_deref())
+    {
+        return match mode.trim().to_ascii_lowercase().as_str() {
+            "true" | "disabled" | "all" | "off" | "disable" => CodexImageGenerationMode::Disabled,
+            "chat" | "chat_only" | "chat-only" => CodexImageGenerationMode::Chat,
+            "passthrough" | "pass_through" | "pass-through" => {
+                CodexImageGenerationMode::Passthrough
+            }
+            _ => CodexImageGenerationMode::Enabled,
+        };
+    }
+
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.supports_image_generation)
+        == Some(false)
+    {
+        CodexImageGenerationMode::Disabled
+    } else {
+        CodexImageGenerationMode::Enabled
+    }
+}
+
+fn is_codex_images_endpoint(endpoint: &str) -> bool {
+    let path = endpoint.split('?').next().unwrap_or(endpoint).trim();
+    path.ends_with("/images/generations") || path.ends_with("/images/edits")
+}
+
+fn suppress_codex_image_generation_for_provider(
+    provider: &Provider,
+    endpoint: &str,
+    body: &mut Value,
+) {
+    match codex_image_generation_mode_for_provider(provider) {
+        CodexImageGenerationMode::Disabled => strip_codex_image_generation_tools(body),
+        CodexImageGenerationMode::Chat if !is_codex_images_endpoint(endpoint) => {
+            strip_codex_image_generation_tools(body);
+        }
+        CodexImageGenerationMode::Enabled
+        | CodexImageGenerationMode::Chat
+        | CodexImageGenerationMode::Passthrough => {}
+    }
+}
+
+fn strip_codex_image_generation_tools(body: &mut Value) {
+    strip_codex_image_generation_tool_array_field(body, "tools");
+    strip_codex_image_generation_tool_array_field(body, "allowed_tools");
+    strip_codex_image_generation_tool_array_field(body, "allowedTools");
+    strip_codex_image_generation_tool_choice_field(body, "tool_choice");
+    strip_codex_image_generation_tool_choice_field(body, "toolChoice");
+    strip_codex_image_generation_include_field(body);
+}
+
+fn strip_codex_image_generation_tool_array_field(body: &mut Value, field: &str) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    let Some(tools) = obj.get_mut(field).and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    tools.retain(|tool| !value_contains_codex_image_generation_identifier(tool));
+    if tools.is_empty() {
+        obj.remove(field);
+    }
+}
+
+fn strip_codex_image_generation_tool_choice_field(body: &mut Value, field: &str) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    if obj
+        .get(field)
+        .is_some_and(value_contains_codex_image_generation_identifier)
+    {
+        obj.remove(field);
+    }
+}
+
+fn strip_codex_image_generation_include_field(body: &mut Value) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    let Some(include) = obj.get_mut("include").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    include.retain(|item| !value_contains_codex_image_generation_identifier(item));
+    if include.is_empty() {
+        obj.remove("include");
+    }
+}
+
+fn value_contains_codex_image_generation_identifier(value: &Value) -> bool {
+    match value {
+        Value::String(s) => {
+            let normalized = s.trim().to_ascii_lowercase();
+            normalized.contains("image_generation") || normalized.contains("image-generation")
+        }
+        Value::Array(items) => items
+            .iter()
+            .any(value_contains_codex_image_generation_identifier),
+        Value::Object(map) => map
+            .values()
+            .any(value_contains_codex_image_generation_identifier),
+        _ => false,
+    }
+}
+
 fn log_prompt_cache_trace(
     app_type: &AppType,
     provider: &Provider,
@@ -2990,6 +3117,55 @@ mod tests {
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
         );
+    }
+
+    #[test]
+    fn codex_provider_chat_image_generation_mode_strips_only_chat_endpoints() {
+        let mut provider = test_provider_with_type(None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_image_generation_mode: Some("chat".to_string()),
+            ..Default::default()
+        });
+        let mut chat_body = json!({
+            "tools": [
+                { "type": "image_generation" },
+                { "type": "function", "name": "lookup" }
+            ],
+            "include": ["image_generation_call.results", "message.output_text"]
+        });
+        let mut image_body = chat_body.clone();
+
+        suppress_codex_image_generation_for_provider(&provider, "/v1/responses", &mut chat_body);
+        suppress_codex_image_generation_for_provider(
+            &provider,
+            "/v1/images/generations",
+            &mut image_body,
+        );
+
+        assert_eq!(
+            chat_body["tools"],
+            json!([{ "type": "function", "name": "lookup" }])
+        );
+        assert_eq!(chat_body["include"], json!(["message.output_text"]));
+        assert_eq!(image_body["tools"][0]["type"], "image_generation");
+    }
+
+    #[test]
+    fn codex_provider_passthrough_image_generation_mode_keeps_chat_payload() {
+        let mut provider = test_provider_with_type(None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            codex_image_generation_mode: Some("passthrough".to_string()),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "tools": [{ "type": "image_generation" }],
+            "tool_choice": { "type": "image_generation" }
+        });
+        let original = body.clone();
+
+        suppress_codex_image_generation_for_provider(&provider, "/v1/responses", &mut body);
+
+        assert_eq!(body, original);
     }
 
     #[test]

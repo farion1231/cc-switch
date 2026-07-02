@@ -39,6 +39,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexImageGenerationMode,
   ProviderCategory,
 } from "@/types";
 
@@ -75,6 +76,8 @@ interface CodexFormFieldsProps {
   onApiFormatChange: (format: CodexApiFormat) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
+  imageGenerationMode: CodexImageGenerationMode;
+  onImageGenerationModeChange: (value: CodexImageGenerationMode) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -160,6 +163,8 @@ export function CodexFormFields({
   onApiFormatChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
+  imageGenerationMode,
+  onImageGenerationModeChange,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -458,6 +463,63 @@ export function CodexFormFields({
                     })}
                   </p>
                 </div>
+              </div>
+            )}
+
+            {String(category) !== "official" && (
+              <div
+                className={cn(
+                  "flex items-center justify-between gap-4",
+                  shouldShowSpeedTest && "border-t border-border-default pt-3",
+                )}
+              >
+                <div className="space-y-1">
+                  <FormLabel>
+                    {t("codexConfig.imageGenerationToggle", {
+                      defaultValue: "Codex 生图策略",
+                    })}
+                  </FormLabel>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("codexConfig.imageGenerationHint", {
+                      defaultValue:
+                        "启用会让 Codex 暴露生图工具；仅图片端点会保护普通聊天请求，避免上游因 image_generation 注入返回 403/502。",
+                    })}
+                  </p>
+                </div>
+                <Select
+                  value={imageGenerationMode}
+                  onValueChange={(value) =>
+                    onImageGenerationModeChange(
+                      value as CodexImageGenerationMode,
+                    )
+                  }
+                >
+                  <SelectTrigger className="w-40 shrink-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="enabled">
+                      {t("codexConfig.imageGenerationEnabled", {
+                        defaultValue: "启用",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="chat">
+                      {t("codexConfig.imageGenerationChat", {
+                        defaultValue: "仅图片端点",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="passthrough">
+                      {t("codexConfig.imageGenerationPassthrough", {
+                        defaultValue: "透传",
+                      })}
+                    </SelectItem>
+                    <SelectItem value="disabled">
+                      {t("codexConfig.imageGenerationDisabled", {
+                        defaultValue: "关闭全部",
+                      })}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
