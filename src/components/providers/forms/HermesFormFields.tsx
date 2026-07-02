@@ -30,6 +30,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Search,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -39,6 +40,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ToggleRow } from "@/components/ui/toggle-row";
 import { ApiKeySection } from "./shared";
 import {
   fetchModelsForConfig,
@@ -68,6 +70,8 @@ interface HermesFormFieldsProps {
   onModelsChange: (models: HermesModel[]) => void;
   rateLimitDelay: number | undefined;
   onRateLimitDelayChange: (delay: number | undefined) => void;
+  discoverModels: boolean;
+  onDiscoverModelsChange: (enabled: boolean) => void;
 }
 
 type BaseUrlErrorCode = "empty" | "invalid" | "scheme";
@@ -155,6 +159,8 @@ export function HermesFormFields({
   onModelsChange,
   rateLimitDelay,
   onRateLimitDelayChange,
+  discoverModels,
+  onDiscoverModelsChange,
 }: HermesFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModels, setExpandedModels] = useState<Record<number, boolean>>(
@@ -337,6 +343,19 @@ export function HermesFormFields({
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
+      />
+
+      <ToggleRow
+        icon={<Search className="h-4 w-4" />}
+        title={t("hermes.form.discoverModelsLabel", {
+          defaultValue: "从 API 发现模型",
+        })}
+        description={t("hermes.form.discoverModelsDescription", {
+          defaultValue:
+            "关闭后仅使用下方手动配置的模型列表，不再从 /models 端点拉取",
+        })}
+        checked={discoverModels}
+        onCheckedChange={onDiscoverModelsChange}
       />
 
       <div className="space-y-3">

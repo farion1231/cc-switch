@@ -2266,6 +2266,10 @@ function ProviderFormFull({
               onRateLimitDelayChange={
                 hermesForm.handleHermesRateLimitDelayChange
               }
+              discoverModels={hermesForm.hermesDiscoverModels}
+              onDiscoverModelsChange={
+                hermesForm.handleHermesDiscoverModelsChange
+              }
             />
           )}
 

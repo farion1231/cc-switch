@@ -2045,7 +2045,9 @@
       "fallbackModel": "备选模型",
       "providerAdvanced": "供应商高级选项",
       "rateLimitDelay": "请求间隔（秒）",
-      "rateLimitDelayHint": "连续请求间的最小间隔秒数（可选）。留空表示无限制。"
+      "rateLimitDelayHint": "连续请求间的最小间隔秒数（可选）。留空表示无限制。",
+      "discoverModelsLabel": "从 API 发现模型",
+      "discoverModelsDescription": "关闭后仅使用下方手动配置的模型列表，不再从 /models 端点拉取。对应 Hermes 配置中的 discover_models: false。"
     },
     "webui": {
       "open": "打开 Hermes Web UI",

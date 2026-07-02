@@ -2045,7 +2045,9 @@
       "fallbackModel": "予備",
       "providerAdvanced": "プロバイダー詳細オプション",
       "rateLimitDelay": "リクエスト間隔（秒）",
-      "rateLimitDelayHint": "連続したリクエスト間の最小待機秒数（任意）。空欄の場合は制限なし。"
+      "rateLimitDelayHint": "連続したリクエスト間の最小待機秒数（任意）。空欄の場合は制限なし。",
+      "discoverModelsLabel": "APIからモデルを検出",
+      "discoverModelsDescription": "無効にすると、下の手動設定モデルリストのみを使用し、/modelsエンドポイントへの問い合わせを行いません。Hermes設定のdiscover_models: falseに対応します。"
     },
     "webui": {
       "open": "Hermes Web UI を開く",
