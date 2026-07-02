@@ -25,7 +25,11 @@ interface CopyToAppsDialogProps {
 
 const APP_OPTIONS: { id: AppId; label: string; labelKey: string }[] = [
   { id: "claude", label: "Claude Code", labelKey: "apps.claude" },
-  { id: "claude-desktop", label: "Claude Desktop", labelKey: "apps.claudeDesktop" },
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    labelKey: "apps.claudeDesktop",
+  },
   { id: "codex", label: "Codex", labelKey: "apps.codex" },
   { id: "gemini", label: "Gemini", labelKey: "apps.gemini" },
   { id: "opencode", label: "OpenCode", labelKey: "apps.opencode" },
@@ -103,56 +107,51 @@ export function CopyToAppsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          {/* 全选选项 */}
-          <div className="flex items-center gap-2 pb-2 border-b">
-            <Checkbox
-              id="select-all"
-              checked={selectedApps.size === availableApps.length}
-              onCheckedChange={handleSelectAll}
-            />
-            <Label
-              htmlFor="select-all"
-              className="text-sm font-medium cursor-pointer"
-            >
-              {t("provider.copyToApps.selectAll", {
-                defaultValue: "全选",
-              })}
-            </Label>
-          </div>
-
-          {/* 应用列表 */}
-          <div className="grid grid-cols-2 gap-3">
-            {availableApps.map((app) => (
-              <div
-                key={app.id}
-                className="flex items-center gap-2 p-2 rounded-md hover:bg-accent/50 cursor-pointer"
-                onClick={() => handleToggleApp(app.id)}
-              >
-                <Checkbox
-                  id={`app-${app.id}`}
-                  checked={selectedApps.has(app.id)}
-                  onCheckedChange={() => handleToggleApp(app.id)}
-                />
-                <Label
-                  htmlFor={`app-${app.id}`}
-                  className="text-sm cursor-pointer flex-1"
-                >
-                  {t(app.labelKey, { defaultValue: app.label })}
-                </Label>
-              </div>
-            ))}
-          </div>
-
-          {selectedApps.size > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {t("provider.copyToApps.selectedCount", {
-                defaultValue: `已选择 ${selectedApps.size} 个应用`,
-                count: selectedApps.size,
-              })}
-            </p>
-          )}
+        {/* 全选选项 */}
+        <div className="flex items-center gap-2 p-2 border-b">
+          <Checkbox
+            id="select-all"
+            checked={selectedApps.size === availableApps.length}
+            onCheckedChange={handleSelectAll}
+          />
+          <Label
+            htmlFor="select-all"
+            className="text-sm font-medium cursor-pointer"
+          >
+            {t("provider.copyToApps.selectAll", {
+              defaultValue: "全选",
+            })}
+          </Label>
         </div>
+
+        {/* 应用列表 */}
+        <div className="grid grid-cols-2 gap-2 py-3">
+          {availableApps.map((app) => (
+            <Label
+              key={app.id}
+              htmlFor={`app-${app.id}`}
+              className="flex items-center gap-2 p-2 rounded-md hover:bg-accent/50 cursor-pointer"
+            >
+              <Checkbox
+                id={`app-${app.id}`}
+                checked={selectedApps.has(app.id)}
+                onCheckedChange={() => handleToggleApp(app.id)}
+              />
+              <span className="text-sm flex-1">
+                {t(app.labelKey, { defaultValue: app.label })}
+              </span>
+            </Label>
+          ))}
+        </div>
+
+        {selectedApps.size > 0 && (
+          <p className="text-xs text-muted-foreground pb-2">
+            {t("provider.copyToApps.selectedCount", {
+              defaultValue: `已选择 ${selectedApps.size} 个应用`,
+              count: selectedApps.size,
+            })}
+          </p>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={handleClose} disabled={copying}>
@@ -165,7 +164,9 @@ export function CopyToAppsDialog({
             {copying ? (
               <>
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                {t("provider.copyToApps.copying", { defaultValue: "复制中..." })}
+                {t("provider.copyToApps.copying", {
+                  defaultValue: "复制中...",
+                })}
               </>
             ) : (
               <>
