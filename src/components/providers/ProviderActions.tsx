@@ -227,7 +227,7 @@ export function ProviderActions({
   });
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
       {(appId === "openclaw" || appId === "hermes") &&
         isInConfig &&
         onSetAsDefault &&
@@ -280,7 +280,7 @@ export function ProviderActions({
         </Button>
       </span>
 
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center justify-end gap-1">
         <Button
           size="icon"
           variant="ghost"
