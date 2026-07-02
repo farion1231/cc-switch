@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -38,6 +38,18 @@ vi.mock("@/components/ui/switch", () => ({
   Switch: ({ checked, onCheckedChange, ...props }: any) => (
     <button
       role="switch"
+      aria-checked={checked}
+      onClick={() => onCheckedChange?.(!checked)}
+      {...props}
+    />
+  ),
+}));
+
+vi.mock("@/components/ui/checkbox", () => ({
+  Checkbox: ({ checked, onCheckedChange, ...props }: any) => (
+    <button
+      type="button"
+      role="checkbox"
       aria-checked={checked}
       onClick={() => onCheckedChange?.(!checked)}
       {...props}
@@ -94,6 +106,18 @@ const baseConfig: WebDavSyncSettings = {
   remoteRoot: "cc-switch-sync",
   profile: "default",
   autoSync: false,
+  uploadModules: {
+    api: true,
+    mcp: false,
+    prompts: false,
+    skills: false,
+  },
+  downloadModules: {
+    api: true,
+    mcp: true,
+    prompts: true,
+    skills: true,
+  },
   status: {},
 };
 
@@ -110,6 +134,12 @@ function renderSection(config?: WebDavSyncSettings) {
     </QueryClientProvider>,
   );
   return { ...view, client };
+}
+
+function getModuleGroups(container: HTMLElement) {
+  return Array.from(
+    container.querySelectorAll("div.grid.flex-1.grid-cols-4.gap-2"),
+  );
 }
 
 describe("WebdavSyncSection", () => {
@@ -133,9 +163,19 @@ describe("WebdavSyncSection", () => {
       deviceName: "My MacBook",
       createdAt: "2026-02-01T10:00:00Z",
       snapshotId: "snapshot-1",
-      version: 2,
+      version: 3,
+      protocolVersion: 3,
+      dbCompatVersion: 6,
       compatible: true,
-      artifacts: ["db.sql", "skills.zip"],
+      artifacts: ["api.sql", "mcp.sql", "prompts.sql", "skills.sql", "skills.zip"],
+      layout: "current",
+      remotePath: "/cc-switch-sync/v3/db-v6/default",
+      availableModules: {
+        api: true,
+        mcp: true,
+        prompts: true,
+        skills: true,
+      },
     });
     settingsApiMock.webdavSyncUpload.mockResolvedValue({ status: "uploaded" });
     settingsApiMock.webdavSyncDownload.mockResolvedValue({ status: "downloaded" });
@@ -191,6 +231,132 @@ describe("WebdavSyncSection", () => {
 
     expect(toastErrorMock).toHaveBeenCalledWith("settings.webdavSync.missingUrl");
     expect(settingsApiMock.webdavSyncSaveSettings).not.toHaveBeenCalled();
+  });
+
+  it("renders upload and download module groups in a single four-column row", () => {
+    const { container } = renderSection(baseConfig);
+
+    const groups = Array.from(
+      container.querySelectorAll("div.grid.flex-1.gap-2"),
+    );
+
+    expect(groups).toHaveLength(2);
+    for (const group of groups) {
+      expect(group).toHaveClass("grid-cols-4");
+      expect(group).not.toHaveClass("sm:grid-cols-2");
+    }
+  });
+
+  it("uses backend-aligned defaults when upload/download module objects are missing", () => {
+    const { container } = renderSection({
+      ...baseConfig,
+      uploadModules: undefined,
+      downloadModules: undefined,
+    });
+
+    const groups = getModuleGroups(container);
+    expect(groups).toHaveLength(2);
+
+    const uploadGroup = within(groups[0] as HTMLElement);
+    const downloadGroup = within(groups[1] as HTMLElement);
+    const uploadApi = uploadGroup.getByRole("checkbox", {
+      name: "settings.webdavSync.modules.api",
+    });
+    const uploadMcp = uploadGroup.getByRole("checkbox", {
+      name: "settings.webdavSync.modules.mcp",
+    });
+    const uploadPrompts = uploadGroup.getByRole("checkbox", {
+      name: "settings.webdavSync.modules.prompts",
+    });
+    const uploadSkills = uploadGroup.getByRole("checkbox", {
+      name: "settings.webdavSync.modules.skills",
+    });
+
+    expect(uploadApi).toHaveAttribute("aria-checked", "true");
+    expect(uploadMcp).toHaveAttribute("aria-checked", "false");
+    expect(uploadPrompts).toHaveAttribute("aria-checked", "false");
+    expect(uploadSkills).toHaveAttribute("aria-checked", "false");
+
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.api",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.mcp",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.prompts",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.skills",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("fills missing module fields as enabled when a legacy module object is partially present", () => {
+    const legacyConfig = {
+      ...baseConfig,
+      uploadModules: { api: false } as unknown as WebDavSyncSettings["uploadModules"],
+      downloadModules: {
+        api: true,
+        mcp: false,
+      } as unknown as WebDavSyncSettings["downloadModules"],
+    };
+    const { container } = renderSection(legacyConfig);
+
+    const groups = getModuleGroups(container);
+    expect(groups).toHaveLength(2);
+
+    const uploadGroup = within(groups[0] as HTMLElement);
+    const downloadGroup = within(groups[1] as HTMLElement);
+
+    expect(
+      uploadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.api",
+      }),
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
+      uploadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.mcp",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      uploadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.prompts",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      uploadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.skills",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.api",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.mcp",
+      }),
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.prompts",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      downloadGroup.getByRole("checkbox", {
+        name: "settings.webdavSync.modules.skills",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
   });
 
   it("saves settings and auto tests connection", async () => {
@@ -396,6 +562,9 @@ describe("WebdavSyncSection", () => {
     await waitFor(() => {
       expect(settingsApiMock.webdavSyncFetchRemoteInfo).toHaveBeenCalledTimes(1);
     });
+    expect(
+      screen.getByText("settings.webdavSync.confirmUpload.availableModules"),
+    ).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", {
