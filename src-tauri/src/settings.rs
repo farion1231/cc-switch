@@ -94,11 +94,30 @@ pub struct WebDavSyncStatus {
     pub last_remote_manifest_hash: Option<String>,
 }
 
+fn default_preset() -> String {
+    "aws-s3".to_string()
+}
 fn default_remote_root() -> String {
     "cc-switch-sync".to_string()
 }
 fn default_profile() -> String {
     "default".to_string()
+}
+fn default_s3_url_style() -> S3UrlStyle {
+    S3UrlStyle::Auto
+}
+
+/// S3 URL 风格
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum S3UrlStyle {
+    /// 自动判断（AWS → Virtual-Hosted，自定义 → Path-Style）
+    #[default]
+    Auto,
+    /// 强制 Virtual-Hosted Style
+    VirtualHosted,
+    /// 强制 Path-Style
+    PathStyle,
 }
 
 /// WebDAV 同步设置
@@ -184,6 +203,8 @@ pub struct S3SyncSettings {
     pub enabled: bool,
     #[serde(default)]
     pub auto_sync: bool,
+    #[serde(default = "default_preset")]
+    pub preset: String,
     #[serde(default)]
     pub region: String,
     #[serde(default)]
@@ -198,6 +219,8 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    #[serde(default = "default_s3_url_style")]
+    pub url_style: S3UrlStyle,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -207,6 +230,7 @@ impl Default for S3SyncSettings {
         Self {
             enabled: false,
             auto_sync: false,
+            preset: default_preset(),
             region: String::new(),
             bucket: String::new(),
             access_key_id: String::new(),
@@ -214,6 +238,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            url_style: S3UrlStyle::Auto,
             status: WebDavSyncStatus::default(),
         }
     }
@@ -253,12 +278,16 @@ impl S3SyncSettings {
     }
 
     pub fn normalize(&mut self) {
+        self.preset = self.preset.trim().to_string();
         self.region = self.region.trim().to_string();
         self.bucket = self.bucket.trim().to_string();
         self.access_key_id = self.access_key_id.trim().to_string();
         self.endpoint = self.endpoint.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        if self.preset.is_empty() {
+            self.preset = default_preset();
+        }
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }
