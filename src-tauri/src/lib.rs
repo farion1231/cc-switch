@@ -1422,6 +1422,7 @@ pub fn run() {
             // Provider import/export
             commands::export_providers,
             commands::import_providers,
+            commands::write_text_file_to_path,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,

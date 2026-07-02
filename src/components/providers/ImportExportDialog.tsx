@@ -92,7 +92,7 @@ export function ImportExportDialog({
     if (!file) return;
 
     // Validate file type
-    if (!file.name.endsWith('.json') && file.type !== 'application/json') {
+    if (!file.name.endsWith(".json") && file.type !== "application/json") {
       toast.error(
         t("provider.importExport.invalidFileType", {
           defaultValue: "请选择 JSON 文件",
@@ -159,7 +159,10 @@ export function ImportExportDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="export" className="flex-1 flex flex-col min-h-0">
+        <Tabs
+          defaultValue="export"
+          className="flex-1 flex flex-col min-h-0 p-2"
+        >
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="export">
               <Download className="h-4 w-4 mr-2" />
@@ -176,7 +179,7 @@ export function ImportExportDialog({
             className="flex-1 flex flex-col space-y-4 min-h-0"
           >
             {/* 全选选项 */}
-            <div className="flex items-center gap-2 pb-2 border-b">
+            <div className="flex items-center gap-2 p-2 border-b">
               <Checkbox
                 id="select-all-export"
                 checked={selectedProviders.size === providerList.length}
@@ -267,7 +270,7 @@ export function ImportExportDialog({
 
           <TabsContent
             value="import"
-            className="flex-1 flex flex-col space-y-4 min-h-0"
+            className="flex-1 flex flex-col p-2 space-y-4 min-h-0"
           >
             <div className="space-y-2">
               <Label htmlFor="import-file">
