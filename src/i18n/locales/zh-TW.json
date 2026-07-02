@@ -2373,6 +2373,11 @@
       "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個"
     }
   },
+  "claudeScience": {
+    "launch": "透過代理啟動 Claude Science",
+    "launchSuccess": "Claude Science 已透過本地代理啟動。",
+    "launchFailed": "啟動 Claude Science 失敗"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "服務位址",

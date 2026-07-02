@@ -2401,6 +2401,11 @@
       "disabled": "{{app}} フェイルオーバーを有効にする\nキューの P1 に即時切替し、失敗時は次を順に試行します"
     }
   },
+  "claudeScience": {
+    "launch": "プロキシ経由で Claude Science を起動",
+    "launchSuccess": "Claude Science をローカルプロキシ経由で起動しました。",
+    "launchFailed": "Claude Science の起動に失敗しました"
+  },
   "proxy": {
     "panel": {
       "serviceAddress": "サービスアドレス",

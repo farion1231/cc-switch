@@ -25,6 +25,8 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Microscope,
+  Loader2,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -32,6 +34,7 @@ import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
+  claudeScienceApi,
   settingsApi,
   type AppId,
   type ProviderSwitchEvent,
@@ -238,6 +241,8 @@ function App() {
   } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
+  const [isLaunchingClaudeScience, setIsLaunchingClaudeScience] =
+    useState(false);
 
   const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
@@ -340,6 +345,24 @@ function App() {
         );
       },
     });
+  };
+
+  const handleLaunchClaudeScience = async () => {
+    if (isLaunchingClaudeScience) {
+      return;
+    }
+
+    setIsLaunchingClaudeScience(true);
+    try {
+      await claudeScienceApi.launchWithProxy();
+      toast.success(t("claudeScience.launchSuccess"));
+    } catch (error) {
+      toast.error(t("claudeScience.launchFailed"), {
+        description: extractErrorMessage(error),
+      });
+    } finally {
+      setIsLaunchingClaudeScience(false);
+    }
   };
 
   useEffect(() => {
@@ -1236,6 +1259,23 @@ function App() {
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
+                  {activeApp === "claude" && settingsData?.enableLocalProxy && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleLaunchClaudeScience}
+                      disabled={isLaunchingClaudeScience}
+                      title={t("claudeScience.launch")}
+                      aria-label={t("claudeScience.launch")}
+                      className="hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      {isLaunchingClaudeScience ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Microscope className="w-4 h-4" />
+                      )}
+                    </Button>
+                  )}
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
                   ) : (
