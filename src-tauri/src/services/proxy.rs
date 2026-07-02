@@ -2145,12 +2145,16 @@ impl ProxyService {
                 .get("auth")
                 .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
             let config_str = effective_settings.get("config").and_then(|v| v.as_str());
+            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+            );
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &effective_settings,
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                profile,
             )
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
         }
@@ -2410,12 +2414,16 @@ impl ProxyService {
             .get("auth")
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
+        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+        );
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
             provider.category.as_deref(),
             auth,
             config_str,
+            profile,
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }
@@ -2435,9 +2443,12 @@ impl ProxyService {
                 .filter(|auth| Self::codex_auth_has_proxy_placeholder(auth))
             {
                 let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
+                let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                    provider.and_then(|p| p.meta.as_ref()?.api_format.as_deref()),
+                );
                 let prepared_config =
                     crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                        config, config_str,
+                        config, config_str, profile,
                     )
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 let live_config =
@@ -2471,10 +2482,18 @@ impl ProxyService {
         // living in the config's `experimental_bearer_token`). Computing it up here
         // keeps every config-writing branch — write-auth, delete-auth, no-auth —
         // consistent instead of letting the empty-auth path skip projection.
+        // Verbatim restore has no Provider in hand (we only have the stored
+        // backup config), so the catalog tool profile can't be recovered here.
+        // Default to ProxyChat: a restored native-direct backup keeps its inline
+        // modelCatalog but would not get apply_patch re-stripped until the next
+        // provider switch rewrites it via write_live_snapshot. Acceptable known
+        // limitation (restore-of-deleted-provider-backup only).
         let prepared_cfg = config_str
             .map(|cfg| {
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                    config, cfg,
+                    config,
+                    cfg,
+                    crate::codex_config::CodexCatalogToolProfile::ProxyChat,
                 )
             })
             .transpose()
@@ -5444,8 +5463,10 @@ command = "shared-command"
         )
         .expect("set common config snippet");
 
-        let mut proxy_config = ProxyConfig::default();
-        proxy_config.listen_port = 0;
+        let proxy_config = ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        };
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config");
@@ -5582,8 +5603,10 @@ requires_openai_auth = true
         let db = Arc::new(Database::memory().expect("init db"));
         let state = crate::store::AppState::new(db.clone());
 
-        let mut proxy_config = ProxyConfig::default();
-        proxy_config.listen_port = 0;
+        let proxy_config = ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        };
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config");

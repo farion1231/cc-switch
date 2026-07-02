@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_mcp_path, get_default_claude_mcp_path};
+use crate::config::{atomic_write, get_claude_mcp_path};
 use crate::error::AppError;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
@@ -98,49 +98,7 @@ pub struct McpStatus {
 }
 
 fn user_config_path() -> PathBuf {
-    ensure_mcp_override_migrated();
     get_claude_mcp_path()
-}
-
-fn ensure_mcp_override_migrated() {
-    if crate::settings::get_claude_override_dir().is_none() {
-        return;
-    }
-
-    let new_path = get_claude_mcp_path();
-    if new_path.exists() {
-        return;
-    }
-
-    let legacy_path = get_default_claude_mcp_path();
-    if !legacy_path.exists() {
-        return;
-    }
-
-    if let Some(parent) = new_path.parent() {
-        if let Err(err) = fs::create_dir_all(parent) {
-            log::warn!("创建 MCP 目录失败: {err}");
-            return;
-        }
-    }
-
-    match fs::copy(&legacy_path, &new_path) {
-        Ok(_) => {
-            log::info!(
-                "已根据覆盖目录复制 MCP 配置: {} -> {}",
-                legacy_path.display(),
-                new_path.display()
-            );
-        }
-        Err(err) => {
-            log::warn!(
-                "复制 MCP 配置失败: {} -> {}: {}",
-                legacy_path.display(),
-                new_path.display(),
-                err
-            );
-        }
-    }
 }
 
 fn read_json_value(path: &Path) -> Result<Value, AppError> {

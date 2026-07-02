@@ -345,9 +345,7 @@ describe("SettingsPage Component", () => {
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
-    fireEvent.click(
-      screen.getByRole("button", { name: /settings\.import/ }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /settings\.import/ }));
     expect(importExportMock.importConfig).toHaveBeenCalled();
 
     fireEvent.click(
@@ -358,6 +356,20 @@ describe("SettingsPage Component", () => {
     // 清除选择按钮
     fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
     expect(importExportMock.clearSelection).toHaveBeenCalled();
+  });
+
+  it("should reset tab content scroll position when switching settings tabs", () => {
+    const { container } = renderSettingsPage();
+    const scrollContainer = container.querySelector(
+      ".overflow-y-auto",
+    ) as HTMLDivElement | null;
+
+    expect(scrollContainer).not.toBeNull();
+
+    scrollContainer!.scrollTop = 640;
+    fireEvent.click(screen.getByText("settings.tabAdvanced"));
+
+    expect(scrollContainer!.scrollTop).toBe(0);
   });
 
   it("should pass onImportSuccess callback to useImportExport hook", async () => {
