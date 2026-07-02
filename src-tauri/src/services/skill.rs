@@ -1978,8 +1978,6 @@ impl SkillService {
             {
                 skills.push(skill);
             }
-
-            return Ok(());
         }
 
         for entry in fs::read_dir(current_dir)? {
@@ -1987,6 +1985,8 @@ impl SkillService {
             let path = entry.path();
 
             if path.is_dir() {
+                // 当前目录即使已经命中 SKILL.md，也仍需继续递归，
+                // 否则父 skill 会把其子目录中的嵌套 skill 截断掉。
                 self.scan_dir_recursive(&path, base_dir, repo, skills)?;
             }
         }
@@ -3102,6 +3102,43 @@ mod tests {
             .expect("install name should fall back to the matching discovered skill directory");
 
         assert_eq!(resolved, nested);
+    }
+
+    #[test]
+    fn scan_dir_recursive_discovers_parent_and_nested_child_skills() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        let child = root.join("child");
+        write_skill(root, "Root Skill");
+        write_skill(&child, "Child Skill");
+
+        let repo = SkillRepo {
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            branch: "main".to_string(),
+            enabled: true,
+        };
+        let service = SkillService::new();
+        let mut skills = Vec::new();
+
+        service
+            .scan_dir_recursive(root, root, &repo, &mut skills)
+            .expect("scan should succeed");
+
+        skills.sort_by(|a, b| a.directory.cmp(&b.directory));
+
+        let discovered: Vec<(String, String)> = skills
+            .into_iter()
+            .map(|skill| (skill.directory, skill.name))
+            .collect();
+
+        assert_eq!(
+            discovered,
+            vec![
+                ("child".to_string(), "Child Skill".to_string()),
+                ("repo".to_string(), "Root Skill".to_string()),
+            ]
+        );
     }
 
     #[test]
