@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::Sha256;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -34,6 +35,20 @@ const REQUIRED_OAUTH_KEY: &str = "OAUTH_ENCRYPTION_KEY";
 const ENCRYPTION_KEY_FILENAME: &str = "encryption.key";
 const LAUNCH_POLL_ATTEMPTS: usize = 50;
 const LAUNCH_POLL_INTERVAL_MS: u64 = 100;
+const CLAUDE_SCIENCE_BINARY_NAME: &str = "claude-science";
+const SCIENCE_MODEL_ENV_KEYS_TO_CLEAR: &[&str] = &[
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_REASONING_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,6 +251,7 @@ fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String
 
     stop_science_for_profile(&bin, &profile)?;
 
+    let proxy_env = proxy_launch_env(&proxy_base_url);
     let output = run_cli_with_env(
         &bin,
         &[
@@ -246,11 +262,7 @@ fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String
             "--no-browser",
             "--no-auto-update",
         ],
-        &[
-            ("ANTHROPIC_BASE_URL", proxy_base_url.as_str()),
-            ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER),
-            ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER),
-        ],
+        &proxy_env,
         Some(&profile),
     )?;
     if !output.status.success() {
@@ -325,6 +337,17 @@ fn read_science_url(bin: &Path, profile: &ScienceProfilePaths) -> Result<String,
         .ok_or_else(|| "Claude Science URL lookup did not return a URL".to_string())
 }
 
+fn proxy_launch_env(proxy_base_url: &str) -> [(&'static str, &str); 3] {
+    // Claude Science does not currently document a stable config key for
+    // Anthropic client routing. Keep the proxy handoff scoped to this managed
+    // daemon launch instead of writing it into the user's default profile.
+    [
+        ("ANTHROPIC_BASE_URL", proxy_base_url),
+        ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER),
+        ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER),
+    ]
+}
+
 fn run_cli(
     bin: &Path,
     args: &[&str],
@@ -344,14 +367,11 @@ fn run_cli_with_env(
     command
         .args(args)
         .envs(envs.iter().copied())
-        .env_remove("ANTHROPIC_MODEL")
-        .env_remove("ANTHROPIC_REASONING_MODEL")
-        .env_remove("ANTHROPIC_DEFAULT_HAIKU_MODEL")
-        .env_remove("ANTHROPIC_DEFAULT_SONNET_MODEL")
-        .env_remove("ANTHROPIC_DEFAULT_OPUS_MODEL")
-        .env_remove("ANTHROPIC_SMALL_FAST_MODEL")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for key in SCIENCE_MODEL_ENV_KEYS_TO_CLEAR {
+        command.env_remove(key);
+    }
 
     if let Some(profile) = profile {
         command
@@ -643,23 +663,72 @@ fn set_private_dir_permissions(_path: &Path) -> Result<(), String> {
 }
 
 fn find_claude_science_binary() -> Option<PathBuf> {
+    find_claude_science_binary_from(
+        std::env::var(CLAUDE_SCIENCE_BIN_ENV).ok(),
+        home_dir(),
+        std::env::var_os("PATH"),
+    )
+}
+
+fn find_claude_science_binary_from(
+    override_path: Option<String>,
+    home: Option<PathBuf>,
+    path_var: Option<OsString>,
+) -> Option<PathBuf> {
+    find_first_executable(claude_science_binary_candidates(
+        override_path,
+        home,
+        path_var,
+    ))
+}
+
+fn claude_science_binary_candidates(
+    override_path: Option<String>,
+    home: Option<PathBuf>,
+    path_var: Option<OsString>,
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Ok(path) = std::env::var(CLAUDE_SCIENCE_BIN_ENV) {
+    if let Some(path) = override_path {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
-            candidates.push(PathBuf::from(trimmed));
+            push_unique_path(&mut candidates, PathBuf::from(trimmed));
         }
     }
 
-    if let Some(home) = home_dir() {
-        candidates.push(home.join(".claude-science/bin/claude-science"));
+    if let Some(home) = home {
+        push_unique_path(
+            &mut candidates,
+            home.join(".claude-science/bin")
+                .join(CLAUDE_SCIENCE_BINARY_NAME),
+        );
+        push_unique_path(
+            &mut candidates,
+            home.join(".local/bin").join(CLAUDE_SCIENCE_BINARY_NAME),
+        );
     }
 
-    candidates.push(PathBuf::from(
-        "/Applications/Claude Science.app/Contents/Resources/bin/claude-science",
-    ));
+    if let Some(path_var) = path_var {
+        for dir in std::env::split_paths(&path_var) {
+            push_unique_path(&mut candidates, dir.join(CLAUDE_SCIENCE_BINARY_NAME));
+        }
+    }
 
+    push_unique_path(
+        &mut candidates,
+        PathBuf::from("/Applications/Claude Science.app/Contents/Resources/bin/claude-science"),
+    );
+
+    candidates
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn find_first_executable(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|path| path.is_file() && is_executable(path))
@@ -739,9 +808,20 @@ fn format_cli_failure(context: &str, output: &Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn fixed_base64_key(byte: u8) -> String {
         BASE64_STANDARD.encode([byte; 32])
+    }
+
+    #[cfg(unix)]
+    fn write_executable(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create executable parent");
+        }
+        fs::write(path, content).expect("write executable");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("mark executable");
     }
 
     fn decrypt_oauth_payload_for_test(oauth_key: &str, encrypted: &str) -> Vec<u8> {
@@ -841,6 +921,105 @@ mod tests {
         assert!(scopes.contains("user:file_upload"));
         assert!(scopes.contains("user:mcp_servers"));
         assert!(scopes.contains("user:plugins"));
+    }
+
+    #[test]
+    fn proxy_launch_env_points_science_at_local_proxy() {
+        let env = proxy_launch_env("http://127.0.0.1:15721");
+
+        assert_eq!(env[0], ("ANTHROPIC_BASE_URL", "http://127.0.0.1:15721"));
+        assert_eq!(env[1], ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER));
+        assert_eq!(env[2], ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn binary_candidates_include_supported_locations() {
+        let home = PathBuf::from("/home/science-user");
+        let path_entries = [PathBuf::from("/opt/science/bin"), PathBuf::from("/usr/bin")];
+        let path_var = std::env::join_paths(path_entries.iter()).expect("join PATH");
+
+        let candidates = claude_science_binary_candidates(
+            Some(" /custom/claude-science ".to_string()),
+            Some(home.clone()),
+            Some(path_var),
+        );
+
+        assert_eq!(candidates[0], PathBuf::from("/custom/claude-science"));
+        assert!(candidates.contains(
+            &home
+                .join(".claude-science/bin")
+                .join(CLAUDE_SCIENCE_BINARY_NAME)
+        ));
+        assert!(candidates.contains(&home.join(".local/bin").join(CLAUDE_SCIENCE_BINARY_NAME)));
+        assert!(candidates
+            .contains(&PathBuf::from("/opt/science/bin").join(CLAUDE_SCIENCE_BINARY_NAME)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_binary_checks_documented_linux_local_bin() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let bin = home.join(".local/bin").join(CLAUDE_SCIENCE_BINARY_NAME);
+        write_executable(&bin, "#!/bin/sh\nexit 0\n");
+
+        let found = find_claude_science_binary_from(None, Some(home), None);
+
+        assert_eq!(found, Some(bin));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_binary_falls_back_to_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path_dir = tmp.path().join("path-bin");
+        let bin = path_dir.join(CLAUDE_SCIENCE_BINARY_NAME);
+        write_executable(&bin, "#!/bin/sh\nexit 0\n");
+        let path_var = std::env::join_paths([path_dir]).expect("join PATH");
+
+        let found = find_claude_science_binary_from(None, None, Some(path_var));
+
+        assert_eq!(found, Some(bin));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn run_cli_scopes_proxy_env_and_clears_model_env() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bin = tmp.path().join("dump-env.sh");
+        write_executable(
+            &bin,
+            r#"#!/bin/sh
+printf 'base=%s\n' "${ANTHROPIC_BASE_URL-}"
+printf 'auth=%s\n' "${ANTHROPIC_AUTH_TOKEN-}"
+printf 'api=%s\n' "${ANTHROPIC_API_KEY-}"
+printf 'model=%s\n' "${ANTHROPIC_MODEL-}"
+printf 'sonnet_name=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME-}"
+"#,
+        );
+        let profile = managed_profile_paths_for_app_config_dir(&tmp.path().join("cc-switch"));
+        fs::create_dir_all(&profile.data_dir).expect("profile data dir");
+
+        std::env::set_var("ANTHROPIC_MODEL", "stale-model");
+        std::env::set_var("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "Stale Sonnet");
+        let output = run_cli_with_env(
+            &bin,
+            &[],
+            &proxy_launch_env("http://127.0.0.1:15721"),
+            Some(&profile),
+        )
+        .expect("run CLI");
+        std::env::remove_var("ANTHROPIC_MODEL");
+        std::env::remove_var("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+        assert!(stdout.contains("base=http://127.0.0.1:15721\n"));
+        assert!(stdout.contains(&format!("auth={PROXY_TOKEN_PLACEHOLDER}\n")));
+        assert!(stdout.contains(&format!("api={PROXY_TOKEN_PLACEHOLDER}\n")));
+        assert!(stdout.contains("model=\n"));
+        assert!(stdout.contains("sonnet_name=\n"));
     }
 
     #[test]
