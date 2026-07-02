@@ -40,6 +40,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { ApiKeySection } from "./shared/ApiKeySection";
+import { KiroAuthSection } from "./KiroAuthSection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
@@ -60,6 +61,7 @@ import {
 } from "@/config/claudeDesktopProviderPresets";
 import {
   fetchModelsForConfig,
+  fetchKiroModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -280,6 +282,9 @@ export function ClaudeDesktopProviderForm({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [selectedKiroAccountId, setSelectedKiroAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "kiro"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -383,7 +388,8 @@ export function ClaudeDesktopProviderForm({
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     activeProviderType === "github_copilot" ||
-    activeProviderType === "codex_oauth";
+    activeProviderType === "codex_oauth" ||
+    activeProviderType === "kiro";
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
   const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
@@ -530,6 +536,33 @@ export function ClaudeDesktopProviderForm({
         hasBaseUrl: Boolean(baseUrl.trim()),
         hasApiKey: Boolean(apiKey.trim()),
       });
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  // Kiro 使用专用接口获取模型（基于绑定账号的 token / region / profileArn）
+  const handleFetchKiroModels = async () => {
+    setIsFetchingModels(true);
+    try {
+      const models = await fetchKiroModels(selectedKiroAccountId ?? null);
+      setFetchedModels(models);
+      if (models.length === 0) {
+        toast.info(
+          t("providerForm.fetchModelsEmpty", {
+            defaultValue: "未获取到可用模型",
+          }),
+        );
+      } else {
+        toast.success(
+          t("providerForm.fetchModelsSuccess", {
+            count: models.length,
+            defaultValue: `已获取 ${models.length} 个模型`,
+          }),
+        );
+      }
+    } catch (error) {
+      showFetchModelsError(error, t);
     } finally {
       setIsFetchingModels(false);
     }
@@ -683,7 +716,13 @@ export function ClaudeDesktopProviderForm({
               authProvider: "codex_oauth",
               accountId: selectedCodexAccountId ?? undefined,
             }
-          : undefined;
+          : activeProviderType === "kiro"
+            ? {
+                source: "managed_account",
+                authProvider: "kiro",
+                accountId: selectedKiroAccountId ?? undefined,
+              }
+            : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
@@ -773,6 +812,11 @@ export function ClaudeDesktopProviderForm({
                     selectedAccountId={selectedGitHubAccountId}
                     onAccountSelect={setSelectedGitHubAccountId}
                   />
+                ) : activeProviderType === "kiro" ? (
+                  <KiroAuthSection
+                    selectedAccountId={selectedKiroAccountId}
+                    onAccountSelect={setSelectedKiroAccountId}
+                  />
                 ) : (
                   <CodexOAuthSection
                     selectedAccountId={selectedCodexAccountId}
@@ -853,6 +897,7 @@ export function ClaudeDesktopProviderForm({
                     onValueChange={(value) =>
                       setApiFormat(value as ClaudeApiFormat)
                     }
+                    disabled={activeProviderType === "kiro"}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue />
@@ -879,8 +924,24 @@ export function ClaudeDesktopProviderForm({
                             "Gemini Native generateContent (需开启路由)",
                         })}
                       </SelectItem>
+                      {/* Kiro 仅在 Kiro 供应商时可选（由预设固定） */}
+                      {activeProviderType === "kiro" && (
+                        <SelectItem value="kiro">
+                          {t("providerForm.apiFormatKiro", {
+                            defaultValue: "Kiro (AWS CodeWhisperer)",
+                          })}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
+                  {activeProviderType === "kiro" && (
+                    <p className="text-xs text-muted-foreground">
+                      {t("providerForm.apiFormatHintKiro", {
+                        defaultValue:
+                          "Kiro 供应商使用固定的 Kiro 格式（AWS CodeWhisperer），不可更改。",
+                      })}
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -897,6 +958,25 @@ export function ClaudeDesktopProviderForm({
                           variant="outline"
                           size="sm"
                           onClick={handleFetchModels}
+                          disabled={isFetchingModels}
+                          className="h-7 gap-1"
+                        >
+                          {isFetchingModels ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          {t("providerForm.fetchModels", {
+                            defaultValue: "获取模型",
+                          })}
+                        </Button>
+                      )}
+                      {activeProviderType === "kiro" && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleFetchKiroModels}
                           disabled={isFetchingModels}
                           className="h-7 gap-1"
                         >

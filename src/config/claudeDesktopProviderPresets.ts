@@ -15,7 +15,8 @@ export type ClaudeDesktopApiFormat =
   | "anthropic"
   | "openai_chat"
   | "openai_responses"
-  | "gemini_native";
+  | "gemini_native"
+  | "kiro";
 
 export interface ClaudeDesktopRoutePreset {
   routeId: string;
@@ -56,7 +57,7 @@ export interface ClaudeDesktopProviderPreset {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
-  providerType?: "github_copilot" | "codex_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "kiro";
   requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
@@ -394,6 +395,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     modelRoutes: brandedRoutes("gpt-5.5", "gpt-5.5", "gpt-5.4-mini"),
     icon: "openai",
     iconColor: "#000000",
+  },
+  {
+    name: "Kiro",
+    websiteUrl: "https://kiro.dev",
+    category: "third_party",
+    baseUrl: "https://runtime.us-east-1.kiro.dev",
+    mode: "proxy",
+    apiFormat: "kiro",
+    providerType: "kiro",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes(
+      "claude-sonnet-4-6",
+      "claude-opus-4-8",
+      "claude-haiku-4-5",
+    ),
+    icon: "kiro",
+    iconColor: "#9046FF",
   },
   {
     name: "DeepSeek",
