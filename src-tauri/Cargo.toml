@@ -90,7 +90,7 @@ webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
-windows-sys = { version = "0.61", features = ["Win32_Globalization", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(all(target_os = "windows", target_arch = "aarch64"))'.dependencies]
 rquickjs = { version = "0.8", features = ["bindgen"] }

@@ -33,6 +33,7 @@ mod settings;
 mod store;
 
 mod tray;
+mod tray_compat;
 mod usage_events;
 mod usage_script;
 
@@ -937,6 +938,12 @@ pub fn run() {
             }
 
             let _tray = tray_builder.build(app)?;
+
+            // 第三方托盘（MyDockFinder 等）右键发 WM_CONTEXTMENU 而非 Explorer 回调，
+            // tray-icon 不处理该消息导致菜单不弹。子类化托盘窗口拦截 WM_CONTEXTMENU 自行弹出。
+            #[cfg(target_os = "windows")]
+            crate::tray_compat::install(app.handle());
+
             crate::services::webdav_auto_sync::start_worker(
                 app_state.db.clone(),
                 app.handle().clone(),
