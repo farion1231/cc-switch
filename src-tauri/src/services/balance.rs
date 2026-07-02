@@ -1,6 +1,6 @@
 //! 供应商余额查询服务
 //!
-//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询。
+//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI、Kimi (Moonshot) 的账户余额查询。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
 
 use crate::provider::{UsageData, UsageResult};
@@ -15,6 +15,8 @@ enum BalanceProvider {
     SiliconFlowEn,
     OpenRouter,
     NovitaAI,
+    Kimi,
+    KimiEn,
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
@@ -31,6 +33,10 @@ fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
         Some(BalanceProvider::OpenRouter)
     } else if url.contains("api.novita.ai") {
         Some(BalanceProvider::NovitaAI)
+    } else if url.contains("api.moonshot.cn") {
+        Some(BalanceProvider::Kimi)
+    } else if url.contains("api.moonshot.ai") || url.contains("api.kimi.ai") {
+        Some(BalanceProvider::KimiEn)
     } else {
         None
     }
@@ -373,6 +379,97 @@ async fn query_novita(api_key: &str) -> UsageResult {
     }
 }
 
+// ── Kimi (Moonshot) ────────────────────────────────────────
+// GET https://api.moonshot.cn/v1/users/me/balance (CN)
+// GET https://api.moonshot.ai/v1/users/me/balance (EN)
+// Also: https://api.kimi.ai/v1/users/me/balance (EN alias)
+// Response: { code: 0, data: { available_balance, voucher_balance, cash_balance }, status: true }
+
+async fn query_kimi(api_key: &str, is_en: bool) -> UsageResult {
+    let client = crate::proxy::http_client::get();
+
+    let domain = if is_en {
+        "api.moonshot.ai"
+    } else {
+        "api.moonshot.cn"
+    };
+    let url = format!("https://{domain}/v1/users/me/balance");
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return make_error(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return make_auth_error(status);
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return make_error(format!("API error (HTTP {status}): {body}"));
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+    };
+
+    let data = match body.get("data") {
+        Some(d) => d,
+        None => return make_error("Missing 'data' field in response".to_string()),
+    };
+
+    let available = parse_f64_field(data, "available_balance").unwrap_or(0.0);
+    let cash = parse_f64_field(data, "cash_balance").unwrap_or(0.0);
+    let voucher = parse_f64_field(data, "voucher_balance").unwrap_or(0.0);
+
+    let (plan_name, unit, symbol) = if is_en {
+        ("Kimi (EN)", "USD", "$")
+    } else {
+        ("Kimi", "CNY", "¥")
+    };
+
+    let mut usage_data = vec![UsageData {
+        plan_name: Some(plan_name.to_string()),
+        remaining: Some(available),
+        total: None,
+        used: None,
+        unit: Some(unit.to_string()),
+        is_valid: Some(available > 0.0),
+        invalid_message: if available <= 0.0 {
+            Some("Insufficient balance".to_string())
+        } else {
+            None
+        },
+        extra: None,
+    }];
+
+    if cash > 0.0 || voucher > 0.0 {
+        let mut parts = Vec::new();
+        if cash > 0.0 {
+            parts.push(format!("Cash: {symbol}{cash:.2}"));
+        }
+        if voucher > 0.0 {
+            parts.push(format!("Voucher: {symbol}{voucher:.2}"));
+        }
+        usage_data[0].extra = Some(parts.join(", "));
+    }
+
+    UsageResult {
+        success: true,
+        data: Some(usage_data),
+        error: None,
+    }
+}
+
 // ── 工具函数 ────────────────────────────────────────────────
 
 /// 解析 JSON 字段为 f64，兼容数字和字符串格式
@@ -412,6 +509,8 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
         BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
         BalanceProvider::OpenRouter => query_openrouter(api_key).await,
         BalanceProvider::NovitaAI => query_novita(api_key).await,
+        BalanceProvider::Kimi => query_kimi(api_key, false).await,
+        BalanceProvider::KimiEn => query_kimi(api_key, true).await,
     };
 
     Ok(result)
