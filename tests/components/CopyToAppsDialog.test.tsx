@@ -14,6 +14,7 @@ vi.mock("react-i18next", () => ({
         "provider.copyToApps.deselectAll": "取消全选",
         "provider.copyToApps.selectedCount": `已选择 ${options?.count || 0} 个应用`,
         "provider.copyToApps.copyButton": `复制到 ${options?.count || 0} 个应用`,
+        "provider.copyToApps.copy": `复制到 ${options?.count || 0} 个应用`,
         "provider.copyToApps.copying": "复制中...",
         "common.cancel": "取消",
         "apps.claude": "Claude Code",
@@ -152,7 +153,7 @@ describe("CopyToAppsDialog", () => {
       />,
     );
 
-    const copyButton = screen.getByText(/复制到 0 个应用/i);
+    const copyButton = screen.getByRole("button", { name: /复制到 0 个应用/ });
     expect(copyButton).toBeDisabled();
   });
 
@@ -170,7 +171,7 @@ describe("CopyToAppsDialog", () => {
     const codexCheckbox = screen.getByRole("checkbox", { name: /Codex/i });
     fireEvent.click(codexCheckbox);
 
-    const copyButton = screen.getByText(/复制到 1 个应用/i);
+    const copyButton = screen.getByRole("button", { name: /复制到 1 个应用/ });
     expect(copyButton).not.toBeDisabled();
   });
 
@@ -193,7 +194,7 @@ describe("CopyToAppsDialog", () => {
     fireEvent.click(codexCheckbox);
     fireEvent.click(geminiCheckbox);
 
-    const copyButton = screen.getByText(/复制到 2 个应用/i);
+    const copyButton = screen.getByRole("button", { name: /复制到 2 个应用/ });
     fireEvent.click(copyButton);
 
     await waitFor(() => {
@@ -234,7 +235,7 @@ describe("CopyToAppsDialog", () => {
     const codexCheckbox = screen.getByRole("checkbox", { name: /Codex/i });
     fireEvent.click(codexCheckbox);
 
-    const copyButton = screen.getByText(/复制到 1 个应用/i);
+    const copyButton = screen.getByRole("button", { name: /复制到 1 个应用/ });
     fireEvent.click(copyButton);
 
     await waitFor(() => {
@@ -258,7 +259,7 @@ describe("CopyToAppsDialog", () => {
     const codexCheckbox = screen.getByRole("checkbox", { name: /Codex/i });
     fireEvent.click(codexCheckbox);
 
-    const copyButton = screen.getByText(/复制到 1 个应用/i);
+    const copyButton = screen.getByRole("button", { name: /复制到 1 个应用/ });
     fireEvent.click(copyButton);
 
     await waitFor(() => {
