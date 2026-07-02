@@ -5,6 +5,7 @@
 pub mod calculator;
 pub mod logger;
 pub mod parser;
+pub mod pricing;
 
 // 仅导出内部使用的类型,避免未使用警告
 #[allow(unused_imports)]

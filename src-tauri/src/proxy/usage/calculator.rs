@@ -23,6 +23,10 @@ pub struct ModelPricing {
     pub output_cost_per_million: Decimal,
     pub cache_read_cost_per_million: Decimal,
     pub cache_creation_cost_per_million: Decimal,
+    pub input_cost_above_200k_per_million: Option<Decimal>,
+    pub output_cost_above_200k_per_million: Option<Decimal>,
+    pub cache_read_cost_above_200k_per_million: Option<Decimal>,
+    pub cache_creation_cost_above_200k_per_million: Option<Decimal>,
 }
 
 /// 成本计算器
@@ -83,17 +87,36 @@ impl CostCalculator {
         } else {
             usage.input_tokens
         };
+        let context_tokens = billable_input_tokens
+            .saturating_add(usage.cache_read_tokens)
+            .saturating_add(usage.cache_creation_tokens);
+        let use_long_context_rates = context_tokens > 200_000;
 
         // 各项基础成本（不含倍率）
-        let input_cost =
-            Decimal::from(billable_input_tokens) * pricing.input_cost_per_million / million;
-        let output_cost =
-            Decimal::from(usage.output_tokens) * pricing.output_cost_per_million / million;
-        let cache_read_cost =
-            Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million;
-        let cache_creation_cost = Decimal::from(usage.cache_creation_tokens)
-            * pricing.cache_creation_cost_per_million
-            / million;
+        let input_cost = Self::context_cost(
+            billable_input_tokens,
+            pricing.input_cost_per_million,
+            pricing.input_cost_above_200k_per_million,
+            use_long_context_rates,
+        ) / million;
+        let output_cost = Self::context_cost(
+            usage.output_tokens,
+            pricing.output_cost_per_million,
+            pricing.output_cost_above_200k_per_million,
+            use_long_context_rates,
+        ) / million;
+        let cache_read_cost = Self::context_cost(
+            usage.cache_read_tokens,
+            pricing.cache_read_cost_per_million,
+            pricing.cache_read_cost_above_200k_per_million,
+            use_long_context_rates,
+        ) / million;
+        let cache_creation_cost = Self::context_cost(
+            usage.cache_creation_tokens,
+            pricing.cache_creation_cost_per_million,
+            pricing.cache_creation_cost_above_200k_per_million,
+            use_long_context_rates,
+        ) / million;
 
         // 总成本 = 各项基础成本之和 × 倍率
         let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
@@ -106,6 +129,20 @@ impl CostCalculator {
             cache_creation_cost,
             total_cost,
         }
+    }
+
+    fn context_cost(
+        tokens: u32,
+        base: Decimal,
+        above_200k: Option<Decimal>,
+        use_long_context_rates: bool,
+    ) -> Decimal {
+        let rate = if use_long_context_rates {
+            above_200k.unwrap_or(base)
+        } else {
+            base
+        };
+        Decimal::from(tokens) * rate
     }
 
     /// 尝试计算成本，如果模型未知则返回 None
@@ -141,6 +178,10 @@ impl ModelPricing {
             output_cost_per_million: Decimal::from_str(output)?,
             cache_read_cost_per_million: Decimal::from_str(cache_read)?,
             cache_creation_cost_per_million: Decimal::from_str(cache_creation)?,
+            input_cost_above_200k_per_million: None,
+            output_cost_above_200k_per_million: None,
+            cache_read_cost_above_200k_per_million: None,
+            cache_creation_cost_above_200k_per_million: None,
         })
     }
 }
@@ -266,5 +307,27 @@ mod tests {
         // 验证高精度计算
         assert!(cost.total_cost > Decimal::ZERO);
         assert!(cost.total_cost.to_string().len() > 2); // 确保保留了小数位
+    }
+
+    #[test]
+    fn test_above_200k_rates_apply_to_whole_request_context() {
+        let usage = TokenUsage {
+            input_tokens: 250_000,
+            output_tokens: 1_000,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        let mut pricing = ModelPricing::from_strings("1", "2", "0", "0").unwrap();
+        pricing.input_cost_above_200k_per_million = Some(Decimal::from(3));
+        pricing.output_cost_above_200k_per_million = Some(Decimal::from(4));
+
+        let cost = CostCalculator::calculate(&usage, &pricing, Decimal::ONE);
+
+        assert_eq!(cost.input_cost, Decimal::from_str("0.75").unwrap());
+        assert_eq!(cost.output_cost, Decimal::from_str("0.004").unwrap());
+        assert_eq!(cost.total_cost, Decimal::from_str("0.754").unwrap());
     }
 }
