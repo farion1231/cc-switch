@@ -1147,6 +1147,7 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
 
 pub fn write_codex_provider_live_with_catalog(
     settings: &Value,
+    provider_meta: Option<&crate::provider::ProviderMeta>,
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
@@ -1154,9 +1155,79 @@ pub fn write_codex_provider_live_with_catalog(
 ) -> Result<(), AppError> {
     let prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
+        .map(|result| {
+            result.and_then(|text| {
+                apply_codex_provider_feature_overrides(settings, provider_meta, &text)
+            })
+        })
         .transpose()?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+}
+
+fn apply_codex_provider_feature_overrides(
+    settings: &Value,
+    provider_meta: Option<&crate::provider::ProviderMeta>,
+    config_text: &str,
+) -> Result<String, AppError> {
+    let image_generation_mode = provider_meta
+        .and_then(|meta| meta.codex_image_generation_mode.as_deref())
+        .or_else(|| {
+            settings
+                .get("meta")
+                .and_then(|meta| meta.get("codexImageGenerationMode"))
+                .and_then(Value::as_str)
+        })
+        .map(normalize_codex_image_generation_mode);
+    if let Some(mode) = image_generation_mode {
+        return set_codex_feature_bool(
+            config_text,
+            "image_generation",
+            !matches!(mode.as_str(), "disabled"),
+        );
+    }
+
+    let supports_image_generation = provider_meta
+        .and_then(|meta| meta.supports_image_generation)
+        .or_else(|| {
+            settings
+                .get("meta")
+                .and_then(|meta| meta.get("supportsImageGeneration"))
+                .and_then(Value::as_bool)
+        });
+    match supports_image_generation {
+        Some(enabled) => set_codex_feature_bool(config_text, "image_generation", enabled),
+        None => Ok(config_text.to_string()),
+    }
+}
+
+fn normalize_codex_image_generation_mode(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "disabled" | "all" | "off" | "disable" => "disabled".to_string(),
+        "chat" | "chat_only" | "chat-only" => "chat".to_string(),
+        "passthrough" | "pass_through" | "pass-through" => "passthrough".to_string(),
+        _ => "enabled".to_string(),
+    }
+}
+
+fn set_codex_feature_bool(
+    config_text: &str,
+    feature: &str,
+    enabled: bool,
+) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    if doc
+        .get("features")
+        .and_then(|item| item.as_table())
+        .is_none()
+    {
+        doc["features"] = toml_edit::table();
+    }
+    doc["features"][feature] = toml_edit::value(enabled);
+    Ok(doc.to_string())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
