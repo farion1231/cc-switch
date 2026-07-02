@@ -568,15 +568,63 @@ impl ProviderManager {
 // 统一供应商（Universal Provider）- 跨应用共享配置
 // ============================================================================
 
+/// 单个应用的权限配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UniversalProviderAppPermission {
+    /// 简单布尔值（向后兼容）
+    Simple(bool),
+    /// 详细权限配置
+    Detailed {
+        enabled: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        visible: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        readonly: Option<bool>,
+    },
+}
+
+impl Default for UniversalProviderAppPermission {
+    fn default() -> Self {
+        Self::Simple(false)
+    }
+}
+
+impl UniversalProviderAppPermission {
+    /// 获取是否启用
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Simple(enabled) => *enabled,
+            Self::Detailed { enabled, .. } => *enabled,
+        }
+    }
+
+    /// 获取是否可见（默认 true）
+    pub fn is_visible(&self) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Detailed { visible, .. } => visible.unwrap_or(true),
+        }
+    }
+
+    /// 获取是否只读（默认 false）
+    pub fn is_readonly(&self) -> bool {
+        match self {
+            Self::Simple(_) => false,
+            Self::Detailed { readonly, .. } => readonly.unwrap_or(false),
+        }
+    }
+}
+
 /// 统一供应商的应用启用状态
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UniversalProviderApps {
     #[serde(default)]
-    pub claude: bool,
+    pub claude: UniversalProviderAppPermission,
     #[serde(default)]
-    pub codex: bool,
+    pub codex: UniversalProviderAppPermission,
     #[serde(default)]
-    pub gemini: bool,
+    pub gemini: UniversalProviderAppPermission,
 }
 
 /// Claude 模型配置
@@ -707,7 +755,7 @@ impl UniversalProvider {
 
     /// 生成 Claude 供应商配置
     pub fn to_claude_provider(&self) -> Option<Provider> {
-        if !self.apps.claude {
+        if !self.apps.claude.is_enabled() {
             return None;
         }
 
@@ -754,7 +802,7 @@ impl UniversalProvider {
 
     /// 生成 Codex 供应商配置
     pub fn to_codex_provider(&self) -> Option<Provider> {
-        if !self.apps.codex {
+        if !self.apps.codex.is_enabled() {
             return None;
         }
 
@@ -819,7 +867,7 @@ requires_openai_auth = true"#
 
     /// 生成 Gemini 供应商配置
     pub fn to_gemini_provider(&self) -> Option<Provider> {
-        if !self.apps.gemini {
+        if !self.apps.gemini.is_enabled() {
             return None;
         }
 
