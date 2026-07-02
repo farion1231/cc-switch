@@ -11,6 +11,7 @@ import {
   Terminal,
   Trash2,
   Zap,
+  Share2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ interface ProviderActionsProps {
   onSwitch: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
+  onCopyToApps?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
   onDelete: () => void;
@@ -66,6 +68,7 @@ export function ProviderActions({
   onSwitch,
   onEdit,
   onDuplicate,
+  onCopyToApps,
   onTest,
   onConfigureUsage,
   onDelete,
@@ -304,6 +307,20 @@ export function ProviderActions({
         >
           <Copy className="h-4 w-4" />
         </Button>
+
+        {onCopyToApps && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onCopyToApps}
+            title={t("provider.copyToApps.title", {
+              defaultValue: "复制到其他应用",
+            })}
+            className={iconButtonClass}
+          >
+            <Share2 className="h-4 w-4" />
+          </Button>
+        )}
 
         <Button
           size="icon"

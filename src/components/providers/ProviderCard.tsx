@@ -49,6 +49,7 @@ interface ProviderCardProps {
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
+  onCopyToApps?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
   onOpenTerminal?: (provider: Provider) => void;
   isTesting?: boolean;
@@ -148,6 +149,7 @@ export function ProviderCard({
   onConfigureUsage,
   onOpenWebsite,
   onDuplicate,
+  onCopyToApps,
   onTest,
   onOpenTerminal,
   isTesting,
@@ -547,6 +549,7 @@ export function ProviderCard({
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
               onDuplicate={() => onDuplicate(provider)}
+              onCopyToApps={onCopyToApps ? () => onCopyToApps(provider) : undefined}
               onTest={
                 // 连通检测对第三方/自定义/Copilot/Codex-OAuth 供应商开放（这些正是旧的
                 // 真实请求探测会误报、而可达性探测能正确处理的对象）。官方供应商
