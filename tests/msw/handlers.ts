@@ -311,6 +311,28 @@ export const handlers = [
     success({ success: true }),
   ),
 
+  http.post(`${TAURI_ENDPOINT}/get_claude_desktop_status`, () =>
+    success({
+      supported: true,
+      configured: true,
+      appliedId: "00000000-0000-4000-8000-000000157210",
+      profilePath: null,
+      configLibraryPath: null,
+      mode: "direct",
+      expectedBaseUrl: null,
+      actualBaseUrl: null,
+      proxyRunning: false,
+      staleRawModels: false,
+      missingRouteMappings: false,
+      gatewayTokenConfigured: true,
+      disableAutoUpdates: false,
+    }),
+  ),
+
+  http.post(`${TAURI_ENDPOINT}/set_claude_desktop_disable_auto_updates`, () =>
+    success(true),
+  ),
+
   // Proxy status (for SettingsPage / ProxyPanel hooks)
   http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
     success({

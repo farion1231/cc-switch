@@ -19,6 +19,7 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 #[cfg(any(target_os = "macos", windows, test))]
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
+const DISABLE_AUTO_UPDATES_SETTING_KEY: &str = "claude_desktop_disable_auto_updates";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
 const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
@@ -108,6 +109,7 @@ pub struct ClaudeDesktopStatus {
     pub stale_raw_models: bool,
     pub missing_route_mappings: bool,
     pub gateway_token_configured: bool,
+    pub disable_auto_updates: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +147,7 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
             stale_raw_models: false,
             missing_route_mappings: false,
             gateway_token_configured: false,
+            disable_auto_updates: false,
         });
     }
 
@@ -172,6 +175,7 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         .ok()
         .flatten()
         .is_some_and(|token| !token.trim().is_empty());
+    let disable_auto_updates = configured_disable_auto_updates(db, &paths);
     let current_provider = crate::settings::get_effective_current_provider(
         db,
         &crate::app_config::AppType::ClaudeDesktop,
@@ -206,11 +210,37 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         stale_raw_models,
         missing_route_mappings,
         gateway_token_configured,
+        disable_auto_updates,
     })
 }
 
 pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
+}
+
+pub fn set_disable_auto_updates(db: &Database, enabled: bool) -> Result<(), AppError> {
+    if !is_supported_platform() {
+        return Err(AppError::localized(
+            "claude_desktop.unsupported_platform",
+            "当前平台不支持 Claude Desktop 配置",
+            "Claude Desktop configuration is not supported on this platform",
+        ));
+    }
+
+    let paths = current_platform_paths()?;
+    set_disable_auto_updates_at_paths(db, &paths, enabled)
+}
+
+fn set_disable_auto_updates_at_paths(
+    db: &Database,
+    paths: &ClaudeDesktopPaths,
+    enabled: bool,
+) -> Result<(), AppError> {
+    write_disable_auto_updates_to_active_profile(paths, enabled)?;
+    db.set_setting(
+        DISABLE_AUTO_UPDATES_SETTING_KEY,
+        if enabled { "true" } else { "false" },
+    )
 }
 
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {
@@ -231,6 +261,55 @@ pub fn provider_mode(provider: &Provider) -> ClaudeDesktopMode {
         .as_ref()
         .and_then(|meta| meta.claude_desktop_mode.clone())
         .unwrap_or(ClaudeDesktopMode::Direct)
+}
+
+fn stored_disable_auto_updates(db: &Database) -> bool {
+    db.get_setting(DISABLE_AUTO_UPDATES_SETTING_KEY)
+        .ok()
+        .flatten()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+}
+
+fn configured_disable_auto_updates(db: &Database, paths: &ClaudeDesktopPaths) -> bool {
+    active_profile_disable_auto_updates(paths).unwrap_or_else(|| stored_disable_auto_updates(db))
+}
+
+fn active_profile_disable_auto_updates(paths: &ClaudeDesktopPaths) -> Option<bool> {
+    let profile_path = active_profile_path(paths);
+    read_json_or_empty(&profile_path)
+        .ok()
+        .and_then(|profile| profile.get("disableAutoUpdates").and_then(Value::as_bool))
+}
+
+fn write_disable_auto_updates_to_active_profile(
+    paths: &ClaudeDesktopPaths,
+    enabled: bool,
+) -> Result<(), AppError> {
+    let profile_path = active_profile_path(paths);
+    let mut profile = read_json_or_empty(&profile_path)?;
+    if !profile.is_object() {
+        profile = json!({});
+    }
+
+    let obj = profile.as_object_mut().expect("just normalized to object");
+    obj.insert("disableAutoUpdates".to_string(), json!(enabled));
+    write_json_file(&profile_path, &profile)
+}
+
+fn active_profile_path(paths: &ClaudeDesktopPaths) -> PathBuf {
+    read_applied_id(&paths.meta_path)
+        .as_deref()
+        .and_then(|id| profile_path_for_id(&paths.config_library_path, id))
+        .unwrap_or_else(|| paths.profile_path.clone())
+}
+
+fn profile_path_for_id(config_library_path: &Path, profile_id: &str) -> Option<PathBuf> {
+    let trimmed = profile_id.trim();
+    if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') {
+        return None;
+    }
+
+    Some(config_library_path.join(format!("{trimmed}.json")))
 }
 
 pub fn is_claude_safe_model_id(model: &str) -> bool {
@@ -971,6 +1050,7 @@ fn apply_provider_to_paths_inner(
     provider: &Provider,
     paths: &ClaudeDesktopPaths,
 ) -> Result<(), AppError> {
+    let disable_auto_updates = configured_disable_auto_updates(db, paths);
     let profile = match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
             let credentials = direct_gateway_credentials(provider)?;
@@ -978,6 +1058,7 @@ fn apply_provider_to_paths_inner(
             build_gateway_profile(
                 &credentials.base_url,
                 &credentials.api_key,
+                disable_auto_updates,
                 (!model_specs.is_empty()).then_some(model_specs.as_slice()),
             )
         }
@@ -993,7 +1074,12 @@ fn apply_provider_to_paths_inner(
                     supports_1m: route.supports_1m,
                 })
                 .collect::<Vec<_>>();
-            build_gateway_profile(&base_url, &api_key, Some(model_specs.as_slice()))
+            build_gateway_profile(
+                &base_url,
+                &api_key,
+                disable_auto_updates,
+                Some(model_specs.as_slice()),
+            )
         }
     };
 
@@ -1021,10 +1107,12 @@ fn restore_official_at_paths_inner(paths: &ClaudeDesktopPaths) -> Result<(), App
 fn build_gateway_profile(
     base_url: &str,
     api_key: &str,
+    disable_auto_updates: bool,
     model_specs: Option<&[InferenceModelSpec]>,
 ) -> Value {
     let mut profile = json!({
         "coworkEgressAllowedHosts": ["*"],
+        "disableAutoUpdates": disable_auto_updates,
         "disableDeploymentModeChooser": true,
         "inferenceGatewayApiKey": api_key,
         "inferenceGatewayAuthScheme": "bearer",
@@ -1503,6 +1591,7 @@ mod tests {
         );
         assert_eq!(profile["inferenceGatewayApiKey"], json!("test-token"));
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
+        assert_eq!(profile["disableAutoUpdates"], json!(false));
         assert_eq!(profile["disableDeploymentModeChooser"], json!(true));
         assert_eq!(profile["coworkEgressAllowedHosts"], json!(["*"]));
         assert!(profile.get("inferenceModels").is_none());
@@ -1512,6 +1601,95 @@ mod tests {
             .expect("entries")
             .iter()
             .any(|entry| entry["id"] == json!(PROFILE_ID) && entry["name"] == json!(PROFILE_NAME)));
+    }
+
+    #[test]
+    fn claude_desktop_apply_writes_stored_disable_auto_updates_flag() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let provider = direct_provider("direct-no-updates");
+        let db = test_db();
+        db.set_setting(DISABLE_AUTO_UPDATES_SETTING_KEY, "true")
+            .expect("store setting");
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["disableAutoUpdates"], json!(true));
+    }
+
+    #[test]
+    fn claude_desktop_apply_preserves_existing_profile_disable_auto_updates_flag() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let provider = direct_provider("direct-preserve-no-updates");
+        let db = test_db();
+        write_json_file(&paths.profile_path, &json!({ "disableAutoUpdates": true }))
+            .expect("seed profile");
+
+        apply_provider_to_paths(&db, &provider, &paths).expect("apply provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["disableAutoUpdates"], json!(true));
+    }
+
+    #[test]
+    fn claude_desktop_disable_auto_updates_updates_active_profile() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let external_id = "external-profile";
+        let external_profile_path = paths
+            .config_library_path
+            .join(format!("{external_id}.json"));
+        write_json_file(
+            &paths.meta_path,
+            &json!({
+                "appliedId": external_id,
+                "entries": [{ "id": external_id, "name": "External" }]
+            }),
+        )
+        .expect("seed meta");
+        write_json_file(&external_profile_path, &json!({ "name": "External" }))
+            .expect("seed profile");
+
+        write_disable_auto_updates_to_active_profile(&paths, true).expect("write true");
+        let profile: Value = read_json_file(&external_profile_path).expect("read profile");
+        assert_eq!(profile["disableAutoUpdates"], json!(true));
+
+        write_disable_auto_updates_to_active_profile(&paths, false).expect("write false");
+        let profile: Value = read_json_file(&external_profile_path).expect("read profile");
+        assert_eq!(profile["disableAutoUpdates"], json!(false));
+    }
+
+    #[test]
+    fn claude_desktop_disable_auto_updates_persists_after_profile_write() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        write_json_file(&paths.profile_path, &json!({ "name": "CC Switch" }))
+            .expect("seed profile");
+
+        set_disable_auto_updates_at_paths(&db, &paths, true).expect("set disable updates");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        assert_eq!(profile["disableAutoUpdates"], json!(true));
+        assert!(stored_disable_auto_updates(&db));
+    }
+
+    #[test]
+    fn claude_desktop_disable_auto_updates_does_not_persist_when_profile_write_fails() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let db = test_db();
+        fs::create_dir_all(paths.profile_path.parent().expect("profile parent"))
+            .expect("create profile dir");
+        fs::write(&paths.profile_path, "{ invalid json").expect("seed broken profile");
+
+        let err = set_disable_auto_updates_at_paths(&db, &paths, true)
+            .expect_err("broken profile should fail");
+
+        assert!(err.to_string().contains("JSON"), "unexpected error: {err}");
+        assert!(!stored_disable_auto_updates(&db));
     }
 
     #[test]

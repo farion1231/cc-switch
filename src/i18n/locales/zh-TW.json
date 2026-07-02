@@ -216,6 +216,15 @@
     "statusMissingRouteMappings": "目前供應商啟用了模型對應，但沒有有效路由；請編輯供應商並補全至少一個模型對應。",
     "statusGatewayTokenMissing": "目前本地路由 token 尚未產生；重新切換該供應商會寫入新的本地 token。",
     "statusBaseUrlMismatch": "Claude Desktop profile 指向的位址與目前供應商不一致；目前為 {{actual}}，應為 {{expected}}。重新切換目前供應商可修復。",
+    "autoUpdates": {
+      "label": "關閉 Claude Desktop 自動更新",
+      "blocked": "已關閉 Claude Desktop 自動更新",
+      "allowed": "已允許 Claude Desktop 自動更新",
+      "failed": "更新 Claude Desktop 自動更新設定失敗: {{error}}",
+      "unsupported": "目前平台暫不支援 Claude Desktop 3P 設定寫入",
+      "tooltipBlocked": "Claude Desktop 自動更新已關閉",
+      "tooltipAllowed": "允許 Claude Desktop 自動更新"
+    },
     "route": {
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
@@ -683,6 +692,10 @@
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "開啟後跳過 Claude Code 初次安裝確認",
     "codexAuth": "Codex 應用增強",
+    "claudeDesktopSettings": "Claude Desktop 設定",
+    "disableClaudeDesktopAutoUpdates": "關閉 Claude Desktop 自動更新",
+    "disableClaudeDesktopAutoUpdatesDescription": "開啟後，Claude Desktop 不會自動下載和安裝新版本；關閉後恢復預設自動更新。",
+    "claudeDesktopUnsupportedDescription": "目前平台暫不支援 Claude Desktop 3P 設定寫入。",
     "preserveCodexOfficialAuthOnSwitch": "切換第三方時保留官方登入",
     "preserveCodexOfficialAuthOnSwitchDescription": "開啟後可以在使用第三方 API 的時候使用 Codex 應用的官方外掛、手機遠端操作等功能",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",

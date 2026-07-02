@@ -38,6 +38,7 @@ export interface ClaudeDesktopStatus {
   staleRawModels: boolean;
   missingRouteMappings: boolean;
   gatewayTokenConfigured: boolean;
+  disableAutoUpdates: boolean;
 }
 
 export interface ClaudeDesktopDefaultRoute {
@@ -105,6 +106,10 @@ export const providersApi = {
 
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {
     return await invoke("get_claude_desktop_status");
+  },
+
+  async setClaudeDesktopDisableAutoUpdates(enabled: boolean): Promise<boolean> {
+    return await invoke("set_claude_desktop_disable_auto_updates", { enabled });
   },
 
   async getClaudeDesktopDefaultRoutes(): Promise<ClaudeDesktopDefaultRoute[]> {
