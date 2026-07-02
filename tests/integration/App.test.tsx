@@ -305,6 +305,60 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("keeps duplicate next to original when original lacks sortIndex in a mixed list", async () => {
+    // Mixed indexed/unindexed list: A has sortIndex, B and C do not.
+    // Display order is A, B, C. Duplicating C must yield A, B, C, "C copy" — it must not
+    // lift C (and its copy) above the unindexed B. Regression test for the #4234 mixed case.
+    const base = Date.now();
+    setProviders("codex", {
+      "codex-a": {
+        id: "codex-a",
+        name: "A",
+        settingsConfig: {},
+        category: "custom",
+        sortIndex: 0,
+        createdAt: base,
+      },
+      "codex-b": {
+        id: "codex-b",
+        name: "B",
+        settingsConfig: {},
+        category: "custom",
+        createdAt: base + 1,
+      },
+      "codex-c": {
+        id: "codex-c",
+        name: "C",
+        settingsConfig: {},
+        category: "custom",
+        createdAt: base + 2,
+      },
+    });
+    setCurrentProviderId("codex", "codex-c");
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(screen.getByText("switch-codex"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-c",
+      ),
+    );
+
+    fireEvent.click(screen.getByText("duplicate"));
+
+    await waitFor(() => {
+      const list = screen.getByTestId("provider-list").textContent ?? "";
+      const parsed = JSON.parse(list) as Record<string, { name: string }>;
+      const names = Object.values(parsed).map((p) => p.name);
+      expect(names).toEqual(["A", "B", "C", "C copy"]);
+    });
+
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
   it("shows toast when duplicate cannot load live provider ids", async () => {
     setProviders("openclaw", {
       deepseek: {
