@@ -81,6 +81,11 @@ export type ClaudeDesktopProviderFormValues = ProviderFormData & {
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
+const defaultApiKeyFieldForApiFormat = (
+  apiFormat: ClaudeApiFormat,
+): ApiKeyField =>
+  apiFormat === "anthropic" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN";
+
 type PresetEntry = {
   id: string;
   preset: ClaudeDesktopProviderPreset;
@@ -269,10 +274,12 @@ export function ClaudeDesktopProviderForm({
     envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
       envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY"),
   );
-  const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() =>
-    envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
-      ? "ANTHROPIC_API_KEY"
-      : "ANTHROPIC_AUTH_TOKEN",
+  const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(
+    () =>
+      initialData?.meta?.apiKeyField ??
+      (envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
+        ? "ANTHROPIC_API_KEY"
+        : "ANTHROPIC_AUTH_TOKEN"),
   );
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -409,8 +416,11 @@ export function ClaudeDesktopProviderForm({
 
     setBaseUrl(preset.baseUrl);
     setApiKey("");
-    setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
-    setApiFormat(preset.apiFormat ?? "anthropic");
+    const presetApiFormat = preset.apiFormat ?? "anthropic";
+    setApiKeyField(
+      preset.apiKeyField ?? defaultApiKeyFieldForApiFormat(presetApiFormat),
+    );
+    setApiFormat(presetApiFormat);
 
     didSeedDefaultRoutes.current = true;
     setMode(preset.mode);
@@ -440,8 +450,8 @@ export function ClaudeDesktopProviderForm({
       form.reset(defaultValues);
       setBaseUrl("");
       setApiKey("");
-      setApiKeyField("ANTHROPIC_AUTH_TOKEN");
       setApiFormat("anthropic");
+      setApiKeyField(defaultApiKeyFieldForApiFormat("anthropic"));
       didSeedDefaultRoutes.current = false;
       setMode("direct");
       setRoutes([]);
@@ -666,6 +676,7 @@ export function ClaudeDesktopProviderForm({
       ...(initialData?.meta ?? {}),
       claudeDesktopMode: mode,
       apiFormat: mode === "proxy" ? apiFormat : "anthropic",
+      apiKeyField: usesManagedOAuth ? undefined : apiKeyField,
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
@@ -850,9 +861,13 @@ export function ClaudeDesktopProviderForm({
                   </Label>
                   <Select
                     value={apiFormat}
-                    onValueChange={(value) =>
-                      setApiFormat(value as ClaudeApiFormat)
-                    }
+                    onValueChange={(value) => {
+                      const nextApiFormat = value as ClaudeApiFormat;
+                      setApiFormat(nextApiFormat);
+                      setApiKeyField(
+                        defaultApiKeyFieldForApiFormat(nextApiFormat),
+                      );
+                    }}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue />

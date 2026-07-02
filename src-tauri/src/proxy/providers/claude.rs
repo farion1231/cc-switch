@@ -650,6 +650,13 @@ impl ClaudeAdapter {
         }
         None
     }
+
+    fn api_format_auth_strategy(&self, provider: &Provider) -> Option<AuthStrategy> {
+        match self.get_api_format(provider) {
+            "openai_chat" | "openai_responses" => Some(AuthStrategy::Bearer),
+            _ => None,
+        }
+    }
 }
 
 impl Default for ClaudeAdapter {
@@ -764,12 +771,18 @@ impl ProviderAdapter for ClaudeAdapter {
             ProviderType::OpenRouter => Some(AuthInfo::new(key, AuthStrategy::Bearer)),
             ProviderType::ClaudeAuth => Some(AuthInfo::new(key, AuthStrategy::ClaudeAuth)),
             _ => {
-                // 按 env 中的变量名推断鉴权策略，对齐 Anthropic SDK 语义：
+                // OpenAI-compatible formats use Bearer auth regardless of the
+                // stored env field name. This keeps legacy providers that saved
+                // ANTHROPIC_API_KEY from sending x-api-key to /chat/completions.
+                //
+                // Otherwise, infer by env variable name to preserve Anthropic SDK
+                // semantics:
                 // ANTHROPIC_AUTH_TOKEN → Authorization: Bearer
                 // ANTHROPIC_API_KEY    → x-api-key
                 // 其他来源（apiKey 直填等）默认走 x-api-key（Anthropic 官方协议）。
                 let strategy = self
-                    .infer_anthropic_auth_strategy(provider)
+                    .api_format_auth_strategy(provider)
+                    .or_else(|| self.infer_anthropic_auth_strategy(provider))
                     .unwrap_or(AuthStrategy::Anthropic);
                 Some(AuthInfo::new(key, strategy))
             }
@@ -1031,6 +1044,123 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "sk-ant-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+    }
+
+    #[test]
+    fn test_extract_auth_openai_chat_api_key_uses_bearer_for_glm52() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+                    "ANTHROPIC_API_KEY": "sk-opencode-go"
+                },
+                "model": "glm-5.2"
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-opencode-go");
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(headers[0].1.to_str().unwrap(), "Bearer sk-opencode-go");
+    }
+
+    #[test]
+    fn test_extract_auth_openai_chat_auth_token_uses_bearer_for_glm52() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-opencode-go"
+                },
+                "model": "glm-5.2"
+            }),
+            ProviderMeta {
+                api_format: Some("openai_chat".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-opencode-go");
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_openai_responses_api_key_uses_bearer() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com",
+                    "ANTHROPIC_API_KEY": "sk-responses"
+                }
+            }),
+            ProviderMeta {
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-responses");
+        assert_eq!(auth.strategy, AuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn test_extract_auth_anthropic_api_key_uses_x_api_key_for_minimax_m3() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+                    "ANTHROPIC_API_KEY": "sk-opencode-go"
+                },
+                "model": "MiniMax-M3"
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-opencode-go");
+        assert_eq!(auth.strategy, AuthStrategy::Anthropic);
+
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert_eq!(headers[0].0.as_str(), "x-api-key");
+        assert_eq!(headers[0].1.to_str().unwrap(), "sk-opencode-go");
+    }
+
+    #[test]
+    fn test_extract_auth_anthropic_auth_token_keeps_existing_bearer_for_minimax_m3() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://opencode.ai/zen/go",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-opencode-go"
+                },
+                "model": "MiniMax-M3"
+            }),
+            ProviderMeta {
+                api_format: Some("anthropic".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.api_key, "sk-opencode-go");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeAuth);
     }
 
     #[test]

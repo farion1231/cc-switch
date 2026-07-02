@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ClaudeDesktopProviderForm } from "@/components/providers/forms/ClaudeDesktopProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -263,5 +264,113 @@ describe("ClaudeDesktopProviderForm", () => {
         model: "claude-sonnet-5",
       },
     });
+  });
+
+  it("应用 OpenCode Go 预设后保存 openai_chat 配置到 Bearer key 字段", async () => {
+    const onSubmit = vi.fn();
+    renderForm(undefined, onSubmit);
+
+    fireEvent.click(screen.getByRole("button", { name: /OpenCode Go/ }));
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "sk-opencode-go" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    const settingsConfig = JSON.parse(submitted.settingsConfig);
+
+    expect(submitted.meta.apiFormat).toBe("openai_chat");
+    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_AUTH_TOKEN");
+    expect(settingsConfig.env).toMatchObject({
+      ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+      ANTHROPIC_AUTH_TOKEN: "sk-opencode-go",
+    });
+    expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    expect(submitted.meta.claudeDesktopModelRoutes).toMatchObject({
+      "claude-sonnet-5": { model: "glm-5.2" },
+      "claude-opus-4-8": { model: "glm-5.2" },
+      "claude-haiku-4-5": { model: "glm-5.2" },
+    });
+  });
+
+  it("切换到 Anthropic Messages 后保存 MiniMax-M3 配置到 x-api-key 字段", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "OpenCode Go Messages",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+            ANTHROPIC_AUTH_TOKEN: "sk-opencode-go",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiFormat: "openai_chat",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "MiniMax-M3" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(
+      await screen.findByRole("option", { name: /Anthropic Messages/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    const settingsConfig = JSON.parse(submitted.settingsConfig);
+
+    expect(submitted.meta.apiFormat).toBe("anthropic");
+    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(settingsConfig.env).toMatchObject({
+      ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+      ANTHROPIC_API_KEY: "sk-opencode-go",
+    });
+    expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(
+      submitted.meta.claudeDesktopModelRoutes["claude-sonnet-5"],
+    ).toMatchObject({ model: "MiniMax-M3" });
+  });
+
+  it("旧配置没有 meta.apiKeyField 时按 env 推断并持久化", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Legacy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
+            ANTHROPIC_API_KEY: "sk-legacy",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          apiFormat: "anthropic",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "MiniMax-M3" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    const settingsConfig = JSON.parse(submitted.settingsConfig);
+
+    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(settingsConfig.env).toMatchObject({
+      ANTHROPIC_API_KEY: "sk-legacy",
+    });
+    expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
   });
 });
