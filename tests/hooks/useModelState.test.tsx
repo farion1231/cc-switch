@@ -96,15 +96,15 @@ describe("useModelState", () => {
 
   it("normalizes Claude Code 1M markers for UI toggles", () => {
     expect(hasClaudeOneMMarker("deepseek-v4-pro[1m]")).toBe(true);
-    expect(hasClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(true);
-    expect(stripClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(
+    expect(hasClaudeOneMMarker("deepseek-v4-pro [1m]  ")).toBe(true);
+    expect(stripClaudeOneMMarker("deepseek-v4-pro [1m]  ")).toBe(
       "deepseek-v4-pro",
     );
-    expect(setClaudeOneMMarker("deepseek-v4-pro [1M]", false)).toBe(
+    expect(setClaudeOneMMarker("deepseek-v4-pro [1m]", false)).toBe(
       "deepseek-v4-pro",
     );
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
-      "deepseek-v4-pro[1M]",
+      "deepseek-v4-pro[1m]",
     );
   });
 });
