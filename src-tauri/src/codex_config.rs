@@ -434,6 +434,12 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(spec.display_name));
     entry_obj.insert("context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    if let Some(truncation_policy) = entry_obj
+        .get_mut("truncation_policy")
+        .and_then(|value| value.as_object_mut())
+    {
+        truncation_policy.insert("limit".to_string(), json!(spec.context_window));
+    }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -2314,7 +2320,11 @@ base_url = "https://production.api/v1"
                 "target": "gpt-5.5"
             },
             "context_window": 272000,
-            "max_context_window": 272000
+            "max_context_window": 272000,
+            "truncation_policy": {
+                "mode": "tokens",
+                "limit": 10000
+            }
         });
         let settings = json!({
             "modelCatalog": {
@@ -2353,6 +2363,27 @@ base_url = "https://production.api/v1"
         assert_eq!(
             models[1]
                 .get("context_window")
+                .and_then(|value| value.as_u64()),
+            Some(128_000)
+        );
+        assert_eq!(
+            models[0]
+                .get("truncation_policy")
+                .and_then(|value| value.get("mode"))
+                .and_then(|value| value.as_str()),
+            Some("tokens")
+        );
+        assert_eq!(
+            models[0]
+                .get("truncation_policy")
+                .and_then(|value| value.get("limit"))
+                .and_then(|value| value.as_u64()),
+            Some(64_000)
+        );
+        assert_eq!(
+            models[1]
+                .get("truncation_policy")
+                .and_then(|value| value.get("limit"))
                 .and_then(|value| value.as_u64()),
             Some(128_000)
         );
