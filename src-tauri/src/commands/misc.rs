@@ -231,7 +231,8 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
 
     let bat_file =
         std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
-    std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    // 切到 UTF-8 代码页，避免 .bat 按 UTF-8 写入、cmd 按 GBK 读取导致中文路径乱码（#3150）
+    std::fs::write(&bat_file, format!("chcp 65001 >nul\r\n{command_line}")).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let output = Command::new("cmd")
         .arg("/C")
@@ -3211,6 +3212,7 @@ fn launch_windows_terminal(
 
     let content = format!(
         "@echo off
+chcp 65001 >nul
 {cwd_command}
 echo Using provider-specific claude config:
 echo {}
@@ -3458,7 +3460,7 @@ read -r _
 
         let bat_file = temp_dir.join(format!("cc_switch_{}_{}.bat", label, pid));
         let content = format!(
-            "@echo off\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
+            "@echo off\r\nchcp 65001 >nul\r\necho [cc-switch] Starting: {label}\r\necho.\r\n{cmd}\r\necho.\r\necho [cc-switch] Command exited. Press any key to close.\r\npause >nul\r\ndel \"%~f0\" >nul 2>&1\r\n",
             label = label,
             cmd = command_line,
         );
