@@ -3060,8 +3060,10 @@ fn macos_otty_cli_candidates() -> Vec<std::path::PathBuf> {
         );
     }
 
+    // "Install CLI" symlinks `otty` onto PATH; the in-bundle binary is `otty-cli`.
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("otty"));
             candidates.push(dir.join("otty-cli"));
         }
     }

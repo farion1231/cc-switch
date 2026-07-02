@@ -278,11 +278,8 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn launch_otty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    // Otty exposes a standalone `otty-cli` binary inside the app bundle
-    // (Contents/MacOS/otty-cli). Unlike Ghostty/Kitty, Otty cannot be driven
-    // via `open -na Otty --args ...` because the GUI binary does not honor the
-    // `open` subcommand passed through `--args`. We must invoke `otty-cli`
-    // directly: `otty-cli open [path] --command "<shell command>"`.
+    // Otty's GUI binary ignores the `open` subcommand via `open -na --args`, so
+    // drive its standalone CLI directly: `otty open [path] --command "<cmd>"`.
     let otty_cli = find_otty_cli().ok_or_else(|| {
         "Otty CLI not found. Install Otty to /Applications or ~/Applications.".to_string()
     })?;
@@ -331,8 +328,10 @@ fn otty_cli_candidates() -> Vec<std::path::PathBuf> {
         );
     }
 
+    // "Install CLI" symlinks `otty` onto PATH; the in-bundle binary is `otty-cli`.
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("otty"));
             candidates.push(dir.join("otty-cli"));
         }
     }
@@ -389,18 +388,14 @@ fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-#[cfg(unix)]
+// Only the macOS Otty launcher uses this.
+#[cfg(target_os = "macos")]
 fn is_executable_file(path: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
     path.metadata()
         .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
         .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable_file(path: &std::path::Path) -> bool {
-    path.is_file()
 }
 
 #[cfg(test)]
