@@ -2464,7 +2464,7 @@ impl ProxyService {
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
-        use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+        use crate::codex_config::get_codex_auth_path;
 
         let auth = config.get("auth");
         let config_str = config.get("config").and_then(|v| v.as_str());
@@ -2504,8 +2504,7 @@ impl ProxyService {
                 let auth_path = get_codex_auth_path();
                 if auth.as_object().is_some_and(|obj| obj.is_empty()) {
                     let _ = crate::config::delete_file(&auth_path);
-                    let config_path = get_codex_config_path();
-                    crate::config::write_text_file(&config_path, cfg)
+                    crate::codex_config::write_codex_live_config_atomic(Some(cfg))
                         .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
                 } else {
                     crate::codex_config::write_codex_live_atomic(auth, Some(cfg))
@@ -2518,8 +2517,7 @@ impl ProxyService {
                     .map_err(|e| format!("写入 Codex auth 失败: {e}"))?;
             }
             (None, Some(cfg)) => {
-                let config_path = get_codex_config_path();
-                crate::config::write_text_file(&config_path, cfg)
+                crate::codex_config::write_codex_live_config_atomic(Some(cfg))
                     .map_err(|e| format!("写入 Codex config 失败: {e}"))?;
             }
             (None, None) => {}
@@ -5881,6 +5879,10 @@ requires_openai_auth = true
 
         let restored = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read restored config.toml");
+        assert!(
+            restored.starts_with("# [CC Switch Codex Config Instructions]"),
+            "empty-auth restore must preserve the managed config header"
+        );
         assert!(
             restored.contains("model_catalog_json"),
             "empty-auth restore must still project the inline catalog pointer, got:\n{restored}"

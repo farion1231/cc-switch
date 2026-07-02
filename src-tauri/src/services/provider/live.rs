@@ -701,7 +701,7 @@ impl LiveSnapshot {
                 }
 
                 if let Some(text) = config {
-                    crate::config::write_text_file(&config_path, text)?;
+                    crate::codex_config::write_codex_live_config_atomic(Some(text))?;
                 } else if config_path.exists() {
                     delete_file(&config_path)?;
                 }
