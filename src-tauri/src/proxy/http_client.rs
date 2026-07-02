@@ -15,6 +15,8 @@ static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 
 /// 当前代理 URL（用于日志和状态查询）
 static CURRENT_PROXY_URL: OnceCell<RwLock<Option<String>>> = OnceCell::new();
+/// 当前是否跟随系统代理（环境变量）
+static CURRENT_FOLLOW_SYSTEM_PROXY: OnceCell<RwLock<bool>> = OnceCell::new();
 
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceCell<RwLock<u16>> = OnceCell::new();
@@ -50,9 +52,9 @@ fn get_proxy_port() -> u16 {
 /// # Arguments
 /// * `proxy_url` - 代理 URL，如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`
 ///   传入 None 或空字符串表示直连
-pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
+pub fn init(proxy_url: Option<&str>, follow_system_proxy: bool) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let client = build_client(effective_url)?;
+    let client = build_client(effective_url, follow_system_proxy)?;
 
     // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
     if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
@@ -63,14 +65,15 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
                 .unwrap_or_else(|| "direct connection".to_string())
         );
         // 已初始化，改用 apply_proxy 更新
-        return apply_proxy(proxy_url);
+        return apply_proxy(proxy_url, follow_system_proxy);
     }
 
     // 初始化代理 URL 记录
     let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
+    let _ = CURRENT_FOLLOW_SYSTEM_PROXY.set(RwLock::new(follow_system_proxy));
 
     log::info!(
-        "[GlobalProxy] Initialized: {}",
+        "[GlobalProxy] Initialized: {} (follow_system_proxy={follow_system_proxy})",
         effective_url
             .map(mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
@@ -89,10 +92,10 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
 ///
 /// # Returns
 /// 验证成功返回 Ok(())，失败返回错误信息
-pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+pub fn validate_proxy(proxy_url: Option<&str>, follow_system_proxy: bool) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     // 只调用 build_client 来验证，但不应用
-    build_client(effective_url)?;
+    build_client(effective_url, follow_system_proxy)?;
     Ok(())
 }
 
@@ -103,9 +106,9 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 ///
 /// # Arguments
 /// * `proxy_url` - 代理 URL，None 或空字符串表示直连
-pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
+pub fn apply_proxy(proxy_url: Option<&str>, follow_system_proxy: bool) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
+    let new_client = build_client(effective_url, follow_system_proxy)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -116,7 +119,7 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         *client = new_client;
     } else {
         // 如果还没初始化，则初始化
-        return init(proxy_url);
+        return init(proxy_url, follow_system_proxy);
     }
 
     // 更新代理 URL 记录
@@ -127,9 +130,16 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         })?;
         *url = effective_url.map(|s| s.to_string());
     }
+    if let Some(lock) = CURRENT_FOLLOW_SYSTEM_PROXY.get() {
+        let mut follow = lock.write().map_err(|e| {
+            log::error!("[GlobalProxy] [GP-011] Failed to acquire follow-system write lock: {e}");
+            "Failed to update follow system proxy: lock poisoned".to_string()
+        })?;
+        *follow = follow_system_proxy;
+    }
 
     log::info!(
-        "[GlobalProxy] Applied: {}",
+        "[GlobalProxy] Applied: {} (follow_system_proxy={follow_system_proxy})",
         effective_url
             .map(mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
@@ -149,7 +159,8 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 #[allow(dead_code)]
 pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
+    let follow_system_proxy = get_follow_system_proxy();
+    let new_client = build_client(effective_url, follow_system_proxy)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -160,7 +171,7 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         *client = new_client;
     } else {
         // 如果还没初始化，则初始化
-        return init(proxy_url);
+        return init(proxy_url, follow_system_proxy);
     }
 
     // 更新代理 URL 记录
@@ -173,7 +184,7 @@ pub fn update_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     }
 
     log::info!(
-        "[GlobalProxy] Updated: {}",
+        "[GlobalProxy] Updated: {} (follow_system_proxy={follow_system_proxy})",
         effective_url
             .map(mask_url)
             .unwrap_or_else(|| "direct connection".to_string())
@@ -192,7 +203,7 @@ pub fn get() -> Client {
         .map(|c| c.clone())
         .unwrap_or_else(|| {
             log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
-            build_client(None).unwrap_or_default()
+            build_client(None, get_follow_system_proxy()).unwrap_or_default()
         })
 }
 
@@ -206,6 +217,15 @@ pub fn get_current_proxy_url() -> Option<String> {
         .and_then(|url| url.clone())
 }
 
+/// 获取当前是否跟随系统代理
+pub fn get_follow_system_proxy() -> bool {
+    CURRENT_FOLLOW_SYSTEM_PROXY
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|follow| *follow)
+        .unwrap_or(true)
+}
+
 /// 检查是否正在使用代理
 #[allow(dead_code)]
 pub fn is_proxy_enabled() -> bool {
@@ -213,7 +233,7 @@ pub fn is_proxy_enabled() -> bool {
 }
 
 /// 构建 HTTP 客户端
-fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
+fn build_client(proxy_url: Option<&str>, follow_system_proxy: bool) -> Result<Client, String> {
     let mut builder = Client::builder()
         .timeout(Duration::from_secs(600))
         .connect_timeout(Duration::from_secs(30))
@@ -245,6 +265,9 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
             .map_err(|e| format!("Invalid proxy URL '{}': {}", mask_url(url), e))?;
         builder = builder.proxy(proxy);
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
+    } else if !follow_system_proxy {
+        builder = builder.no_proxy();
+        log::debug!("[GlobalProxy] System proxy disabled, using direct connection");
     } else {
         // 未设置全局代理时，让 reqwest 自动检测系统代理（环境变量）
         // 若系统代理指向本机，禁用系统代理避免自环
@@ -368,19 +391,25 @@ mod tests {
 
     #[test]
     fn test_build_client_direct() {
-        let result = build_client(None);
+        let result = build_client(None, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_client_without_system_proxy() {
+        let result = build_client(None, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_client_with_http_proxy() {
-        let result = build_client(Some("http://127.0.0.1:7890"));
+        let result = build_client(Some("http://127.0.0.1:7890"), true);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_build_client_with_socks5_proxy() {
-        let result = build_client(Some("socks5://127.0.0.1:1080"));
+        let result = build_client(Some("socks5://127.0.0.1:1080"), true);
         assert!(result.is_ok());
     }
 
@@ -388,7 +417,7 @@ mod tests {
     fn test_build_client_invalid_url() {
         // reqwest::Proxy::all 对某些无效 URL 不会立即报错
         // 使用明确无效的 scheme 来触发错误
-        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"));
+        let result = build_client(Some("invalid-scheme://127.0.0.1:7890"), true);
         assert!(result.is_err(), "Should reject invalid proxy scheme");
     }
 

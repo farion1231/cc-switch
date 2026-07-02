@@ -993,8 +993,11 @@ pub fn run() {
             {
                 let db = &app.state::<AppState>().db;
                 let proxy_url = db.get_global_proxy_url().ok().flatten();
+                let follow_system_proxy = db.get_global_proxy_follow_system().unwrap_or(true);
 
-                if let Err(e) = crate::proxy::http_client::init(proxy_url.as_deref()) {
+                if let Err(e) =
+                    crate::proxy::http_client::init(proxy_url.as_deref(), follow_system_proxy)
+                {
                     log::error!(
                         "[GlobalProxy] [GP-005] Failed to initialize with saved config: {e}"
                     );
@@ -1012,7 +1015,9 @@ pub fn run() {
                     }
 
                     // 使用直连模式重新初始化
-                    if let Err(fallback_err) = crate::proxy::http_client::init(None) {
+                    if let Err(fallback_err) =
+                        crate::proxy::http_client::init(None, follow_system_proxy)
+                    {
                         log::error!(
                             "[GlobalProxy] [GP-008] Failed to initialize direct connection: {fallback_err}"
                         );
@@ -1445,7 +1450,11 @@ pub fn run() {
             commands::set_hermes_memory_enabled,
             // Global upstream proxy
             commands::get_global_proxy_url,
+            commands::get_global_proxy_settings,
+            commands::get_global_proxy_follow_system,
             commands::set_global_proxy_url,
+            commands::set_global_proxy_settings,
+            commands::set_global_proxy_follow_system,
             commands::test_proxy_url,
             commands::get_upstream_proxy_status,
             commands::scan_local_proxies,

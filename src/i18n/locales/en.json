@@ -844,6 +844,8 @@
     "globalProxy": {
       "label": "Global Proxy",
       "hint": "Proxy all requests (API, Skills download, etc.). When local routing is enabled, app traffic is also routed through this proxy. Leave empty for direct connection.",
+      "followSystemProxy": "Follow System Proxy",
+      "followSystemProxyHint": "When no explicit proxy URL is set, read HTTP_PROXY / HTTPS_PROXY / ALL_PROXY and related environment variables.",
       "username": "Username (optional)",
       "password": "Password (optional)",
       "test": "Test Connection",

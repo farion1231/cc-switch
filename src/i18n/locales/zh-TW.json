@@ -815,6 +815,8 @@
     "globalProxy": {
       "label": "全域代理伺服器",
       "hint": "代理所有請求（API、Skills 下載等）。開啟本地路由時，應用程式的請求也會經過此代理伺服器。留空表示直連。",
+      "followSystemProxy": "跟隨系統代理",
+      "followSystemProxyHint": "未填寫明確代理位址時，是否讀取 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 等系統代理環境變數。",
       "username": "使用者名稱（選填）",
       "password": "密碼（選填）",
       "test": "測試連線",

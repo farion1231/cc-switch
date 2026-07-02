@@ -844,6 +844,8 @@
     "globalProxy": {
       "label": "全局代理",
       "hint": "代理所有请求（API、Skills 下载等）。开启本地路由时，应用的请求也会经过此代理。留空表示直连。",
+      "followSystemProxy": "跟随系统代理",
+      "followSystemProxyHint": "未填写显式代理地址时，是否读取 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 等系统代理环境变量。",
       "username": "用户名（可选）",
       "password": "密码（可选）",
       "test": "测试连接",
