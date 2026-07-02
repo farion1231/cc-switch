@@ -3353,15 +3353,15 @@ impl ProviderService {
 
         // 删除生成的子供应商
         if let Some(p) = provider {
-            if p.apps.claude {
+            if p.apps.claude.is_enabled() {
                 let claude_id = format!("universal-claude-{id}");
                 let _ = state.db.delete_provider("claude", &claude_id);
             }
-            if p.apps.codex {
+            if p.apps.codex.is_enabled() {
                 let codex_id = format!("universal-codex-{id}");
                 let _ = state.db.delete_provider("codex", &codex_id);
             }
-            if p.apps.gemini {
+            if p.apps.gemini.is_enabled() {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }
