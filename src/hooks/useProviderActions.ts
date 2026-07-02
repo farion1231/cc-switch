@@ -2,7 +2,13 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  settingsApi,
+  openclawApi,
+  proxyApi,
+  type AppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -41,6 +47,33 @@ export function useProviderActions(
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
   const switchProviderMutation = useSwitchProviderMutation(activeApp);
+
+  const claudeProviderNeedsProxy = useCallback(
+    (provider: Provider) =>
+      activeApp === "claude" &&
+      provider.category !== "official" &&
+      Boolean(provider.meta?.imageModel?.trim()),
+    [activeApp],
+  );
+
+  const ensureClaudeProxyTakeover = useCallback(
+    async (provider: Provider) => {
+      if (!claudeProviderNeedsProxy(provider)) return;
+
+      await proxyApi.setProxyTakeoverForApp("claude", true);
+      await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["proxyTakeoverStatus"],
+      });
+      toast.success(
+        t("notifications.claudeProxyTakeoverEnabled", {
+          defaultValue: "已接管 Claude Code 配置，请重启 Claude Code 后生效",
+        }),
+        { closeButton: true },
+      );
+    },
+    [claudeProviderNeedsProxy, queryClient, t],
+  );
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
@@ -135,6 +168,15 @@ export function useProviderActions(
   const updateProvider = useCallback(
     async (provider: Provider, originalId?: string) => {
       await updateProviderMutation.mutateAsync({ provider, originalId });
+      if (claudeProviderNeedsProxy(provider)) {
+        const currentProviderId = await providersApi.getCurrent(activeApp);
+        if (
+          currentProviderId === provider.id ||
+          (originalId && currentProviderId === originalId)
+        ) {
+          await ensureClaudeProxyTakeover(provider);
+        }
+      }
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -146,7 +188,12 @@ export function useProviderActions(
         );
       }
     },
-    [updateProviderMutation],
+    [
+      activeApp,
+      claudeProviderNeedsProxy,
+      ensureClaudeProxyTakeover,
+      updateProviderMutation,
+    ],
   );
 
   // 切换供应商
@@ -232,6 +279,9 @@ export function useProviderActions(
 
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
+        if (claudeProviderNeedsProxy(provider)) {
+          await ensureClaudeProxyTakeover(provider);
+        }
         await syncClaudePlugin(provider);
 
         // Show backfill warning if present
@@ -276,9 +326,12 @@ export function useProviderActions(
     [
       switchProviderMutation,
       syncClaudePlugin,
+      ensureClaudeProxyTakeover,
       activeApp,
+      claudeProviderNeedsProxy,
       isProxyRunning,
       isProxyTakeover,
+      queryClient,
       t,
     ],
   );

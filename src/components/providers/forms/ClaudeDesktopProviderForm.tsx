@@ -262,6 +262,9 @@ export function ClaudeDesktopProviderForm({
   const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(
     initialData?.meta?.apiFormat ?? "anthropic",
   );
+  const [imageModel, setImageModel] = useState(
+    initialData?.meta?.imageModel ?? "",
+  );
   const [baseUrl, setBaseUrl] = useState(
     envString(initialData?.settingsConfig, "ANTHROPIC_BASE_URL"),
   );
@@ -411,6 +414,7 @@ export function ClaudeDesktopProviderForm({
     setApiKey("");
     setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setApiFormat(preset.apiFormat ?? "anthropic");
+    setImageModel("");
 
     didSeedDefaultRoutes.current = true;
     setMode(preset.mode);
@@ -442,6 +446,7 @@ export function ClaudeDesktopProviderForm({
       setApiKey("");
       setApiKeyField("ANTHROPIC_AUTH_TOKEN");
       setApiFormat("anthropic");
+      setImageModel("");
       didSeedDefaultRoutes.current = false;
       setMode("direct");
       setRoutes([]);
@@ -556,6 +561,7 @@ export function ClaudeDesktopProviderForm({
       delete meta.apiFormat;
       delete meta.endpointAutoSelect;
       delete meta.isFullUrl;
+      delete meta.imageModel;
       await onSubmit({
         ...values,
         name: values.name.trim(),
@@ -666,6 +672,8 @@ export function ClaudeDesktopProviderForm({
       ...(initialData?.meta ?? {}),
       claudeDesktopMode: mode,
       apiFormat: mode === "proxy" ? apiFormat : "anthropic",
+      imageModel:
+        mode === "proxy" && imageModel.trim() ? imageModel.trim() : undefined,
     };
 
     meta.claudeDesktopModelRoutes = routeMap;
@@ -1022,6 +1030,36 @@ export function ClaudeDesktopProviderForm({
                       </div>
                     );
                   })}
+                  <div className="space-y-2 border-t border-border-default pt-4">
+                    <Label htmlFor="claudeDesktopImageModel">
+                      {t("providerForm.imageModelLabel", {
+                        defaultValue: "图片处理模型",
+                      })}
+                    </Label>
+                    <div className="flex gap-1">
+                      <Input
+                        id="claudeDesktopImageModel"
+                        value={imageModel}
+                        onChange={(event) => setImageModel(event.target.value)}
+                        placeholder={t("providerForm.imageModelPlaceholder", {
+                          defaultValue: "例如 qwen3.7-plus",
+                        })}
+                        className="flex-1"
+                      />
+                      {fetchedModels.length > 0 && (
+                        <ModelDropdown
+                          models={fetchedModels}
+                          onSelect={setImageModel}
+                        />
+                      )}
+                    </div>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("providerForm.imageModelHint", {
+                        defaultValue:
+                          "仅在请求包含图片时先识别图片内容，再把结果注入上下文；最终回答仍由上面的主模型处理。留空时保持现有图片降级逻辑。",
+                      })}
+                    </p>
+                  </div>
                 </div>
               </div>
             )}

@@ -124,9 +124,11 @@ interface ClaudeFormFieldsProps {
   defaultSonnetModelName: string;
   defaultOpusModel: string;
   defaultOpusModelName: string;
+  imageModel?: string;
   defaultFableModel: string;
   defaultFableModelName: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
+  onImageModelChange?: (value: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -194,9 +196,11 @@ export function ClaudeFormFields({
   defaultSonnetModelName,
   defaultOpusModel,
   defaultOpusModelName,
+  imageModel = "",
   defaultFableModel,
   defaultFableModelName,
   onModelChange,
+  onImageModelChange = () => {},
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -220,6 +224,7 @@ export function ClaudeFormFields({
     defaultHaikuModel ||
     defaultSonnetModel ||
     defaultOpusModel ||
+    imageModel ||
     defaultFableModel ||
     apiFormat !== "anthropic" ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
@@ -396,12 +401,15 @@ export function ClaudeFormFields({
   const renderModelInput = (
     id: string,
     value: string,
-    field: ClaudeModelEnvField,
+    field: ClaudeModelEnvField | null,
     placeholder?: string,
     onValueChange?: (value: string) => void,
   ) => {
     const updateValue =
-      onValueChange ?? ((next: string) => onModelChange(field, next));
+      onValueChange ??
+      ((next: string) => {
+        if (field) onModelChange(field, next);
+      });
 
     if (isCodexOauthPreset) {
       return (
@@ -949,6 +957,29 @@ export function ClaudeFormFields({
                   </div>
                 );
               })}
+            </div>
+
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="claudeImageModel">
+                {t("providerForm.imageModelLabel", {
+                  defaultValue: "图片处理模型",
+                })}
+              </FormLabel>
+              {renderModelInput(
+                "claudeImageModel",
+                imageModel,
+                null,
+                t("providerForm.imageModelPlaceholder", {
+                  defaultValue: "例如 qwen3.7-plus",
+                }),
+                onImageModelChange,
+              )}
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.imageModelHint", {
+                  defaultValue:
+                    "仅用于先识别图片内容；最终回答仍由上面的 Sonnet / Opus / Haiku 或兜底模型处理。留空时沿用现有不支持图片降级逻辑。",
+                })}
+              </p>
             </div>
 
             <div className="space-y-2 border-t pt-4">

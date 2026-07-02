@@ -419,6 +419,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "HashMap::is_empty"
     )]
     pub claude_desktop_model_routes: HashMap<String, ClaudeDesktopModelRoute>,
+    /// 图片处理模型：仅供本地代理识别图片内容，不写入 live 配置。
+    #[serde(rename = "imageModel", skip_serializing_if = "Option::is_none")]
+    pub image_model: Option<String>,
     /// 用量查询脚本配置
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_script: Option<UsageScript>,
@@ -983,6 +986,21 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_image_model() {
+        let meta: ProviderMeta =
+            serde_json::from_value(json!({ "imageModel": "glm-5.1" })).expect("deserialize meta");
+
+        assert_eq!(meta.image_model.as_deref(), Some("glm-5.1"));
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+        assert_eq!(
+            value.get("imageModel").and_then(|item| item.as_str()),
+            Some("glm-5.1")
+        );
+        assert!(value.get("image_model").is_none());
     }
 
     #[test]

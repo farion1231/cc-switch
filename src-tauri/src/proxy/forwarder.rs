@@ -31,12 +31,20 @@ use crate::{
 };
 use futures::StreamExt;
 use http::Extensions;
+use once_cell::sync::Lazy;
 use serde_json::Value;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+const IMAGE_CONTEXT_CACHE_MAX_ENTRIES: usize = 256;
+static IMAGE_CONTEXT_CACHE: Lazy<Mutex<HashMap<String, super::image_context::ImageAnalysis>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static IMAGE_CONTEXT_IMAGE_CACHE: Lazy<Mutex<HashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -55,6 +63,23 @@ pub struct ForwardResult {
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ForwardOptions {
+    apply_model_mapping: bool,
+    image_context: bool,
+    media_prevention: bool,
+}
+
+impl Default for ForwardOptions {
+    fn default() -> Self {
+        Self {
+            apply_model_mapping: true,
+            image_context: true,
+            media_prevention: true,
+        }
+    }
 }
 
 /// 活跃连接 RAII guard
@@ -469,6 +494,7 @@ impl RequestForwarder {
                     &headers,
                     &extensions,
                     adapter.as_ref(),
+                    ForwardOptions::default(),
                 )
                 .await
             {
@@ -568,6 +594,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    ForwardOptions::default(),
                                 )
                                 .await
                             {
@@ -714,6 +741,7 @@ impl RequestForwarder {
                                         &headers,
                                         &extensions,
                                         adapter.as_ref(),
+                                        ForwardOptions::default(),
                                     )
                                     .await
                                 {
@@ -880,6 +908,7 @@ impl RequestForwarder {
                                     &headers,
                                     &extensions,
                                     adapter.as_ref(),
+                                    ForwardOptions::default(),
                                 )
                                 .await
                             {
@@ -1104,6 +1133,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
+        options: ForwardOptions,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
@@ -1125,7 +1155,9 @@ impl RequestForwarder {
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
-        let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
+        let mapped_body = if !options.apply_model_mapping {
+            body.clone()
+        } else if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
@@ -1293,7 +1325,22 @@ impl RequestForwarder {
                     provider,
                     api_format,
                 );
-                self.apply_media_prevention(&mut mapped_body, provider);
+                if options.image_context {
+                    self.apply_image_context_if_configured(
+                        app_type,
+                        method,
+                        provider,
+                        endpoint,
+                        &mut mapped_body,
+                        headers,
+                        extensions,
+                        adapter,
+                    )
+                    .await?;
+                }
+                if options.media_prevention {
+                    self.apply_media_prevention(&mut mapped_body, provider);
+                }
             }
         }
         let needs_transform = match resolved_claude_api_format.as_deref() {
@@ -2076,6 +2123,335 @@ impl RequestForwarder {
         }
 
         "openai_chat".to_string()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_image_context_if_configured(
+        &self,
+        app_type: &AppType,
+        method: &http::Method,
+        provider: &Provider,
+        endpoint: &str,
+        mapped_body: &mut Value,
+        headers: &axum::http::HeaderMap,
+        extensions: &Extensions,
+        adapter: &dyn ProviderAdapter,
+    ) -> Result<(), ProxyError> {
+        if !super::image_context::contains_image_blocks(mapped_body) {
+            return Ok(());
+        }
+
+        let image_count = super::image_context::count_image_blocks(mapped_body);
+        let Some(image_model) = super::image_context::image_model_from_provider(provider) else {
+            log::info!(
+                "[ImageContext] 检测到图片但未配置图片处理模型: provider={} images={image_count}",
+                provider.id
+            );
+            return Ok(());
+        };
+
+        let main_model = mapped_body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let cache_key =
+            super::image_context::image_context_cache_key(mapped_body, &provider.id, &image_model);
+        let image_cache_keys = super::image_context::image_context_image_cache_keys(
+            mapped_body,
+            &provider.id,
+            &image_model,
+        );
+        if let Some(key) = cache_key.as_deref() {
+            if let Some(analysis) = IMAGE_CONTEXT_CACHE
+                .lock()
+                .ok()
+                .and_then(|cache| cache.get(key).cloned())
+            {
+                if let Some(messages) = mapped_body.get("messages").cloned() {
+                    mapped_body["messages"] =
+                        super::image_context::inject_image_context(&messages, &analysis);
+                }
+                log::info!(
+                    "[ImageContext] 使用缓存图片识别结果: provider={} image_model={} images={image_count}",
+                    provider.id,
+                    image_model
+                );
+                return Ok(());
+            }
+        }
+        if let Some(analysis) =
+            self.cached_image_context_analysis(image_cache_keys.as_deref(), image_count)
+        {
+            if let Some(messages) = mapped_body.get("messages").cloned() {
+                mapped_body["messages"] =
+                    super::image_context::inject_image_context(&messages, &analysis);
+            }
+            log::info!(
+                "[ImageContext] 使用单图缓存图片识别结果: provider={} image_model={} images={image_count}",
+                provider.id,
+                image_model
+            );
+            return Ok(());
+        }
+
+        log::info!(
+            "[ImageContext] 准备图片识别: app={:?} provider={} main_model={} image_model={} images={image_count}",
+            app_type,
+            provider.id,
+            main_model,
+            image_model
+        );
+
+        let analysis_request =
+            super::image_context::create_image_analysis_request(mapped_body, &image_model);
+        let image_forward = self.forward(
+            app_type,
+            method,
+            provider,
+            endpoint,
+            &analysis_request,
+            headers,
+            extensions,
+            adapter,
+            ForwardOptions {
+                apply_model_mapping: false,
+                image_context: false,
+                media_prevention: false,
+            },
+        );
+        let image_started_at = Instant::now();
+        let (response, _, _) = match Box::pin(image_forward).await {
+            Ok(response) => response,
+            Err(error) => {
+                let reason = error.to_string();
+                log::warn!("[ImageContext] 图片识别失败，回退到原有图片处理: {reason}");
+                self.replace_images_after_image_context_failure(mapped_body, &provider.id, &reason);
+                return Ok(());
+            }
+        };
+        let analysis = match self
+            .inject_image_analysis(
+                response,
+                image_count,
+                mapped_body,
+                &image_model,
+                &provider.id,
+                app_type,
+                image_started_at,
+            )
+            .await
+        {
+            Ok(analysis) => analysis,
+            Err(error) => {
+                let reason = error.to_string();
+                log::warn!("[ImageContext] 图片识别结果注入失败，回退到原有图片处理: {reason}");
+                self.replace_images_after_image_context_failure(mapped_body, &provider.id, &reason);
+                return Ok(());
+            }
+        };
+        if let Some(key) = cache_key {
+            if let Ok(mut cache) = IMAGE_CONTEXT_CACHE.lock() {
+                if cache.len() >= IMAGE_CONTEXT_CACHE_MAX_ENTRIES {
+                    cache.clear();
+                }
+                cache.insert(key, analysis.clone());
+            }
+        }
+        self.cache_individual_image_analysis(image_cache_keys.as_deref(), &analysis);
+
+        Ok(())
+    }
+
+    fn cached_image_context_analysis(
+        &self,
+        image_cache_keys: Option<&[String]>,
+        image_count: usize,
+    ) -> Option<super::image_context::ImageAnalysis> {
+        let image_cache_keys = image_cache_keys?;
+        if image_cache_keys.len() != image_count || image_cache_keys.is_empty() {
+            return None;
+        }
+        if image_count > 1
+            && image_cache_keys
+                .windows(2)
+                .any(|pair| pair.first() != pair.get(1))
+        {
+            return None;
+        }
+
+        let cache = IMAGE_CONTEXT_IMAGE_CACHE.lock().ok()?;
+        let mut images = BTreeMap::new();
+        let mut raw_parts = Vec::with_capacity(image_cache_keys.len());
+        for (index, key) in image_cache_keys.iter().enumerate() {
+            let text = cache.get(key)?.clone();
+            images.insert(index + 1, text.clone());
+            raw_parts.push(format!("Image {}:\n{}", index + 1, text));
+        }
+
+        Some(super::image_context::ImageAnalysis {
+            images,
+            relation: None,
+            raw_text: raw_parts.join("\n\n"),
+        })
+    }
+
+    fn cache_individual_image_analysis(
+        &self,
+        image_cache_keys: Option<&[String]>,
+        analysis: &super::image_context::ImageAnalysis,
+    ) {
+        let Some(image_cache_keys) = image_cache_keys else {
+            return;
+        };
+        let Ok(mut cache) = IMAGE_CONTEXT_IMAGE_CACHE.lock() else {
+            return;
+        };
+        if cache.len() >= IMAGE_CONTEXT_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
+        for (index, key) in image_cache_keys.iter().enumerate() {
+            let image_index = index + 1;
+            let text = analysis
+                .images
+                .get(&image_index)
+                .map(String::as_str)
+                .unwrap_or(analysis.raw_text.as_str())
+                .trim();
+            if !text.is_empty() {
+                cache.insert(key.clone(), text.to_string());
+            }
+        }
+    }
+
+    fn replace_images_after_image_context_failure(
+        &self,
+        mapped_body: &mut Value,
+        provider_id: &str,
+        reason: &str,
+    ) {
+        let replaced = super::media_sanitizer::replace_image_blocks_with_marker(mapped_body);
+        if replaced > 0 {
+            log::warn!(
+                "[ImageContext] 图片识别失败后已替换图片为 {}: provider={} replaced={} reason={}",
+                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER,
+                provider_id,
+                replaced,
+                reason
+            );
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn inject_image_analysis(
+        &self,
+        response: super::hyper_client::ProxyResponse,
+        image_count: usize,
+        mapped_body: &mut Value,
+        image_model: &str,
+        provider_id: &str,
+        app_type: &AppType,
+        started_at: Instant,
+    ) -> Result<super::image_context::ImageAnalysis, ProxyError> {
+        let status_code = response.status().as_u16();
+        let body_bytes = response.bytes().await?;
+        let latency_ms = started_at.elapsed().as_millis() as u64;
+        let response_json: Value = serde_json::from_slice(&body_bytes).map_err(|err| {
+            ProxyError::ForwardFailed(format!("图片识别失败: 响应不是有效 JSON: {err}"))
+        })?;
+        self.log_image_context_usage(
+            &response_json,
+            provider_id,
+            app_type,
+            image_model,
+            status_code,
+            latency_ms,
+        )
+        .await;
+        let text = super::image_context::extract_text_from_response(&response_json);
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(ProxyError::ForwardFailed(
+                "图片识别失败: 图片处理模型未返回文本描述".to_string(),
+            ));
+        }
+
+        let analysis = super::image_context::parse_image_analysis_response(text, image_count);
+        if let Some(messages) = mapped_body.get("messages").cloned() {
+            mapped_body["messages"] =
+                super::image_context::inject_image_context(&messages, &analysis);
+        }
+        log::info!(
+            "[ImageContext] 图片识别完成: provider={} image_model={} images={image_count}",
+            provider_id,
+            image_model
+        );
+
+        Ok(analysis)
+    }
+
+    async fn log_image_context_usage(
+        &self,
+        response_json: &Value,
+        provider_id: &str,
+        app_type: &AppType,
+        image_model: &str,
+        status_code: u16,
+        latency_ms: u64,
+    ) {
+        let Some(app_handle) = &self.app_handle else {
+            return;
+        };
+        let Some(usage) = super::usage::parser::TokenUsage::from_claude_response(response_json)
+            .or_else(|| super::usage::parser::TokenUsage::from_codex_response_auto(response_json))
+            .or_else(|| super::usage::parser::TokenUsage::from_gemini_response(response_json))
+            .or_else(|| super::usage::parser::TokenUsage::from_openai_response(response_json))
+        else {
+            log::debug!(
+                "[ImageContext] 图片识别响应没有可解析 usage: provider={} image_model={}",
+                provider_id,
+                image_model
+            );
+            return;
+        };
+        if !usage.has_billable_tokens() {
+            return;
+        }
+
+        let state = app_handle.state::<crate::store::AppState>();
+        let logger = super::usage::logger::UsageLogger::new(&state.db);
+        let app_type_str = app_type.as_str();
+        let (multiplier, pricing_model_source) = logger
+            .resolve_pricing_config(provider_id, app_type_str)
+            .await;
+        let model = usage
+            .model
+            .as_deref()
+            .filter(|m| !m.is_empty())
+            .unwrap_or(image_model);
+        let pricing_model = if pricing_model_source == crate::database::PRICING_SOURCE_REQUEST {
+            image_model
+        } else {
+            model
+        };
+        let request_id = usage.dedup_request_id();
+        if let Err(error) = logger.log_with_calculation(
+            request_id,
+            provider_id.to_string(),
+            app_type_str.to_string(),
+            model.to_string(),
+            image_model.to_string(),
+            pricing_model.to_string(),
+            usage,
+            multiplier,
+            latency_ms,
+            None,
+            status_code,
+            Some(format!("image-context:{}", self.session_id)),
+            None,
+            false,
+        ) {
+            log::warn!("[ImageContext] 图片识别 usage 记录失败: {error}");
+        }
     }
 
     /// 用 Copilot live `/models` 列表确认 model ID 真实可用，找不到时按 family 降级。

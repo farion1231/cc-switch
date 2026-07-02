@@ -55,6 +55,8 @@ vi.mock("@/lib/query", () => ({
 
 const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
+const providersApiGetCurrentMock = vi.fn();
+const proxyApiSetProxyTakeoverForAppMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
 const openclawApiGetModelCatalogMock = vi.fn();
@@ -64,8 +66,13 @@ const openclawApiSetDefaultModelMock = vi.fn();
 vi.mock("@/lib/api", () => ({
   providersApi: {
     update: (...args: unknown[]) => providersApiUpdateMock(...args),
+    getCurrent: (...args: unknown[]) => providersApiGetCurrentMock(...args),
     updateTrayMenu: (...args: unknown[]) =>
       providersApiUpdateTrayMenuMock(...args),
+  },
+  proxyApi: {
+    setProxyTakeoverForApp: (...args: unknown[]) =>
+      proxyApiSetProxyTakeoverForAppMock(...args),
   },
   settingsApi: {
     get: (...args: unknown[]) => settingsApiGetMock(...args),
@@ -113,6 +120,8 @@ beforeEach(() => {
   switchProviderMutateAsync.mockReset();
   providersApiUpdateMock.mockReset();
   providersApiUpdateTrayMenuMock.mockReset();
+  providersApiGetCurrentMock.mockReset();
+  proxyApiSetProxyTakeoverForAppMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
   openclawApiGetModelCatalogMock.mockReset();
@@ -174,6 +183,31 @@ describe("useProviderActions", () => {
       originalId: undefined,
     });
     expect(providersApiUpdateTrayMenuMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not disable Claude proxy takeover when updating an inactive text-only provider", async () => {
+    updateProviderMutateAsync.mockResolvedValueOnce(undefined);
+    providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      id: "inactive-provider",
+      category: "custom",
+      meta: {},
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude", true, true),
+      {
+        wrapper,
+      },
+    );
+
+    await act(async () => {
+      await result.current.updateProvider(provider);
+    });
+
+    expect(providersApiGetCurrentMock).not.toHaveBeenCalled();
+    expect(proxyApiSetProxyTakeoverForAppMock).not.toHaveBeenCalled();
   });
 
   it("should not request plugin sync when switching non-Claude provider", async () => {
