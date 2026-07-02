@@ -919,11 +919,31 @@ pub fn run() {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
                     // 让用户下一次（或快速打开菜单的那一刻）看到较新的数字。
                     // refresh_all_usage_in_tray 内部有 10 秒防抖。
-                    TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
+                    TrayIconEvent::Enter { .. } => {
                         let app = tray.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             crate::tray::refresh_all_usage_in_tray(&app).await;
                         });
+                    }
+                    TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        rect,
+                        ..
+                    } => {
+                        let app = tray.app_handle().clone();
+                        tauri::async_runtime::spawn({
+                            let app = app.clone();
+                            async move {
+                                crate::tray::refresh_all_usage_in_tray(&app).await;
+                            }
+                        });
+                        crate::tray::maybe_toggle_tray_usage_window(
+                            &app,
+                            button,
+                            button_state,
+                            rect,
+                        );
                     }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
@@ -931,7 +951,11 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
-                .show_menu_on_left_click(true);
+                .show_menu_on_left_click(false);
+
+            if let Some(title) = tray::today_usage_tray_title(&app_state) {
+                tray_builder = tray_builder.title(title);
+            }
 
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]

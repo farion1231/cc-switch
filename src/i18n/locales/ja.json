@@ -1456,6 +1456,13 @@
   "usage": {
     "title": "利用統計",
     "subtitle": "AI モデルの利用状況とコスト統計を表示",
+    "trayPanel": {
+      "title": "使用量",
+      "day": "日",
+      "week": "週",
+      "month": "月",
+      "apps": "アプリ"
+    },
     "today": "24時間",
     "last7days": "7日間",
     "last30days": "30日間",

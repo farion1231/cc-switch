@@ -1428,6 +1428,13 @@
   "usage": {
     "title": "使用統計",
     "subtitle": "查看 AI 模型的使用情況和成本統計",
+    "trayPanel": {
+      "title": "用量速覽",
+      "day": "日",
+      "week": "週",
+      "month": "月",
+      "apps": "應用"
+    },
     "today": "24 小時",
     "last7days": "7 天",
     "last30days": "30 天",
