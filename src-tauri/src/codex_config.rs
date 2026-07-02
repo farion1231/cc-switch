@@ -133,6 +133,16 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "oss",
     "ollama-chat",
 ];
+const CODEX_PROVIDER_SWITCH_TOP_LEVEL_FIELDS: &[&str] = &[
+    "model",
+    "model_provider",
+    "model_catalog_json",
+    "base_url",
+    "wire_api",
+    "experimental_bearer_token",
+];
+const CODEX_PROVIDER_SWITCH_TABLE_FIELDS: &[&str] = &["model_providers"];
+const CODEX_PROVIDER_SWITCH_REPLACE_IF_PRESENT_TABLE_FIELDS: &[&str] = &["mcp_servers"];
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
@@ -280,23 +290,98 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
             .any(|reserved| reserved.eq_ignore_ascii_case(id))
 }
 
-/// Write only Codex `config.toml` for provider switching.
-///
-/// Codex login state lives in `auth.json`; provider routing, endpoint, model,
-/// and provider-scoped bearer tokens live in `config.toml`. Provider switches
-/// should not overwrite the user's ChatGPT login cache.
-pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
-    let config_path = get_codex_config_path();
-    let cfg_text = match config_text_opt {
-        Some(config_text) => config_text.to_string(),
-        None => String::new(),
-    };
+fn parse_codex_document(config_text: &str) -> Result<DocumentMut, AppError> {
+    config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))
+}
 
-    if !cfg_text.trim().is_empty() {
-        toml::from_str::<toml::Table>(&cfg_text).map_err(|e| AppError::toml(&config_path, e))?;
+fn copy_or_remove_codex_toml_field(target: &mut DocumentMut, source: &DocumentMut, field: &str) {
+    if let Some(item) = source.get(field).cloned() {
+        target.as_table_mut().insert(field, item);
+    } else {
+        target.as_table_mut().remove(field);
+    }
+}
+
+fn replace_codex_toml_table_if_present(
+    target: &mut DocumentMut,
+    source: &DocumentMut,
+    field: &str,
+) {
+    if let Some(item) = source.get(field).cloned() {
+        target.as_table_mut().insert(field, item);
+    }
+}
+
+pub fn merge_codex_provider_live_config(
+    current_text: &str,
+    provider_text: &str,
+) -> Result<String, AppError> {
+    let mut current_doc = parse_codex_document(current_text)?;
+    let provider_doc = parse_codex_document(provider_text)?;
+
+    for field in CODEX_PROVIDER_SWITCH_TOP_LEVEL_FIELDS {
+        copy_or_remove_codex_toml_field(&mut current_doc, &provider_doc, field);
+    }
+    for field in CODEX_PROVIDER_SWITCH_TABLE_FIELDS {
+        copy_or_remove_codex_toml_field(&mut current_doc, &provider_doc, field);
+    }
+    for field in CODEX_PROVIDER_SWITCH_REPLACE_IF_PRESENT_TABLE_FIELDS {
+        replace_codex_toml_table_if_present(&mut current_doc, &provider_doc, field);
     }
 
-    write_text_file(&config_path, &cfg_text)
+    Ok(current_doc.to_string())
+}
+
+pub fn prepare_codex_provider_live_config_text(config_text: &str) -> Result<String, AppError> {
+    let current_text = read_codex_config_text()?;
+    merge_codex_provider_live_config(&current_text, config_text)
+}
+
+/// Write Codex provider routing into the live config without replacing
+/// Desktop-owned state such as `[hooks.state]`, feature flags, or plugins.
+pub fn write_codex_provider_live_config_atomic(
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    let config_path = get_codex_config_path();
+    let merged_config = prepare_codex_provider_live_config_text(config_text_opt.unwrap_or(""))?;
+
+    write_text_file(&config_path, &merged_config)
+}
+
+/// Atomically update provider-owned Codex auth and routing, preserving
+/// unrelated live `config.toml` state and rolling auth back if config fails.
+pub fn write_codex_provider_live_atomic(
+    auth: &Value,
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = get_codex_auth_path();
+    let config_path = get_codex_config_path();
+
+    if let Some(parent) = auth_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+
+    let old_auth = if auth_path.exists() {
+        Some(fs::read(&auth_path).map_err(|e| AppError::io(&auth_path, e))?)
+    } else {
+        None
+    };
+    let merged_config = prepare_codex_provider_live_config_text(config_text_opt.unwrap_or(""))?;
+
+    write_json_file(&auth_path, auth)?;
+
+    if let Err(e) = write_text_file(&config_path, &merged_config) {
+        if let Some(bytes) = old_auth {
+            let _ = atomic_write(&auth_path, &bytes);
+        } else {
+            let _ = delete_file(&auth_path);
+        }
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
@@ -1501,10 +1586,10 @@ pub fn write_codex_live_for_provider(
             && !crate::settings::preserve_codex_official_auth_on_switch());
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_provider_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+        write_codex_provider_live_config_atomic(Some(&live_config))
     }
 }
 
@@ -1699,6 +1784,101 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn provider_live_config_merge_preserves_codex_owned_state() {
+        let current = r#"model = "old-model"
+model_provider = "old-provider"
+notify = ["terminal-notifier"]
+
+[features]
+js_repl = false
+
+[hooks.state."/Users/me/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:trusted"
+
+[plugins."computer-use@openai-bundled"]
+enabled = true
+
+[mcp_servers.legacy]
+command = "legacy-command"
+
+[model_providers.old-provider]
+base_url = "https://old.example/v1"
+wire_api = "chat"
+experimental_bearer_token = "old-token"
+"#;
+        let provider = r#"model = "new-model"
+model_provider = "new-provider"
+model_catalog_json = "cc-switch-model-catalog.json"
+
+[mcp_servers.latest]
+command = "latest-command"
+
+[model_providers.new-provider]
+base_url = "https://new.example/v1"
+wire_api = "responses"
+experimental_bearer_token = "new-token"
+"#;
+
+        let merged = merge_codex_provider_live_config(current, provider).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed.get("model").and_then(|v| v.as_str()),
+            Some("new-model")
+        );
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("new-provider")
+        );
+        assert_eq!(
+            parsed
+                .get("hooks")
+                .and_then(|v| v.get("state"))
+                .and_then(|v| v.get("/Users/me/.codex/hooks.json:stop:0:0"))
+                .and_then(|v| v.get("trusted_hash"))
+                .and_then(|v| v.as_str()),
+            Some("sha256:trusted")
+        );
+        assert_eq!(
+            parsed
+                .get("features")
+                .and_then(|v| v.get("js_repl"))
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("computer-use@openai-bundled"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("latest"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("latest-command")
+        );
+        assert!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("legacy"))
+                .is_none(),
+            "provider-supplied MCP table should replace stale live MCP entries"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("old-provider"))
+                .is_none(),
+            "stale provider routing tables should be removed"
+        );
+    }
 
     #[test]
     fn unified_session_bucket_injects_for_empty_official_config() {

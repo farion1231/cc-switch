@@ -2400,8 +2400,10 @@ impl ProxyService {
                             auth, config_str,
                         )
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                        crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
-                            .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                        crate::codex_config::write_codex_provider_live_config_atomic(Some(
+                            &live_config,
+                        ))
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                         return Ok(());
                     }
                 }
@@ -2454,7 +2456,7 @@ impl ProxyService {
                 let live_config =
                     crate::codex_config::prepare_codex_provider_live_config(auth, &prepared_config)
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
-                crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
+                crate::codex_config::write_codex_provider_live_config_atomic(Some(&live_config))
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 return Ok(());
             }
