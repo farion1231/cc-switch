@@ -1119,6 +1119,14 @@ pub fn import_providers(
     Ok(imported_count)
 }
 
+/// 将文本内容写入用户通过「另存为」对话框选择的路径。
+/// 仅用于供应商配置导出，路径由前端 dialog::save 返回。
+#[tauri::command]
+pub fn write_text_file_to_path(path: String, content: String) -> Result<(), String> {
+    crate::config::write_text_file(std::path::Path::new(&path), &content)
+        .map_err(|e| format!("写入文件失败: {e}"))
+}
+
 // ============================================================================
 // OpenClaw 专属命令 → 已迁移至 commands/openclaw.rs
 // ============================================================================

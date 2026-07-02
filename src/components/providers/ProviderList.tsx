@@ -17,6 +17,8 @@ import { AlertTriangle, Search, X, Download } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
@@ -244,16 +246,20 @@ export function ProviderList({
       try {
         const jsonContent = await providersApi.exportProviders(appId, providerIds);
 
-        // 创建下载链接
-        const blob = new Blob([jsonContent], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `providers-${appId}-${new Date().toISOString().split("T")[0]}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // 弹出「另存为」对话框让用户选择保存位置
+        const defaultName = `providers-${appId}-${new Date().toISOString().split("T")[0]}.json`;
+        const savePath = await save({
+          defaultPath: defaultName,
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+
+        // 用户取消选择
+        if (!savePath) return;
+
+        await invoke("write_text_file_to_path", {
+          path: savePath,
+          content: jsonContent,
+        });
 
         toast.success(
           t("provider.importExport.exportSuccess", {
