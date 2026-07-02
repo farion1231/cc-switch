@@ -51,6 +51,41 @@ pub struct TrayTexts {
     pub _auto_label: &'static str,
 }
 
+/// 将系统区域标识映射为托盘支持的语言码。
+///
+/// 镜像前端 `i18n/getInitialLanguage` 的判定顺序，确保首次安装
+/// （`settings.language` 尚未写入）时托盘语言与界面语言一致：
+/// 繁中系统（zh-TW/HK/MO/Hant）→ `zh-TW`，其余 zh → `zh`，
+/// 日文 → `ja`，英文 → `en`，未知区域回退到 `zh`（与前端默认一致）。
+fn map_locale_to_tray_language(locale: &str) -> &'static str {
+    let locale = locale.to_lowercase();
+    if locale == "zh" {
+        "zh"
+    } else if locale.starts_with("zh-tw")
+        || locale.starts_with("zh-hk")
+        || locale.starts_with("zh-mo")
+        || locale.starts_with("zh-hant")
+    {
+        "zh-TW"
+    } else if locale.starts_with("zh") {
+        "zh"
+    } else if locale.starts_with("ja") {
+        "ja"
+    } else if locale.starts_with("en") {
+        "en"
+    } else {
+        "zh"
+    }
+}
+
+/// 读取系统区域并映射为托盘语言码；取不到区域时回退到 `zh`。
+fn detect_system_tray_language() -> &'static str {
+    sys_locale::get_locale()
+        .as_deref()
+        .map(map_locale_to_tray_language)
+        .unwrap_or("zh")
+}
+
 impl TrayTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
@@ -493,7 +528,13 @@ pub fn create_tray_menu(
     app_state: &AppState,
 ) -> Result<Menu<tauri::Wry>, AppError> {
     let app_settings = crate::settings::get_settings();
-    let tray_texts = TrayTexts::from_language(app_settings.language.as_deref().unwrap_or("zh"));
+    // 用户未显式设置语言（首次安装）时，按系统区域回退而非硬编码简体，
+    // 否则繁中系统的托盘会固定显示简体直到用户手动切换一次。
+    let language: &str = match app_settings.language.as_deref() {
+        Some(lang) => lang,
+        None => detect_system_tray_language(),
+    };
+    let tray_texts = TrayTexts::from_language(language);
 
     // Get visible apps setting, default to all visible
     let visible_apps = app_settings.visible_apps.unwrap_or_default();
@@ -889,6 +930,59 @@ mod tests {
     fn tray_id_is_unique_to_app() {
         assert_eq!(TRAY_ID, "cc-switch");
         assert_ne!(TRAY_ID, "main");
+    }
+
+    #[test]
+    fn locale_maps_traditional_chinese_variants_to_zh_tw() {
+        use super::map_locale_to_tray_language;
+        for locale in [
+            "zh-TW",
+            "zh-HK",
+            "zh-MO",
+            "zh-Hant",
+            "zh-Hant-TW",
+            "zh-hant-hk",
+        ] {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                "zh-TW",
+                "expected {locale} -> zh-TW"
+            );
+        }
+    }
+
+    #[test]
+    fn locale_maps_simplified_chinese_variants_to_zh() {
+        use super::map_locale_to_tray_language;
+        for locale in ["zh", "zh-CN", "zh-SG", "zh-Hans", "zh-Hans-CN"] {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                "zh",
+                "expected {locale} -> zh"
+            );
+        }
+    }
+
+    #[test]
+    fn locale_maps_japanese_and_english() {
+        use super::map_locale_to_tray_language;
+        assert_eq!(map_locale_to_tray_language("ja-JP"), "ja");
+        assert_eq!(map_locale_to_tray_language("ja"), "ja");
+        assert_eq!(map_locale_to_tray_language("en-US"), "en");
+        assert_eq!(map_locale_to_tray_language("en"), "en");
+    }
+
+    #[test]
+    fn locale_unknown_falls_back_to_zh() {
+        use super::map_locale_to_tray_language;
+        // 与前端 getInitialLanguage 的默认值保持一致。
+        for locale in ["de-DE", "fr", "ko-KR", ""] {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                "zh",
+                "expected {locale} -> zh (default)"
+            );
+        }
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
