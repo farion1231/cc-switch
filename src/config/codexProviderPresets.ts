@@ -1509,4 +1509,12 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "Byesu",
+    websiteUrl: "https://byesu.com",
+    apiKeyUrl: "https://byesu.com/console/token",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig("byesu", "https://byesu.com/v1", "gpt-5.5"),
+    category: "aggregator",
+  },
 ];
