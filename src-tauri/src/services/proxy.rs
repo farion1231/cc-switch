@@ -343,7 +343,7 @@ impl ProxyService {
         )
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
-            Self::preserve_codex_mcp_servers_from_existing_config(
+            Self::preserve_codex_user_config_from_existing_config(
                 &mut effective_settings,
                 existing_live,
             )?;
@@ -2027,7 +2027,7 @@ impl ProxyService {
                 .transpose()?;
 
             if let Some(existing_value) = existing_backup_value.as_ref() {
-                Self::preserve_codex_mcp_servers_from_existing_config(
+                Self::preserve_codex_user_config_from_existing_config(
                     &mut effective_settings,
                     existing_value,
                 )?;
@@ -2175,7 +2175,12 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
-    fn preserve_codex_mcp_servers_from_existing_config(
+    /// 在 Codex provider/route 热切换时保留用户自己维护的全局 config.toml 配置。
+    ///
+    /// 目标 provider 只应该覆盖模型、model_provider、代理地址和 provider 表；
+    /// approval_policy、sandbox_mode、workspace_write、projects、MCP 等 Codex
+    /// 运行配置必须从现有 live/backup 继承，否则切一次 route 就会冲掉用户设置。
+    fn preserve_codex_user_config_from_existing_config(
         target_settings: &mut Value,
         existing_config: &Value,
     ) -> Result<(), String> {
@@ -2187,53 +2192,82 @@ impl ProxyService {
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let mut target_doc = if target_config.trim().is_empty() {
-            toml_edit::DocumentMut::new()
-        } else {
-            target_config
-                .parse::<toml_edit::DocumentMut>()
-                .map_err(|e| format!("解析新的 Codex config.toml 失败: {e}"))?
-        };
-
         let existing_config = existing_config
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if existing_config.trim().is_empty() {
-            target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-            return Ok(());
+
+        let merged =
+            Self::merge_codex_user_config_with_provider_config(existing_config, target_config)
+                .map_err(|e| format!("合并 Codex 用户配置失败: {e}"))?;
+        target_obj.insert("config".to_string(), json!(merged));
+        Ok(())
+    }
+
+    /// 合并 Codex 用户配置与目标 provider 配置，冲突时让目标 provider 获胜。
+    ///
+    /// 现有 live/backup 配置负责提供 approval、sandbox、projects、缺失的 MCP 等
+    /// 用户状态；目标 provider 配置负责当前模型、路由地址、provider 表和同名
+    /// common-config 定义。
+    fn merge_codex_user_config_with_provider_config(
+        existing_config_text: &str,
+        target_config_text: &str,
+    ) -> Result<String, String> {
+        if existing_config_text.trim().is_empty() {
+            return Ok(target_config_text.to_string());
+        }
+        if target_config_text.trim().is_empty() {
+            return Ok(existing_config_text.to_string());
         }
 
-        let existing_doc = existing_config
+        let mut user_doc = existing_config_text
             .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("解析现有 Codex 备份失败: {e}"))?;
+            .map_err(|e| format!("解析 Codex 现有配置失败: {e}"))?;
+        let target_doc = target_config_text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("解析 Codex 目标配置失败: {e}"))?;
 
-        if let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") {
-            match target_doc.get_mut("mcp_servers") {
-                Some(target_mcp_servers) => {
-                    if let (Some(target_table), Some(existing_table)) = (
-                        target_mcp_servers.as_table_like_mut(),
-                        existing_mcp_servers.as_table_like(),
-                    ) {
-                        for (server_id, server_item) in existing_table.iter() {
-                            if target_table.get(server_id).is_none() {
-                                target_table.insert(server_id, server_item.clone());
-                            }
-                        }
-                    } else {
-                        log::warn!(
-                            "Codex config contains a non-table mcp_servers section; skipping MCP merge"
-                        );
-                    }
-                }
+        for key in [
+            "model",
+            "model_provider",
+            "model_context_window",
+            "model_catalog_json",
+            "openai_base_url",
+            "experimental_bearer_token",
+        ] {
+            user_doc.as_table_mut().remove(key);
+        }
+        user_doc.as_table_mut().remove("model_providers");
+
+        Self::merge_toml_table_like_prefer_source(user_doc.as_table_mut(), target_doc.as_table());
+        Ok(user_doc.to_string())
+    }
+
+    /// 递归合并 TOML 表，source 的值覆盖 target 的同名值。
+    fn merge_toml_table_like_prefer_source(
+        target: &mut dyn toml_edit::TableLike,
+        source: &dyn toml_edit::TableLike,
+    ) {
+        for (key, source_item) in source.iter() {
+            match target.get_mut(key) {
+                Some(target_item) => Self::merge_toml_item_prefer_source(target_item, source_item),
                 None => {
-                    target_doc["mcp_servers"] = existing_mcp_servers.clone();
+                    target.insert(key, source_item.clone());
                 }
             }
         }
+    }
 
-        target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-        Ok(())
+    /// 递归合并 TOML item，只有两边都是表时才深入合并，否则整体以 source 为准。
+    fn merge_toml_item_prefer_source(target: &mut toml_edit::Item, source: &toml_edit::Item) {
+        if let Some(source_table) = source.as_table_like() {
+            if let Some(target_table) = target.as_table_like_mut() {
+                Self::merge_toml_table_like_prefer_source(target_table, source_table);
+                return;
+            }
+        }
+
+        *target = source.clone();
     }
 
     fn preserve_codex_oauth_auth_in_backup(
@@ -5284,9 +5318,31 @@ requires_openai_auth = true
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Codex, Some("a"))
             .expect("set local current provider");
+        let provider_a_backup = json!({
+            "auth": {
+                "OPENAI_API_KEY": "responses-key"
+            },
+            "config": r#"approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model_provider = "stable"
+model = "responses-model"
+
+[workspace_write]
+network_access = true
+
+[projects."C:/work"]
+trust_level = "trusted"
+
+[model_providers.stable]
+name = "Stable"
+base_url = "https://responses.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        });
         db.save_live_backup(
             "codex",
-            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+            &serde_json::to_string(&provider_a_backup).expect("serialize provider a backup"),
         )
         .await
         .expect("seed live backup");
@@ -5295,8 +5351,16 @@ requires_openai_auth = true
                 "auth": {
                     "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
                 },
-                "config": r#"model_provider = "stable"
+                "config": r#"approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model_provider = "stable"
 model = "responses-model"
+
+[workspace_write]
+network_access = true
+
+[projects."C:/work"]
+trust_level = "trusted"
 
 [model_providers.stable]
 name = "Stable"
@@ -5344,10 +5408,66 @@ requires_openai_auth = true
             Some("deepseek-v4-flash")
         );
         assert_eq!(
+            parsed_live.get("approval_policy").and_then(|v| v.as_str()),
+            Some("on-request"),
+            "hot-switch must keep Codex approval policy"
+        );
+        assert_eq!(
+            parsed_live.get("sandbox_mode").and_then(|v| v.as_str()),
+            Some("workspace-write"),
+            "hot-switch must keep Codex sandbox mode"
+        );
+        assert_eq!(
+            parsed_live
+                .get("workspace_write")
+                .and_then(|v| v.get("network_access"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "hot-switch must keep Codex workspace-write options"
+        );
+        assert_eq!(
+            parsed_live
+                .get("projects")
+                .and_then(|v| v.get("C:/work"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "hot-switch must keep Codex project trust entries"
+        );
+        assert_eq!(
             live.get("auth")
                 .and_then(|auth| auth.get("OPENAI_API_KEY"))
                 .and_then(|v| v.as_str()),
             Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("read updated live backup")
+            .expect("backup after hot switch");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse updated backup");
+        let backup_config = backup_value
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("backup config string");
+        let parsed_backup: toml::Value =
+            toml::from_str(backup_config).expect("parse updated backup config");
+        assert_eq!(
+            parsed_backup
+                .get("approval_policy")
+                .and_then(|v| v.as_str()),
+            Some("on-request"),
+            "hot-switch backup must preserve approval policy for later restore"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("workspace_write")
+                .and_then(|v| v.get("network_access"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "hot-switch backup must preserve workspace-write config for later restore"
         );
     }
 
@@ -5366,7 +5486,16 @@ requires_openai_auth = true
                 "auth": {
                     "OPENAI_API_KEY": "old-token"
                 },
-                "config": r#"[mcp_servers.shared]
+                "config": r#"approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[workspace_write]
+network_access = true
+
+[projects."C:/work"]
+trust_level = "trusted"
+
+[mcp_servers.shared]
 command = "old-command"
 
 [mcp_servers.legacy]
@@ -5439,6 +5568,33 @@ command = "latest-command"
                 .and_then(|v| v.as_str()),
             Some("latest-command"),
             "new MCP entries should remain in the restore backup"
+        );
+        assert_eq!(
+            parsed.get("approval_policy").and_then(|v| v.as_str()),
+            Some("on-request"),
+            "backup rebuild must keep Codex approval policy"
+        );
+        assert_eq!(
+            parsed.get("sandbox_mode").and_then(|v| v.as_str()),
+            Some("workspace-write"),
+            "backup rebuild must keep Codex sandbox mode"
+        );
+        assert_eq!(
+            parsed
+                .get("workspace_write")
+                .and_then(|v| v.get("network_access"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "backup rebuild must keep Codex workspace-write options"
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("C:/work"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "backup rebuild must keep Codex project trust entries"
         );
     }
 
