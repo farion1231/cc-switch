@@ -91,16 +91,16 @@ impl ProxyServer {
         }
     }
 
+    /// 端口冲突时自动尝试的最大偏移量
+    const PORT_FALLBACK_RANGE: u16 = 10;
+
     pub async fn start(&self) -> Result<ProxyServerInfo, ProxyError> {
         // 检查是否已在运行
         if self.shutdown_tx.read().await.is_some() {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        let base_port = self.config.listen_port;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -108,14 +108,56 @@ impl ProxyServer {
         // 构建路由
         let app = self.build_router();
 
-        // 绑定监听器
-        let listener = tokio::net::TcpListener::bind(&addr)
-            .await
-            .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        // 绑定监听器（端口冲突时自动尝试 base_port..base_port+PORT_FALLBACK_RANGE）
+        let mut last_err: Option<String> = None;
+        let mut listener = None;
+        let start_port = if base_port == 0 { 0 } else { base_port };
+        let end_port = if base_port == 0 {
+            0
+        } else {
+            base_port.saturating_add(Self::PORT_FALLBACK_RANGE)
+        };
+
+        for port in start_port..=end_port {
+            let addr: SocketAddr = format!("{}:{}", self.config.listen_address, port)
+                .parse()
+                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+            match tokio::net::TcpListener::bind(&addr).await {
+                Ok(l) => {
+                    listener = Some(l);
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    if port == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let listener = listener.ok_or_else(|| {
+            ProxyError::BindFailed(format!(
+                "无法绑定端口 {}-{}: {}",
+                start_port,
+                end_port,
+                last_err.unwrap_or_default()
+            ))
+        })?;
+
         let local_addr = listener
             .local_addr()
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
         let actual_port = local_addr.port();
+
+        if actual_port != base_port && base_port != 0 {
+            log::warn!(
+                "[{}] 端口 {} 被占用，已自动切换到 {}",
+                log_srv::PORT_FALLBACK,
+                base_port,
+                actual_port
+            );
+        }
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
@@ -391,5 +433,75 @@ impl ProxyServer {
             .provider_router
             .reset_provider_breaker(provider_id, app_type)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use std::sync::Arc;
+
+    /// 验证端口 fallback：配置端口被占用时自动切换。
+    #[tokio::test]
+    async fn port_fallback_when_configured_port_is_occupied() {
+        let db = Arc::new(Database::memory().expect("create test db"));
+        let base_port: u16 = 15800;
+
+        // 先占用 base_port
+        let occupant = tokio::net::TcpListener::bind(format!("127.0.0.1:{base_port}"))
+            .await
+            .expect("bind occupant");
+
+        let config = ProxyConfig {
+            listen_port: base_port,
+            ..Default::default()
+        };
+        let server = ProxyServer::new(config, db, None);
+
+        let info = server.start().await.expect("start with fallback");
+        let actual_port = info.port;
+
+        assert_ne!(actual_port, base_port, "应该 fallback 到不同端口");
+        assert!(
+            actual_port > base_port && actual_port <= base_port + ProxyServer::PORT_FALLBACK_RANGE,
+            "fallback 端口 {actual_port} 应在 {}-{} 范围内",
+            base_port + 1,
+            base_port + ProxyServer::PORT_FALLBACK_RANGE
+        );
+
+        drop(occupant);
+        let _ = server.stop().await;
+    }
+
+    /// 验证：所有端口被占用时返回 BindFailed。
+    #[tokio::test]
+    async fn port_fallback_fails_when_all_ports_occupied() {
+        let db = Arc::new(Database::memory().expect("create test db"));
+        let base_port: u16 = 15900;
+        let range = ProxyServer::PORT_FALLBACK_RANGE;
+
+        let mut occupants = Vec::new();
+        for port in base_port..=base_port + range {
+            match tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
+                Ok(l) => occupants.push(l),
+                Err(_) => break,
+            }
+        }
+
+        if (occupants.len() as u16) < range + 1 {
+            eprintln!("无法占用所有端口，跳过测试");
+            return;
+        }
+
+        let config = ProxyConfig {
+            listen_port: base_port,
+            ..Default::default()
+        };
+        let server = ProxyServer::new(config, db, None);
+
+        assert!(server.start().await.is_err(), "所有端口被占用应返回错误");
+
+        drop(occupants);
     }
 }

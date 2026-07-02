@@ -455,8 +455,20 @@ impl ProxyService {
             .persist_ephemeral_listen_port_if_needed(&config, info.port)
             .await
         {
-            let _ = server.stop().await;
-            return Err(e);
+            log::warn!("持久化动态代理端口失败，代理服务器仍正常运行: {e}");
+        }
+
+        // If port fallback occurred, refresh Live configs (Claude/Codex/Gemini)
+        // so they point at the actual port instead of the original occupied one.
+        if info.port != config.listen_port && config.listen_port != 0 {
+            log::info!(
+                "端口由 {} fallback 到 {}，刷新 Live 配置",
+                config.listen_port,
+                info.port
+            );
+            if let Err(e) = self.takeover_live_configs().await {
+                log::error!("fallback 后刷新 Live 配置失败: {e}");
+            }
         }
 
         // 5. 保存服务器实例
@@ -466,12 +478,13 @@ impl ProxyService {
         Ok(info)
     }
 
+    /// 当实际监听端口与配置端口不同时持久化（覆盖 port=0 和端口 fallback 两种场景）
     async fn persist_ephemeral_listen_port_if_needed(
         &self,
         config: &ProxyConfig,
         actual_port: u16,
     ) -> Result<(), String> {
-        if config.listen_port != 0 {
+        if config.listen_port != 0 && config.listen_port == actual_port {
             return Ok(());
         }
 
@@ -525,6 +538,12 @@ impl ProxyService {
 
         // 3. 在写入接管配置之前先落盘接管标志：
         //    这样即使在接管过程中断电/kill，下次启动也能检测到并自动恢复。
+        let configured_port = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?
+            .listen_port;
         if let Err(e) = self.db.set_live_takeover_active(true).await {
             if let Err(clean_err) = self.db.delete_all_live_backups().await {
                 log::warn!("清理 Live 备份失败: {clean_err}");
@@ -556,7 +575,21 @@ impl ProxyService {
 
         // 5. 启动代理服务器
         match self.start().await {
-            Ok(info) => Ok(info),
+            Ok(info) => {
+                // 端口 fallback 后，Live 配置仍指向旧端口，需重新接管
+                if info.port != configured_port && configured_port != 0 {
+                    log::warn!(
+                        "端口由 {} fallback 到 {}，重新接管 Live 配置",
+                        configured_port,
+                        info.port
+                    );
+                    if let Err(e) = self.takeover_live_configs().await {
+                        log::error!("fallback 后重新接管 Live 配置失败: {e}");
+                        return Err(e);
+                    }
+                }
+                Ok(info)
+            }
             Err(e) => {
                 // 启动失败，恢复原始配置
                 log::error!("代理启动失败，尝试恢复原始配置: {e}");
