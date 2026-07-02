@@ -2146,6 +2146,8 @@
     "checkingUpdates": "確認中...",
     "noUpdates": "すべてのスキルは最新です",
     "updatesFound": "{{count}} 個のスキルに更新があります",
+    "updateCheckIncomplete": "{{failureCount}} 個のリポジトリのチェックが完了しませんでした",
+    "updateCheckPartialWithUpdates": "{{updateCount}} 個の更新があります。{{failureCount}} 個のリポジトリのチェックが完了しませんでした",
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "{{count}} 個のスキルを更新しました",
@@ -2182,6 +2184,15 @@
       }
     },
     "repo": {
+      "failureReason": {
+        "timeout": "接続がタイムアウトしました",
+        "network": "ネットワーク接続に失敗しました",
+        "notFound": "リポジトリまたはブランチが見つかりません",
+        "accessLimited": "GitHub のアクセス制限またはレート制限を受けています",
+        "noSkills": "対応するスキルが見つかりません",
+        "invalidContent": "リポジトリ内容を読み取れません",
+        "unknown": "不明なエラー"
+      },
       "title": "スキルリポジトリを管理",
       "description": "GitHub のスキルリポジトリソースを追加または削除します",
       "url": "リポジトリ URL",

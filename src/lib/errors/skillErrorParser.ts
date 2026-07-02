@@ -106,3 +106,80 @@ export function formatSkillError(
     description,
   };
 }
+
+/**
+ * 格式化仓库拉取/扫描失败摘要，供“发现/检查更新”这类部分失败提示使用。
+ */
+export function formatSkillRepoFailure(
+  failure: { owner: string; name: string; branch?: string; error: string },
+  t: TFunction,
+): string {
+  const repo = failure.branch
+    ? `${failure.owner}/${failure.name}@${failure.branch}`
+    : `${failure.owner}/${failure.name}`;
+  return `${repo}: ${t(getSkillRepoFailureReasonKey(failure.error))}`;
+}
+
+/**
+ * 将后端和网络库的详细错误归并为少量、易理解的仓库失败原因。
+ */
+export function getSkillRepoFailureReasonKey(errorString: string): string {
+  const parsedError = parseSkillError(errorString);
+  const normalized = errorString.toLowerCase();
+
+  if (
+    parsedError?.code === "DOWNLOAD_TIMEOUT" ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("deadline has elapsed") ||
+    normalized.includes("超时")
+  ) {
+    return "skills.repo.failureReason.timeout";
+  }
+
+  const status = parsedError?.context?.status;
+  if (status === "404" || normalized.includes("404")) {
+    return "skills.repo.failureReason.notFound";
+  }
+  if (
+    status === "403" ||
+    status === "429" ||
+    normalized.includes("403") ||
+    normalized.includes("429") ||
+    normalized.includes("rate limit")
+  ) {
+    return "skills.repo.failureReason.accessLimited";
+  }
+  if (
+    parsedError?.code === "NO_SKILLS_IN_ZIP" ||
+    parsedError?.code === "SKILL_DIR_NOT_FOUND" ||
+    normalized.includes("no_skills_in_zip") ||
+    normalized.includes("skill_dir_not_found") ||
+    normalized.includes("skill.md") ||
+    normalized.includes("no skills")
+  ) {
+    return "skills.repo.failureReason.noSkills";
+  }
+  if (
+    parsedError?.code === "DOWNLOAD_FAILED" ||
+    normalized.includes("network") ||
+    normalized.includes("connect") ||
+    normalized.includes("dns") ||
+    normalized.includes("proxy") ||
+    normalized.includes("sending request")
+  ) {
+    return "skills.repo.failureReason.network";
+  }
+  if (
+    parsedError?.code === "EMPTY_ARCHIVE" ||
+    normalized.includes("invalid zip") ||
+    normalized.includes("zip archive") ||
+    normalized.includes("invalid archive") ||
+    normalized.includes("failed to read zip") ||
+    normalized.includes("failed to read archive")
+  ) {
+    return "skills.repo.failureReason.invalidContent";
+  }
+
+  return "skills.repo.failureReason.unknown";
+}

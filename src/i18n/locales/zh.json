@@ -2146,6 +2146,8 @@
     "checkingUpdates": "检查中...",
     "noUpdates": "所有技能已是最新版本",
     "updatesFound": "发现 {{count}} 个技能有可用更新",
+    "updateCheckIncomplete": "{{failureCount}} 个仓库未完成检查",
+    "updateCheckPartialWithUpdates": "发现 {{updateCount}} 个更新，{{failureCount}} 个仓库未完成检查",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 个技能",
@@ -2182,6 +2184,15 @@
       }
     },
     "repo": {
+      "failureReason": {
+        "timeout": "连接超时",
+        "network": "网络连接失败",
+        "notFound": "仓库或分支不存在",
+        "accessLimited": "GitHub 访问受限或被限流",
+        "noSkills": "未找到对应的技能",
+        "invalidContent": "无法读取仓库内容",
+        "unknown": "未知错误"
+      },
       "title": "管理技能仓库",
       "description": "添加或删除 GitHub 技能仓库源",
       "url": "仓库 URL",

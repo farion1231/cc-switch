@@ -2118,6 +2118,8 @@
     "checkingUpdates": "檢查中...",
     "noUpdates": "所有技能已是最新版本",
     "updatesFound": "發現 {{count}} 個技能有可用更新",
+    "updateCheckIncomplete": "{{failureCount}} 個倉庫未完成檢查",
+    "updateCheckPartialWithUpdates": "發現 {{updateCount}} 個更新，{{failureCount}} 個倉庫未完成檢查",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",
     "updateAllSuccess": "已成功更新 {{count}} 個技能",
@@ -2154,6 +2156,15 @@
       }
     },
     "repo": {
+      "failureReason": {
+        "timeout": "連線逾時",
+        "network": "網路連線失敗",
+        "notFound": "倉庫或分支不存在",
+        "accessLimited": "GitHub 存取受限或被限流",
+        "noSkills": "未找到對應的技能",
+        "invalidContent": "無法讀取倉庫內容",
+        "unknown": "未知錯誤"
+      },
       "title": "管理技能儲存庫",
       "description": "新增或刪除 GitHub 技能儲存庫來源",
       "url": "儲存庫 URL",
