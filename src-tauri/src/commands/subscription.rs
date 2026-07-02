@@ -18,8 +18,13 @@ pub async fn get_subscription_quota(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     tool: String,
+    include_reset_credits: Option<bool>,
 ) -> Result<SubscriptionQuota, String> {
-    let inner = crate::services::subscription::get_subscription_quota(&tool).await;
+    let inner = crate::services::subscription::get_subscription_quota(
+        &tool,
+        include_reset_credits.unwrap_or(false),
+    )
+    .await;
     let snapshot = match &inner {
         Ok(q) => q.clone(),
         // transport 层 Err —— 凭据状态不明，用 Valid 表达"凭据没问题，是通信/parse 出错"。
@@ -29,6 +34,7 @@ pub async fn get_subscription_quota(
         let payload = serde_json::json!({
             "kind": "subscription",
             "appType": app_type.as_str(),
+            "includeResetCredits": include_reset_credits.unwrap_or(false),
             "data": &snapshot,
         });
         if let Err(e) = app.emit("usage-cache-updated", payload) {

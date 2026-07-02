@@ -10,6 +10,7 @@ interface SubscriptionQuotaFooterProps {
   inline?: boolean;
   isCurrent?: boolean;
   autoQueryInterval?: number;
+  includeResetCredits?: boolean;
 }
 
 interface SubscriptionQuotaViewProps {
@@ -211,7 +212,11 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
   const tiers = (quota.tiers || []).filter(
     (tier) => tier.name in TIER_I18N_KEYS,
   );
-  if (tiers.length === 0) return null;
+  const resetCredits = quota.resetCredits;
+  const hasSubscriptionDetails =
+    tiers.length > 0 || quota.extraUsage?.isEnabled === true;
+  if (inline && tiers.length === 0 && !resetCredits) return null;
+  if (!inline && !hasSubscriptionDetails) return null;
 
   // ── inline 模式：紧凑两行显示 ──
   if (inline) {
@@ -245,6 +250,9 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
             .map((tier) => (
               <TierBadge key={tier.name} tier={tier} t={t} />
             ))}
+          {resetCredits && (
+            <ResetCreditsBadge resetCredits={resetCredits} t={t} />
+          )}
         </div>
       </div>
     );
@@ -296,6 +304,95 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
               </>
             )}
           </span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ResetCreditsBadge: React.FC<{
+  resetCredits: NonNullable<SubscriptionQuota["resetCredits"]>;
+  t: (key: string, options?: Record<string, unknown>) => string;
+}> = ({ resetCredits, t }) => {
+  const nextExpiry = resetCredits.credits
+    .map((credit) => credit.expiresAt)
+    .filter((value): value is string => Boolean(value))
+    .sort()[0];
+  const countdown = countdownStr(nextExpiry ?? null);
+
+  return (
+    <div
+      className="flex items-center gap-1 text-violet-600 dark:text-violet-400"
+      title={resetCredits.credits
+        .map((credit) => credit.expiresAt)
+        .filter(Boolean)
+        .join("\n")}
+    >
+      <span className="text-muted-foreground">
+        {t("subscription.resetCredits")}:
+      </span>
+      <span className="font-semibold tabular-nums">
+        {resetCredits.availableCount}
+      </span>
+      {countdown && (
+        <span className="text-muted-foreground/60 flex items-center gap-px">
+          <Clock size={10} />
+          {countdown}
+        </span>
+      )}
+    </div>
+  );
+};
+
+export const ResetCreditsCard: React.FC<{
+  resetCredits: NonNullable<SubscriptionQuota["resetCredits"]>;
+}> = ({ resetCredits }) => {
+  const { t } = useTranslation();
+
+  return (
+    <div className="rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm text-xs">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-medium text-gray-500 dark:text-gray-400">
+          {t("subscription.resetOpportunities")}
+        </span>
+        <span className="font-semibold text-gray-600 dark:text-gray-300 tabular-nums">
+          {t("subscription.availableResetCredits", {
+            count: resetCredits.availableCount,
+          })}
+        </span>
+      </div>
+      {resetCredits.credits.length > 0 && (
+        <div className="mt-2 flex flex-col gap-2">
+          {resetCredits.credits.map((credit, index) => (
+            <div
+              key={`${credit.grantedAt ?? "unknown"}-${credit.expiresAt ?? index}`}
+              className="grid grid-cols-[auto_1fr] items-start gap-x-4 gap-y-1"
+            >
+              <span className="font-medium text-gray-500 dark:text-gray-400">
+                {t("subscription.resetCreditNumber", { count: index + 1 })}
+              </span>
+              <div className="flex flex-wrap justify-end gap-x-5 gap-y-1 text-right text-muted-foreground tabular-nums">
+                <span>
+                  {credit.grantedAt
+                    ? t("subscription.grantedAt", {
+                        time: new Date(credit.grantedAt).toLocaleString(),
+                      })
+                    : t("subscription.grantedAt", {
+                        time: t("common.unknown"),
+                      })}
+                </span>
+                <span>
+                  {credit.expiresAt
+                    ? t("subscription.expiresAt", {
+                        time: new Date(credit.expiresAt).toLocaleString(),
+                      })
+                    : t("subscription.expiresAt", {
+                        time: t("common.unknown"),
+                      })}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -401,6 +498,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   inline = false,
   isCurrent = false,
   autoQueryInterval = 5,
+  includeResetCredits = false,
 }) => {
   const {
     data: quota,
@@ -411,6 +509,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
     isCurrent,
     isCurrent && autoQueryInterval > 0,
     autoQueryInterval,
+    includeResetCredits,
   );
 
   if (!isCurrent) return null;
@@ -422,6 +521,85 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
       refetch={refetch}
       appIdForExpiredHint={appId}
       inline={inline}
+    />
+  );
+};
+
+interface OfficialSubscriptionDetailsViewProps {
+  quota: SubscriptionQuota | undefined;
+  loading: boolean;
+  refetch: () => void;
+  appId: AppId;
+  includeResetCredits: boolean;
+}
+
+export const OfficialSubscriptionDetailsView: React.FC<
+  OfficialSubscriptionDetailsViewProps
+> = ({ quota, loading, refetch, appId, includeResetCredits }) => {
+  if (
+    !quota ||
+    !quota.success ||
+    quota.credentialStatus === "not_found" ||
+    quota.credentialStatus === "parse_error"
+  ) {
+    return null;
+  }
+
+  const hasSubscriptionDetails =
+    quota.tiers.some((tier) => tier.name in TIER_I18N_KEYS) ||
+    quota.extraUsage?.isEnabled === true;
+  const hasResetCredits =
+    includeResetCredits && quota.success && quota.resetCredits != null;
+
+  if (!hasSubscriptionDetails && !hasResetCredits) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border-default space-y-3">
+      {hasSubscriptionDetails && (
+        <SubscriptionQuotaView
+          quota={quota}
+          loading={loading}
+          refetch={refetch}
+          appIdForExpiredHint={appId}
+          inline={false}
+        />
+      )}
+      {hasResetCredits && (
+        <ResetCreditsCard resetCredits={quota.resetCredits!} />
+      )}
+    </div>
+  );
+};
+
+export const OfficialSubscriptionDetails: React.FC<
+  Omit<SubscriptionQuotaFooterProps, "inline">
+> = ({
+  appId,
+  isCurrent = false,
+  autoQueryInterval = 5,
+  includeResetCredits = false,
+}) => {
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useSubscriptionQuota(
+    appId,
+    isCurrent,
+    isCurrent && autoQueryInterval > 0,
+    autoQueryInterval,
+    includeResetCredits,
+  );
+
+  if (!isCurrent) return null;
+
+  return (
+    <OfficialSubscriptionDetailsView
+      quota={quota}
+      loading={loading}
+      refetch={refetch}
+      appId={appId}
+      includeResetCredits={includeResetCredits}
     />
   );
 };

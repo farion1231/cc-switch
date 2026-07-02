@@ -617,9 +617,15 @@ async fn query_provider_usage_inner(
             });
         }
 
-        let quota = crate::services::subscription::get_subscription_quota(app_type.as_str())
-            .await
-            .map_err(|e| format!("Failed to query subscription quota: {e}"))?;
+        let include_reset_credits = usage_script
+            .and_then(|script| script.include_reset_credits)
+            .unwrap_or(false);
+        let quota = crate::services::subscription::get_subscription_quota(
+            app_type.as_str(),
+            include_reset_credits,
+        )
+        .await
+        .map_err(|e| format!("Failed to query subscription quota: {e}"))?;
 
         if !quota.success {
             return Ok(crate::provider::UsageResult {
@@ -1079,6 +1085,7 @@ mod native_query_credentials_tests {
             template_type: Some("token_plan".to_string()),
             auto_query_interval: None,
             coding_plan_provider: coding_plan_provider.map(str::to_string),
+            include_reset_credits: None,
             access_key_id: None,
             secret_access_key: None,
         }

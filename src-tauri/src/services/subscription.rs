@@ -51,6 +51,20 @@ pub struct ExtraUsage {
     pub currency: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredit {
+    pub granted_at: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredits {
+    pub available_count: usize,
+    pub credits: Vec<ResetCredit>,
+}
+
 /// 订阅额度查询结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +75,8 @@ pub struct SubscriptionQuota {
     pub success: bool,
     pub tiers: Vec<QuotaTier>,
     pub extra_usage: Option<ExtraUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_credits: Option<ResetCredits>,
     pub error: Option<String>,
     pub queried_at: Option<i64>,
 }
@@ -74,6 +90,7 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: None,
             queried_at: None,
         }
@@ -87,6 +104,7 @@ impl SubscriptionQuota {
             success: false,
             tiers: vec![],
             extra_usage: None,
+            reset_credits: None,
             error: Some(message),
             queried_at: Some(now_millis()),
         }
@@ -436,6 +454,7 @@ async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -629,6 +648,131 @@ struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
 }
 
+fn first_value<'a>(
+    object: &'a serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<&'a serde_json::Value> {
+    names.iter().find_map(|name| object.get(*name))
+}
+
+fn first_string(
+    object: &serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<String> {
+    first_value(object, names)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn parse_codex_reset_credits(body: &serde_json::Value) -> Option<ResetCredits> {
+    let object = body.as_object();
+    let list = body.as_array().or_else(|| {
+        object
+            .and_then(|object| {
+                first_value(
+                    object,
+                    &[
+                        "credits",
+                        "reset_credits",
+                        "available_credits",
+                        "items",
+                        "data",
+                    ],
+                )
+            })
+            .and_then(serde_json::Value::as_array)
+    });
+    let count_value = object.and_then(|object| {
+        first_value(
+            object,
+            &["available_count", "available_resets", "count", "remaining"],
+        )
+    });
+
+    if list.is_none() && count_value.is_none() {
+        return None;
+    }
+
+    let credits: Vec<ResetCredit> = list
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_object)
+        .filter(|item| match item.get("status") {
+            Some(serde_json::Value::String(status)) => status.eq_ignore_ascii_case("available"),
+            Some(_) => false,
+            None => true,
+        })
+        .filter_map(|item| {
+            let granted_at = first_string(
+                item,
+                &["granted_at", "grant_date", "grantedAt", "created_at"],
+            );
+            let expires_at = first_string(
+                item,
+                &["expires_at", "expiry_date", "expiresAt", "expiration_date"],
+            );
+            (granted_at.is_some() || expires_at.is_some()).then_some(ResetCredit {
+                granted_at,
+                expires_at,
+            })
+        })
+        .collect();
+
+    let available_count = count_value
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        })
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(credits.len());
+
+    Some(ResetCredits {
+        available_count,
+        credits,
+    })
+}
+
+async fn query_codex_reset_credits(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Option<ResetCredits> {
+    let response = build_codex_reset_credits_request(access_token, account_id)
+        .send()
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        log::warn!(
+            "Codex reset credits query failed with HTTP {}",
+            response.status()
+        );
+        return None;
+    }
+
+    let body: serde_json::Value = response.json().await.ok()?;
+    parse_codex_reset_credits(&body)
+}
+
+fn build_codex_reset_credits_request(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let request = crate::proxy::http_client::get()
+        .get("https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")
+        .header("Authorization", format!("Bearer {access_token}"))
+        .header("OpenAI-Beta", "codex-1")
+        .header("originator", "Codex Desktop")
+        .header("Accept", "application/json")
+        .header("User-Agent", "cc-switch")
+        .timeout(std::time::Duration::from_secs(15));
+
+    match account_id.filter(|value| !value.is_empty()) {
+        Some(account_id) => request.header("ChatGPT-Account-ID", account_id),
+        None => request,
+    }
+}
+
 /// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
 fn window_seconds_to_tier_name(secs: i64) -> String {
     match secs {
@@ -660,6 +804,7 @@ pub(crate) async fn query_codex_quota(
     account_id: Option<&str>,
     tool_label: &str,
     expired_message: &str,
+    include_reset_credits: bool,
 ) -> SubscriptionQuota {
     let client = crate::proxy::http_client::get();
 
@@ -736,6 +881,12 @@ pub(crate) async fn query_codex_quota(
         }
     }
 
+    let reset_credits = if include_reset_credits {
+        query_codex_reset_credits(access_token, account_id).await
+    } else {
+        None
+    };
+
     SubscriptionQuota {
         tool: tool_label.to_string(),
         credential_status: CredentialStatus::Valid,
@@ -743,6 +894,7 @@ pub(crate) async fn query_codex_quota(
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1210,6 +1362,7 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
         success: true,
         tiers,
         extra_usage: None,
+        reset_credits: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1218,7 +1371,10 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
 // ── 入口函数 ──────────────────────────────────────────────
 
 /// 查询指定 CLI 工具的官方订阅额度
-pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
+pub async fn get_subscription_quota(
+    tool: &str,
+    include_reset_credits: bool,
+) -> Result<SubscriptionQuota, String> {
     match tool {
         "claude" => {
             let (token, status, message) = read_claude_credentials();
@@ -1268,6 +1424,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                             account_id.as_deref(),
                             "codex",
                             "Authentication failed. Please re-login with Codex CLI.",
+                            include_reset_credits,
                         )
                         .await;
                         if result.success {
@@ -1287,6 +1444,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                         account_id.as_deref(),
                         "codex",
                         "Authentication failed. Please re-login with Codex CLI.",
+                        include_reset_credits,
                     )
                     .await)
                 }
@@ -1339,4 +1497,122 @@ fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_codex_reset_credits_with_compatible_field_names() {
+        let body = serde_json::json!({
+            "available_resets": 2,
+            "reset_credits": [
+                {
+                    "grant_date": "2026-06-01T00:00:00Z",
+                    "expiry_date": "2026-06-30T00:00:00Z"
+                },
+                {
+                    "grantedAt": "2026-06-02T00:00:00Z",
+                    "expiresAt": "2026-07-01T00:00:00Z"
+                }
+            ]
+        });
+
+        let parsed = parse_codex_reset_credits(&body).expect("reset credits should parse");
+
+        assert_eq!(parsed.available_count, 2);
+        assert_eq!(parsed.credits.len(), 2);
+        assert_eq!(
+            parsed.credits[0].granted_at.as_deref(),
+            Some("2026-06-01T00:00:00Z")
+        );
+        assert_eq!(
+            parsed.credits[1].expires_at.as_deref(),
+            Some("2026-07-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn excludes_unavailable_codex_reset_credit_history() {
+        let body = serde_json::json!({
+            "available_count": 1,
+            "credits": [
+                {
+                    "status": "available",
+                    "granted_at": "2026-06-01T00:00:00Z",
+                    "expires_at": "2026-06-30T00:00:00Z"
+                },
+                {
+                    "status": "redeemed",
+                    "granted_at": "2026-05-01T00:00:00Z",
+                    "expires_at": "2026-05-31T00:00:00Z"
+                },
+                {
+                    "status": "expired",
+                    "granted_at": "2026-04-01T00:00:00Z",
+                    "expires_at": "2026-04-30T00:00:00Z"
+                }
+            ]
+        });
+
+        let parsed = parse_codex_reset_credits(&body).expect("reset credits should parse");
+
+        assert_eq!(parsed.available_count, 1);
+        assert_eq!(parsed.credits.len(), 1);
+        assert_eq!(
+            parsed.credits[0].granted_at.as_deref(),
+            Some("2026-06-01T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn ignores_unknown_codex_reset_credit_response_shapes() {
+        let body = serde_json::json!({
+            "message": "response shape changed"
+        });
+
+        assert_eq!(parse_codex_reset_credits(&body), None);
+    }
+
+    #[test]
+    fn builds_codex_reset_credits_request_without_optional_account_id() {
+        let request = build_codex_reset_credits_request("test-token", None)
+            .build()
+            .expect("request should build without an account id");
+
+        assert_eq!(
+            request.url().as_str(),
+            "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer test-token")
+        );
+        assert!(!request.headers().contains_key("ChatGPT-Account-ID"));
+    }
+
+    #[test]
+    fn adds_codex_account_header_only_for_non_empty_account_id() {
+        let with_account = build_codex_reset_credits_request("test-token", Some("account-123"))
+            .build()
+            .expect("request should build with an account id");
+        assert_eq!(
+            with_account
+                .headers()
+                .get("ChatGPT-Account-ID")
+                .and_then(|value| value.to_str().ok()),
+            Some("account-123")
+        );
+
+        let with_empty_account = build_codex_reset_credits_request("test-token", Some(""))
+            .build()
+            .expect("request should build with an empty account id");
+        assert!(!with_empty_account
+            .headers()
+            .contains_key("ChatGPT-Account-ID"));
+    }
 }

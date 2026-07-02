@@ -1569,11 +1569,13 @@
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "Official",
-    "templateOfficialSubscription": "Official Subscription",
+    "templateOfficialSubscription": "Official Subscription Quota",
     "copilotAutoAuth": "Auto OAuth authentication, no manual credentials needed",
     "tokenPlanHint": "Automatically uses the provider's API Key and Base URL to query Token Plan quota",
     "balanceHint": "Automatically uses the provider's API Key to query account balance",
-    "officialSubscriptionHint": "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it.",
+    "officialSubscriptionHint": "For subscription accounts signed in through the official local CLI. Once enabled, it queries plan usage automatically.",
+    "includeResetCredits": "Show reset credits",
+    "includeResetCreditsHint": "Also query every reset opportunity and show when it was acquired and when it expires.",
     "resetDate": "Reset date",
     "premiumRequests": "Premium Requests",
     "credentialsConfig": "Credentials",
@@ -2915,6 +2917,12 @@
     "expired": "Session expired",
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
+    "resetCredits": "Reset credits",
+    "resetOpportunities": "Reset opportunities",
+    "availableResetCredits": "{{count}} available",
+    "resetCreditNumber": "Credit {{count}}",
+    "grantedAt": "Acquired: {{time}}",
+    "expiresAt": "Expires: {{time}}",
     "refresh": "Refresh"
   }
 }

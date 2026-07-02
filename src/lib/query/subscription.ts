@@ -9,7 +9,8 @@ const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 export const subscriptionKeys = {
   all: ["subscription"] as const,
-  quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
+  quota: (appId: AppId, includeResetCredits = false) =>
+    [...subscriptionKeys.all, "quota", appId, includeResetCredits] as const,
 };
 
 export function useSubscriptionQuota(
@@ -17,6 +18,7 @@ export function useSubscriptionQuota(
   enabled: boolean,
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
+  includeResetCredits = false,
 ) {
   const refetchInterval =
     autoQuery && autoQueryIntervalMinutes > 0
@@ -24,8 +26,8 @@ export function useSubscriptionQuota(
       : false;
 
   return useQuery({
-    queryKey: subscriptionKeys.quota(appId),
-    queryFn: () => subscriptionApi.getQuota(appId),
+    queryKey: subscriptionKeys.quota(appId, includeResetCredits),
+    queryFn: () => subscriptionApi.getQuota(appId, includeResetCredits),
     enabled: enabled && ["claude", "codex", "gemini"].includes(appId),
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),

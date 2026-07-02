@@ -7,6 +7,7 @@ import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
+import { subscriptionKeys } from "@/lib/query/subscription";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import {
@@ -497,16 +498,33 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
       if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const quota = await subscriptionApi.getQuota(appId);
-        if (quota.success && quota.tiers.length > 0) {
-          const summary = quota.tiers
-            .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
-            .join(", ");
-          toast.success(`${t("usageScript.testSuccess")}${summary}`, {
-            duration: 3000,
-            closeButton: true,
-          });
-          queryClient.setQueryData(["subscription", "quota", appId], quota);
+        const quota = await subscriptionApi.getQuota(
+          appId,
+          script.includeResetCredits ?? false,
+        );
+        if (
+          quota.success &&
+          (quota.tiers.length > 0 || quota.resetCredits != null)
+        ) {
+          const summary = quota.tiers.map(
+            (tier) => `${tier.name}: ${Math.round(tier.utilization)}%`,
+          );
+          if (quota.resetCredits) {
+            summary.push(
+              `${t("subscription.resetCredits")}: ${quota.resetCredits.availableCount}`,
+            );
+          }
+          toast.success(
+            `${t("usageScript.testSuccess")}${summary.join(", ")}`,
+            {
+              duration: 3000,
+              closeButton: true,
+            },
+          );
+          queryClient.setQueryData(
+            subscriptionKeys.quota(appId, script.includeResetCredits ?? false),
+            quota,
+          );
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
@@ -1000,10 +1018,33 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
             {/* 官方订阅额度模式：自动提示 */}
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
-              <div className="space-y-2 border-t border-white/10 pt-3">
+              <div className="space-y-3 border-t border-white/10 pt-3">
                 <p className="text-sm text-muted-foreground">
                   {t("usageScript.officialSubscriptionHint")}
                 </p>
+                {appId === "codex" && (
+                  <div className="flex items-center justify-between gap-4 rounded-lg border border-border-default bg-background/50 px-4 py-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="include-reset-credits">
+                        {t("usageScript.includeResetCredits")}
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t("usageScript.includeResetCreditsHint")}
+                      </p>
+                    </div>
+                    <Switch
+                      id="include-reset-credits"
+                      checked={script.includeResetCredits ?? false}
+                      onCheckedChange={(checked) =>
+                        setScript({
+                          ...script,
+                          includeResetCredits: checked,
+                        })
+                      }
+                      aria-label={t("usageScript.includeResetCredits")}
+                    />
+                  </div>
+                )}
               </div>
             )}
 

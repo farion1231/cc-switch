@@ -1569,11 +1569,13 @@
     "templateCopilot": "GitHub Copilot",
     "templateTokenPlan": "Token Plan",
     "templateBalance": "公式",
-    "templateOfficialSubscription": "公式サブスクリプション",
+    "templateOfficialSubscription": "公式サブスクリプション枠",
     "copilotAutoAuth": "OAuth 認証を自動使用、手動設定不要",
     "tokenPlanHint": "プロバイダーのAPI KeyとBase URLを使用してToken Planクォータを自動クエリ",
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
-    "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
+    "officialSubscriptionHint": "ローカルの公式 CLI でサインインしたサブスクリプションアカウント向けです。有効化するとプラン使用量を自動照会します。",
+    "includeResetCredits": "リセットクレジットを表示",
+    "includeResetCreditsHint": "すべてのリセット機会を追加で照会し、取得日時と有効期限を表示します。",
     "resetDate": "リセット日",
     "premiumRequests": "Premium リクエスト",
     "credentialsConfig": "認証情報",
@@ -2915,6 +2917,12 @@
     "expired": "セッション期限切れ",
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
+    "resetCredits": "リセットクレジット",
+    "resetOpportunities": "リセット機会",
+    "availableResetCredits": "利用可能 {{count}} 回",
+    "resetCreditNumber": "クレジット {{count}}",
+    "grantedAt": "取得：{{time}}",
+    "expiresAt": "有効期限：{{time}}",
     "refresh": "更新"
   }
 }
