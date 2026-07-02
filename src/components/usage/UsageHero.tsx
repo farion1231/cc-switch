@@ -6,6 +6,7 @@ import { useUsageSummaryByApp } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import { APP_ICON_MAP } from "@/config/appConfig";
 import type { AppId } from "@/lib/api/types";
+import { UsageActivityHeatmap } from "./UsageActivityHeatmap";
 import {
   Activity,
   ArrowDownToLine,
@@ -352,6 +353,11 @@ export function UsageHero({
               </div>
             </div>
           </div>
+
+          <UsageActivityHeatmap
+            appType={appType}
+            refreshIntervalMs={refreshIntervalMs}
+          />
         </CardContent>
       </Card>
     </motion.div>

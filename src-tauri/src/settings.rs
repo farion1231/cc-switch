@@ -397,7 +397,6 @@ pub struct AppSettings {
     pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_apps: Option<VisibleApps>,
@@ -474,18 +473,48 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+    /// Codex 多账号用量刷新间隔（秒，默认 300 = 5 分钟）
+    #[serde(default = "default_codex_quota_refresh_interval")]
+    pub codex_quota_refresh_interval: u32,
 
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+
+    // ===== 用量查询设置 =====
+    /// 用量自动刷新间隔（秒，默认 60）
+    #[serde(default = "default_usage_refresh_interval")]
+    pub usage_refresh_interval_secs: u64,
+    /// 是否启用用量自动刷新
+    #[serde(default = "default_true")]
+    pub usage_auto_refresh: bool,
+    /// 是否显示所有 Codex 账号的用量（而非仅当前账号）
+    #[serde(default = "default_true")]
+    pub usage_show_all_accounts: bool,
+
+    // ===== 旧版顶部浮层兼容字段 =====
+    /// 是否显示旧版顶部浮层
+    #[serde(default)]
+    pub notch_visible: bool,
+    /// 旧版顶部浮层显示 Codex 用量
+    #[serde(default = "default_true")]
+    pub notch_show_codex: bool,
 }
 
 fn default_show_in_tray() -> bool {
     true
 }
 
+fn default_codex_quota_refresh_interval() -> u32 {
+    300
+}
+
 fn default_minimize_to_tray_on_close() -> bool {
     true
+}
+
+fn default_usage_refresh_interval() -> u64 {
+    60
 }
 
 impl Default for AppSettings {
@@ -532,7 +561,13 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            codex_quota_refresh_interval: default_codex_quota_refresh_interval(),
             local_migrations: None,
+            usage_refresh_interval_secs: default_usage_refresh_interval(),
+            usage_auto_refresh: true,
+            usage_show_all_accounts: true,
+            notch_visible: false,
+            notch_show_codex: true,
         }
     }
 }
@@ -732,7 +767,7 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     Ok(())
 }
 
-fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
+pub(crate) fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {

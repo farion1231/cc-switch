@@ -8,6 +8,8 @@ import type {
 } from "@/types/usage";
 
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
+const ACTIVITY_HEATMAP_DAYS = 365;
+const SECONDS_PER_DAY = 24 * 60 * 60;
 
 type UsageQueryOptions = {
   refetchInterval?: number | false;
@@ -89,6 +91,14 @@ export const usageKeys = {
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
+  activityHeatmap: (startDate: number, endDate: number, appType?: string) =>
+    [
+      ...usageKeys.all,
+      "activity-heatmap",
+      startDate,
+      endDate,
+      appType ?? "all",
+    ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
@@ -148,6 +158,23 @@ export const usageKeys = {
   script: (providerId: string, appType: string) =>
     [...usageKeys.all, providerId, appType] as const,
 };
+
+export function getActivityHeatmapRange(now: Date = new Date()): {
+  startDate: number;
+  endDate: number;
+} {
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const start = new Date(todayStart);
+  start.setDate(start.getDate() - (ACTIVITY_HEATMAP_DAYS - 1));
+
+  const end = new Date(todayStart);
+  end.setSeconds(end.getSeconds() + SECONDS_PER_DAY - 1);
+
+  return {
+    startDate: Math.floor(start.getTime() / 1000),
+    endDate: Math.floor(end.getTime() / 1000),
+  };
+}
 
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
 function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
@@ -239,6 +266,21 @@ export function useUsageTrends(
         effective.model,
       );
     },
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useUsageActivityHeatmap(
+  appType?: string,
+  options?: UsageQueryOptions,
+) {
+  const effectiveAppType = appType === "all" ? undefined : appType;
+  const { startDate, endDate } = getActivityHeatmapRange();
+  return useQuery({
+    queryKey: usageKeys.activityHeatmap(startDate, endDate, effectiveAppType),
+    queryFn: () =>
+      usageApi.getUsageActivityHeatmap(startDate, endDate, effectiveAppType),
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });

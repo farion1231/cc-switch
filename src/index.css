@@ -141,6 +141,12 @@ body {
   color: hsl(var(--foreground));
 }
 
+html.tray-usage-window,
+html.tray-usage-window body,
+html.tray-usage-window #root {
+  background: transparent;
+}
+
 html.dark {
   color-scheme: dark;
 }

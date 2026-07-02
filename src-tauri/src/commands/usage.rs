@@ -62,6 +62,19 @@ pub fn get_usage_trends(
     )
 }
 
+/// 获取年度活跃热力图
+#[tauri::command]
+pub fn get_usage_activity_heatmap(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    app_type: Option<String>,
+) -> Result<Vec<UsageActivityDay>, AppError> {
+    state
+        .db
+        .get_usage_activity_heatmap(start_date, end_date, app_type.as_deref())
+}
+
 /// 获取 Provider 统计
 #[tauri::command]
 pub fn get_provider_stats(
