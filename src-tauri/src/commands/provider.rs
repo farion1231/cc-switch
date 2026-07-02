@@ -879,8 +879,8 @@ pub fn copy_provider_to_apps(
     for target_app in target_apps {
         let target_app_type = AppType::from_str(&target_app).map_err(|e| e.to_string())?;
 
-        // 生成新的 ID（避免冲突）
-        let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or(""));
+        // 生成新的 ID（避免冲突 - 使用完整 UUID）
+        let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4());
 
         // 克隆供应商配置
         let mut new_provider = source_provider.clone();
@@ -951,15 +951,30 @@ pub fn import_providers(
     app: String,
     json_content: String,
 ) -> Result<usize, String> {
+    // Validate JSON size (10MB limit)
+    if json_content.len() > 10_000_000 {
+        return Err("导入文件过大，请选择小于 10MB 的文件".to_string());
+    }
+
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let export: ProviderExport = serde_json::from_str(&json_content)
         .map_err(|e| format!("Failed to parse import file: {}", e))?;
 
+    // Validate version
+    if export.version != "1.0" {
+        return Err(format!("不支持的导出版本: {}", export.version));
+    }
+
+    // Validate provider count
+    if export.providers.len() > 1000 {
+        return Err("导入文件包含的供应商数量过多（最多 1000 个）".to_string());
+    }
+
     let mut imported_count = 0;
 
     for mut provider in export.providers {
-        // 生成新的 ID 避免冲突
-        let new_id = format!("{}-imported-{}", provider.id, uuid::Uuid::new_v4().to_string().split('-').next().unwrap_or(""));
+        // 生成新的 ID 避免冲突（使用完整 UUID）
+        let new_id = format!("{}-imported-{}", provider.id, uuid::Uuid::new_v4());
         provider.id = new_id;
         provider.created_at = Some(chrono::Utc::now().timestamp_millis());
 

@@ -38,7 +38,7 @@ describe("ImportExportDialog", () => {
       settingsConfig: {},
       category: "custom",
       createdAt: Date.now(),
-      in_failover_queue: false,
+      inFailoverQueue: false,
     },
     "provider-2": {
       id: "provider-2",
@@ -46,7 +46,7 @@ describe("ImportExportDialog", () => {
       settingsConfig: {},
       category: "custom",
       createdAt: Date.now(),
-      in_failover_queue: false,
+      inFailoverQueue: false,
     },
   };
 

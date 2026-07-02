@@ -2,7 +2,6 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CopyToAppsDialog } from "@/components/providers/CopyToAppsDialog";
 import type { Provider } from "@/types";
-import type { AppId } from "@/lib/api";
 
 // Mock i18next
 vi.mock("react-i18next", () => ({
@@ -37,7 +36,7 @@ describe("CopyToAppsDialog", () => {
     settingsConfig: {},
     category: "custom",
     createdAt: Date.now(),
-    in_failover_queue: false,
+    inFailoverQueue: false,
   };
 
   const mockOnClose = vi.fn();

@@ -335,7 +335,6 @@ export function ProviderList({
   );
 
   // Import current live config as default provider
-  const queryClient = useQueryClient();
   const importMutation = useMutation({
     mutationFn: async (): Promise<boolean> => {
       if (appId === "opencode") {
@@ -543,6 +542,7 @@ export function ProviderList({
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
                 onTest={handleTest}
+                onCopyToApps={handleOpenCopyDialog}
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
