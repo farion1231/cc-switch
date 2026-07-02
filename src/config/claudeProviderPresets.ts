@@ -314,6 +314,29 @@ export const providerPresets: ProviderPreset[] = [
     icon: "amux",
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.umodelverse.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "gemini-3.5-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.5",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    endpointCandidates: [
+      "https://api.umodelverse.ai/v1",
+      "https://api.modelverse.cn/v1",
+    ],
+    icon: "ucloud",
+    iconColor: "#0052D9",
+  },
+  {
     name: "Gemini Native",
     websiteUrl: "https://ai.google.dev/gemini-api",
     apiKeyUrl: "https://aistudio.google.com/app/apikey",

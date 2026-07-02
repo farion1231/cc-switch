@@ -509,6 +509,42 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    settingsConfig: {
+      baseUrl: "https://api.umodelverse.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        { id: "gpt-5.5", name: "GPT-5.5", contextWindow: 128000 },
+        { id: "o4-mini", name: "o4 Mini", contextWindow: 128000 },
+        { id: "qwen3.7-max", name: "Qwen3.7 Max", contextWindow: 128000 },
+        { id: "glm-5.1", name: "GLM-5.1", contextWindow: 128000 },
+      ],
+    },
+    category: "aggregator",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "astraflow/gpt-5.5",
+        fallbacks: ["astraflow/o4-mini"],
+      },
+      modelCatalog: {
+        "astraflow/gpt-5.5": { alias: "GPT-5.5" },
+        "astraflow/o4-mini": { alias: "o4 Mini" },
+      },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai?source=ccswitch",

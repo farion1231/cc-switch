@@ -246,6 +246,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    settingsConfig: {
+      name: "astraflow",
+      base_url: "https://api.umodelverse.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-5.5", name: "GPT-5.5", context_length: 128000 },
+        { id: "o4-mini", name: "o4 Mini", context_length: 128000 },
+        { id: "qwen3.7-max", name: "Qwen3.7 Max", context_length: 128000 },
+        { id: "glm-5.1", name: "GLM-5.1", context_length: 128000 },
+      ],
+    },
+    category: "aggregator",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "astraflow" },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai?source=ccswitch",

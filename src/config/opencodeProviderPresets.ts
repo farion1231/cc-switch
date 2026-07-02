@@ -451,6 +451,36 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Astraflow",
+      options: {
+        baseURL: "https://api.umodelverse.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+        "o4-mini": { name: "o4 Mini" },
+        "qwen3.7-max": { name: "Qwen3.7 Max" },
+        "glm-5.1": { name: "GLM-5.1" },
+      },
+    },
+    category: "aggregator",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai?source=ccswitch",

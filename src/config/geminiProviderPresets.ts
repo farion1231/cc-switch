@@ -71,6 +71,28 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "shengsuanyun",
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.umodelverse.ai/v1",
+        GEMINI_MODEL: "gemini-3.5-flash",
+      },
+    },
+    baseURL: "https://api.umodelverse.ai/v1",
+    model: "gemini-3.5-flash",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+    category: "aggregator",
+    endpointCandidates: [
+      "https://api.umodelverse.ai/v1",
+      "https://api.modelverse.cn/v1",
+    ],
+    icon: "ucloud",
+    iconColor: "#0052D9",
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",

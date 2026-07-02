@@ -365,6 +365,31 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "amux",
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "astraflow",
+      "https://api.umodelverse.ai/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: [
+      "https://api.umodelverse.ai/v1",
+      "https://api.modelverse.cn/v1",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      { model: "gpt-5.5", displayName: "GPT-5.5", contextWindow: 128000 },
+      { model: "o4-mini", displayName: "o4 Mini", contextWindow: 128000 },
+      { model: "qwen3.7-max", displayName: "Qwen3.7 Max", contextWindow: 128000 },
+      { model: "glm-5.1", displayName: "GLM-5.1", contextWindow: 128000 },
+    ]),
+    icon: "ucloud",
+    iconColor: "#0052D9",
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai?source=ccswitch",
