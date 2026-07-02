@@ -223,6 +223,7 @@ Modern AI-powered coding relies on tools like Claude Code, Claude Desktop, Codex
 - **Unified MCP panel** — Manage MCP servers across Claude, Codex, Gemini, OpenCode, and Hermes with bidirectional sync and Deep Link import
 - **Prompts** — Markdown editor with cross-app sync (CLAUDE.md / AGENTS.md / GEMINI.md) and backfill protection
 - **Skills** — One-click install from GitHub repos or ZIP files, custom repository management, with symlink and file copy support
+- **Hermes Tweet context** - If your Hermes workspace uses [Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet) for X/Twitter account, post, or trend context, CC Switch can keep the surrounding Hermes provider, prompts, MCP, and Skills setup in the same desktop workflow.
 
 ### Usage & Cost Tracking
 
