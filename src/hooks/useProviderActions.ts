@@ -17,6 +17,7 @@ import {
   useDeleteProviderMutation,
   useSwitchProviderMutation,
 } from "@/lib/query";
+import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import {
@@ -309,7 +310,7 @@ export function useProviderActions(
         // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
         // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
         await queryClient.invalidateQueries({
-          queryKey: ["usage", provider.id, activeApp],
+          queryKey: usageKeys.script(provider.id, activeApp),
         });
         await queryClient.invalidateQueries({
           queryKey: ["subscription", "quota", activeApp],

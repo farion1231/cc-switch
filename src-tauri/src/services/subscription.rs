@@ -307,6 +307,11 @@ pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
 /// 写入、tray 渲染、commands::provider 扁平化三处共用同一标识。
 pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
 
+/// 月窗口 tier 名。火山方舟 Agent Plan / Coding Plan 有 5h / 周 / 月 三个展示
+/// 窗口（Kimi / MiniMax 只有 5h + 周），月窗口共用此标识；前端 `TIER_I18N_KEYS`
+/// 映射到 `subscription.monthly`。
+pub const TIER_MONTHLY: &str = "monthly";
+
 /// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
 pub const TIER_GEMINI_PRO: &str = "gemini_pro";
 pub const TIER_GEMINI_FLASH: &str = "gemini_flash";

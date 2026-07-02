@@ -15,7 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { RefreshCw, Search, Loader2 } from "lucide-react";
+import {
+  RefreshCw,
+  Search,
+  Loader2,
+  Settings,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
@@ -36,8 +42,11 @@ import type {
 } from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
 
+export type SkillsPageSource = "repos" | "skillssh";
+
 interface SkillsPageProps {
   initialApp?: AppId;
+  onSourceChange?: (source: SkillsPageSource) => void;
 }
 
 export interface SkillsPageHandle {
@@ -45,7 +54,35 @@ export interface SkillsPageHandle {
   openRepoManager: () => void;
 }
 
-type SearchSource = "repos" | "skillssh";
+type SkillsPageHeaderAction = {
+  key: string;
+  sources: readonly SkillsPageSource[];
+  labelKey: string;
+  Icon: LucideIcon;
+  execute: (page: SkillsPageHandle | null) => void;
+};
+
+const SKILLS_PAGE_HEADER_ACTIONS: readonly SkillsPageHeaderAction[] = [
+  {
+    key: "refresh-repos",
+    sources: ["repos"],
+    labelKey: "skills.refresh",
+    Icon: RefreshCw,
+    execute: (page) => page?.refresh(),
+  },
+  {
+    key: "manage-repos",
+    sources: ["repos", "skillssh"],
+    labelKey: "skills.repoManager",
+    Icon: Settings,
+    execute: (page) => page?.openRepoManager(),
+  },
+];
+
+export const getSkillsPageHeaderActions = (source: SkillsPageSource) =>
+  SKILLS_PAGE_HEADER_ACTIONS.filter((action) =>
+    action.sources.includes(source),
+  );
 
 const SKILLSSH_PAGE_SIZE = 20;
 
@@ -54,7 +91,7 @@ const SKILLSSH_PAGE_SIZE = 20;
  * 用于浏览和安装来自仓库或 skills.sh 的 Skills
  */
 export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
-  ({ initialApp = "claude" }, ref) => {
+  ({ initialApp = "claude", onSourceChange }, ref) => {
     const { t } = useTranslation();
     const [repoManagerOpen, setRepoManagerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
@@ -64,7 +101,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     >("all");
 
     // skills.sh 搜索状态
-    const [searchSource, setSearchSource] = useState<SearchSource>("repos");
+    const [searchSource, setSearchSource] = useState<SkillsPageSource>("repos");
     const [skillsShInput, setSkillsShInput] = useState("");
     const [skillsShQuery, setSkillsShQuery] = useState("");
     const [skillsShOffset, setSkillsShOffset] = useState(0);
@@ -90,23 +127,25 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       data: skillsShResult,
       isLoading: loadingSkillsSh,
       isFetching: fetchingSkillsSh,
+      isPlaceholderData: placeholderSkillsSh,
     } = useSearchSkillsSh(skillsShQuery, SKILLSSH_PAGE_SIZE, skillsShOffset);
 
     // 当搜索结果返回时累积
     useEffect(() => {
-      if (skillsShResult) {
+      if (skillsShResult && !placeholderSkillsSh) {
         if (skillsShOffset === 0) {
           setAccumulatedResults(skillsShResult.skills);
         } else {
           setAccumulatedResults((prev) => [...prev, ...skillsShResult.skills]);
         }
       }
-    }, [skillsShResult, skillsShOffset]);
+    }, [skillsShResult, skillsShOffset, placeholderSkillsSh]);
 
     // 手动提交搜索
     const handleSkillsShSearch = () => {
       const trimmed = skillsShInput.trim();
       if (trimmed.length < 2) return;
+      if (trimmed === skillsShQuery && skillsShOffset === 0) return;
       setSkillsShOffset(0);
       setAccumulatedResults([]);
       setSkillsShQuery(trimmed);
@@ -314,12 +353,18 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     // 是否有更多 skills.sh 结果
     const hasMoreSkillsSh =
       skillsShResult && accumulatedResults.length < skillsShResult.totalCount;
+    const searchingSkillsSh =
+      (loadingSkillsSh || fetchingSkillsSh) && accumulatedResults.length === 0;
 
-    // 无仓库时默认切换到 skills.sh
+    // 无仓库配置时默认切换到 skills.sh；仓库发现结果为空时仍保留仓库视图，方便手动刷新重试。
     const effectiveSource =
-      searchSource === "repos" && skills.length === 0 && !loading
+      searchSource === "repos" && repos.length === 0 && !loading
         ? "skillssh"
         : searchSource;
+
+    useEffect(() => {
+      onSourceChange?.(effectiveSource);
+    }, [effectiveSource, onSourceChange]);
 
     return (
       <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden bg-background/50">
@@ -528,7 +573,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
             ) : (
               /* ===== skills.sh 模式 ===== */
               <>
-                {loadingSkillsSh && accumulatedResults.length === 0 ? (
+                {searchingSkillsSh ? (
                   <div className="flex items-center justify-center h-64">
                     <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                     <span className="ml-3 text-sm text-muted-foreground">
@@ -542,7 +587,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                       {t("skills.skillssh.searchPlaceholder")}
                     </p>
                   </div>
-                ) : accumulatedResults.length === 0 && !loadingSkillsSh ? (
+                ) : accumulatedResults.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-48 text-center">
                     <p className="text-lg font-medium text-foreground">
                       {t("skills.skillssh.noResults", {

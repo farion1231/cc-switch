@@ -674,7 +674,7 @@ mod tests {
             let date_str = Local
                 .timestamp_opt(old_ts, 0)
                 .single()
-                .expect("valid local timestamp")
+                .expect("old timestamp should be a valid local datetime")
                 .format("%Y-%m-%d")
                 .to_string();
             conn.execute(

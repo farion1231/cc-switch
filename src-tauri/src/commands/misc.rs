@@ -1445,11 +1445,15 @@ fn opencode_extra_search_paths(
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        vec![
+        let extensionless = dir.join(tool);
+        let mut candidates = vec![
             dir.join(format!("{tool}.cmd")),
             dir.join(format!("{tool}.exe")),
-            dir.join(tool),
-        ]
+        ];
+        if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
+            candidates.push(extensionless);
+        }
+        candidates
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1617,6 +1621,18 @@ fn is_windows_command_script(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::path::PathBuf> {
+    if path.extension().is_some() {
+        return None;
+    }
+
+    ["cmd", "exe"]
+        .iter()
+        .map(|ext| path.with_extension(ext))
+        .find(|candidate| candidate.is_file())
 }
 
 #[cfg(target_os = "windows")]
@@ -1821,7 +1837,10 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     if first.is_empty() {
         return None;
     }
-    std::fs::canonicalize(first).ok()
+    let path = Path::new(first);
+    let preferred =
+        windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
+    std::fs::canonicalize(preferred).ok()
 }
 
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
@@ -5061,6 +5080,35 @@ mod tests {
                 PathBuf::from("C:\\tools\\opencode"),
             ]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tool_executable_candidates_windows_skips_shadowed_npm_unix_shim() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let extensionless = dir.path().join("codex");
+        let cmd = dir.path().join("codex.cmd");
+        std::fs::write(&extensionless, "").expect("extensionless shim should be created");
+        std::fs::write(&cmd, "").expect("cmd shim should be created");
+
+        let candidates = tool_executable_candidates("codex", dir.path());
+
+        assert_eq!(candidates, vec![cmd.clone(), dir.path().join("codex.exe")]);
+        assert!(!candidates.contains(&extensionless));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_runnable_sibling_prefers_cmd_over_extensionless_tool() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let extensionless = dir.path().join("codex");
+        let cmd = dir.path().join("codex.cmd");
+        std::fs::write(&extensionless, "").expect("extensionless shim should be created");
+        std::fs::write(&cmd, "").expect("cmd shim should be created");
+
+        let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
+
+        assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
     }
 
     #[test]

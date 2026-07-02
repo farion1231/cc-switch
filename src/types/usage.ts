@@ -160,6 +160,9 @@ export interface UsageRangeSelection {
   preset: UsageRangePreset;
   customStartDate?: number;
   customEndDate?: number;
+  /** When true (custom mode only), endDate resolves to "now" instead of the
+   *  fixed customEndDate snapshot, and the end-time field becomes read-only. */
+  liveEndTime?: boolean;
 }
 
 /**
