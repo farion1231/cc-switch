@@ -512,6 +512,76 @@ pub fn clean_schema(mut schema: Value) -> Value {
     schema
 }
 
+/// Maps an OpenAI-format `usage` object into an Anthropic-format usage object.
+///
+/// OpenAI `prompt_tokens` is cache-inclusive while Anthropic `input_tokens` is not, so
+/// cache_read and cache_creation are subtracted to make `input` fresh input. This path
+/// accounts under app_type="claude" (the calculator no longer subtracts); without the
+/// subtraction, cached tokens would be double-counted in both `input` and the cache
+/// buckets. The three buckets are mutually exclusive and satisfy the identity:
+/// input + cache_read + cache_creation == prompt_tokens (upstream is inclusive).
+/// Symmetric with streaming `build_anthropic_usage_json` (#2774) and transform_gemini's
+/// saturating_sub. Final cache_read prefers the top-level field over the nested one;
+/// cache_creation comes only from the top-level field (OpenAI has no such concept).
+fn map_openai_usage_to_anthropic(usage: Option<&Value>) -> Value {
+    let usage = usage.cloned().unwrap_or(json!({}));
+    let cached = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .saturating_sub(cached)
+        .saturating_sub(cache_creation) as u32;
+    let output_tokens = usage
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    let mut usage_json = json!({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens
+    });
+
+    if cached > 0 {
+        usage_json["cache_read_input_tokens"] = json!(cached);
+    }
+    if cache_creation > 0 {
+        usage_json["cache_creation_input_tokens"] = json!(cache_creation);
+    }
+    usage_json
+}
+
+/// Builds a valid empty-content Anthropic response.
+///
+/// Used when the upstream returns success but with an empty `choices` array
+/// (see `openai_to_anthropic`). Reuses the same usage mapping as the main
+/// conversion path to keep token accounting consistent.
+fn empty_anthropic_response(body: &Value) -> Value {
+    let usage_json = map_openai_usage_to_anthropic(body.get("usage"));
+    json!({
+        "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
+        "type": "message",
+        "role": "assistant",
+        "content": [],
+        "model": body.get("model").and_then(|m| m.as_str()).unwrap_or(""),
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": usage_json
+    })
+}
+
 /// OpenAI 响应 → Anthropic 响应
 pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
     let choices = body
@@ -519,9 +589,17 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         .and_then(|c| c.as_array())
         .ok_or_else(|| ProxyError::TransformError("No choices in response".to_string()))?;
 
-    let choice = choices
-        .first()
-        .ok_or_else(|| ProxyError::TransformError("Empty choices array".to_string()))?;
+    // An empty choices array is a legal successful upstream response, not an error:
+    // e.g. when Claude Code's auto-mode classifier sends a max_tokens=1 request,
+    // GitHub Copilot's Claude models may emit no content token and return
+    // `choices: []` (HTTP 200). Previously this was thrown as a TransformError and
+    // surfaced as 422, causing Claude Code to declare the classifier "unavailable"
+    // and block Bash and other actions in auto mode. Degrade to a valid empty-content
+    // Anthropic response (stop_reason=end_turn) so the client gets a 200 and proceeds.
+    // Usage is still passed through from upstream to keep accounting correct.
+    let Some(choice) = choices.first() else {
+        return Ok(empty_anthropic_response(&body));
+    };
 
     let message = choice
         .get("message")
@@ -647,48 +725,7 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
         .or(if has_tool_use { Some("tool_use") } else { None });
 
     // usage — map cache tokens from OpenAI format to Anthropic format
-    let usage = body.get("usage").cloned().unwrap_or(json!({}));
-    // OpenAI prompt_tokens 含缓存命中，Anthropic input_tokens 不含 → 减去 cache_read 与
-    // cache_creation，使 input 成为 fresh input。本路径以 app_type="claude" 记账（calculator
-    // 不再扣减），若不减则缓存会被计入 input 与各 cache 桶两次。三桶互斥，恒等：
-    // input + cache_read + cache_creation == prompt_tokens（inclusive 上游）。
-    // 与流式 build_anthropic_usage_json (#2774) 及 transform_gemini 的 saturating_sub 对称。
-    // 最终 cache_read：直传字段优先于 nested；cache_creation 仅来自直传字段（OpenAI 无此概念）。
-    let cached = usage
-        .get("cache_read_input_tokens")
-        .and_then(|v| v.as_u64())
-        .or_else(|| {
-            usage
-                .pointer("/prompt_tokens_details/cached_tokens")
-                .and_then(|v| v.as_u64())
-        })
-        .unwrap_or(0);
-    let cache_creation = usage
-        .get("cache_creation_input_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let input_tokens = usage
-        .get("prompt_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0)
-        .saturating_sub(cached)
-        .saturating_sub(cache_creation) as u32;
-    let output_tokens = usage
-        .get("completion_tokens")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
-
-    let mut usage_json = json!({
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens
-    });
-
-    if cached > 0 {
-        usage_json["cache_read_input_tokens"] = json!(cached);
-    }
-    if cache_creation > 0 {
-        usage_json["cache_creation_input_tokens"] = json!(cache_creation);
-    }
+    let usage_json = map_openai_usage_to_anthropic(body.get("usage"));
 
     let result = json!({
         "id": body.get("id").and_then(|i| i.as_str()).unwrap_or(""),
@@ -1064,6 +1101,46 @@ mod tests {
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_empty_choices_returns_valid_empty_message() {
+        // Upstream succeeds but returns empty choices (e.g. Claude Code's auto-mode
+        // classifier sends max_tokens=1 and GitHub Copilot's Claude models emit no
+        // content token, returning `choices: []` with HTTP 200). This must degrade to
+        // a valid empty-content response instead of erroring, otherwise Claude Code
+        // declares the classifier "unavailable" and blocks Bash actions in auto mode.
+        let input = json!({
+            "id": "chatcmpl-empty",
+            "object": "chat.completion",
+            "model": "claude-opus-4.8",
+            "choices": [],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 0, "total_tokens": 12}
+        });
+
+        let result = openai_to_anthropic(input).expect("empty choices must not error");
+        assert_eq!(result["type"], "message");
+        assert_eq!(result["role"], "assistant");
+        assert_eq!(result["id"], "chatcmpl-empty");
+        assert_eq!(result["model"], "claude-opus-4.8");
+        assert!(result["content"].as_array().unwrap().is_empty());
+        assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 0);
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_missing_choices_still_errors() {
+        // A completely missing choices field (as opposed to an empty array) is a
+        // malformed response and should retain the error semantics.
+        let input = json!({
+            "id": "chatcmpl-malformed",
+            "object": "chat.completion",
+            "model": "claude-opus-4.8",
+            "usage": {"prompt_tokens": 5, "completion_tokens": 0}
+        });
+
+        assert!(openai_to_anthropic(input).is_err());
     }
 
     #[test]
