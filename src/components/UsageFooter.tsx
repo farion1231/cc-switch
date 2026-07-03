@@ -198,6 +198,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
             {formatCompactNumber(cashAmount)}
           </span>
+          {firstUsage.unit && (
+            <span className="text-gray-500 dark:text-gray-400">{firstUsage.unit}</span>
+          )}
         </div>
       </div>
     );

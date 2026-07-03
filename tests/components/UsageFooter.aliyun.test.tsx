@@ -64,8 +64,8 @@ describe("UsageFooter aliyun balance display", () => {
 
     expect(screen.getByText("usage.availableCashAmount")).toBeInTheDocument();
     expect(screen.getByText("5.43")).toBeInTheDocument();
+    expect(screen.getByText("CNY")).toBeInTheDocument();
     expect(screen.queryByText("Remaining:")).not.toBeInTheDocument();
-    expect(screen.queryByText("CNY")).not.toBeInTheDocument();
     expect(screen.queryByText(/CreditAmount=/)).not.toBeInTheDocument();
   });
 });
