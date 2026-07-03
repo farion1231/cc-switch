@@ -868,8 +868,8 @@ pub fn copy_provider_to_apps(
     let source_app_type = AppType::from_str(&source_app).map_err(|e| e.to_string())?;
 
     // 获取源供应商
-    let providers = ProviderService::list(state.inner(), source_app_type.clone())
-        .map_err(|e| e.to_string())?;
+    let providers =
+        ProviderService::list(state.inner(), source_app_type.clone()).map_err(|e| e.to_string())?;
     let source_provider = providers
         .get(&provider_id)
         .ok_or_else(|| format!("Provider {} not found in {}", provider_id, source_app))?;
@@ -1048,8 +1048,8 @@ pub fn export_providers(
     provider_ids: Vec<String>,
 ) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let all_providers = ProviderService::list(state.inner(), app_type.clone())
-        .map_err(|e| e.to_string())?;
+    let all_providers =
+        ProviderService::list(state.inner(), app_type.clone()).map_err(|e| e.to_string())?;
 
     let providers: Vec<Provider> = provider_ids
         .iter()
@@ -1094,10 +1094,7 @@ pub fn import_providers(
     // Cross-app migration should use "copy to other apps" which does format conversion.
     // Returns a structured error code so the frontend can render a localized message.
     if export.app_type != app {
-        return Err(format!(
-            "APP_TYPE_MISMATCH:{}:{}",
-            export.app_type, app
-        ));
+        return Err(format!("APP_TYPE_MISMATCH:{}:{}", export.app_type, app));
     }
 
     // Validate provider count
