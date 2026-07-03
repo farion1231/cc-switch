@@ -36,6 +36,7 @@ export interface InstalledSkill {
   installedAt: number;
   contentHash?: string;
   updatedAt: number;
+  category?: string;
 }
 
 export interface SkillUninstallResult {
@@ -95,6 +96,29 @@ export interface SkillUpdateInfo {
   name: string;
   currentHash?: string;
   remoteHash: string;
+}
+
+/** 单个 Skill 的应用启用状态更新 */
+export interface SkillAppUpdate {
+  id: string;
+  apps: SkillApps;
+}
+
+/** 用户创建的 Skills 分类 */
+export interface SkillCategory {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 用户保存的 Skills 模式 */
+export interface SkillMode {
+  id: string;
+  name: string;
+  matrix: Record<string, SkillApps>;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** 存储位置迁移结果 */
@@ -175,6 +199,64 @@ export const skillsApi = {
   /** 切换 Skill 的应用启用状态 */
   async toggleApp(id: string, app: AppId, enabled: boolean): Promise<boolean> {
     return await invoke("toggle_skill_app", { id, app, enabled });
+  },
+
+  /** 获取 Skills 分类 */
+  async getCategories(): Promise<SkillCategory[]> {
+    return await invoke("get_skill_categories");
+  },
+
+  /** 保存 Skills 分类 */
+  async saveCategory(category: SkillCategory): Promise<SkillCategory> {
+    return await invoke("save_skill_category", { category });
+  },
+
+  /** 删除 Skills 分类 */
+  async deleteCategory(id: string): Promise<boolean> {
+    return await invoke("delete_skill_category", { id });
+  },
+
+  /** 删除 Skills 分类，并卸载分类下所有 Skills */
+  async deleteCategoryWithSkills(id: string): Promise<boolean> {
+    return await invoke("delete_skill_category_with_skills", { id });
+  },
+
+  /** 移动 Skill 到指定分类 */
+  async moveToCategory(id: string, category?: string | null): Promise<boolean> {
+    return await invoke("move_skill_to_category", {
+      id,
+      category: category || null,
+    });
+  },
+
+  /** 批量更新 Skill 应用启用状态 */
+  async bulkUpdateApps(updates: SkillAppUpdate[]): Promise<number> {
+    return await invoke("bulk_update_skill_apps", { updates });
+  },
+
+  /** 获取 Skills 模式 */
+  async getModes(): Promise<SkillMode[]> {
+    return await invoke("get_skill_modes");
+  },
+
+  /** 获取当前 Skills 模式 */
+  async getActiveMode(): Promise<string> {
+    return await invoke("get_active_skill_mode");
+  },
+
+  /** 保存 Skills 模式 */
+  async saveMode(mode: SkillMode): Promise<SkillMode> {
+    return await invoke("save_skill_mode", { mode });
+  },
+
+  /** 删除 Skills 模式 */
+  async deleteMode(id: string): Promise<boolean> {
+    return await invoke("delete_skill_mode", { id });
+  },
+
+  /** 切换 Skills 模式 */
+  async switchMode(id: string): Promise<InstalledSkill[]> {
+    return await invoke("switch_skill_mode", { id });
   },
 
   /** 扫描未管理的 Skills */

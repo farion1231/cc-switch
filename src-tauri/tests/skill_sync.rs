@@ -1,7 +1,8 @@
 use std::fs;
 
 use cc_switch_lib::{
-    migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillService,
+    migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillMode,
+    SkillService,
 };
 
 #[path = "support.rs"]
@@ -152,6 +153,7 @@ fn sync_to_app_removes_disabled_and_orphaned_ssot_symlinks() {
             installed_at: 0,
             content_hash: None,
             updated_at: 0,
+            category: None,
         })
         .expect("save disabled skill");
 
@@ -196,6 +198,7 @@ fn uninstall_skill_creates_backup_before_removing_ssot() {
             installed_at: 123,
             content_hash: None,
             updated_at: 0,
+            category: None,
         })
         .expect("save skill");
 
@@ -264,6 +267,7 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
             installed_at: 456,
             content_hash: None,
             updated_at: 0,
+            category: None,
         })
         .expect("save skill");
 
@@ -315,6 +319,123 @@ fn restore_skill_backup_restores_files_to_ssot_and_current_app() {
 }
 
 #[test]
+fn skill_category_persists_on_installed_skill() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:category-skill".to_string(),
+            name: "Category Skill".to_string(),
+            description: None,
+            directory: "category-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps::default(),
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+            category: Some("Writing".to_string()),
+        })
+        .expect("save skill");
+
+    state
+        .db
+        .update_skill_category("local:category-skill", Some("Coding".to_string()))
+        .expect("update category");
+
+    let skill = state
+        .db
+        .get_installed_skill("local:category-skill")
+        .expect("query skill")
+        .expect("skill exists");
+
+    assert_eq!(skill.category.as_deref(), Some("Coding"));
+}
+
+#[test]
+fn switch_skill_mode_updates_apps_and_syncs_live_directories() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let ssot_skill_dir = home.join(".cc-switch").join("skills").join("mode-skill");
+    write_skill(&ssot_skill_dir, "Mode Skill");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_skill(&InstalledSkill {
+            id: "local:mode-skill".to_string(),
+            name: "Mode Skill".to_string(),
+            description: None,
+            directory: "mode-skill".to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: SkillApps {
+                claude: true,
+                ..Default::default()
+            },
+            installed_at: 0,
+            content_hash: None,
+            updated_at: 0,
+            category: Some("Agents".to_string()),
+        })
+        .expect("save skill");
+    SkillService::sync_to_app(&state.db, &AppType::Claude).expect("sync claude");
+
+    let mut matrix = std::collections::HashMap::new();
+    matrix.insert(
+        "local:mode-skill".to_string(),
+        SkillApps {
+            codex: true,
+            hermes: true,
+            ..Default::default()
+        },
+    );
+    state
+        .db
+        .save_skill_mode(&SkillMode {
+            id: "focused-mode".to_string(),
+            name: "Focused".to_string(),
+            matrix,
+            created_at: 10,
+            updated_at: 20,
+        })
+        .expect("save mode");
+
+    SkillService::switch_mode(&state.db, "focused-mode").expect("switch mode");
+
+    let skill = state
+        .db
+        .get_installed_skill("local:mode-skill")
+        .expect("query skill")
+        .expect("skill exists");
+
+    assert!(!skill.apps.claude, "Claude should be disabled by the mode");
+    assert!(skill.apps.codex, "Codex should be enabled by the mode");
+    assert!(skill.apps.hermes, "Hermes should be enabled by the mode");
+    assert!(
+        !home
+            .join(".claude")
+            .join("skills")
+            .join("mode-skill")
+            .exists(),
+        "applying the mode should remove disabled app sync"
+    );
+    assert!(
+        home.join(".codex").join("skills").join("mode-skill").exists(),
+        "applying the mode should sync enabled Codex app"
+    );
+}
+
+#[test]
 fn delete_skill_backup_removes_backup_directory() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -345,6 +466,7 @@ fn delete_skill_backup_removes_backup_directory() {
             installed_at: 789,
             content_hash: None,
             updated_at: 0,
+            category: None,
         })
         .expect("save skill");
 

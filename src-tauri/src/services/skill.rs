@@ -186,6 +186,35 @@ pub struct SkillUpdateInfo {
     pub remote_hash: String,
 }
 
+/// 单个 Skill 的应用启用状态更新。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillAppUpdate {
+    pub id: String,
+    pub apps: SkillApps,
+}
+
+/// 用户创建的 Skills 分类。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCategory {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// 用户保存的 Skills 模式。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMode {
+    pub id: String,
+    pub name: String,
+    pub matrix: HashMap<String, SkillApps>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Skill 存储位置迁移结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -265,6 +294,9 @@ struct SkillBackupMetadata {
 }
 
 const SKILL_BACKUP_RETAIN_COUNT: usize = 20;
+const DEFAULT_SKILL_CATEGORY_ID: &str = "default";
+const DEFAULT_SKILL_MODE_ID: &str = "default";
+const ACTIVE_SKILL_MODE_SETTING_KEY: &str = "active_skill_mode_id";
 
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
@@ -564,6 +596,292 @@ impl SkillService {
         Ok(skills.into_values().collect())
     }
 
+    fn supported_skill_apps() -> [AppType; 5] {
+        [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+            AppType::Hermes,
+        ]
+    }
+
+    fn slugify_id(name: &str, fallback: &str) -> String {
+        let mut slug = String::new();
+        let mut previous_dash = false;
+        for ch in name.trim().chars() {
+            if ch.is_ascii_alphanumeric() {
+                slug.push(ch.to_ascii_lowercase());
+                previous_dash = false;
+            } else if !previous_dash && !slug.is_empty() {
+                slug.push('-');
+                previous_dash = true;
+            }
+        }
+        while slug.ends_with('-') {
+            slug.pop();
+        }
+        if slug.is_empty() {
+            fallback.to_string()
+        } else {
+            slug
+        }
+    }
+
+    fn normalize_category_id(category: Option<String>) -> Option<String> {
+        category.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() || trimmed == DEFAULT_SKILL_CATEGORY_ID {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+    }
+
+    fn current_skill_matrix(db: &Arc<Database>) -> Result<HashMap<String, SkillApps>> {
+        let installed = db.get_all_installed_skills()?;
+        Ok(installed
+            .into_iter()
+            .map(|(id, skill)| (id, skill.apps))
+            .collect())
+    }
+
+    fn ensure_default_mode(db: &Arc<Database>) -> Result<SkillMode> {
+        if let Some(mode) = db.get_skill_mode(DEFAULT_SKILL_MODE_ID)? {
+            return Ok(mode);
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        let mode = SkillMode {
+            id: DEFAULT_SKILL_MODE_ID.to_string(),
+            name: "Default".to_string(),
+            matrix: Self::current_skill_matrix(db)?,
+            created_at: now,
+            updated_at: now,
+        };
+        db.save_skill_mode(&mode)?;
+        Ok(mode)
+    }
+
+    fn get_active_mode_or_default(db: &Arc<Database>) -> Result<String> {
+        Ok(db
+            .get_setting(ACTIVE_SKILL_MODE_SETTING_KEY)?
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_SKILL_MODE_ID.to_string()))
+    }
+
+    fn update_active_mode_matrix(
+        db: &Arc<Database>,
+        updates: &[SkillAppUpdate],
+    ) -> Result<()> {
+        let active_id = Self::get_active_mode_or_default(db)?;
+        let mut mode = if active_id == DEFAULT_SKILL_MODE_ID {
+            Self::ensure_default_mode(db)?
+        } else if let Some(mode) = db.get_skill_mode(&active_id)? {
+            mode
+        } else {
+            db.set_setting(ACTIVE_SKILL_MODE_SETTING_KEY, DEFAULT_SKILL_MODE_ID)?;
+            Self::ensure_default_mode(db)?
+        };
+
+        for update in updates {
+            mode.matrix.insert(update.id.clone(), update.apps.clone());
+        }
+        mode.updated_at = chrono::Utc::now().timestamp();
+        if mode.created_at <= 0 {
+            mode.created_at = mode.updated_at;
+        }
+        db.save_skill_mode(&mode)?;
+        Ok(())
+    }
+
+    fn upsert_skill_in_active_mode(
+        db: &Arc<Database>,
+        id: &str,
+        apps: &SkillApps,
+    ) -> Result<()> {
+        Self::update_active_mode_matrix(
+            db,
+            &[SkillAppUpdate {
+                id: id.to_string(),
+                apps: apps.clone(),
+            }],
+        )
+    }
+
+    /// 获取所有 Skills 分类。
+    pub fn get_categories(db: &Arc<Database>) -> Result<Vec<SkillCategory>> {
+        let mut categories = vec![SkillCategory {
+            id: DEFAULT_SKILL_CATEGORY_ID.to_string(),
+            name: "Default".to_string(),
+            created_at: 0,
+            updated_at: 0,
+        }];
+        categories.extend(db.get_skill_categories()?);
+        Ok(categories)
+    }
+
+    /// 保存 Skills 分类。
+    pub fn save_category(db: &Arc<Database>, mut category: SkillCategory) -> Result<SkillCategory> {
+        category.name = category.name.trim().to_string();
+        if category.name.is_empty() {
+            return Err(anyhow!("Skill category name cannot be empty"));
+        }
+        let now = chrono::Utc::now().timestamp();
+        if category.id.trim().is_empty() {
+            category.id = Self::slugify_id(&category.name, &format!("category-{now}"));
+        } else {
+            category.id = category.id.trim().to_string();
+        }
+        if category.id == DEFAULT_SKILL_CATEGORY_ID {
+            return Err(anyhow!("Default skill category cannot be overwritten"));
+        }
+        if category.created_at <= 0 {
+            category.created_at = now;
+        }
+        category.updated_at = now;
+        db.save_skill_category(&category)?;
+        Ok(category)
+    }
+
+    /// 删除 Skills 分类，分类内 Skills 回到默认分类。
+    pub fn delete_category(db: &Arc<Database>, id: &str) -> Result<bool> {
+        if id == DEFAULT_SKILL_CATEGORY_ID {
+            return Err(anyhow!("Default skill category cannot be deleted"));
+        }
+        db.delete_skill_category(id).map_err(Into::into)
+    }
+
+    /// 删除 Skills 分类，并卸载分类内所有 Skills。
+    pub fn delete_category_with_skills(db: &Arc<Database>, id: &str) -> Result<bool> {
+        if id == DEFAULT_SKILL_CATEGORY_ID {
+            return Err(anyhow!("Default skill category cannot be deleted"));
+        }
+
+        let skill_ids: Vec<String> = db
+            .get_all_installed_skills()?
+            .values()
+            .filter(|skill| skill.category.as_deref() == Some(id))
+            .map(|skill| skill.id.clone())
+            .collect();
+
+        for skill_id in skill_ids {
+            Self::uninstall(db, &skill_id)?;
+        }
+
+        db.delete_skill_category(id).map_err(Into::into)
+    }
+
+    /// 移动 Skill 到指定分类。
+    pub fn move_to_category(
+        db: &Arc<Database>,
+        id: &str,
+        category: Option<String>,
+    ) -> Result<bool> {
+        let normalized = Self::normalize_category_id(category);
+        if let Some(category_id) = normalized.as_deref() {
+            if db.get_skill_category(category_id)?.is_none() {
+                return Err(anyhow!("Skill category not found: {category_id}"));
+            }
+        }
+        db.update_skill_category(id, normalized).map_err(Into::into)
+    }
+
+    /// 批量更新 Skill 应用启用状态并同步所有支持 Skills 的应用目录。
+    pub fn bulk_update_apps(db: &Arc<Database>, updates: Vec<SkillAppUpdate>) -> Result<usize> {
+        let affected = db.bulk_update_skill_apps(&updates)?;
+        Self::update_active_mode_matrix(db, &updates)?;
+        Self::sync_supported_apps(db)?;
+        Ok(affected)
+    }
+
+    /// 获取所有 Skills 模式。
+    pub fn get_modes(db: &Arc<Database>) -> Result<Vec<SkillMode>> {
+        Self::ensure_default_mode(db)?;
+        let mut modes = db.get_skill_modes()?;
+        modes.sort_by(|a, b| match (
+            a.id.as_str() == DEFAULT_SKILL_MODE_ID,
+            b.id.as_str() == DEFAULT_SKILL_MODE_ID,
+        ) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
+        });
+        Ok(modes)
+    }
+
+    /// 获取当前激活的 Skills 模式。
+    pub fn get_active_mode(db: &Arc<Database>) -> Result<String> {
+        Self::get_active_mode_or_default(db)
+    }
+
+    /// 保存 Skills 模式。
+    pub fn save_mode(db: &Arc<Database>, mut mode: SkillMode) -> Result<SkillMode> {
+        mode.name = mode.name.trim().to_string();
+        if mode.name.is_empty() {
+            return Err(anyhow!("Skill mode name cannot be empty"));
+        }
+        let now = chrono::Utc::now().timestamp();
+        if mode.id.trim().is_empty() {
+            mode.id = Self::slugify_id(&mode.name, &format!("mode-{now}"));
+        } else {
+            mode.id = mode.id.trim().to_string();
+        }
+        if mode.matrix.is_empty() {
+            mode.matrix = Self::current_skill_matrix(db)?;
+        }
+        if mode.created_at <= 0 {
+            mode.created_at = now;
+        }
+        mode.updated_at = now;
+        db.save_skill_mode(&mode)?;
+        Ok(mode)
+    }
+
+    /// 删除 Skills 模式。
+    pub fn delete_mode(db: &Arc<Database>, id: &str) -> Result<bool> {
+        if id == DEFAULT_SKILL_MODE_ID {
+            return Err(anyhow!("Default skill mode cannot be deleted"));
+        }
+        let affected = db.delete_skill_mode(id)?;
+        if affected && Self::get_active_mode_or_default(db)? == id {
+            let _ = Self::switch_mode(db, DEFAULT_SKILL_MODE_ID)?;
+        }
+        Ok(affected)
+    }
+
+    /// 切换 Skills 模式。
+    pub fn switch_mode(db: &Arc<Database>, id: &str) -> Result<Vec<InstalledSkill>> {
+        Self::ensure_default_mode(db)?;
+        let mode = db
+            .get_skill_mode(id)?
+            .ok_or_else(|| anyhow!("Skill mode not found: {id}"))?;
+        let installed = db.get_all_installed_skills()?;
+        let updates: Vec<SkillAppUpdate> = installed
+            .iter()
+            .map(|(skill_id, _skill)| {
+                let apps = mode.matrix.get(skill_id).cloned().unwrap_or_default();
+                SkillAppUpdate {
+                    id: skill_id.clone(),
+                    apps,
+                }
+            })
+            .collect();
+
+        db.bulk_update_skill_apps(&updates)?;
+        db.set_setting(ACTIVE_SKILL_MODE_SETTING_KEY, id)?;
+        Self::sync_supported_apps(db)?;
+        Self::get_all_installed(db)
+    }
+
+    fn sync_supported_apps(db: &Arc<Database>) -> Result<()> {
+        for app in Self::supported_skill_apps() {
+            Self::sync_to_app(db, &app)?;
+        }
+        Ok(())
+    }
+
     /// 安装 Skill
     ///
     /// 流程：
@@ -610,6 +928,7 @@ impl SkillService {
                     let mut updated = existing.clone();
                     updated.apps.set_enabled_for(current_app, true);
                     db.save_skill(&updated)?;
+                    Self::upsert_skill_in_active_mode(db, &updated.id, &updated.apps)?;
                     Self::sync_to_app_dir(&updated.directory, current_app)?;
                     log::info!(
                         "Skill {} 已存在，更新 {:?} 启用状态",
@@ -762,10 +1081,12 @@ impl SkillService {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            category: None,
         };
 
         // 保存到数据库
         db.save_skill(&installed_skill)?;
+        Self::upsert_skill_in_active_mode(db, &installed_skill.id, &installed_skill.apps)?;
 
         // 同步到当前应用目录
         Self::sync_to_app_dir(&install_name, current_app)?;
@@ -1100,6 +1421,7 @@ impl SkillService {
             installed_at: skill.installed_at,
             content_hash: new_hash,
             updated_at: chrono::Utc::now().timestamp(),
+            category: skill.category.clone(),
         };
 
         db.save_skill(&updated_skill)?;
@@ -1332,6 +1654,7 @@ impl SkillService {
             let _ = fs::remove_dir_all(&restore_path);
             return Err(err.into());
         }
+        Self::upsert_skill_in_active_mode(db, &restored_skill.id, &restored_skill.apps)?;
 
         if !restored_skill.apps.is_empty() {
             if let Err(err) = Self::sync_to_app_dir(&restored_skill.directory, current_app) {
@@ -1355,23 +1678,18 @@ impl SkillService {
     /// 启用：复制到应用目录
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
-        // 获取当前 skill
         let mut skill = db
             .get_installed_skill(id)?
             .ok_or_else(|| anyhow!("Skill not found: {id}"))?;
 
-        // 更新状态
         skill.apps.set_enabled_for(app, enabled);
-
-        // 同步文件
-        if enabled {
-            Self::sync_to_app_dir(&skill.directory, app)?;
-        } else {
-            Self::remove_from_app(&skill.directory, app)?;
-        }
-
-        // 更新数据库
-        db.update_skill_apps(id, &skill.apps)?;
+        Self::bulk_update_apps(
+            db,
+            vec![SkillAppUpdate {
+                id: id.to_string(),
+                apps: skill.apps.clone(),
+            }],
+        )?;
 
         log::info!("Skill {} 的 {:?} 状态已更新为 {}", skill.name, app, enabled);
 
@@ -1534,10 +1852,12 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                category: None,
             };
 
             // 保存到数据库
             db.save_skill(&skill)?;
+            Self::upsert_skill_in_active_mode(db, &skill.id, &skill.apps)?;
 
             imported.push(skill);
         }
@@ -2655,10 +2975,12 @@ impl SkillService {
                 installed_at: chrono::Utc::now().timestamp(),
                 content_hash,
                 updated_at: 0,
+                category: None,
             };
 
             // 保存到数据库
             db.save_skill(&skill)?;
+            Self::upsert_skill_in_active_mode(db, &skill.id, &skill.apps)?;
 
             // 同步到当前应用目录
             Self::sync_to_app_dir(&install_name, current_app)?;
@@ -3042,9 +3364,11 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             installed_at: chrono::Utc::now().timestamp(),
             content_hash,
             updated_at: 0,
+            category: None,
         };
 
         db.save_skill(&skill)?;
+        SkillService::upsert_skill_in_active_mode(db, &skill.id, &skill.apps)?;
         count += 1;
     }
 

@@ -2259,6 +2259,37 @@
       "success": "スキル {{name}} をバックアップから復元しました",
       "failed": "バックアップからの復元に失敗しました"
     },
+    "categories": {
+      "default": "デフォルト分類",
+      "namePlaceholder": "分類名",
+      "createTitle": "グループを作成",
+      "createDescription": "新しいグループ名を入力してください。",
+      "create": "分類を作成",
+      "delete": "削除",
+      "assign": "分類",
+      "empty": "この分類にスキルはありません",
+      "bulkToggle": "一括切替",
+      "deleteOptionsTitle": "グループを削除",
+      "deleteOptionsDescription": "グループ「{{name}}」の処理方法を選択してください。",
+      "deleteOnlyCategory": "グループのみ削除し、skills は削除しない",
+      "deleteCategoryAndSkills": "グループと skill を一緒に削除",
+      "createSuccess": "分類を作成しました",
+      "deleteSuccess": "分類を削除しました"
+    },
+    "modes": {
+      "title": "モード",
+      "default": "デフォルトモード",
+      "namePlaceholder": "モード名",
+      "createTitle": "モードを作成",
+      "createDescription": "新しいモード名を入力してください。",
+      "create": "モードを作成",
+      "delete": "削除",
+      "untitled": "名称未設定モード",
+      "createSuccess": "モードを作成しました",
+      "deleteConfirmTitle": "モードを削除",
+      "deleteConfirmMessage": "モード「{{name}}」を削除しますか？",
+      "deleteSuccess": "モードを削除しました"
+    },
     "apps": {
       "claude": "Claude",
       "codex": "Codex",

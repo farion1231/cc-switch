@@ -6,25 +6,47 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Tags,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   type ImportSkillSelection,
   type SkillBackupEntry,
+  useActiveSkillMode,
   useDeleteSkillBackup,
+  useDeleteSkillCategory,
+  useDeleteSkillCategoryWithSkills,
   useInstalledSkills,
+  useMoveSkillToCategory,
   useSkillBackups,
+  useSkillCategories,
   useRestoreSkillBackup,
-  useToggleSkillApp,
   useUninstallSkill,
   useScanUnmanagedSkills,
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useCheckSkillUpdates,
   useUpdateSkill,
+  useBulkUpdateSkillApps,
+  useDeleteSkillMode,
+  useSaveSkillCategory,
+  useSaveSkillMode,
+  useSkillModes,
+  useSwitchSkillMode,
   type InstalledSkill,
+  type SkillApps,
+  type SkillMode,
   type SkillUpdateInfo,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
@@ -32,6 +54,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
+import { APP_ICON_MAP } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
@@ -87,7 +110,6 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isFetchingSkillBackups,
   } = useSkillBackups();
   const deleteBackupMutation = useDeleteSkillBackup();
-  const toggleAppMutation = useToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
   // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
@@ -101,7 +123,28 @@ const UnifiedSkillsPanel = React.forwardRef<
     isFetching: isCheckingUpdates,
   } = useCheckSkillUpdates();
   const updateSkillMutation = useUpdateSkill();
+  const { data: skillCategories = [] } = useSkillCategories();
+  const { data: skillModes = [] } = useSkillModes();
+  const { data: activeModeId = "default" } = useActiveSkillMode();
+  const saveSkillCategoryMutation = useSaveSkillCategory();
+  const deleteSkillCategoryMutation = useDeleteSkillCategory();
+  const deleteSkillCategoryWithSkillsMutation =
+    useDeleteSkillCategoryWithSkills();
+  const moveSkillToCategoryMutation = useMoveSkillToCategory();
+  const bulkUpdateSkillAppsMutation = useBulkUpdateSkillApps();
+  const saveSkillModeMutation = useSaveSkillMode();
+  const deleteSkillModeMutation = useDeleteSkillMode();
+  const switchSkillModeMutation = useSwitchSkillMode();
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
+  const [modeName, setModeName] = useState("");
+  const [categoryName, setCategoryName] = useState("");
+  const [createDialog, setCreateDialog] = useState<"mode" | "category" | null>(
+    null,
+  );
+  const [categoryDeleteDialog, setCategoryDeleteDialog] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
 
   const updatesMap = useMemo(() => {
     const map: Record<string, SkillUpdateInfo> = {};
@@ -132,9 +175,162 @@ const UnifiedSkillsPanel = React.forwardRef<
     return counts;
   }, [skills]);
 
-  const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
+  const groupedSkills = useMemo(
+    () => groupSkillsByCategory(skills || [], skillCategories, t),
+    [skills, skillCategories, t],
+  );
+  const skillCategoryOptions = useMemo(
+    () => normalizeSkillCategories(skillCategories, t),
+    [skillCategories, t],
+  );
+  const hasVisibleSkillGroups =
+    Boolean(skills && skills.length > 0) ||
+    skillCategories.some((category) => category.id !== "default");
+
+  const handleToggleApp = async (
+    skill: InstalledSkill,
+    app: AppId,
+    enabled: boolean,
+  ) => {
     try {
-      await toggleAppMutation.mutateAsync({ id, app, enabled });
+      await bulkUpdateSkillAppsMutation.mutateAsync([
+        {
+          id: skill.id,
+          apps: {
+            ...createDefaultSkillApps(),
+            ...skill.apps,
+            [app]: enabled,
+          },
+        },
+      ]);
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    const name = categoryName.trim();
+    if (!name) return;
+    try {
+      await saveSkillCategoryMutation.mutateAsync({
+        id: createCategoryId(name),
+        name,
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      setCategoryName("");
+      setCreateDialog(null);
+      toast.success(t("skills.categories.createSuccess"), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    try {
+      await deleteSkillCategoryMutation.mutateAsync(id);
+      setCategoryDeleteDialog(null);
+      toast.success(t("skills.categories.deleteSuccess"), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleDeleteCategoryWithSkills = async (id: string) => {
+    try {
+      await deleteSkillCategoryWithSkillsMutation.mutateAsync(id);
+      setCategoryDeleteDialog(null);
+      toast.success(t("skills.categories.deleteSuccess"), {
+        closeButton: true,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleMoveSkillToCategory = async (
+    skillId: string,
+    categoryId: string,
+  ) => {
+    try {
+      await moveSkillToCategoryMutation.mutateAsync({
+        id: skillId,
+        category: categoryId === "default" ? null : categoryId,
+      });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleBulkToggleCategoryApp = async (
+    categorySkills: InstalledSkill[],
+    app: AppId,
+  ) => {
+    const allEnabled = categorySkills.every((skill) => skill.apps[app]);
+    const enabled = !allEnabled;
+    const updates = categorySkills.map((skill) => ({
+      id: skill.id,
+      apps: {
+        ...createDefaultSkillApps(),
+        ...skill.apps,
+        [app]: enabled,
+      },
+    }));
+
+    try {
+      await bulkUpdateSkillAppsMutation.mutateAsync(updates);
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleCreateMode = async () => {
+    const trimmedName = modeName.trim() || t("skills.modes.untitled");
+    const mode: SkillMode = {
+      id: createModeId(trimmedName),
+      name: trimmedName,
+      matrix: Object.fromEntries(
+        (skills || []).map((skill) => [
+          skill.id,
+          {
+            ...createDefaultSkillApps(),
+            ...skill.apps,
+          },
+        ]),
+      ),
+      createdAt: 0,
+      updatedAt: 0,
+    };
+
+    try {
+      const saved = await saveSkillModeMutation.mutateAsync(mode);
+      await switchSkillModeMutation.mutateAsync(saved.id);
+      setModeName("");
+      setCreateDialog(null);
+      toast.success(t("skills.modes.createSuccess"), { closeButton: true });
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleSwitchMode = async (id: string) => {
+    try {
+      await switchSkillModeMutation.mutateAsync(id);
+    } catch (error) {
+      toast.error(t("common.error"), { description: String(error) });
+    }
+  };
+
+  const handleDeleteMode = async (id: string) => {
+    if (id === "default") return;
+    try {
+      await deleteSkillModeMutation.mutateAsync(id);
+      setConfirmDialog(null);
+      toast.success(t("skills.modes.deleteSuccess"), { closeButton: true });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
     }
@@ -400,12 +596,99 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border-default bg-muted/20 px-3 py-2">
+        <Tags size={14} className="text-muted-foreground" />
+        <span className="text-xs font-medium text-muted-foreground">
+          {t("skills.modes.title")}
+        </span>
+        <Select
+          value={activeModeId}
+          onValueChange={handleSwitchMode}
+          disabled={switchSkillModeMutation.isPending}
+        >
+          <SelectTrigger
+            aria-label={t("skills.modes.title")}
+            className="h-7 min-w-36 w-auto gap-2 px-2 py-1 text-xs"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {skillModes.map((mode) => (
+              <SelectItem key={mode.id} value={mode.id} className="text-xs">
+                <span className="flex w-full items-center justify-between gap-2">
+                  <span className="truncate">{getModeLabel(mode, t)}</span>
+                  {mode.id !== "default" && (
+                    <button
+                      type="button"
+                      aria-label={`${t("skills.modes.delete")} ${getModeLabel(mode, t)}`}
+                      className="ml-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-red-100 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: t("skills.modes.deleteConfirmTitle"),
+                          message: t("skills.modes.deleteConfirmMessage", {
+                            name: getModeLabel(mode, t),
+                          }),
+                          confirmText: t("skills.modes.delete"),
+                          variant: "destructive",
+                          onConfirm: () => handleDeleteMode(mode.id),
+                        });
+                      }}
+                      onPointerUp={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={() => {
+            setModeName("");
+            setCreateDialog("mode");
+          }}
+          disabled={saveSkillModeMutation.isPending}
+        >
+          <Plus size={12} />
+          {t("skills.modes.create")}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={() => {
+            setCategoryName("");
+            setCreateDialog("category");
+          }}
+          disabled={saveSkillCategoryMutation.isPending}
+        >
+          <Plus size={12} />
+          {t("skills.categories.create")}
+        </Button>
+      </div>
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("skills.loading")}
           </div>
-        ) : !skills || skills.length === 0 ? (
+        ) : !hasVisibleSkillGroups ? (
           <div className="text-center py-12">
             <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
               <Sparkles size={24} className="text-muted-foreground" />
@@ -419,20 +702,29 @@ const UnifiedSkillsPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
-                <InstalledSkillListItem
-                  key={skill.id}
-                  skill={skill}
-                  hasUpdate={!!updatesMap[skill.id]}
-                  isUpdating={
+            <div className="space-y-3">
+              {groupedSkills.map((group) => (
+                <SkillCategoryGroup
+                  key={group.key}
+                  group={group}
+                  categories={skillCategoryOptions}
+                  isDeleting={
+                    deleteSkillCategoryMutation.isPending ||
+                    deleteSkillCategoryWithSkillsMutation.isPending
+                  }
+                  onBulkToggle={handleBulkToggleCategoryApp}
+                  onDeleteCategory={(id, label) =>
+                    setCategoryDeleteDialog({ id, label })
+                  }
+                  onMoveSkillToCategory={handleMoveSkillToCategory}
+                  updatesMap={updatesMap}
+                  isSkillUpdating={(id) =>
                     updateSkillMutation.isPending &&
-                    updateSkillMutation.variables === skill.id
+                    updateSkillMutation.variables === id
                   }
                   onToggleApp={handleToggleApp}
-                  onUninstall={() => handleUninstall(skill)}
-                  onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  onUninstall={handleUninstall}
+                  onUpdateSkill={handleUpdateSkill}
                 />
               ))}
             </div>
@@ -452,6 +744,28 @@ const UnifiedSkillsPanel = React.forwardRef<
           onCancel={() => setConfirmDialog(null)}
         />
       )}
+
+      <CreateSkillGroupDialog
+        type={createDialog}
+        modeName={modeName}
+        categoryName={categoryName}
+        isCreatingMode={saveSkillModeMutation.isPending}
+        isCreatingCategory={saveSkillCategoryMutation.isPending}
+        onModeNameChange={setModeName}
+        onCategoryNameChange={setCategoryName}
+        onCreateMode={handleCreateMode}
+        onCreateCategory={handleCreateCategory}
+        onClose={() => setCreateDialog(null)}
+      />
+
+      <DeleteSkillCategoryOptionsDialog
+        category={categoryDeleteDialog}
+        isDeletingOnlyCategory={deleteSkillCategoryMutation.isPending}
+        isDeletingWithSkills={deleteSkillCategoryWithSkillsMutation.isPending}
+        onDeleteOnlyCategory={(id) => handleDeleteCategory(id)}
+        onDeleteWithSkills={(id) => handleDeleteCategoryWithSkills(id)}
+        onClose={() => setCategoryDeleteDialog(null)}
+      />
 
       {importDialogOpen && unmanagedSkills && (
         <ImportSkillsDialog
@@ -478,11 +792,402 @@ const UnifiedSkillsPanel = React.forwardRef<
 
 UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 
+function createDefaultSkillApps(): SkillApps {
+  return {
+    claude: false,
+    codex: false,
+    gemini: false,
+    opencode: false,
+    openclaw: false,
+    hermes: false,
+  };
+}
+
+function createModeId(name: string): string {
+  const slug = createSlug(name) || "mode";
+  return `${slug}-${Date.now()}`;
+}
+
+function createCategoryId(name: string): string {
+  const slug = createSlug(name) || "category";
+  return `${slug}-${Date.now()}`;
+}
+
+function createSlug(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getModeLabel(mode: SkillMode, t: (key: string) => string): string {
+  return mode.id === "default" ? t("skills.modes.default") : mode.name;
+}
+
+function normalizeSkillCategories(
+  categories: Array<{ id: string; name: string }>,
+  t: (key: string) => string,
+) {
+  const normalized =
+    categories.length > 0
+      ? [...categories]
+      : [{ id: "default", name: t("skills.categories.default") }];
+
+  if (!normalized.some((category) => category.id === "default")) {
+    normalized.unshift({
+      id: "default",
+      name: t("skills.categories.default"),
+    });
+  }
+
+  return normalized;
+}
+
+function groupSkillsByCategory(
+  skills: InstalledSkill[],
+  categories: Array<{ id: string; name: string }>,
+  t: (key: string) => string,
+) {
+  const map = new Map<
+    string,
+    { key: string; label: string; skills: InstalledSkill[] }
+  >();
+  const normalizedCategories = normalizeSkillCategories(categories, t);
+
+  for (const category of normalizedCategories) {
+    const key = category.id || "default";
+    map.set(key, {
+      key,
+      label: key === "default" ? t("skills.categories.default") : category.name,
+      skills: [],
+    });
+  }
+
+  if (!map.has("default")) {
+    map.set("default", {
+      key: "default",
+      label: t("skills.categories.default"),
+      skills: [],
+    });
+  }
+
+  for (const skill of skills) {
+    const raw = skill.category?.trim();
+    const key = raw || "default";
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        label: raw || t("skills.categories.default"),
+        skills: [],
+      });
+    }
+    map.get(key)!.skills.push(skill);
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.key === "default") return -1;
+    if (b.key === "default") return 1;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+interface CategoryBulkToggleGroupProps {
+  categoryLabel: string;
+  skills: InstalledSkill[];
+  onToggle: (app: AppId) => void;
+}
+
+const CategoryBulkToggleGroup: React.FC<CategoryBulkToggleGroupProps> = ({
+  categoryLabel,
+  skills,
+  onToggle,
+}) => (
+  <div className="flex items-center gap-1.5 flex-shrink-0">
+    {SKILLS_APP_IDS.map((app) => {
+      const { label, icon, activeClass } = APP_ICON_MAP[app];
+      const allEnabled =
+        skills.length > 0 && skills.every((skill) => Boolean(skill.apps[app]));
+      const someEnabled = skills.some((skill) => Boolean(skill.apps[app]));
+      return (
+        <button
+          key={app}
+          type="button"
+          aria-label={`skills.categories.bulkToggle ${categoryLabel} ${label}`}
+          onClick={() => onToggle(app)}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+            allEnabled
+              ? activeClass
+              : someEnabled
+                ? "opacity-70 ring-1 ring-border-default"
+                : "opacity-35 hover:opacity-70"
+          }`}
+        >
+          {icon}
+        </button>
+      );
+    })}
+  </div>
+);
+
+interface CreateSkillGroupDialogProps {
+  type: "mode" | "category" | null;
+  modeName: string;
+  categoryName: string;
+  isCreatingMode: boolean;
+  isCreatingCategory: boolean;
+  onModeNameChange: (value: string) => void;
+  onCategoryNameChange: (value: string) => void;
+  onCreateMode: () => void;
+  onCreateCategory: () => void;
+  onClose: () => void;
+}
+
+const CreateSkillGroupDialog: React.FC<CreateSkillGroupDialogProps> = ({
+  type,
+  modeName,
+  categoryName,
+  isCreatingMode,
+  isCreatingCategory,
+  onModeNameChange,
+  onCategoryNameChange,
+  onCreateMode,
+  onCreateCategory,
+  onClose,
+}) => {
+  const { t } = useTranslation();
+  const isMode = type === "mode";
+  const value = isMode ? modeName : categoryName;
+  const title = isMode
+    ? t("skills.modes.createTitle")
+    : t("skills.categories.createTitle");
+  const placeholder = isMode
+    ? t("skills.modes.namePlaceholder")
+    : t("skills.categories.namePlaceholder");
+  const submitLabel = isMode
+    ? t("skills.modes.create")
+    : t("skills.categories.create");
+  const isPending = isMode ? isCreatingMode : isCreatingCategory;
+  const isDisabled = isPending || (!isMode && !categoryName.trim());
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (isDisabled) return;
+    if (isMode) {
+      onCreateMode();
+    } else {
+      onCreateCategory();
+    }
+  };
+
+  return (
+    <Dialog
+      open={type !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="max-w-sm" zIndex="top">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {isMode
+                ? t("skills.modes.createDescription")
+                : t("skills.categories.createDescription")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="px-6 py-5">
+            <Input
+              value={value}
+              onChange={(event) =>
+                isMode
+                  ? onModeNameChange(event.target.value)
+                  : onCategoryNameChange(event.target.value)
+              }
+              placeholder={placeholder}
+              className="h-9 text-sm"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={isDisabled}>
+              {isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : null}
+              {submitLabel}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+interface DeleteSkillCategoryOptionsDialogProps {
+  category: { id: string; label: string } | null;
+  isDeletingOnlyCategory: boolean;
+  isDeletingWithSkills: boolean;
+  onDeleteOnlyCategory: (id: string) => void;
+  onDeleteWithSkills: (id: string) => void;
+  onClose: () => void;
+}
+
+const DeleteSkillCategoryOptionsDialog: React.FC<
+  DeleteSkillCategoryOptionsDialogProps
+> = ({
+  category,
+  isDeletingOnlyCategory,
+  isDeletingWithSkills,
+  onDeleteOnlyCategory,
+  onDeleteWithSkills,
+  onClose,
+}) => {
+  const { t } = useTranslation();
+  const isPending = isDeletingOnlyCategory || isDeletingWithSkills;
+
+  return (
+    <Dialog
+      open={category !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="max-w-sm" zIndex="top">
+        <DialogHeader className="space-y-2 border-b-0 bg-transparent pb-0">
+          <DialogTitle>{t("skills.categories.deleteOptionsTitle")}</DialogTitle>
+          <DialogDescription>
+            {t("skills.categories.deleteOptionsDescription", {
+              name: category?.label ?? "",
+            })}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex gap-2 border-t-0 bg-transparent pt-2 sm:justify-end">
+          <Button type="button" variant="outline" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => category && onDeleteOnlyCategory(category.id)}
+            disabled={isPending}
+          >
+            {isDeletingOnlyCategory ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : null}
+            {t("skills.categories.deleteOnlyCategory")}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => category && onDeleteWithSkills(category.id)}
+            disabled={isPending}
+          >
+            {isDeletingWithSkills ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : null}
+            {t("skills.categories.deleteCategoryAndSkills")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+interface SkillCategoryGroupProps {
+  group: { key: string; label: string; skills: InstalledSkill[] };
+  categories: Array<{ id: string; name: string }>;
+  isDeleting: boolean;
+  updatesMap: Record<string, SkillUpdateInfo>;
+  isSkillUpdating: (id: string) => boolean;
+  onBulkToggle: (skills: InstalledSkill[], app: AppId) => void;
+  onDeleteCategory: (id: string, label: string) => void;
+  onMoveSkillToCategory: (skillId: string, categoryId: string) => void;
+  onToggleApp: (skill: InstalledSkill, app: AppId, enabled: boolean) => void;
+  onUninstall: (skill: InstalledSkill) => void;
+  onUpdateSkill: (skill: InstalledSkill) => void;
+}
+
+const SkillCategoryGroup: React.FC<SkillCategoryGroupProps> = ({
+  group,
+  categories,
+  isDeleting,
+  updatesMap,
+  isSkillUpdating,
+  onBulkToggle,
+  onDeleteCategory,
+  onMoveSkillToCategory,
+  onToggleApp,
+  onUninstall,
+  onUpdateSkill,
+}) => {
+  const { t } = useTranslation();
+
+  return (
+    <div className="rounded-xl border border-border-default overflow-hidden">
+      <div className="flex items-center justify-between gap-3 bg-muted/30 px-4 py-2 border-b border-border-default">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-foreground truncate">
+            {group.label}
+          </span>
+          <Badge variant="outline" className="h-5 text-[10px]">
+            {group.skills.length}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <CategoryBulkToggleGroup
+            categoryLabel={group.label}
+            skills={group.skills}
+            onToggle={(app) => onBulkToggle(group.skills, app)}
+          />
+          {group.key !== "default" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+              aria-label={`skills.categories.delete ${group.label}`}
+              onClick={() => onDeleteCategory(group.key, group.label)}
+              disabled={isDeleting}
+            >
+              <Trash2 size={13} />
+            </Button>
+          )}
+        </div>
+      </div>
+      {group.skills.map((skill, index) => (
+        <InstalledSkillListItem
+          key={skill.id}
+          skill={skill}
+          categories={categories}
+          hasUpdate={!!updatesMap[skill.id]}
+          isUpdating={isSkillUpdating(skill.id)}
+          onToggleApp={onToggleApp}
+          onCategoryChange={(categoryId) =>
+            onMoveSkillToCategory(skill.id, categoryId)
+          }
+          onUninstall={() => onUninstall(skill)}
+          onUpdate={() => onUpdateSkill(skill)}
+          isLast={index === group.skills.length - 1}
+        />
+      ))}
+      {group.skills.length === 0 && (
+        <div className="px-4 py-3 text-xs text-muted-foreground">
+          {t("skills.categories.empty")}
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface InstalledSkillListItemProps {
   skill: InstalledSkill;
+  categories: Array<{ id: string; name: string }>;
   hasUpdate?: boolean;
   isUpdating?: boolean;
-  onToggleApp: (id: string, app: AppId, enabled: boolean) => void;
+  onToggleApp: (skill: InstalledSkill, app: AppId, enabled: boolean) => void;
+  onCategoryChange: (categoryId: string) => void;
   onUninstall: () => void;
   onUpdate?: () => void;
   isLast?: boolean;
@@ -490,9 +1195,11 @@ interface InstalledSkillListItemProps {
 
 const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
   skill,
+  categories,
   hasUpdate,
   isUpdating,
   onToggleApp,
+  onCategoryChange,
   onUninstall,
   onUpdate,
   isLast,
@@ -555,9 +1262,34 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
 
       <AppToggleGroup
         apps={skill.apps}
-        onToggle={(app, enabled) => onToggleApp(skill.id, app, enabled)}
+        onToggle={(app, enabled) => onToggleApp(skill, app, enabled)}
         appIds={SKILLS_APP_IDS}
       />
+
+      <Select
+        value={skill.category?.trim() || "default"}
+        onValueChange={onCategoryChange}
+      >
+        <SelectTrigger
+          aria-label={`${t("skills.categories.assign")} ${skill.name}`}
+          className="h-7 w-32 shrink-0 gap-2 px-2 py-1 text-xs"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {categories.map((category) => (
+            <SelectItem
+              key={category.id}
+              value={category.id || "default"}
+              className="text-xs"
+            >
+              {category.id === "default"
+                ? t("skills.categories.default")
+                : category.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <div
         className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"

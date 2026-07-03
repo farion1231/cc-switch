@@ -10,6 +10,10 @@ import {
   type DiscoverableSkill,
   type ImportSkillSelection,
   type InstalledSkill,
+  type SkillApps,
+  type SkillAppUpdate,
+  type SkillCategory,
+  type SkillMode,
   type SkillUpdateInfo,
   type SkillsShSearchResult,
 } from "@/lib/api/skills";
@@ -164,23 +168,123 @@ export function useRestoreSkillBackup() {
   });
 }
 
-/**
- * 切换 Skill 在特定应用的启用状态
- */
-export function useToggleSkillApp() {
+export function useSkillCategories() {
+  return useQuery({
+    queryKey: ["skills", "categories"],
+    queryFn: () => skillsApi.getCategories(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSaveSkillCategory() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      id,
-      app,
-      enabled,
-    }: {
-      id: string;
-      app: AppId;
-      enabled: boolean;
-    }) => skillsApi.toggleApp(id, app, enabled),
+    mutationFn: (category: SkillCategory) => skillsApi.saveCategory(category),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "categories"] });
+    },
+  });
+}
+
+export function useDeleteSkillCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.deleteCategory(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "categories"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
+export function useDeleteSkillCategoryWithSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.deleteCategoryWithSkills(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "categories"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "backups"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "discoverable"] });
+    },
+  });
+}
+
+export function useMoveSkillToCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, category }: { id: string; category?: string | null }) =>
+      skillsApi.moveToCategory(id, category),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
+export function useBulkUpdateSkillApps() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: SkillAppUpdate[]) =>
+      skillsApi.bulkUpdateApps(updates),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "modes"] });
+    },
+  });
+}
+
+export function useSkillModes() {
+  return useQuery({
+    queryKey: ["skills", "modes"],
+    queryFn: () => skillsApi.getModes(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useActiveSkillMode() {
+  return useQuery({
+    queryKey: ["skills", "activeMode"],
+    queryFn: () => skillsApi.getActiveMode(),
+    staleTime: Infinity,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSaveSkillMode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: SkillMode) => skillsApi.saveMode(mode),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "modes"] });
+    },
+  });
+}
+
+export function useDeleteSkillMode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.deleteMode(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["skills", "modes"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "activeMode"] });
+      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+    },
+  });
+}
+
+export function useSwitchSkillMode() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => skillsApi.switchMode(id),
+    onSuccess: (skills, id) => {
+      queryClient.setQueryData<InstalledSkill[]>(
+        ["skills", "installed"],
+        skills,
+      );
+      queryClient.setQueryData(["skills", "activeMode"], id);
+      queryClient.invalidateQueries({ queryKey: ["skills", "modes"] });
     },
   });
 }
@@ -359,6 +463,10 @@ export type {
   DiscoverableSkill,
   ImportSkillSelection,
   SkillBackupEntry,
+  SkillApps,
+  SkillAppUpdate,
+  SkillCategory,
+  SkillMode,
   SkillUpdateInfo,
   SkillsShSearchResult,
   AppId,

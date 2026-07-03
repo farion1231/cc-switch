@@ -2259,6 +2259,37 @@
       "success": "Skill {{name}} restored from backup",
       "failed": "Failed to restore from backup"
     },
+    "categories": {
+      "default": "Default Category",
+      "namePlaceholder": "Category name",
+      "createTitle": "Create Group",
+      "createDescription": "Enter the new group name.",
+      "create": "Create Category",
+      "delete": "Delete",
+      "assign": "Category",
+      "empty": "No skills in this category",
+      "bulkToggle": "Batch toggle",
+      "deleteOptionsTitle": "Delete Group",
+      "deleteOptionsDescription": "Choose how to handle group \"{{name}}\".",
+      "deleteOnlyCategory": "Delete group only, keep skills",
+      "deleteCategoryAndSkills": "Delete group and skills",
+      "createSuccess": "Category created",
+      "deleteSuccess": "Category deleted"
+    },
+    "modes": {
+      "title": "Modes",
+      "default": "Default Mode",
+      "namePlaceholder": "Mode name",
+      "createTitle": "Create Mode",
+      "createDescription": "Enter the new mode name.",
+      "create": "Create Mode",
+      "delete": "Delete",
+      "untitled": "Untitled Mode",
+      "createSuccess": "Mode created",
+      "deleteConfirmTitle": "Delete Mode",
+      "deleteConfirmMessage": "Are you sure you want to delete mode \"{{name}}\"?",
+      "deleteSuccess": "Mode deleted"
+    },
     "apps": {
       "claude": "Claude",
       "codex": "Codex",

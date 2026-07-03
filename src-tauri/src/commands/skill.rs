@@ -7,9 +7,9 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
-    SkillsShSearchResult,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppUpdate,
+    SkillBackupEntry, SkillCategory, SkillMode, SkillRepo, SkillService, SkillStorageLocation,
+    SkillUninstallResult, SkillUpdateInfo, SkillsShSearchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -95,6 +95,91 @@ pub fn toggle_skill_app(
     let app_type = parse_app_type(&app)?;
     SkillService::toggle_app(&app_state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+/// 获取 Skills 分类
+#[tauri::command]
+pub fn get_skill_categories(app_state: State<'_, AppState>) -> Result<Vec<SkillCategory>, String> {
+    SkillService::get_categories(&app_state.db).map_err(|e| e.to_string())
+}
+
+/// 保存 Skills 分类
+#[tauri::command]
+pub fn save_skill_category(
+    category: SkillCategory,
+    app_state: State<'_, AppState>,
+) -> Result<SkillCategory, String> {
+    SkillService::save_category(&app_state.db, category).map_err(|e| e.to_string())
+}
+
+/// 删除 Skills 分类
+#[tauri::command]
+pub fn delete_skill_category(id: String, app_state: State<'_, AppState>) -> Result<bool, String> {
+    SkillService::delete_category(&app_state.db, &id).map_err(|e| e.to_string())
+}
+
+/// 删除 Skills 分类，并卸载分类下所有 Skills
+#[tauri::command]
+pub fn delete_skill_category_with_skills(
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::delete_category_with_skills(&app_state.db, &id).map_err(|e| e.to_string())
+}
+
+/// 移动 Skill 到指定分类
+#[tauri::command]
+pub fn move_skill_to_category(
+    id: String,
+    category: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::move_to_category(&app_state.db, &id, category).map_err(|e| e.to_string())
+}
+
+/// 批量更新 Skill 的应用启用状态
+#[tauri::command]
+pub fn bulk_update_skill_apps(
+    updates: Vec<SkillAppUpdate>,
+    app_state: State<'_, AppState>,
+) -> Result<usize, String> {
+    SkillService::bulk_update_apps(&app_state.db, updates).map_err(|e| e.to_string())
+}
+
+/// 获取 Skills 模式
+#[tauri::command]
+pub fn get_skill_modes(app_state: State<'_, AppState>) -> Result<Vec<SkillMode>, String> {
+    SkillService::get_modes(&app_state.db).map_err(|e| e.to_string())
+}
+
+/// 获取当前 Skills 模式
+#[tauri::command]
+pub fn get_active_skill_mode(app_state: State<'_, AppState>) -> Result<String, String> {
+    SkillService::get_active_mode(&app_state.db).map_err(|e| e.to_string())
+}
+
+/// 保存 Skills 模式
+#[tauri::command]
+pub fn save_skill_mode(
+    mode: SkillMode,
+    app_state: State<'_, AppState>,
+) -> Result<SkillMode, String> {
+    SkillService::save_mode(&app_state.db, mode).map_err(|e| e.to_string())
+}
+
+/// 删除 Skills 模式
+#[tauri::command]
+pub fn delete_skill_mode(id: String, app_state: State<'_, AppState>) -> Result<bool, String> {
+    SkillService::delete_mode(&app_state.db, &id).map_err(|e| e.to_string())
+}
+
+/// 切换 Skills 模式
+#[tauri::command]
+pub fn switch_skill_mode(
+    id: String,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<InstalledSkill>, String> {
+    SkillService::switch_mode(&app_state.db, &id).map_err(|e| e.to_string())
 }
 
 /// 扫描未管理的 Skills

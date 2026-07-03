@@ -2231,6 +2231,37 @@
       "success": "技能 {{name}} 已從備份還原",
       "failed": "從備份還原失敗"
     },
+    "categories": {
+      "default": "預設分類",
+      "namePlaceholder": "分類名稱",
+      "createTitle": "建立分組",
+      "createDescription": "輸入新分組名稱。",
+      "create": "建立分類",
+      "delete": "刪除",
+      "assign": "分類",
+      "empty": "此分類暫無技能",
+      "bulkToggle": "批次切換",
+      "deleteOptionsTitle": "刪除分組",
+      "deleteOptionsDescription": "請選擇如何處理分組 \"{{name}}\"。",
+      "deleteOnlyCategory": "僅刪除分組，不刪除skills",
+      "deleteCategoryAndSkills": "分組和skill一起刪除",
+      "createSuccess": "分類已建立",
+      "deleteSuccess": "分類已刪除"
+    },
+    "modes": {
+      "title": "模式",
+      "default": "預設模式",
+      "namePlaceholder": "模式名稱",
+      "createTitle": "建立模式",
+      "createDescription": "輸入新模式名稱。",
+      "create": "建立模式",
+      "delete": "刪除",
+      "untitled": "未命名模式",
+      "createSuccess": "模式已建立",
+      "deleteConfirmTitle": "刪除模式",
+      "deleteConfirmMessage": "確定要刪除模式 \"{{name}}\" 嗎？",
+      "deleteSuccess": "模式已刪除"
+    },
     "apps": {
       "claude": "Claude",
       "codex": "Codex",
