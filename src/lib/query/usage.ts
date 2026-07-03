@@ -1,7 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
-import type { LogFilters, UsageRangeSelection } from "@/types/usage";
+import type {
+  LogFilters,
+  UsageRangeSelection,
+  UsageScopeFilters,
+} from "@/types/usage";
 
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
 
@@ -22,6 +26,7 @@ type RequestLogsKey = {
   preset: UsageRangeSelection["preset"];
   customStartDate?: number;
   customEndDate?: number;
+  liveEndTime?: boolean;
   appType?: string;
   providerName?: string;
   model?: string;
@@ -35,7 +40,8 @@ export const usageKeys = {
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    appType?: string,
+    filters?: UsageScopeFilters,
+    liveEndTime?: boolean,
   ) =>
     [
       ...usageKeys.all,
@@ -43,12 +49,17 @@ export const usageKeys = {
       preset,
       customStartDate ?? 0,
       customEndDate ?? 0,
-      appType ?? "all",
+      liveEndTime ?? false,
+      filters?.appType ?? null,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
     ] as const,
   summaryByApp: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
+    filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+    liveEndTime?: boolean,
   ) =>
     [
       ...usageKeys.all,
@@ -56,12 +67,16 @@ export const usageKeys = {
       preset,
       customStartDate ?? 0,
       customEndDate ?? 0,
+      liveEndTime ?? false,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
     ] as const,
   trends: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    appType?: string,
+    filters?: UsageScopeFilters,
+    liveEndTime?: boolean,
   ) =>
     [
       ...usageKeys.all,
@@ -69,13 +84,17 @@ export const usageKeys = {
       preset,
       customStartDate ?? 0,
       customEndDate ?? 0,
-      appType ?? "all",
+      liveEndTime ?? false,
+      filters?.appType ?? null,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    appType?: string,
+    filters?: UsageScopeFilters,
+    liveEndTime?: boolean,
   ) =>
     [
       ...usageKeys.all,
@@ -83,13 +102,17 @@ export const usageKeys = {
       preset,
       customStartDate ?? 0,
       customEndDate ?? 0,
-      appType ?? "all",
+      liveEndTime ?? false,
+      filters?.appType ?? null,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
     ] as const,
   modelStats: (
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    appType?: string,
+    filters?: UsageScopeFilters,
+    liveEndTime?: boolean,
   ) =>
     [
       ...usageKeys.all,
@@ -97,7 +120,10 @@ export const usageKeys = {
       preset,
       customStartDate ?? 0,
       customEndDate ?? 0,
-      appType ?? "all",
+      liveEndTime ?? false,
+      filters?.appType ?? null,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
     ] as const,
   logs: (key: RequestLogsKey, page: number, pageSize: number) =>
     [
@@ -106,6 +132,7 @@ export const usageKeys = {
       key.preset,
       key.customStartDate ?? 0,
       key.customEndDate ?? 0,
+      key.liveEndTime ?? false,
       key.appType ?? "",
       key.providerName ?? "",
       key.model ?? "",
@@ -122,23 +149,39 @@ export const usageKeys = {
     [...usageKeys.all, providerId, appType] as const,
 };
 
+/** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
+function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
+  return {
+    appType: filters?.appType === "all" ? undefined : filters?.appType,
+    providerName: filters?.providerName,
+    model: filters?.model,
+  };
+}
+
 // Hooks
 export function useUsageSummary(
   range: UsageRangeSelection,
-  appType?: string,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
-  const effectiveAppType = appType === "all" ? undefined : appType;
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.summary(
       range.preset,
       range.customStartDate,
       range.customEndDate,
-      appType,
+      effective,
+      range.liveEndTime,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
-      return usageApi.getUsageSummary(startDate, endDate, effectiveAppType);
+      return usageApi.getUsageSummary(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerName,
+        effective.model,
+      );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
@@ -147,6 +190,7 @@ export function useUsageSummary(
 
 export function useUsageSummaryByApp(
   range: UsageRangeSelection,
+  filters?: Pick<UsageScopeFilters, "providerName" | "model">,
   options?: UsageQueryOptions,
 ) {
   return useQuery({
@@ -154,10 +198,17 @@ export function useUsageSummaryByApp(
       range.preset,
       range.customStartDate,
       range.customEndDate,
+      filters,
+      range.liveEndTime,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
-      return usageApi.getUsageSummaryByApp(startDate, endDate);
+      return usageApi.getUsageSummaryByApp(
+        startDate,
+        endDate,
+        filters?.providerName,
+        filters?.model,
+      );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
@@ -166,20 +217,27 @@ export function useUsageSummaryByApp(
 
 export function useUsageTrends(
   range: UsageRangeSelection,
-  appType?: string,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
-  const effectiveAppType = appType === "all" ? undefined : appType;
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.trends(
       range.preset,
       range.customStartDate,
       range.customEndDate,
-      appType,
+      effective,
+      range.liveEndTime,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
-      return usageApi.getUsageTrends(startDate, endDate, effectiveAppType);
+      return usageApi.getUsageTrends(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerName,
+        effective.model,
+      );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
@@ -188,20 +246,27 @@ export function useUsageTrends(
 
 export function useProviderStats(
   range: UsageRangeSelection,
-  appType?: string,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
-  const effectiveAppType = appType === "all" ? undefined : appType;
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.providerStats(
       range.preset,
       range.customStartDate,
       range.customEndDate,
-      appType,
+      effective,
+      range.liveEndTime,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
-      return usageApi.getProviderStats(startDate, endDate, effectiveAppType);
+      return usageApi.getProviderStats(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerName,
+        effective.model,
+      );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
@@ -210,20 +275,27 @@ export function useProviderStats(
 
 export function useModelStats(
   range: UsageRangeSelection,
-  appType?: string,
+  filters?: UsageScopeFilters,
   options?: UsageQueryOptions,
 ) {
-  const effectiveAppType = appType === "all" ? undefined : appType;
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.modelStats(
       range.preset,
       range.customStartDate,
       range.customEndDate,
-      appType,
+      effective,
+      range.liveEndTime,
     ),
     queryFn: () => {
       const { startDate, endDate } = resolveUsageRange(range);
-      return usageApi.getModelStats(startDate, endDate, effectiveAppType);
+      return usageApi.getModelStats(
+        startDate,
+        endDate,
+        effective.appType,
+        effective.providerName,
+        effective.model,
+      );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
@@ -241,6 +313,7 @@ export function useRequestLogs({
     preset: range.preset,
     customStartDate: range.customStartDate,
     customEndDate: range.customEndDate,
+    liveEndTime: range.liveEndTime,
     appType: filters.appType,
     providerName: filters.providerName,
     model: filters.model,

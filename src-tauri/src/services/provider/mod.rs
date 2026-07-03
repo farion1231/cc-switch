@@ -42,6 +42,48 @@ use live::{
 };
 use usage::validate_usage_script;
 
+/// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
+/// live 配置，使开关即时生效（无需等下一次切换）。
+/// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
+/// 第三方 live 配置不受开关影响。
+pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, AppError> {
+    let current_id = ProviderService::current(state, AppType::Codex)?;
+    if current_id.is_empty() {
+        return Ok(false);
+    }
+    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(false);
+    };
+    if provider.category.as_deref() != Some("official") {
+        return Ok(false);
+    }
+
+    // 代理接管期间 live 归代理所有（开启代理时官方供应商只警告不拦截，
+    // 二者可以共存）。与切换/保存路径一致：以 backup/占位符为所有权信号，
+    // 只更新备份，注入后的配置由接管释放时的恢复路径落盘。
+    let has_live_backup =
+        futures::executor::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+            .ok()
+            .flatten()
+            .is_some();
+    let live_taken_over = state
+        .proxy_service
+        .detect_takeover_in_live_config_for_app(&AppType::Codex);
+    if has_live_backup || live_taken_over {
+        futures::executor::block_on(
+            state
+                .proxy_service
+                .update_live_backup_from_provider(AppType::Codex.as_str(), provider),
+        )
+        .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+        return Ok(true);
+    }
+
+    live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    Ok(true)
+}
+
 /// Provider business logic service
 pub struct ProviderService;
 
@@ -59,9 +101,9 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::ProviderMeta;
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
+    use crate::provider::{ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -184,6 +226,68 @@ mod tests {
         result
     }
 
+    fn codex_settings(base_url: &str, api_key: &str) -> Value {
+        json!({
+            "auth": {
+                "OPENAI_API_KEY": api_key
+            },
+            "config": format!(
+                "model_provider = \"custom\"\n\
+                 [model_providers.custom]\n\
+                 name = \"custom\"\n\
+                 base_url = \"{base_url}\"\n\
+                 wire_api = \"chat\"\n"
+            )
+        })
+    }
+
+    fn usage_script_with_credentials(
+        api_key: Option<&str>,
+        base_url: Option<&str>,
+        template_type: Option<&str>,
+    ) -> UsageScript {
+        UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: "return { remaining: 1, unit: 'USD' };".to_string(),
+            timeout: Some(10),
+            api_key: api_key.map(str::to_string),
+            base_url: base_url.map(str::to_string),
+            access_token: None,
+            user_id: None,
+            template_type: template_type.map(str::to_string),
+            auto_query_interval: None,
+            coding_plan_provider: None,
+            access_key_id: Some("ak-test".to_string()),
+            secret_access_key: Some("sk-test".to_string()),
+        }
+    }
+
+    fn codex_provider_with_usage(
+        id: &str,
+        base_url: &str,
+        api_key: &str,
+        usage_api_key: Option<&str>,
+        usage_base_url: Option<&str>,
+        template_type: Option<&str>,
+    ) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            format!("Provider {id}"),
+            codex_settings(base_url, api_key),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            usage_script: Some(usage_script_with_credentials(
+                usage_api_key,
+                usage_base_url,
+                template_type,
+            )),
+            ..Default::default()
+        });
+        provider
+    }
+
     fn openclaw_provider(id: &str) -> Provider {
         Provider {
             id: id.to_string(),
@@ -285,6 +389,255 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn add_clears_usage_credentials_that_match_provider_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-a",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some(" sk-a "),
+                Some(" https://api.a.example/v1/ "),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-a", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key, None);
+            assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_preserves_usage_credentials_that_only_match_previous_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-usage-old",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some("sk-a"),
+                Some("https://api.a.example/v1/"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider with explicit usage credentials");
+
+            let mut updated = provider.clone();
+            updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+
+            ProviderService::update(state, AppType::Codex, None, updated)
+                .expect("update provider main credentials");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-usage-old", AppType::Codex.as_str())
+                .expect("query updated provider")
+                .expect("updated provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-a"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://api.a.example/v1/")
+            );
+            assert_eq!(
+                saved.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn copied_provider_uses_edited_credentials_after_add_clears_mirrored_usage_credentials() {
+        with_test_home(|state, _| {
+            let copied_provider = codex_provider_with_usage(
+                "codex-copy",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some("sk-a"),
+                Some("https://api.a.example/v1/"),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, copied_provider, false)
+                .expect("add copied provider");
+
+            let saved_after_add = state
+                .db
+                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query copied provider")
+                .expect("copied provider should exist");
+            let script_after_add = saved_after_add
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+            assert_eq!(script_after_add.api_key, None);
+            assert_eq!(script_after_add.base_url, None);
+
+            let mut edited_provider = saved_after_add.clone();
+            edited_provider.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+
+            ProviderService::update(state, AppType::Codex, None, edited_provider)
+                .expect("edit copied provider credentials");
+
+            let saved_after_update = state
+                .db
+                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query edited provider")
+                .expect("edited provider should exist");
+            let script_after_update = saved_after_update
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script_after_update.api_key, None);
+            assert_eq!(script_after_update.base_url, None);
+            assert_eq!(
+                saved_after_update.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_clears_usage_credentials_that_match_current_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-current",
+                "https://api.a.example/v1",
+                "sk-a",
+                Some("sk-usage"),
+                Some("https://usage.example/api"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider with distinct usage credentials");
+
+            let mut updated = provider.clone();
+            updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+            updated.meta = Some(ProviderMeta {
+                usage_script: Some(usage_script_with_credentials(
+                    Some(" sk-b "),
+                    Some(" https://api.b.example/v1/ "),
+                    None,
+                )),
+                ..Default::default()
+            });
+
+            ProviderService::update(state, AppType::Codex, None, updated)
+                .expect("update provider with redundant usage credentials");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-current", AppType::Codex.as_str())
+                .expect("query updated provider")
+                .expect("updated provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key, None);
+            assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_preserves_distinct_usage_credentials() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-distinct",
+                "https://api.main.example/v1",
+                "sk-main",
+                Some("sk-usage"),
+                Some("https://usage.example/api"),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-distinct", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://usage.example/api")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_does_not_clear_token_plan_credentials() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-token-plan",
+                "https://api.plan.example/v1",
+                "sk-plan",
+                Some("sk-plan"),
+                Some("https://api.plan.example/v1"),
+                Some("token_plan"),
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-token-plan", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-plan"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://api.plan.example/v1")
+            );
+            assert_eq!(script.access_key_id.as_deref(), Some("ak-test"));
+            assert_eq!(script.secret_access_key.as_deref(), Some("sk-test"));
+        });
+    }
+
+    #[test]
     fn validate_provider_settings_rejects_missing_auth() {
         let provider = Provider::with_id(
             "codex".into(),
@@ -298,6 +651,83 @@ mod tests {
             err.to_string().contains("auth"),
             "expected auth error, got {err:?}"
         );
+    }
+
+    #[test]
+    fn extract_claude_common_config_strips_all_credentials_keeps_shareable() {
+        // env 混入多种凭据（Anthropic/OpenRouter/Google/OpenAI/Gemini + AWS/Vertex）
+        // 与可共享配置；顶层混入非标准的 apiKey/api_key 凭据与正常设置。
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-ant",
+                "ANTHROPIC_AUTH_TOKEN": "tok-ant",
+                "OPENROUTER_API_KEY": "sk-or",
+                "GOOGLE_API_KEY": "g-key",
+                "OPENAI_API_KEY": "sk-oai",
+                "GEMINI_API_KEY": "g-gem",
+                "AWS_ACCESS_KEY_ID": "AKIA",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+                "AWS_SESSION_TOKEN": "sess",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/path/creds.json",
+                "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
+                "ANTHROPIC_BASE_URL": "https://example.com",
+                "ANTHROPIC_MODEL": "claude-x",
+                // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
+                "ENABLE_TOOL_SEARCH": "true",
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
+            },
+            "apiKey": "sk-top",
+            "api_key": "sk-top2",
+            "theme": "dark",
+            "includeCoAuthoredBy": false
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        // 所有凭据都不得出现在共享片段里
+        let env = value.get("env");
+        for leaked in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "OPENROUTER_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "AWS_BEARER_TOKEN_BEDROCK",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(leaked)).is_none(),
+                "credential {leaked} must not leak into common config"
+            );
+        }
+        assert!(
+            value.get("apiKey").is_none() && value.get("api_key").is_none(),
+            "top-level credentials must be stripped"
+        );
+
+        // 端点/模型（provider-specific 非机密）也应剥掉
+        assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
+        assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
+
+        // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
+        assert_eq!(
+            env.and_then(|e| e.get("ENABLE_TOOL_SEARCH"))
+                .and_then(|v| v.as_str()),
+            Some("true")
+        );
+        assert_eq!(
+            env.and_then(|e| e.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"))
+                .and_then(|v| v.as_str()),
+            Some("8192")
+        );
+        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
+        assert_eq!(value.get("includeCoAuthoredBy"), Some(&json!(false)));
     }
 
     #[test]
@@ -421,6 +851,7 @@ base_url = "http://localhost:8080"
 
         db.update_proxy_config(ProxyConfig {
             live_takeover_active: true,
+            listen_port: 0,
             ..Default::default()
         })
         .await
@@ -449,7 +880,7 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -502,7 +933,7 @@ base_url = "http://localhost:8080"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
                 .and_then(|v| v.as_str()),
-            Some("http://127.0.0.1:15721"),
+            Some(format!("http://127.0.0.1:{}", proxy_info.port).as_str()),
             "proxy base URL should stay intact"
         );
         assert!(
@@ -1153,6 +1584,72 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
+    fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
+        let current_credentials = provider.resolve_usage_credentials(app_type);
+
+        let Some(usage_script) = provider
+            .meta
+            .as_mut()
+            .and_then(|meta| meta.usage_script.as_mut())
+        else {
+            return;
+        };
+
+        if usage_script.template_type.as_deref() == Some("token_plan") {
+            return;
+        }
+
+        if usage_script.api_key.as_deref().is_some_and(|api_key| {
+            Self::should_clear_usage_api_key_override(api_key, &current_credentials)
+        }) {
+            usage_script.api_key = None;
+        }
+
+        if usage_script.base_url.as_deref().is_some_and(|base_url| {
+            Self::should_clear_usage_base_url_override(base_url, &current_credentials)
+        }) {
+            usage_script.base_url = None;
+        }
+    }
+
+    fn should_clear_usage_api_key_override(
+        script_api_key: &str,
+        current_credentials: &(String, String),
+    ) -> bool {
+        let candidate = script_api_key.trim();
+        if candidate.is_empty() {
+            return true;
+        }
+
+        let matches_provider_key = |api_key: &str| {
+            let api_key = api_key.trim();
+            !api_key.is_empty() && api_key == candidate
+        };
+
+        matches_provider_key(&current_credentials.1)
+    }
+
+    fn should_clear_usage_base_url_override(
+        script_base_url: &str,
+        current_credentials: &(String, String),
+    ) -> bool {
+        let candidate = Self::normalize_usage_base_url_for_compare(script_base_url);
+        if candidate.is_empty() {
+            return true;
+        }
+
+        let matches_provider_base_url = |base_url: &str| {
+            let base_url = Self::normalize_usage_base_url_for_compare(base_url);
+            !base_url.is_empty() && base_url == candidate
+        };
+
+        matches_provider_base_url(&current_credentials.0)
+    }
+
+    fn normalize_usage_base_url_for_compare(base_url: &str) -> String {
+        base_url.trim().trim_end_matches('/').to_string()
+    }
+
     /// List all providers for an app type
     pub fn list(
         state: &AppState,
@@ -1189,6 +1686,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
@@ -1243,6 +1741,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
             if !app_type.is_additive_mode() {
@@ -1700,6 +2199,17 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                            // 切走前先把 live 里的可共享改动（含用户直接在应用内
+                            // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
+                            // 详见 sync_common_config_snippet_from_live 的文档。
+                            Self::sync_common_config_snippet_from_live(
+                                state,
+                                &app_type,
+                                &current_provider,
+                                &live_config,
+                                &mut result,
+                            );
+
                             current_provider.settings_config =
                                 strip_common_config_from_live_settings(
                                     state.db.as_ref(),
@@ -1920,6 +2430,100 @@ impl ProviderService {
         Self::migrate_legacy_common_config_usage(state, app_type, &snippet)
     }
 
+    /// 切走某供应商前，把它 live 配置里的可共享部分重新提取并**整体替换**到
+    /// 通用配置片段，使在 live 应用里直接做的改动不会因切换而丢失。
+    ///
+    /// 采用"整体重提取 + 替换"而非"只合并新增"，是为了同时覆盖三种情况：
+    /// - **新增**：用户直接在应用里装了插件、加了 hook、改了 env/主题/权限等共享
+    ///   偏好，被捕获进通用配置，切到别的供应商也带得过去；
+    /// - **删除**：被删掉的键不在新提取结果里，于是从片段里消失、下次切换不会被
+    ///   重新注入——否则会出现"插件怎么删也删不掉"的反直觉 bug；
+    /// - **密钥安全**：提取器已剥掉 auth / model / endpoint，密钥永不进共享片段。
+    ///
+    /// 之所以"整体替换"是安全的：每次写 live 都会把当前片段合并进去，所以切走时
+    /// 读到的 live 一定是"片段 + 本地改动"的超集，重提取只会丢掉用户真正删掉的键，
+    /// 不会误删其它供应商共享的内容。
+    ///
+    /// **作用域**：仅 Claude。Codex 的 live 是 TOML 且端点藏在 `[model_providers]`
+    /// 表里（现有提取器不剥），自动同步会泄漏端点并与 modelCatalog / 统一会话桶 /
+    /// auth 还原逻辑冲突；Gemini 暂未纳入。两者如需支持应各自单独验证后再加。
+    ///
+    /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
+    /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
+    /// 配置又塞回来。所有失败均为非致命，只记 warning，绝不阻断切换。
+    fn sync_common_config_snippet_from_live(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        live_config: &Value,
+        result: &mut SwitchResult,
+    ) {
+        // 作用域限定 Claude（见函数文档）。
+        if !matches!(app_type, AppType::Claude) {
+            return;
+        }
+
+        let opted_in = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.common_config_enabled)
+            == Some(true);
+        if !opted_in {
+            return;
+        }
+
+        match state.db.is_config_snippet_cleared(app_type.as_str()) {
+            Ok(true) => return, // 用户显式清空过通用配置，尊重其选择，不再自动塞回
+            Ok(false) => {}
+            Err(err) => {
+                log::warn!(
+                    "Failed to read common config cleared flag for {}: {err}",
+                    app_type.as_str()
+                );
+                return;
+            }
+        }
+
+        let new_snippet = match Self::extract_common_config_snippet_from_settings(
+            app_type.clone(),
+            live_config,
+        ) {
+            Ok(snippet) => snippet,
+            Err(err) => {
+                log::warn!(
+                    "Failed to extract common config from live for {} provider '{}': {err}",
+                    app_type.as_str(),
+                    provider.id
+                );
+                return;
+            }
+        };
+
+        // 未变化则跳过，避免无谓写库（不切 live 配置时这是常态路径）。
+        let current = state
+            .db
+            .get_config_snippet(app_type.as_str())
+            .ok()
+            .flatten();
+        if current.as_deref() == Some(new_snippet.as_str()) {
+            return;
+        }
+
+        if let Err(err) = state
+            .db
+            .set_config_snippet(app_type.as_str(), Some(new_snippet))
+        {
+            log::warn!(
+                "Failed to persist synced common config for {} provider '{}': {err}",
+                app_type.as_str(),
+                provider.id
+            );
+            result
+                .warnings
+                .push(format!("common_config_sync_failed:{}", provider.id));
+        }
+    }
+
     /// Extract common config snippet from current provider
     ///
     /// Extracts the current provider's configuration and removes provider-specific fields
@@ -1966,16 +2570,63 @@ impl ProviderService {
         }
     }
 
+    /// 判断一个 env / 顶层配置键名是否为凭据/机密：凡命中一律不得写入共享的
+    /// 通用配置片段。**故意从严**——多剥一个非机密键只是它不被共享（可恢复的小
+    /// 不便），漏剥一个凭据则会把密钥注入到每个供应商（不可恢复的泄漏）。因此用
+    /// 模式匹配覆盖整类，而非枚举具体名字（枚举永远会漏掉下一个 `*_API_KEY`）。
+    ///
+    /// 覆盖：Anthropic / OpenRouter / Google / OpenAI / Gemini 等 `*_API_KEY`
+    /// （Claude provider 的凭据见 `Provider::resolve_usage_credentials`，确实支持
+    /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
+    /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、以及通用 secret / password /
+    /// 私钥命名。
+    fn is_sensitive_config_key(name: &str) -> bool {
+        let upper = name.to_ascii_uppercase();
+
+        // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
+        // （CLAUDE_CODE_MAX_OUTPUT_TOKENS / MAX_THINKING_TOKENS 是正常可共享配置）。
+        const SENSITIVE_SUFFIXES: &[&str] = &[
+            "_API_KEY",
+            "_APIKEY",
+            "_AUTH_TOKEN",
+            "_TOKEN",
+            "_ACCESS_KEY",
+            "_ACCESS_KEY_ID",
+            "_KEY_ID",
+            "_PRIVATE_KEY",
+        ];
+        const SENSITIVE_EXACT: &[&str] = &[
+            "APIKEY",
+            "API_KEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIALS",
+        ];
+        // contains：覆盖 AWS_SECRET_ACCESS_KEY / *_CLIENT_SECRET /
+        // GOOGLE_APPLICATION_CREDENTIALS / AWS_BEARER_TOKEN_BEDROCK 等变体。
+        const SENSITIVE_CONTAINS: &[&str] = &[
+            "SECRET",
+            "PASSWORD",
+            "PASSWD",
+            "CREDENTIAL",
+            "PRIVATE_KEY",
+            "BEARER_TOKEN",
+        ];
+
+        SENSITIVE_EXACT.contains(&upper.as_str())
+            || SENSITIVE_SUFFIXES.iter().any(|s| upper.ends_with(s))
+            || SENSITIVE_CONTAINS.iter().any(|c| upper.contains(c))
+    }
+
     /// Extract common config for Claude (JSON format)
     fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
         let mut config = settings.clone();
 
-        // Fields to exclude from common config
-        const ENV_EXCLUDES: &[&str] = &[
-            // Auth
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            // Models and Claude Code model-menu display names
+        // 供应商专属的**非机密**字段（模型 + 端点），不应共享。凭据/机密不在此列举，
+        // 改由 `is_sensitive_config_key`（模式匹配）统一剥离，新供应商的 `*_API_KEY`
+        // 等无需再手工补名单即可被覆盖。
+        const ENV_PROVIDER_SPECIFIC_EXCLUDES: &[&str] = &[
             "ANTHROPIC_MODEL",
             "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -1984,7 +2635,6 @@ impl ProviderService {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            // Endpoint
             "ANTHROPIC_BASE_URL",
         ];
 
@@ -1995,10 +2645,18 @@ impl ProviderService {
             "smallFastModel",
         ];
 
-        // Remove env fields
+        // Remove env fields: provider-specific (models/endpoint) + 任何凭据键。
         if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
-            for key in ENV_EXCLUDES {
+            let sensitive: Vec<String> = env
+                .keys()
+                .filter(|k| Self::is_sensitive_config_key(k))
+                .cloned()
+                .collect();
+            for key in ENV_PROVIDER_SPECIFIC_EXCLUDES {
                 env.remove(*key);
+            }
+            for key in &sensitive {
+                env.remove(key);
             }
             // If env is empty after removal, remove the env object itself
             if env.is_empty() {
@@ -2006,10 +2664,19 @@ impl ProviderService {
             }
         }
 
-        // Remove top-level fields
+        // Remove top-level fields: legacy model fields + 任何凭据键
+        // （例如非标准的顶层 apiKey / api_key / *_TOKEN）。
         if let Some(obj) = config.as_object_mut() {
+            let sensitive: Vec<String> = obj
+                .keys()
+                .filter(|k| Self::is_sensitive_config_key(k))
+                .cloned()
+                .collect();
             for key in TOP_LEVEL_EXCLUDES {
                 obj.remove(*key);
+            }
+            for key in &sensitive {
+                obj.remove(key);
             }
         }
 

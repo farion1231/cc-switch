@@ -597,6 +597,14 @@ wire_api = "responses"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
+    let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+    proxy_config.listen_port = 0;
+    state
+        .db
+        .update_proxy_config(proxy_config)
+        .await
+        .expect("use ephemeral proxy port");
+
     ProviderService::switch(&state, AppType::Codex, "deepseek-provider")
         .expect("switch from official subscription to DeepSeek");
 
@@ -623,6 +631,12 @@ wire_api = "responses"
         .set_takeover_for_app("codex", true)
         .await
         .expect("enable Codex takeover");
+    let proxy_status = state
+        .proxy_service
+        .get_status()
+        .await
+        .expect("read proxy status after takeover");
+    let codex_proxy_base_url = format!("http://127.0.0.1:{}/v1", proxy_status.port);
 
     let auth_after_takeover: serde_json::Value =
         read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth after takeover");
@@ -634,7 +648,7 @@ wire_api = "responses"
     let config_after_takeover =
         std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config");
     assert!(
-        config_after_takeover.contains("http://127.0.0.1:15721/v1"),
+        config_after_takeover.contains(&codex_proxy_base_url),
         "enabling takeover should point Codex config.toml at the local proxy"
     );
     assert!(
@@ -1682,6 +1696,367 @@ fn provider_service_switch_claude_updates_live_and_state() {
     );
 }
 
+/// 切走勾选了通用配置的 Claude 供应商时，应把它 live 里新增的可共享键
+/// （用户直接在应用内装插件/改偏好）捕获进通用配置片段，并带到下一个供应商。
+#[test]
+fn switch_claude_syncs_new_shared_keys_from_live_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    // A 的 live = A 私有密钥（含非 Anthropic 的 OpenRouter 凭据）+ 已共享的 theme
+    // + 用户刚在应用内新增的 enableAllProjectMcpServers
+    let live = json!({
+        "env": { "ANTHROPIC_API_KEY": "a-key", "OPENROUTER_API_KEY": "sk-or-leak" },
+        "theme": "dark",
+        "enableAllProjectMcpServers": true
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "a".to_string();
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("a".to_string(), provider_a);
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("b".to_string(), provider_b);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{"theme":"dark"}"#.to_string()),
+        )
+        .expect("seed common config snippet");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+
+    // 片段应捕获到新增键，并保留已有共享键，且绝不含密钥
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Claude.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    let snippet_value: serde_json::Value =
+        serde_json::from_str(&snippet).expect("snippet is valid JSON");
+    assert_eq!(
+        snippet_value.get("enableAllProjectMcpServers"),
+        Some(&json!(true)),
+        "newly added shared key should be captured into common config"
+    );
+    assert_eq!(
+        snippet_value.get("theme").and_then(|v| v.as_str()),
+        Some("dark"),
+        "previously shared key should be preserved"
+    );
+    assert!(
+        snippet_value
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .is_none(),
+        "secrets must never leak into the shared snippet"
+    );
+    assert!(
+        snippet_value
+            .get("env")
+            .and_then(|env| env.get("OPENROUTER_API_KEY"))
+            .is_none(),
+        "non-Anthropic Claude credentials must never leak into the shared snippet"
+    );
+
+    // 新增键应通过通用配置带到 B 的 live
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live after switch");
+    assert_eq!(
+        live_after.get("enableAllProjectMcpServers"),
+        Some(&json!(true)),
+        "shared key should propagate to the next provider's live config"
+    );
+    assert!(
+        live_after
+            .get("env")
+            .and_then(|env| env.get("OPENROUTER_API_KEY"))
+            .is_none(),
+        "leaked credential must not be injected into the next provider's live"
+    );
+    assert_eq!(
+        live_after
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str()),
+        Some("b-key"),
+        "live should reflect new provider's own auth"
+    );
+}
+
+/// 用户在应用内删掉一个已共享的键后，切换应把删除同步进通用配置，
+/// 且不会在切到下一个供应商时被重新注入（否则会"删不掉"）。
+#[test]
+fn switch_claude_syncs_deletions_from_live_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    // live 里 theme 还在，但用户已删掉 enableAllProjectMcpServers
+    let live = json!({
+        "env": { "ANTHROPIC_API_KEY": "a-key" },
+        "theme": "dark"
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "a".to_string();
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("a".to_string(), provider_a);
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("b".to_string(), provider_b);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    // 片段里仍残留 enableAllProjectMcpServers（上次共享的）
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{"theme":"dark","enableAllProjectMcpServers":true}"#.to_string()),
+        )
+        .expect("seed common config snippet");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Claude.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    let snippet_value: serde_json::Value =
+        serde_json::from_str(&snippet).expect("snippet is valid JSON");
+    assert!(
+        snippet_value.get("enableAllProjectMcpServers").is_none(),
+        "deleted key should be removed from common config"
+    );
+    assert_eq!(
+        snippet_value.get("theme").and_then(|v| v.as_str()),
+        Some("dark"),
+        "untouched shared key should remain"
+    );
+
+    // 切到 B 后 live 不应再出现被删除的键
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live after switch");
+    assert!(
+        live_after.get("enableAllProjectMcpServers").is_none(),
+        "deleted shared key must not be re-injected into the next provider"
+    );
+}
+
+/// 未勾选"写入通用配置"的供应商，其 live 改动不应自动污染通用配置片段。
+#[test]
+fn switch_claude_does_not_sync_common_config_for_opted_out_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    let live = json!({
+        "env": { "ANTHROPIC_API_KEY": "a-key" },
+        "providerSpecific": "x"
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "a".to_string();
+        // A 未勾选通用配置（meta = None）
+        manager.providers.insert(
+            "a".to_string(),
+            Provider::with_id(
+                "a".to_string(),
+                "A".to_string(),
+                json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+                None,
+            ),
+        );
+        manager.providers.insert(
+            "b".to_string(),
+            Provider::with_id(
+                "b".to_string(),
+                "B".to_string(),
+                json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+                None,
+            ),
+        );
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(r#"{"theme":"dark"}"#.to_string()),
+        )
+        .expect("seed common config snippet");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Claude.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    let snippet_value: serde_json::Value =
+        serde_json::from_str(&snippet).expect("snippet is valid JSON");
+    assert!(
+        snippet_value.get("providerSpecific").is_none(),
+        "opted-out provider's live changes must not pollute the shared snippet"
+    );
+    assert_eq!(
+        snippet_value.get("theme").and_then(|v| v.as_str()),
+        Some("dark"),
+        "snippet should stay unchanged for opted-out providers"
+    );
+}
+
+/// 用户显式清空过通用配置（_cleared）后，切换不应把片段重新塞回来。
+#[test]
+fn switch_claude_respects_explicitly_cleared_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).expect("create claude settings dir");
+    }
+    let live = json!({
+        "env": { "ANTHROPIC_API_KEY": "a-key" },
+        "theme": "dark"
+    });
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&live).expect("serialize live"),
+    )
+    .expect("seed claude live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Claude)
+            .expect("claude manager");
+        manager.current = "a".to_string();
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "a-key" } }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("a".to_string(), provider_a);
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({ "env": { "ANTHROPIC_API_KEY": "b-key" } }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("b".to_string(), provider_b);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet_cleared(AppType::Claude.as_str(), true)
+        .expect("mark snippet cleared");
+
+    ProviderService::switch(&state, AppType::Claude, "b").expect("switch should succeed");
+
+    assert!(
+        state
+            .db
+            .get_config_snippet(AppType::Claude.as_str())
+            .expect("read snippet")
+            .is_none(),
+        "explicitly cleared snippet must not be resurrected by switch-away sync"
+    );
+}
+
 #[test]
 fn provider_service_switch_missing_provider_returns_error() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -1910,4 +2285,63 @@ fn provider_service_delete_current_provider_returns_error() {
         ),
         other => panic!("expected Config/Message error, got {other:?}"),
     }
+}
+
+#[test]
+fn recover_from_crash_without_backup_cleans_placeholder_instead_of_writing_it_back() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // 接管态 Claude Live，且 DB 中无备份（模拟切换 app_config_dir 后新库首启的场景）
+    let taken_over_live = json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"
+        }
+    });
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().expect("settings dir")).expect("create dir");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&taken_over_live).expect("serialize taken over live"),
+    )
+    .expect("write taken over live");
+
+    let state = create_test_state().expect("create test state");
+
+    // 模拟历史异常：接管态 Live 已被导入成 current provider（SSOT 被污染）
+    let provider = Provider::with_id(
+        "default".to_string(),
+        "default".to_string(),
+        taken_over_live.clone(),
+        None,
+    );
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &provider)
+        .expect("save placeholder provider");
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "default")
+        .expect("set current provider");
+
+    futures::executor::block_on(state.proxy_service.recover_from_crash())
+        .expect("recover from crash");
+
+    let live_after: serde_json::Value =
+        read_json_file(&settings_path).expect("read live settings after recovery");
+    let env = live_after.get("env").cloned().unwrap_or_else(|| json!({}));
+    assert_ne!(
+        env.get("ANTHROPIC_AUTH_TOKEN").and_then(|v| v.as_str()),
+        Some("PROXY_MANAGED"),
+        "recovery must not write the placeholder back to live"
+    );
+    assert!(
+        env.get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(|url| !url.starts_with("http://127.0.0.1"))
+            .unwrap_or(true),
+        "recovery must drop the local proxy base URL"
+    );
 }

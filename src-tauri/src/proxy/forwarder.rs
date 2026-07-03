@@ -5,6 +5,7 @@
 use super::hyper_client::ProxyResponse;
 use super::{
     body_filter::filter_private_params_with_whitelist,
+    content_encoding::{decompress_body, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
     json_canonical::{canonicalize_value, short_value_hash},
@@ -24,7 +25,10 @@ use super::{
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-use crate::{app_config::AppType, provider::Provider};
+use crate::{
+    app_config::AppType,
+    provider::{LocalProxyRequestOverrides, Provider},
+};
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
@@ -38,6 +42,11 @@ pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
     pub claude_api_format: Option<String>,
+    /// 实际发往上游的模型名（路由接管/模型映射后的真值）。
+    ///
+    /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
+    /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
+    pub outbound_model: Option<String>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -159,7 +168,7 @@ impl RequestForwarder {
         provider_body: &Value,
         error: &ProxyError,
     ) -> bool {
-        adapter_name == "Claude"
+        matches!(adapter_name, "Claude" | "Codex")
             && self.rectifier_config.enabled
             && self.rectifier_config.request_media_fallback
             && !already_retried
@@ -463,7 +472,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format)) => {
+                Ok((response, claude_api_format, outbound_model)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -511,6 +520,7 @@ impl RequestForwarder {
                         response,
                         provider: provider.clone(),
                         claude_api_format,
+                        outbound_model,
                         connection_guard: None,
                     });
                 }
@@ -561,7 +571,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, outbound_model)) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
@@ -613,6 +623,7 @@ impl RequestForwarder {
                                         response,
                                         provider: provider.clone(),
                                         claude_api_format,
+                                        outbound_model,
                                         connection_guard: None,
                                     });
                                 }
@@ -706,7 +717,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format)) => {
+                                    Ok((response, claude_api_format, outbound_model)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -761,6 +772,7 @@ impl RequestForwarder {
                                             response,
                                             provider: provider.clone(),
                                             claude_api_format,
+                                            outbound_model,
                                             connection_guard: None,
                                         });
                                     }
@@ -871,7 +883,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format)) => {
+                                Ok((response, claude_api_format, outbound_model)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -920,6 +932,7 @@ impl RequestForwarder {
                                         response,
                                         provider: provider.clone(),
                                         claude_api_format,
+                                        outbound_model,
                                         connection_guard: None,
                                     });
                                 }
@@ -1077,6 +1090,9 @@ impl RequestForwarder {
     }
 
     /// 转发单个请求（使用适配器）
+    ///
+    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
+    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
@@ -1088,7 +1104,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1320,8 +1336,17 @@ impl RequestForwarder {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
+        // 记录映射后的出站模型名（此时 mapped_body 已完成接管映射 / [1m] 剥离 /
+        // Copilot 归一化）。格式转换后若 body 仍带 model 字段会在下方刷新覆盖；
+        // gemini_native 等模型在 URL 中的格式则保留此处的转换前真值。
+        let mut outbound_model = mapped_body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+            .map(str::to_string);
+
         // 转换请求体（如果需要）
-        let request_body = if codex_responses_to_chat {
+        let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
             let restored = self
                 .codex_chat_history
@@ -1329,7 +1354,7 @@ impl RequestForwarder {
                 .await;
             if restored > 0 {
                 log::debug!(
-                    "[Codex] Restored {restored} cached function call(s) for Chat upstream"
+                    "[Codex] Restored or enriched {restored} cached function call item(s) for Chat upstream"
                 );
             }
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
@@ -1359,9 +1384,32 @@ impl RequestForwarder {
             mapped_body
         };
 
+        if matches!(app_type, AppType::Codex) {
+            self.apply_media_prevention(&mut request_body, provider);
+        }
+
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
-        let filtered_body = prepare_upstream_request_body(request_body);
+        let mut filtered_body = prepare_upstream_request_body(request_body);
+        if !is_copilot {
+            if let Some(overrides) = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
+            {
+                if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
+                    filtered_body = prepare_upstream_request_body(filtered_body);
+                }
+            }
+        }
+        // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
+        if let Some(m) = filtered_body
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+        {
+            outbound_model = Some(m.to_string());
+        }
         log_prompt_cache_trace(
             app_type,
             provider,
@@ -1504,6 +1552,18 @@ impl RequestForwarder {
                 Vec::new()
             };
 
+        // 自定义 User-Agent：与 stream_check / model_fetch 共用 parse_custom_user_agent，
+        // 运行时静默忽略非法值（前端在输入处给非阻断提示，不在保存时阻断）。
+        // Copilot 指纹 UA 不可覆盖。
+        let custom_user_agent = if is_copilot {
+            None
+        } else {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+        };
+
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
             copilot_optimization
@@ -1598,6 +1658,7 @@ impl RequestForwarder {
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
+        let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
 
@@ -1678,6 +1739,19 @@ impl RequestForwarder {
                 continue;
             }
 
+            // --- user-agent: provider-level override for local proxy routing ---
+            if !is_copilot && key_str.eq_ignore_ascii_case("user-agent") {
+                if !saw_user_agent {
+                    saw_user_agent = true;
+                    if let Some(ref ua) = custom_user_agent {
+                        ordered_headers.append(http::header::USER_AGENT, ua.clone());
+                    } else {
+                        ordered_headers.append(key.clone(), value.clone());
+                    }
+                }
+                continue;
+            }
+
             // --- anthropic-beta — 用重建值替换（确保含 claude-code 标记） ---
             if key_str.eq_ignore_ascii_case("anthropic-beta") {
                 if !saw_anthropic_beta {
@@ -1727,6 +1801,12 @@ impl RequestForwarder {
             );
         }
 
+        if !saw_user_agent {
+            if let Some(ref ua) = custom_user_agent {
+                ordered_headers.append(http::header::USER_AGENT, ua.clone());
+            }
+        }
+
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
         if !saw_anthropic_beta {
             if let Some(ref beta_val) = anthropic_beta_value {
@@ -1767,6 +1847,15 @@ impl RequestForwarder {
                 http::HeaderValue::from_static("application/json"),
             );
         }
+
+        apply_local_proxy_header_overrides(
+            &mut ordered_headers,
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.local_proxy_request_overrides.as_ref()),
+            is_copilot,
+        );
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
@@ -1874,10 +1963,23 @@ impl RequestForwarder {
             let response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
-            Ok((response, resolved_claude_api_format))
+            Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
-            let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
+            // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
+            // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
+            // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
+            let encoding = get_content_encoding(response.headers());
+            let raw = response.bytes().await?;
+            let decoded = match encoding {
+                Some(encoding) => match decompress_body(&encoding, &raw) {
+                    Ok(Some(decompressed)) => decompressed,
+                    // 不支持的编码 / 解压失败：退回原始字节，尽量保留可读信息
+                    _ => raw.to_vec(),
+                },
+                None => raw.to_vec(),
+            };
+            let body_text = String::from_utf8(decoded).ok();
 
             Err(ProxyError::UpstreamError {
                 status: status_code,
@@ -2479,6 +2581,154 @@ fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     format!("{truncated}...")
 }
 
+fn apply_local_proxy_body_overrides(
+    body: &mut Value,
+    overrides: &LocalProxyRequestOverrides,
+) -> bool {
+    let Some(override_body) = overrides.body.as_ref() else {
+        return false;
+    };
+
+    if !override_body.is_object() {
+        log::warn!("[LocalProxyOverrides] Ignoring body override because it is not an object");
+        return false;
+    }
+
+    merge_json_override(body, override_body)
+}
+
+fn merge_json_override(target: &mut Value, patch: &Value) -> bool {
+    merge_json_override_inner(target, patch, true)
+}
+
+fn merge_json_override_inner(target: &mut Value, patch: &Value, is_top_level: bool) -> bool {
+    match (target, patch) {
+        (Value::Object(target_map), Value::Object(patch_map)) => {
+            let mut changed = false;
+            for (key, patch_value) in patch_map {
+                if is_top_level && key == "stream" {
+                    log::warn!(
+                        "[LocalProxyOverrides] Ignoring body override for protected field: stream"
+                    );
+                    continue;
+                }
+                match target_map.get_mut(key) {
+                    Some(target_value) => {
+                        changed |= merge_json_override_inner(target_value, patch_value, false);
+                    }
+                    None => {
+                        target_map.insert(key.clone(), patch_value.clone());
+                        changed = true;
+                    }
+                }
+            }
+            changed
+        }
+        (target_value, patch_value) => {
+            if target_value == patch_value {
+                false
+            } else {
+                *target_value = patch_value.clone();
+                true
+            }
+        }
+    }
+}
+
+fn apply_local_proxy_header_overrides(
+    headers: &mut http::HeaderMap,
+    overrides: Option<&LocalProxyRequestOverrides>,
+    is_copilot: bool,
+) {
+    if is_copilot {
+        return;
+    }
+
+    let Some(header_overrides) = overrides.map(|overrides| &overrides.headers) else {
+        return;
+    };
+
+    for (raw_name, raw_value) in header_overrides {
+        let header_name = raw_name.trim().to_ascii_lowercase();
+        if header_name.is_empty() {
+            log::warn!("[LocalProxyOverrides] Ignoring header override with empty name");
+            continue;
+        }
+
+        let Ok(name) = http::HeaderName::from_bytes(header_name.as_bytes()) else {
+            log::warn!("[LocalProxyOverrides] Ignoring invalid header override name: {raw_name}");
+            continue;
+        };
+
+        if is_protected_local_proxy_override_header(&name) {
+            log::debug!(
+                "[LocalProxyOverrides] Ignoring protected header override: {}",
+                name.as_str()
+            );
+            continue;
+        }
+
+        let Ok(value) = http::HeaderValue::from_str(raw_value) else {
+            log::warn!(
+                "[LocalProxyOverrides] Ignoring invalid header override value for {}",
+                name.as_str()
+            );
+            continue;
+        };
+
+        headers.insert(name, value);
+    }
+}
+
+fn is_protected_local_proxy_override_header(name: &http::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "proxy-authorization"
+            | "proxy-authenticate"
+            | "te"
+            | "trailer"
+            | "upgrade"
+            | "accept-encoding"
+            | "content-type"
+            | "authorization"
+            | "x-api-key"
+            | "x-goog-api-key"
+            | "chatgpt-account-id"
+            | "session_id"
+            | "x-client-request-id"
+            | "x-codex-window-id"
+            | "x-forwarded-host"
+            | "x-forwarded-port"
+            | "x-forwarded-proto"
+            | "forwarded"
+            | "cf-connecting-ip"
+            | "cf-ipcountry"
+            | "cf-ray"
+            | "cf-visitor"
+            | "true-client-ip"
+            | "fastly-client-ip"
+            | "x-azure-clientip"
+            | "x-azure-fdid"
+            | "x-azure-ref"
+            | "akamai-origin-hop"
+            | "x-akamai-config-log-detail"
+            | "x-request-id"
+            | "x-correlation-id"
+            | "x-trace-id"
+            | "x-amzn-trace-id"
+            | "x-b3-traceid"
+            | "x-b3-spanid"
+            | "x-b3-parentspanid"
+            | "x-b3-sampled"
+            | "traceparent"
+            | "tracestate"
+    )
+}
+
 fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
@@ -2542,6 +2792,7 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::LocalProxyRequestOverrides;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -2738,6 +2989,116 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
+    }
+
+    #[test]
+    fn local_proxy_body_overrides_deep_merge_final_body_without_stream() {
+        let mut body = json!({
+            "model": "before",
+            "stream": false,
+            "metadata": {
+                "keep": true,
+                "temperature": 1
+            },
+            "messages": [{ "role": "user", "content": "hello" }]
+        });
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::new(),
+            body: Some(json!({
+                "model": "after",
+                "stream": true,
+                "metadata": {
+                    "temperature": 0.2,
+                    "top_p": 0.9
+                },
+                "messages": []
+            })),
+        };
+
+        assert!(apply_local_proxy_body_overrides(&mut body, &overrides));
+
+        assert_eq!(body["model"], "after");
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["metadata"]["keep"], true);
+        assert_eq!(body["metadata"]["temperature"], 0.2);
+        assert_eq!(body["metadata"]["top_p"], 0.9);
+        assert_eq!(body["messages"], json!([]));
+    }
+
+    #[test]
+    fn local_proxy_header_overrides_replace_allowed_headers_only() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            http::HeaderValue::from_static("original"),
+        );
+        headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_static("Bearer good"),
+        );
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::from([
+                ("User-Agent".to_string(), "custom".to_string()),
+                ("X-Test".to_string(), "ok".to_string()),
+                ("Authorization".to_string(), "Bearer bad".to_string()),
+                ("Content-Type".to_string(), "text/plain".to_string()),
+                ("X-Bad".to_string(), "bad\nvalue".to_string()),
+            ]),
+            body: None,
+        };
+
+        apply_local_proxy_header_overrides(&mut headers, Some(&overrides), false);
+
+        assert_eq!(
+            headers
+                .get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("custom")
+        );
+        assert_eq!(
+            headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer good")
+        );
+        assert_eq!(
+            headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        assert_eq!(
+            headers.get("x-test").and_then(|value| value.to_str().ok()),
+            Some("ok")
+        );
+        assert!(headers.get("x-bad").is_none());
+    }
+
+    #[test]
+    fn local_proxy_header_overrides_are_skipped_for_copilot() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            http::HeaderValue::from_static("copilot"),
+        );
+        let overrides = LocalProxyRequestOverrides {
+            headers: HashMap::from([("User-Agent".to_string(), "custom".to_string())]),
+            body: None,
+        };
+
+        apply_local_proxy_header_overrides(&mut headers, Some(&overrides), true);
+
+        assert_eq!(
+            headers
+                .get(http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("copilot")
         );
     }
 
@@ -3298,6 +3659,18 @@ mod tests {
         })
     }
 
+    fn body_with_codex_input_image(model: &str) -> Value {
+        json!({
+            "model": model,
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        })
+    }
+
     fn image_unsupported_error() -> ProxyError {
         ProxyError::UpstreamError {
             status: 400,
@@ -3383,6 +3756,21 @@ mod tests {
         let fwd = forwarder_with_rectifier(RectifierConfig::default());
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    #[test]
+    fn reactive_triggers_for_codex_image_url_deserialize_errors() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_input_image("deepseek-v4-flash");
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
     }
 
     #[test]
