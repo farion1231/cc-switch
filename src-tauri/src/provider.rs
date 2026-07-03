@@ -575,13 +575,7 @@ pub enum UniversalProviderAppPermission {
     /// 简单布尔值（向后兼容）
     Simple(bool),
     /// 详细权限配置
-    Detailed {
-        enabled: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        visible: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        readonly: Option<bool>,
-    },
+    Detailed { enabled: bool },
 }
 
 impl Default for UniversalProviderAppPermission {
@@ -596,22 +590,6 @@ impl UniversalProviderAppPermission {
         match self {
             Self::Simple(enabled) => *enabled,
             Self::Detailed { enabled, .. } => *enabled,
-        }
-    }
-
-    /// 获取是否可见（默认 true）
-    pub fn is_visible(&self) -> bool {
-        match self {
-            Self::Simple(_) => true,
-            Self::Detailed { visible, .. } => visible.unwrap_or(true),
-        }
-    }
-
-    /// 获取是否只读（默认 false）
-    pub fn is_readonly(&self) -> bool {
-        match self {
-            Self::Simple(_) => false,
-            Self::Detailed { readonly, .. } => readonly.unwrap_or(false),
         }
     }
 }
@@ -1003,6 +981,7 @@ mod tests {
     use super::{
         ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
         OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        UniversalProviderAppPermission,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1157,7 +1136,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.claude = true;
+        universal.apps.claude = UniversalProviderAppPermission::Simple(true);
         universal.models.claude = Some(ClaudeModelConfig {
             model: Some("claude-main".to_string()),
             haiku_model: Some("claude-haiku".to_string()),
@@ -1222,7 +1201,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.codex = true;
+        universal.apps.codex = UniversalProviderAppPermission::Simple(true);
         universal.models.codex = Some(CodexModelConfig {
             model: Some("gpt-4o-mini".to_string()),
             reasoning_effort: Some("low".to_string()),
@@ -1254,7 +1233,7 @@ mod tests {
             "https://api.example.com/v1".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.codex = true;
+        universal.apps.codex = UniversalProviderAppPermission::Simple(true);
 
         let provider = universal.to_codex_provider().expect("codex provider");
         let config = provider
@@ -1288,7 +1267,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.gemini = true;
+        universal.apps.gemini = UniversalProviderAppPermission::Simple(true);
 
         let provider = universal.to_gemini_provider().expect("gemini provider");
 
@@ -1310,7 +1289,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.gemini = true;
+        universal.apps.gemini = UniversalProviderAppPermission::Simple(true);
         universal.models.gemini = Some(GeminiModelConfig {
             model: Some("gemini-custom".to_string()),
         });
@@ -1347,7 +1326,7 @@ mod tests {
             "https://api.openai.com".to_string(),
             "sk-test".to_string(),
         );
-        p.apps.codex = true;
+        p.apps.codex = UniversalProviderAppPermission::Simple(true);
 
         let provider = p.to_codex_provider().expect("should build codex provider");
         let toml = provider
@@ -1368,7 +1347,7 @@ mod tests {
             "https://example.com/openai".to_string(),
             "sk-test".to_string(),
         );
-        p.apps.codex = true;
+        p.apps.codex = UniversalProviderAppPermission::Simple(true);
 
         let provider = p.to_codex_provider().expect("should build codex provider");
         let toml = provider

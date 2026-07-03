@@ -529,8 +529,6 @@ export interface McpConfigResponse {
 // 单个应用的权限配置
 export interface UniversalProviderAppPermission {
   enabled: boolean; // 是否启用同步
-  visible?: boolean; // 是否在该应用中可见（默认 true）
-  readonly?: boolean; // 是否只读（禁止在该应用中编辑，默认 false）
 }
 
 // 统一供应商的应用启用状态（向后兼容）

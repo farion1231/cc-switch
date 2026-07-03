@@ -907,6 +907,7 @@ pub fn copy_provider_to_apps(
         let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4());
         let new_provider = match build_converted_provider(
             source_provider,
+            &source_app_type,
             &target_app_type,
             &base_url,
             &api_key,
@@ -938,6 +939,7 @@ pub fn copy_provider_to_apps(
 /// OpenCode/OpenClaw/Hermes 不走 UniversalProvider，而是直接构造对应结构。
 fn build_converted_provider(
     source: &Provider,
+    source_app: &AppType,
     target_app: &AppType,
     base_url: &str,
     api_key: &str,
@@ -957,6 +959,36 @@ fn build_converted_provider(
             base_url.to_string(),
             api_key.to_string(),
         );
+
+        // 当目标是 Claude 时，保留源的 API 格式信息。
+        // 否则 Codex/OpenCode 等 OpenAI 兼容源会被 to_claude_provider 默认写成
+        // Anthropic 原生模式，导致 Claude 向 OpenAI 端点发送错误格式的请求。
+        if matches!(target_app, AppType::Claude | AppType::ClaudeDesktop) {
+            let source_api_format = source
+                .meta
+                .as_ref()
+                .and_then(|m| m.api_format.as_deref())
+                .map(str::to_string)
+                .filter(|f| !f.trim().is_empty() && f != "anthropic")
+                .or_else(|| {
+                    // OpenAI 兼容源（Codex/OpenCode/OpenClaw/Hermes）没有 api_format 字段，
+                    // 但其上游是 OpenAI 端点，需要走 openai_chat 转换路径。
+                    if matches!(
+                        source_app,
+                        AppType::Codex | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+                    ) {
+                        Some("openai_chat".to_string())
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(api_format) = source_api_format {
+                let meta = universal.meta.get_or_insert_with(Default::default);
+                meta.api_format = Some(api_format);
+            }
+        }
+
         match target_app {
             AppType::Claude | AppType::ClaudeDesktop => {
                 universal.apps.claude = UniversalProviderAppPermission::Simple(true);
@@ -1110,11 +1142,11 @@ pub fn import_providers(
         provider.id = new_id;
         provider.created_at = Some(chrono::Utc::now().timestamp_millis());
 
-        match ProviderService::add(
+        match ProviderService::import_add(
             state.inner(),
             app_type.clone(),
             provider,
-            false, // 不自动添加到 live 配置
+            false, // 不自动添加到 live 配置；即使目标 app 当前无供应商也不自动激活
         ) {
             Ok(_) => imported_count += 1,
             Err(e) => {
