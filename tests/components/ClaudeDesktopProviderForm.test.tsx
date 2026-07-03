@@ -294,6 +294,29 @@ describe("ClaudeDesktopProviderForm", () => {
     });
   });
 
+  it("应用直连 Anthropic 预设后仍保存到 direct gateway 使用的 Bearer key 字段", async () => {
+    const onSubmit = vi.fn();
+    renderForm(undefined, onSubmit);
+
+    fireEvent.click(screen.getByRole("button", { name: /Shengsuanyun/ }));
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "sk-direct-provider" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    const settingsConfig = JSON.parse(submitted.settingsConfig);
+
+    expect(submitted.meta.claudeDesktopMode).toBe("direct");
+    expect(submitted.meta.apiFormat).toBe("anthropic");
+    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_AUTH_TOKEN");
+    expect(settingsConfig.env).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: "sk-direct-provider",
+    });
+    expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+  });
+
   it("切换到 Anthropic Messages 后保存 MiniMax-M3 配置到 x-api-key 字段", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();

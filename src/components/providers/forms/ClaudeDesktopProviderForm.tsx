@@ -83,8 +83,11 @@ type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 const defaultApiKeyFieldForApiFormat = (
   apiFormat: ClaudeApiFormat,
+  mode: "direct" | "proxy",
 ): ApiKeyField =>
-  apiFormat === "anthropic" ? "ANTHROPIC_API_KEY" : "ANTHROPIC_AUTH_TOKEN";
+  mode === "direct" || apiFormat !== "anthropic"
+    ? "ANTHROPIC_AUTH_TOKEN"
+    : "ANTHROPIC_API_KEY";
 
 type PresetEntry = {
   id: string;
@@ -418,7 +421,8 @@ export function ClaudeDesktopProviderForm({
     setApiKey("");
     const presetApiFormat = preset.apiFormat ?? "anthropic";
     setApiKeyField(
-      preset.apiKeyField ?? defaultApiKeyFieldForApiFormat(presetApiFormat),
+      preset.apiKeyField ??
+        defaultApiKeyFieldForApiFormat(presetApiFormat, preset.mode),
     );
     setApiFormat(presetApiFormat);
 
@@ -451,7 +455,7 @@ export function ClaudeDesktopProviderForm({
       setBaseUrl("");
       setApiKey("");
       setApiFormat("anthropic");
-      setApiKeyField(defaultApiKeyFieldForApiFormat("anthropic"));
+      setApiKeyField(defaultApiKeyFieldForApiFormat("anthropic", "direct"));
       didSeedDefaultRoutes.current = false;
       setMode("direct");
       setRoutes([]);
@@ -865,7 +869,7 @@ export function ClaudeDesktopProviderForm({
                       const nextApiFormat = value as ClaudeApiFormat;
                       setApiFormat(nextApiFormat);
                       setApiKeyField(
-                        defaultApiKeyFieldForApiFormat(nextApiFormat),
+                        defaultApiKeyFieldForApiFormat(nextApiFormat, mode),
                       );
                     }}
                   >
