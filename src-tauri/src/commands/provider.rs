@@ -410,12 +410,65 @@ pub async fn queryProviderUsage(
     inner
 }
 
-/// Resolve `(base_url, api_key)` for native usage queries, delegating to the
-/// per-app resolver on `Provider`. Missing provider → empty credentials.
+/// 解析原生用量查询所需的 `(base_url, api_key)`。
+///
+/// 这里通过 `Provider::resolve_usage_credentials` 统一处理各应用的凭据格式。
+/// 如果 provider 不存在，原生余额路径会回退为空凭据，而不是自行猜测。
 fn resolve_native_credentials(app_type: &AppType, provider: Option<&Provider>) -> (String, String) {
     provider
         .map(|p| p.resolve_usage_credentials(app_type))
         .unwrap_or_default()
+}
+
+/// 解析 Official 余额查询路径使用的凭证。
+///
+/// 优先级如下：
+/// 1. 先使用 provider 针对当前应用的原生凭据。
+/// 2. 如果 usage script 提供了覆盖值，则用它覆盖 base URL 和 API Key。
+/// 3. `secret_access_key` 只有在脚本显式提供时才保留。
+///
+/// 返回的 base URL 会去掉尾部 `/`，方便下游请求代码做稳定比较和分发。
+fn resolve_balance_credentials(
+    app_type: &AppType,
+    provider: Option<&Provider>,
+    usage_script: Option<&crate::provider::UsageScript>,
+) -> (String, String, Option<String>) {
+    let (mut base_url, mut api_key) = resolve_native_credentials(app_type, provider);
+    let mut secret_access_key = None;
+
+    if let Some(script) = usage_script {
+        if let Some(script_base_url) = script.base_url.as_deref() {
+            let trimmed = script_base_url.trim_end_matches('/').to_string();
+            if !trimmed.is_empty() {
+                base_url = trimmed;
+            }
+        }
+        if let Some(script_api_key) = script.api_key.as_deref() {
+            let trimmed = script_api_key.trim().to_string();
+            if !trimmed.is_empty() {
+                api_key = trimmed;
+            }
+        }
+        secret_access_key = script
+            .secret_access_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+
+    (base_url, api_key, secret_access_key)
+}
+
+/// 判断当前 provider 是否为阿里云中国大陆地区变体。
+///
+/// 这里根据 provider 解析后的 Anthropic 兼容 base URL 来判断，
+/// 这样可以和现有供应商配置保持一致，而不是再额外维护一个模式标记。
+fn is_aliyun_mainland_provider(app_type: &AppType, provider: Option<&Provider>) -> bool {
+    provider
+        .map(|p| p.resolve_usage_credentials(app_type).0)
+        .map(|base_url| base_url.contains("dashscope.aliyuncs.com"))
+        .unwrap_or(false)
 }
 
 fn resolve_coding_plan_credentials(
@@ -511,6 +564,26 @@ async fn query_provider_usage_inner(
 
     // ── Coding Plan 专用路径 ──
     if template_type == TEMPLATE_TYPE_TOKEN_PLAN {
+        if usage_script
+            .and_then(|s| s.coding_plan_provider.as_deref())
+            .map(|provider| provider.eq_ignore_ascii_case("bailian"))
+            .unwrap_or(false)
+        {
+            let access_key_id = usage_script
+                .and_then(|s| s.access_key_id.clone())
+                .or_else(|| usage_script.and_then(|s| s.api_key.clone()))
+                .unwrap_or_default();
+            let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+
+            return crate::services::balance::get_balance(
+                "https://business.aliyuncs.com",
+                &access_key_id,
+                secret_access_key.as_deref(),
+            )
+            .await
+            .map_err(|e| format!("Failed to query balance: {e}"));
+        }
+
         let (base_url, api_key) =
             resolve_coding_plan_credentials(&app_type, provider, usage_script);
 
@@ -599,12 +672,37 @@ async fn query_provider_usage_inner(
 
     // ── 官方余额查询路径 ──
     if template_type == TEMPLATE_TYPE_BALANCE {
-        // 按 app 区分的凭据存储格式提取 Base URL 与 API Key
-        let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
+        // 阿里云余额提供商（这里单独拎出来的原因是阿里云余额的endpoint和原本的base_url不太一致）
+        // 后人如果遇到了类似不一致的其实是可以考虑单独对这里的逻辑处理一下的，考虑单独拆出来一个比较器
+        if is_aliyun_mainland_provider(&app_type, provider) {
 
-        return crate::services::balance::get_balance(&base_url, &api_key)
+            let access_key_id = usage_script
+                .and_then(|s| s.access_key_id.clone())
+                .or_else(|| usage_script.and_then(|s| s.api_key.clone()))
+                .unwrap_or_default();
+
+            let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+
+            return crate::services::balance::get_balance(
+                "https://business.aliyuncs.com",
+                &access_key_id,
+                secret_access_key.as_deref(),
+            )
             .await
             .map_err(|e| format!("Failed to query balance: {e}"));
+        }
+
+        // 其他余额供应商：沿用 base_url + api_key 的原生路由。
+        let (base_url, api_key, secret_access_key) =
+            resolve_balance_credentials(&app_type, provider, usage_script);
+
+        return crate::services::balance::get_balance(
+            &base_url,
+            &api_key,
+            secret_access_key.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("Failed to query balance: {e}"));
     }
 
     // ── 官方订阅额度查询路径 ──

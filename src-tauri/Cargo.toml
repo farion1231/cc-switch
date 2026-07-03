@@ -79,6 +79,7 @@ rust_decimal = "1.33"
 uuid = { version = "1.11", features = ["v4"] }
 sha2 = "0.10"
 hmac = "0.12"
+sha1 = "0.10"
 json5 = "0.4"
 json-five = "0.3.1"
 
