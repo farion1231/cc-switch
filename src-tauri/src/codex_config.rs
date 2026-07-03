@@ -1152,11 +1152,122 @@ pub fn write_codex_provider_live_with_catalog(
     config_text: Option<&str>,
     profile: CodexCatalogToolProfile,
 ) -> Result<(), AppError> {
-    let prepared_config = config_text
+    let mut prepared_config = config_text
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
         .transpose()?;
 
+    if let Some(config) = prepared_config.as_deref() {
+        match read_codex_config_text() {
+            Ok(existing_config) => {
+                if !existing_config.trim().is_empty() {
+                    match merge_preserved_codex_non_provider_config(config, &existing_config) {
+                        Ok(merged) => prepared_config = Some(merged),
+                        Err(err) => {
+                            log::warn!("Skipping Codex non-provider config preservation: {err}")
+                        }
+                    }
+                }
+            }
+            Err(err) => log::warn!("Unable to read existing Codex config for preservation: {err}"),
+        }
+    }
+
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+}
+
+fn is_codex_provider_owned_config_key(key: &str) -> bool {
+    matches!(
+        key,
+        "base_url"
+            | "experimental_bearer_token"
+            | "model"
+            | "model_catalog_json"
+            | "model_context_window"
+            | "model_provider"
+            | "model_providers"
+            | "openai_base_url"
+            | "profile"
+            | "profiles"
+    )
+}
+
+fn merge_missing_toml_items(target: &mut toml_edit::Item, existing: &toml_edit::Item) {
+    let (Some(target_table), Some(existing_table)) =
+        (target.as_table_like_mut(), existing.as_table_like())
+    else {
+        return;
+    };
+
+    for (key, existing_item) in existing_table.iter() {
+        match target_table.get_mut(key) {
+            Some(target_item) => merge_missing_toml_items(target_item, existing_item),
+            None => {
+                target_table.insert(key, existing_item.clone());
+            }
+        }
+    }
+}
+
+pub fn merge_preserved_codex_non_provider_config(
+    base_provider_config: &str,
+    existing_config: &str,
+) -> Result<String, AppError> {
+    if existing_config.trim().is_empty() {
+        return Ok(base_provider_config.to_string());
+    }
+
+    let mut target_doc = if base_provider_config.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        base_provider_config
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid provider Codex config.toml: {e}")))?
+    };
+    let existing_doc = existing_config
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid existing Codex config.toml: {e}")))?;
+
+    let target_table = target_doc.as_table_mut();
+    for (key, existing_item) in existing_doc.iter() {
+        if is_codex_provider_owned_config_key(key) {
+            continue;
+        }
+
+        match target_table.get_mut(key) {
+            Some(target_item) => merge_missing_toml_items(target_item, existing_item),
+            None => {
+                target_table.insert(key, existing_item.clone());
+            }
+        }
+    }
+
+    Ok(target_doc.to_string())
+}
+
+pub fn preserve_codex_non_provider_config_from_settings(
+    target_settings: &mut Value,
+    existing_settings: &Value,
+) -> Result<(), AppError> {
+    let target_obj = target_settings
+        .as_object_mut()
+        .ok_or_else(|| AppError::Config("Codex settings must be a JSON object".to_string()))?;
+
+    let target_config = target_obj
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let existing_config = existing_settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+
+    if existing_config.trim().is_empty() {
+        return Ok(());
+    }
+
+    let merged = merge_preserved_codex_non_provider_config(target_config, existing_config)?;
+    target_obj.insert("config".to_string(), json!(merged));
+    Ok(())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -1997,6 +2108,136 @@ model = "gpt-5.4"
                 .and_then(|v| v.as_str()),
             Some("vendor_alpha"),
             "profile provider references should be preserved"
+        );
+    }
+
+    #[test]
+    fn merge_preserved_config_keeps_plugins_hooks_projects_and_updates_provider() {
+        let existing = r#"model_provider = "old"
+model = "gpt-4"
+experimental_bearer_token = "old-token"
+
+[model_providers.old]
+name = "Old"
+base_url = "https://old.example/v1"
+
+[marketplaces.openai-bundled]
+source = "builtin"
+
+[marketplaces.ponytail]
+source = "github"
+url = "https://github.com/DietrichGebert/ponytail"
+
+[plugins."browser@openai-bundled"]
+enabled = true
+
+[plugins."ponytail@ponytail"]
+enabled = true
+
+[hooks.state]
+ponytail = "full"
+
+[projects."/work/repo"]
+trust_level = "trusted"
+
+[profiles.old-work]
+model_provider = "old"
+model = "gpt-4"
+
+[mcp_servers.legacy]
+command = "old-command"
+"#;
+
+        let provider = r#"model_provider = "new"
+model = "gpt-5"
+
+[model_providers.new]
+name = "New"
+base_url = "https://new.example/v1"
+
+[mcp_servers.latest]
+command = "new-command"
+"#;
+
+        let merged =
+            merge_preserved_codex_non_provider_config(provider, existing).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("new")
+        );
+        assert_eq!(parsed.get("model").and_then(|v| v.as_str()), Some("gpt-5"));
+        assert!(
+            parsed.get("experimental_bearer_token").is_none(),
+            "old provider token should not be preserved"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("old"))
+                .is_none(),
+            "old provider endpoint table should not be preserved"
+        );
+        assert!(
+            parsed.get("profiles").is_none(),
+            "old provider profile routes should not be preserved"
+        );
+        assert_eq!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("new"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://new.example/v1")
+        );
+        assert_eq!(
+            parsed
+                .get("marketplaces")
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str()),
+            Some("https://github.com/DietrichGebert/ponytail")
+        );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("ponytail@ponytail"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("hooks")
+                .and_then(|v| v.get("state"))
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.as_str()),
+            Some("full")
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/work/repo"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted")
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("legacy"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("old-command")
+        );
+        assert_eq!(
+            parsed
+                .get("mcp_servers")
+                .and_then(|v| v.get("latest"))
+                .and_then(|v| v.get("command"))
+                .and_then(|v| v.as_str()),
+            Some("new-command")
         );
     }
 

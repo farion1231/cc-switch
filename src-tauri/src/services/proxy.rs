@@ -343,7 +343,7 @@ impl ProxyService {
         )
         .map_err(|e| format!("构建 codex 有效配置失败: {e}"))?;
         if let Some(existing_live) = existing_live.as_ref() {
-            Self::preserve_codex_mcp_servers_from_existing_config(
+            Self::preserve_codex_non_provider_config_from_existing_config(
                 &mut effective_settings,
                 existing_live,
             )?;
@@ -2015,6 +2015,7 @@ impl ProxyService {
                 .map_err(|e| format!("构建 {app_type} 有效配置失败: {e}"))?;
 
         if matches!(app_type_enum, AppType::Codex) {
+            let existing_live_value = self.read_codex_live().ok();
             let existing_backup_value = self
                 .db
                 .get_live_backup(app_type)
@@ -2026,8 +2027,15 @@ impl ProxyService {
                 })
                 .transpose()?;
 
+            if let Some(existing_value) = existing_live_value.as_ref() {
+                Self::preserve_codex_non_provider_config_from_existing_config(
+                    &mut effective_settings,
+                    existing_value,
+                )?;
+            }
+
             if let Some(existing_value) = existing_backup_value.as_ref() {
-                Self::preserve_codex_mcp_servers_from_existing_config(
+                Self::preserve_codex_non_provider_config_from_existing_config(
                     &mut effective_settings,
                     existing_value,
                 )?;
@@ -2175,65 +2183,15 @@ impl ProxyService {
         self.switch_locks.lock_for_app(app_type).await
     }
 
-    fn preserve_codex_mcp_servers_from_existing_config(
+    fn preserve_codex_non_provider_config_from_existing_config(
         target_settings: &mut Value,
         existing_config: &Value,
     ) -> Result<(), String> {
-        let target_obj = target_settings
-            .as_object_mut()
-            .ok_or_else(|| "Codex 备份必须是 JSON 对象".to_string())?;
-
-        let target_config = target_obj
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let mut target_doc = if target_config.trim().is_empty() {
-            toml_edit::DocumentMut::new()
-        } else {
-            target_config
-                .parse::<toml_edit::DocumentMut>()
-                .map_err(|e| format!("解析新的 Codex config.toml 失败: {e}"))?
-        };
-
-        let existing_config = existing_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if existing_config.trim().is_empty() {
-            target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-            return Ok(());
-        }
-
-        let existing_doc = existing_config
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| format!("解析现有 Codex 备份失败: {e}"))?;
-
-        if let Some(existing_mcp_servers) = existing_doc.get("mcp_servers") {
-            match target_doc.get_mut("mcp_servers") {
-                Some(target_mcp_servers) => {
-                    if let (Some(target_table), Some(existing_table)) = (
-                        target_mcp_servers.as_table_like_mut(),
-                        existing_mcp_servers.as_table_like(),
-                    ) {
-                        for (server_id, server_item) in existing_table.iter() {
-                            if target_table.get(server_id).is_none() {
-                                target_table.insert(server_id, server_item.clone());
-                            }
-                        }
-                    } else {
-                        log::warn!(
-                            "Codex config contains a non-table mcp_servers section; skipping MCP merge"
-                        );
-                    }
-                }
-                None => {
-                    target_doc["mcp_servers"] = existing_mcp_servers.clone();
-                }
-            }
-        }
-
-        target_obj.insert("config".to_string(), json!(target_doc.to_string()));
-        Ok(())
+        crate::codex_config::preserve_codex_non_provider_config_from_settings(
+            target_settings,
+            existing_config,
+        )
+        .map_err(|e| format!("保留 Codex 非供应商配置失败: {e}"))
     }
 
     fn preserve_codex_oauth_auth_in_backup(
@@ -4980,7 +4938,7 @@ base_url = "https://codex.example/v1"
 
     #[tokio::test]
     #[serial]
-    async fn update_live_backup_from_provider_preserves_codex_mcp_servers() {
+    async fn update_live_backup_from_provider_preserves_codex_non_provider_config() {
         let _home = TempHome::new();
         crate::settings::reload_settings().expect("reload settings");
 
@@ -5002,6 +4960,19 @@ base_url = "https://old.example/v1"
 [mcp_servers.echo]
 command = "npx"
 args = ["echo-server"]
+
+[marketplaces.ponytail]
+source = "github"
+url = "https://github.com/DietrichGebert/ponytail"
+
+[plugins."ponytail@ponytail"]
+enabled = true
+
+[hooks.state]
+ponytail = "full"
+
+[projects."/work/repo"]
+trust_level = "trusted"
 "#
             }))
             .expect("serialize seed backup"),
@@ -5042,14 +5013,240 @@ base_url = "https://new.example/v1"
             .get("config")
             .and_then(|v| v.as_str())
             .expect("config string");
+        let parsed: toml::Value = toml::from_str(config).expect("parse merged codex config");
 
         assert!(
             config.contains("[mcp_servers.echo]"),
             "existing Codex MCP section should survive proxy hot-switch backup update"
         );
+        assert_eq!(
+            parsed
+                .get("marketplaces")
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str()),
+            Some("https://github.com/DietrichGebert/ponytail"),
+            "existing Codex plugin marketplace should survive proxy hot-switch backup update"
+        );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("ponytail@ponytail"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "existing Codex plugin registration should survive proxy hot-switch backup update"
+        );
+        assert_eq!(
+            parsed
+                .get("hooks")
+                .and_then(|v| v.get("state"))
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.as_str()),
+            Some("full"),
+            "existing Codex hook state should survive proxy hot-switch backup update"
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/work/repo"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted"),
+            "existing Codex project config should survive proxy hot-switch backup update"
+        );
         assert!(
             config.contains("https://new.example/v1"),
             "provider-specific base_url should still update to the new provider"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_codex_provider_preserves_plugins_added_to_taken_over_live() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "RightCode".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "rightcode-key"
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "AiHubMix".to_string(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "aihubmix-key"
+                },
+                "config": r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+            }),
+            None,
+        );
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize provider a"),
+        )
+        .await
+        .expect("seed backup without plugin config");
+        service
+            .write_codex_live(&json!({
+                "auth": {
+                    "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[marketplaces.ponytail]
+source = "local"
+path = "/Users/kittors/.codex/plugins/cache/ponytail/ponytail/4.8.4"
+
+[plugins."ponytail@ponytail"]
+enabled = true
+
+[hooks.state]
+ponytail = "full"
+"#
+            }))
+            .expect("seed taken-over live with newly installed plugin config");
+
+        service
+            .hot_switch_provider("codex", "b")
+            .await
+            .expect("hot switch Codex provider");
+
+        let live = service.read_codex_live().expect("read Codex live config");
+        let live_config = live
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("live config string");
+        let parsed_live: toml::Value = toml::from_str(live_config).expect("parse live config");
+        assert_eq!(
+            parsed_live.get("model_provider").and_then(|v| v.as_str()),
+            Some("aihubmix"),
+            "hot-switched live config should expose the selected provider"
+        );
+        assert_eq!(
+            parsed_live
+                .get("model_providers")
+                .and_then(|v| v.get("aihubmix"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1"),
+            "taken-over live config should stay pointed at the local proxy"
+        );
+        assert_eq!(
+            parsed_live
+                .get("plugins")
+                .and_then(|v| v.get("ponytail@ponytail"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "plugin added while Codex is taken over should survive live hot-switch"
+        );
+        assert_eq!(
+            parsed_live
+                .get("hooks")
+                .and_then(|v| v.get("state"))
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.as_str()),
+            Some("full"),
+            "hook state added while Codex is taken over should survive live hot-switch"
+        );
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let stored: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup json");
+        let backup_config = stored
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("backup config string");
+        let parsed_backup: toml::Value =
+            toml::from_str(backup_config).expect("parse backup config");
+        assert_eq!(
+            parsed_backup.get("model_provider").and_then(|v| v.as_str()),
+            Some("aihubmix"),
+            "restore backup should still update to the selected provider"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("model_providers")
+                .and_then(|v| v.get("aihubmix"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("https://aihubmix.example/v1"),
+            "restore backup should keep the provider endpoint, not the local proxy"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("marketplaces")
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("/Users/kittors/.codex/plugins/cache/ponytail/ponytail/4.8.4"),
+            "plugin marketplace added to taken-over live should be copied into restore backup"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("plugins")
+                .and_then(|v| v.get("ponytail@ponytail"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true),
+            "plugin registration added to taken-over live should be copied into restore backup"
+        );
+        assert_eq!(
+            parsed_backup
+                .get("hooks")
+                .and_then(|v| v.get("state"))
+                .and_then(|v| v.get("ponytail"))
+                .and_then(|v| v.as_str()),
+            Some("full"),
+            "hook state added to taken-over live should be copied into restore backup"
         );
     }
 
