@@ -174,7 +174,8 @@
       "invalidFileType": "JSON ファイルを選択してください",
       "fileTooLarge": "ファイルが大きすぎます。10MB 未満のファイルを選択してください",
       "invalidJson": "無効な JSON 形式です",
-      "readError": "ファイルの読み取りに失敗しました"
+      "readError": "ファイルの読み取りに失敗しました",
+      "appTypeMismatch": "インポートファイルのアプリ種別（{{source}}）が選択中のアプリ（{{target}}）と一致しません。クロスアプリ移行には「他のアプリにコピー」機能を使用してください。"
     },
     "name": "プロバイダー名",
     "namePlaceholder": "例: Claude Official",

@@ -174,7 +174,8 @@
       "invalidFileType": "請選擇 JSON 檔案",
       "fileTooLarge": "檔案過大，請選擇小於 10MB 的檔案",
       "invalidJson": "無效的 JSON 格式",
-      "readError": "讀取檔案失敗"
+      "readError": "讀取檔案失敗",
+      "appTypeMismatch": "匯入檔案的應用程式類型（{{source}}）與目前選擇的應用程式（{{target}}）不符。跨應用程式遷移請使用「複製到其他應用程式」功能。"
     },
     "name": "供應商名稱",
     "namePlaceholder": "例如：Claude 官方",

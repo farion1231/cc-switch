@@ -29,6 +29,38 @@ const MANAGED_APPS: { id: AppId; labelKey: string }[] = [
   { id: "hermes", labelKey: "apps.hermes" },
 ];
 
+// app id → i18n label key，用于把后端错误码里的 app id 渲染成本地化名称
+const APP_LABEL_KEY: Record<string, string> = Object.fromEntries(
+  MANAGED_APPS.map((a) => [a.id, a.labelKey]),
+);
+
+/**
+ * 解析后端 import_providers 返回的错误字符串。
+ * 后端对可本地化的错误返回 `CODE:arg1:arg2` 形式的错误码，
+ * 前端据此渲染 i18n 文案；无法识别的错误原样返回。
+ */
+function resolveImportError(
+  raw: unknown,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  const msg = typeof raw === "string" ? raw : String(raw);
+  if (msg.startsWith("APP_TYPE_MISMATCH:")) {
+    const [, sourceId, targetId] = msg.split(":");
+    const source = t(APP_LABEL_KEY[sourceId] ?? sourceId, {
+      defaultValue: sourceId,
+    });
+    const target = t(APP_LABEL_KEY[targetId] ?? targetId, {
+      defaultValue: targetId,
+    });
+    return t("provider.importExport.appTypeMismatch", {
+      defaultValue: "应用类型不匹配",
+      source,
+      target,
+    });
+  }
+  return msg;
+}
+
 interface ProviderConfigManagementProps {}
 
 /**
@@ -155,9 +187,10 @@ export function ProviderConfigManagement({}: ProviderConfigManagementProps) {
       } catch (error) {
         console.error("Failed to import providers:", error);
         toast.error(
-          t("provider.importExport.importError", {
-            defaultValue: "导入供应商配置失败",
-          }),
+          resolveImportError(error, t) ||
+            t("provider.importExport.importError", {
+              defaultValue: "导入供应商配置失败",
+            }),
         );
       } finally {
         setImporting(false);

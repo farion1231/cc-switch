@@ -174,7 +174,8 @@
       "invalidFileType": "Please select a JSON file",
       "fileTooLarge": "File too large, please select a file under 10MB",
       "invalidJson": "Invalid JSON format",
-      "readError": "Failed to read file"
+      "readError": "Failed to read file",
+      "appTypeMismatch": "The imported file's app type ({{source}}) does not match the selected app ({{target}}). For cross-app migration, use the \"Copy to other apps\" feature."
     },
     "name": "Provider Name",
     "namePlaceholder": "e.g., Claude Official",

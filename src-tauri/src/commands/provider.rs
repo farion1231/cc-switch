@@ -1092,9 +1092,10 @@ pub fn import_providers(
 
     // Validate app type match — import is for same-app restore only.
     // Cross-app migration should use "copy to other apps" which does format conversion.
+    // Returns a structured error code so the frontend can render a localized message.
     if export.app_type != app {
         return Err(format!(
-            "导入文件的应用类型 ({}) 与当前选择的应用 ({}) 不匹配。跨应用迁移请使用「复制到其他应用」功能。",
+            "APP_TYPE_MISMATCH:{}:{}",
             export.app_type, app
         ));
     }
