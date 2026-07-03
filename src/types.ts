@@ -540,6 +540,18 @@ export interface UniversalProviderApps {
   gemini: boolean | UniversalProviderAppPermission;
 }
 
+/**
+ * 从 `boolean | UniversalProviderAppPermission` 中提取"是否启用同步"的布尔值。
+ * 兼容旧的纯布尔配置与新权限对象。
+ */
+export function appEnabled(
+  value: boolean | UniversalProviderAppPermission | undefined,
+): boolean {
+  if (value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  return value.enabled;
+}
+
 // Claude 模型配置
 export interface ClaudeModelConfig {
   model?: string;
