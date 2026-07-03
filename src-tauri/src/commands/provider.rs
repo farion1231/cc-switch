@@ -65,9 +65,20 @@ pub fn delete_provider(
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::delete(state.inner(), app_type, &id)
-        .map(|_| true)
-        .map_err(|e| e.to_string())
+    let result = ProviderService::delete(state.inner(), app_type.clone(), &id);
+    // 删除 provider 后 on-disk per-key 文件孤儿了：FK CASCADE 已经清理了
+    // provider_api_keys 表行，但磁盘上的 `{config}/keys/{pid}/` 目录
+    // 不会被自动删。最坏情况——一次失败不会回滚 DB（已 commit），所以
+    // 尽力清，不报错。
+    if result.is_ok() {
+        if let Err(e) = crate::services::provider::per_key_live::cleanup_provider_keys_dir(
+            &app_type,
+            &id,
+        ) {
+            log::warn!("[delete_provider] cleanup_provider_keys_dir 失败 ({id}): {e}");
+        }
+    }
+    result.map(|_| true).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -408,6 +419,60 @@ pub async fn queryProviderUsage(
     inner
 }
 
+/// Per-key usage query: same `usage_script` as `queryProviderUsage`, but the
+/// `api_key` value is read from the specific row in `provider_api_keys`
+/// instead of falling back to the provider-level config. Lets the editor
+/// show each key's quota independently.
+///
+/// Cache key in the per-app `UsageCache` is `"script:<providerId>:<keyId>"`
+/// so two keys in the same pool never overwrite each other's snapshot, and
+/// the per-key tray / cache-updated event can still ride the same emitter.
+#[allow(non_snake_case)]
+#[tauri::command]
+pub async fn queryProviderUsageForKey(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    #[allow(non_snake_case)] providerId: String,
+    app: String,
+    #[allow(non_snake_case)] keyId: String,
+) -> Result<crate::provider::UsageResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let inner: Result<crate::provider::UsageResult, String> =
+        crate::services::provider::usage::query_usage_for_key(
+            &state,
+            app_type.clone(),
+            &providerId,
+            &keyId,
+        )
+        .await
+        .map_err(|e| e.to_string());
+    let snapshot = match &inner {
+        Ok(r) => r.clone(),
+        Err(err_msg) => crate::provider::UsageResult {
+            success: false,
+            data: None,
+            error: Some(err_msg.clone()),
+        },
+    };
+    let payload = serde_json::json!({
+        "kind": "script",
+        "appType": app_type.as_str(),
+        "providerId": &providerId,
+        "keyId": &keyId,
+        "data": &snapshot,
+    });
+    if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
+        log::error!("emit usage-cache-updated (script-for-key) 失败: {e}");
+    }
+    // per-key 缓存：避免两把 key 的快照互相覆盖；put_script_per_key 在 UsageCache 上
+    // 接受 (appType, providerId, keyId, snapshot)——任意一把查完就独立落盘。
+    state
+        .usage_cache
+        .put_script_per_key(app_type, &providerId, &keyId, snapshot);
+    crate::tray::schedule_tray_refresh(&app_handle);
+    inner
+}
+
 /// Resolve `(base_url, api_key)` for native usage queries, delegating to the
 /// per-app resolver on `Provider`. Missing provider → empty credentials.
 fn resolve_native_credentials(app_type: &AppType, provider: Option<&Provider>) -> (String, String) {
@@ -507,154 +572,37 @@ async fn query_provider_usage_inner(
         });
     }
 
-    // ── Coding Plan 专用路径 ──
-    if template_type == TEMPLATE_TYPE_TOKEN_PLAN {
-        let (base_url, api_key) =
-            resolve_coding_plan_credentials(&app_type, provider, usage_script);
+    // ── 账户级模板（TOKEN_PLAN / BALANCE / OFFICIAL_SUBSCRIPTION）专用路径 ──
+    // 共享 `services::provider::usage::query_special_template`：保持 provider 级与
+    // per-key 两个路径走同一份 SubscriptionQuota → UsageResult 转换逻辑，
+    // 避免「单独修了一个忘记另一个」造成的 5h/7d 进度条缺失。
+    if matches!(
+        template_type,
+        TEMPLATE_TYPE_TOKEN_PLAN
+            | TEMPLATE_TYPE_BALANCE
+            | TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION
+    ) {
+        let (base_url, api_key) = if template_type == TEMPLATE_TYPE_TOKEN_PLAN {
+            // 火山方舟在 Coding Plan 里 AK/SK 与推理 key 分离；其余 supplier 走
+            // resolve_native_credentials 同路径。
+            resolve_coding_plan_credentials(&app_type, provider, usage_script)
+        } else {
+            resolve_native_credentials(&app_type, provider)
+        };
 
-        // 火山方舟用账号 AK/SK 签名查询用量（存于 usage_script，与推理 api_key 分离）；
-        // 其他供应商为 None，service 层沿用 api_key。
-        let access_key_id = usage_script.and_then(|s| s.access_key_id.clone());
-        let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
-        // 智谱团队版：显式 provider 标识 + 组织/项目 ID（与个人版智谱 base_url 相同，
-        // 靠 coding_plan_provider == "zhipu_team" 在 service 层路由）。
-        let coding_plan_provider = usage_script.and_then(|s| s.coding_plan_provider.clone());
-        let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
-        let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
-
-        let quota = crate::services::coding_plan::get_coding_plan_quota(
+        // Coding Plan 路径在 query_special_template 内部已经从 usage_script 解出
+        // 所有 coding-plan 相关字段（access_key_id / secret_access_key /
+        // coding_plan_provider / team_organization_id / team_project_id / group_id），
+        // 这里只做路由。
+        return crate::services::provider::usage::query_special_template(
+            &app_type,
+            template_type,
             &base_url,
             &api_key,
-            access_key_id.as_deref(),
-            secret_access_key.as_deref(),
-            coding_plan_provider.as_deref(),
-            team_organization_id.as_deref(),
-            team_project_id.as_deref(),
+            usage_script,
         )
         .await
-        .map_err(|e| format!("Failed to query coding plan: {e}"))?;
-
-        // 将 SubscriptionQuota 转换为 UsageResult
-        if !quota.success {
-            return Ok(crate::provider::UsageResult {
-                success: false,
-                data: None,
-                error: quota.error,
-            });
-        }
-
-        // ZenMux 的 tier 携带 USD 额度信息，需要编码为 JSON extra
-        let has_usd = quota
-            .tiers
-            .first()
-            .map(|t| t.used_value_usd.is_some())
-            .unwrap_or(false);
-        let plan_label = quota
-            .credential_message
-            .as_deref()
-            .and_then(|msg| msg.split(' ').next())
-            .map(|tier| format!("ZenMux·{}", tier.to_uppercase()));
-        let mut first_tier = true;
-
-        let data: Vec<crate::provider::UsageData> = quota
-            .tiers
-            .iter()
-            .map(|tier| {
-                let total = 100.0;
-                let used = tier.utilization;
-                let remaining = total - used;
-                let extra = if has_usd {
-                    let mut extra_json = serde_json::json!({
-                        "resetsAt": tier.resets_at,
-                    });
-                    if let Some(v) = tier.used_value_usd {
-                        extra_json["usedValueUsd"] = serde_json::json!(v);
-                    }
-                    if let Some(v) = tier.max_value_usd {
-                        extra_json["maxValueUsd"] = serde_json::json!(v);
-                    }
-                    if first_tier {
-                        if let Some(ref label) = plan_label {
-                            extra_json["planLabel"] = serde_json::json!(label);
-                        }
-                        first_tier = false;
-                    }
-                    Some(extra_json.to_string())
-                } else {
-                    tier.resets_at.clone()
-                };
-                crate::provider::UsageData {
-                    plan_name: Some(tier.name.clone()),
-                    remaining: Some(remaining),
-                    total: Some(total),
-                    used: Some(used),
-                    unit: Some("%".to_string()),
-                    is_valid: Some(true),
-                    invalid_message: None,
-                    extra,
-                }
-            })
-            .collect();
-
-        return Ok(crate::provider::UsageResult {
-            success: true,
-            data: if data.is_empty() { None } else { Some(data) },
-            error: None,
-        });
-    }
-
-    // ── 官方余额查询路径 ──
-    if template_type == TEMPLATE_TYPE_BALANCE {
-        // 按 app 区分的凭据存储格式提取 Base URL 与 API Key
-        let (base_url, api_key) = resolve_native_credentials(&app_type, provider);
-
-        return crate::services::balance::get_balance(&base_url, &api_key)
-            .await
-            .map_err(|e| format!("Failed to query balance: {e}"));
-    }
-
-    // ── 官方订阅额度查询路径 ──
-    if template_type == TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION {
-        if !usage_script.map(|s| s.enabled).unwrap_or(false) {
-            return Ok(crate::provider::UsageResult {
-                success: false,
-                data: None,
-                error: Some("Usage query is disabled".to_string()),
-            });
-        }
-
-        let quota = crate::services::subscription::get_subscription_quota(app_type.as_str())
-            .await
-            .map_err(|e| format!("Failed to query subscription quota: {e}"))?;
-
-        if !quota.success {
-            return Ok(crate::provider::UsageResult {
-                success: false,
-                data: None,
-                error: quota.error.or(quota.credential_message),
-            });
-        }
-
-        let data: Vec<crate::provider::UsageData> = quota
-            .tiers
-            .iter()
-            .map(|tier| crate::provider::UsageData {
-                plan_name: Some(tier.name.clone()),
-                remaining: Some(100.0 - tier.utilization),
-                total: Some(100.0),
-                used: Some(tier.utilization),
-                unit: Some("%".to_string()),
-                is_valid: Some(true),
-                invalid_message: None,
-                extra: tier.resets_at.clone(),
-            })
-            .collect();
-
-        return Ok(crate::provider::UsageResult {
-            success: true,
-            data: if data.is_empty() { None } else { Some(data) },
-            error: None,
-        });
+        .map_err(|e| e.to_string());
     }
 
     // ── 通用 JS 脚本路径 ──
@@ -1089,6 +1037,7 @@ mod native_query_credentials_tests {
             secret_access_key: None,
             team_organization_id: None,
             team_project_id: None,
+            group_id: None,
         }
     }
 

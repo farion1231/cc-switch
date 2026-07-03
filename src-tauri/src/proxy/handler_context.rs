@@ -64,6 +64,11 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// forwarder 当前轮选到的 key_id（v12 多 key 池引入）。
+    /// None 表示该 provider 走的是 settings_config 里的单 key（非池化）。
+    /// 在 `log_usage` / `log_with_calculation` 路径里透传到 `RequestLog.api_key_id`，
+    /// 让 `usage_rollup` 能按 key 维度分桶、让前端的 per-key 用量视图生效。
+    pub current_key_id: Option<String>,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -170,6 +175,10 @@ impl RequestContext {
             app_type,
             session_id,
             session_client_provided: session_result.client_provided,
+            // forwarder 入口处会覆盖：先设为 None，forwarder 拿到 KeyRing 选中的
+            // key 后回填到这里（见 `handlers.rs::handle_claude_transform`）。
+            // 走 fallback 路径（非 forwarder）的代码路径保持 None。
+            current_key_id: None,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -240,6 +249,8 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            state.key_ring.clone(),
+            self.app_config.max_key_attempts,
             max_retries,
         )
     }

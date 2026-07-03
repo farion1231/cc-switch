@@ -229,6 +229,11 @@ pub fn sanitize_provider_name(name: &str) -> String {
             _ => c,
         })
         .collect::<String>()
+        // Strip `..` token (path traversal) and leading `.` (hidden file on *nix).
+        // Replace with single `-` to keep names readable while neutralising
+        // any chance of escaping the per-key config dir.
+        .replace("..", "-")
+        .trim_start_matches('.')
         .to_lowercase()
 }
 
@@ -240,6 +245,34 @@ pub fn get_provider_config_path(provider_id: &str, provider_name: Option<&str>) 
         .unwrap_or_else(|| sanitize_provider_name(provider_id));
 
     get_claude_config_dir().join(format!("settings-{base_name}.json"))
+}
+
+/// Per-key live config dir：`{app 配置根目录}/keys/{sanitized_provider_id}/`
+///
+/// 多 key 池的每个 key 在自己的子目录下生成一份可独立使用的 settings
+/// 文件——主 settings.json（canonical）仍然只放 active key，副文件供
+/// 直连 Claude Code / Codex CLI 时按需切换。Sanitization 与 `sanitize_provider_name`
+/// 一致：`<>:"|?*/\\` 都替换为 `-`，再 lowercase。这避免 provider_id 含
+/// 路径分隔符时逃出 keys 目录。
+///
+/// App 区分发：Claude / Codex / Gemini 返回各自 override-aware 的
+/// `get_*_config_dir`；ClaudeDesktop / OpenCode / OpenClaw / Hermes 暂
+/// 不支持 per-key（这些应用要么是 additive 模式，要么走 OAuth / IDE 集
+/// 成，单 key 池的语义不适用），返回 None 由上层跳过。
+pub fn get_per_key_live_dir(
+    app_type: &crate::app_config::AppType,
+    provider_id: &str,
+) -> Option<PathBuf> {
+    use crate::app_config::AppType;
+    let dir = match app_type {
+        AppType::Claude => get_claude_config_dir(),
+        AppType::Codex => crate::codex_config::get_codex_config_dir(),
+        AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        // 对其余 app 类型返回 None — 见函数 doc。
+        _ => return None,
+    };
+    let safe_id = sanitize_provider_name(provider_id);
+    Some(dir.join("keys").join(safe_id))
 }
 
 /// 读取 JSON 配置文件

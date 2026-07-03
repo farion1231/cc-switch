@@ -13,19 +13,19 @@ const statusConfig = {
   operational: {
     color: "bg-emerald-500",
     labelKey: "health.operational",
-    labelFallback: "正常",
+    labelFallback: "In rotation",
     textColor: "text-emerald-600 dark:text-emerald-400",
   },
   degraded: {
     color: "bg-yellow-500",
     labelKey: "health.degraded",
-    labelFallback: "降级",
+    labelFallback: "Degraded",
     textColor: "text-yellow-600 dark:text-yellow-400",
   },
   failed: {
     color: "bg-red-500",
     labelKey: "health.failed",
-    labelFallback: "失败",
+    labelFallback: "Failed",
     textColor: "text-red-600 dark:text-red-400",
   },
 };

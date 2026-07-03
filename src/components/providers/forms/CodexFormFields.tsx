@@ -26,7 +26,8 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import { ProviderKeyEditor, EndpointField, ModelDropdown } from "./shared";
+import type { AppId } from "@/lib/api";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -346,26 +347,30 @@ export function CodexFormFields({
 
   return (
     <>
-      {/* Codex API Key 输入框 */}
-      <ApiKeySection
-        id="codexApiKey"
-        label="API Key"
-        value={codexApiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-        placeholder={{
-          official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
-          }),
-          thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
-          }),
-        }}
-      />
+      {/* Codex API Key——单/多 key 由 ProviderKeyEditor 按 providerId + 非官方
+          类别内部切换。Codex 类别 "official" 时完全隐藏（官方不需要 key）。 */}
+      {category !== "official" && (
+        <ProviderKeyEditor
+          appId={"codex" as AppId}
+          providerId={providerId ?? null}
+          shouldShowApiKey
+          shouldShowApiKeyLink={shouldShowApiKeyLink}
+          category={category}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
+          value={codexApiKey}
+          onChange={onApiKeyChange}
+          placeholder={{
+            official: t("providerForm.codexOfficialNoApiKey", {
+              defaultValue: "官方供应商无需 API Key",
+            }),
+            thirdParty: t("providerForm.codexApiKeyAutoFill", {
+              defaultValue: "输入 API Key，将自动填充到配置",
+            }),
+          }}
+        />
+      )}
 
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (

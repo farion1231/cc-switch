@@ -33,7 +33,7 @@ import {
   Wand2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { ProviderKeyEditor, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import {
@@ -41,6 +41,7 @@ import {
   copilotGetModelsForAccount,
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
+import type { AppId } from "@/lib/api";
 import {
   fetchCodexOauthModels,
   fetchModelsForConfig,
@@ -164,7 +165,10 @@ export function ClaudeFormFields({
   isPartner,
   partnerPromotionKey,
   isCopilotPreset,
-  usesOAuth,
+  // usesOAuth is in the destructure list below; was previously used to gate
+  // the now-removed legacy ApiKeySection. Keep the prop in the public
+  // signature for backwards compat (other form fields may pass it), but
+  // it's no longer referenced in this form's body.
   isCopilotAuthenticated,
   selectedGitHubAccountId,
   onGitHubAccountSelect,
@@ -619,18 +623,18 @@ export function ClaudeFormFields({
         />
       )}
 
-      {/* API Key 输入框（非 OAuth 预设时显示） */}
-      {shouldShowApiKey && !usesOAuth && (
-        <ApiKeySection
-          value={apiKey}
-          onChange={onApiKeyChange}
-          category={category}
-          shouldShowLink={shouldShowApiKeyLink}
-          websiteUrl={websiteUrl}
-          isPartner={isPartner}
-          partnerPromotionKey={partnerPromotionKey}
-        />
-      )}
+      <ProviderKeyEditor
+        appId={"claude" as AppId}
+        providerId={providerId ?? null}
+        shouldShowApiKey={shouldShowApiKey}
+        shouldShowApiKeyLink={shouldShowApiKeyLink}
+        category={category}
+        websiteUrl={websiteUrl}
+        isPartner={isPartner}
+        partnerPromotionKey={partnerPromotionKey}
+        value={apiKey}
+        onChange={onApiKeyChange}
+      />
 
       {/* 模板变量输入 */}
       {templateValueEntries.length > 0 && (

@@ -25,11 +25,17 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Loader2 as Loader2Icon,
+  Recycle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import {
+  useAutoFailoverEnabled,
+  useSetAutoFailoverEnabled,
+} from "@/lib/query/failover";
 import {
   providersApi,
   settingsApi,
@@ -44,6 +50,7 @@ import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
+import { useKeyRateLimitedBridge } from "@/hooks/useKeyRateLimitedBridge";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { useScanUnmanagedSkills } from "@/hooks/useSkills";
@@ -247,6 +254,7 @@ function App() {
   const isToolbarCompact = useAutoCompact(toolbarRef);
 
   useUsageCacheBridge();
+  useKeyRateLimitedBridge();
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
@@ -287,6 +295,14 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
+  // 全局故障转移开关（每应用独立）——header 上一个图标按钮直接 toggle。
+  // 与 FailoverQueueManager 的逻辑同源，区别是：
+  //   1. 这里始终可点（即便 failoverQueue 为空）——header 是常用入口，
+  //      用户开了之后再去队列里加 provider。
+  //   2. tooltip 直接读 i18n 里的 failover.tooltip.*，行为跟 tray 菜单一致。
+  const { data: isFailoverEnabled = false } =
+    useAutoFailoverEnabled(sharedFeatureApp);
+  const setFailoverEnabled = useSetAutoFailoverEnabled();
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
@@ -1555,6 +1571,78 @@ function App() {
                       </AnimatePresence>
                     </div>
 
+                    {/* 全局故障转移 toggle —— header 上唯一一个「开关
+                        风格」的图标按钮（其它都是导航类图标）。
+                        视觉策略：
+                          - 关：ghost + muted，hover 跟左边那排 nav 按钮一致
+                          - 开：emerald 实心 + 白色图标，shuffle 图标
+                            暗示「在多个 provider 之间轮换」；跟「+」按钮
+                            的橙色 + 加号形成对比——「+」是加 provider，
+                            shuffle 是开轮换，两个动作互不冲突。
+                        行为：
+                          - 点击 → 调用 setFailoverEnabled mutation；
+                            后端乐观更新（failover.ts:onMutate）所以
+                            UI 立刻变绿，不会因为 RTT 看起来卡。
+                          - mutation 进行中：图标换成 Loader2 自转，
+                            防止用户连点。 */}
+                    <Button
+                      onClick={() =>
+                        setFailoverEnabled.mutate({
+                          appType: sharedFeatureApp,
+                          enabled: !isFailoverEnabled,
+                        })
+                      }
+                      size="icon"
+                      disabled={setFailoverEnabled.isPending}
+                      className={cn(
+                        "ml-2 w-8 h-8 rounded-full transition-all duration-200",
+                        isFailoverEnabled
+                          ? "bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/30 dark:shadow-emerald-500/40"
+                          : // 关态默认是纯文字色（muted-foreground），但 hover
+                            // 时有 `bg-black/5` / `bg-white/5` 的浅灰底。
+                            // 当 isPending 触发 disabled 时，shadcn 默认会
+                            // 把整按钮降到 opacity-50，并屏蔽 hover 样式——
+                            // 结果是「文字淡 50% 但背景全透」，看起来反而
+                            // 比 enabled 态更弱，传达不出「正在处理」的含义。
+                            // 显式覆盖：disabled 时给一个固定的浅灰底（跟
+                            // hover 同色），让按钮在 disabled / 非 disabled
+                            // 切换时只有「图标变 spinner」一个变量，不会
+                            // 出现「按钮整个变淡」的视觉抖动。
+                            "text-muted-foreground bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-100 disabled:bg-black/5 dark:disabled:bg-white/5",
+                      )}
+                      title={
+                        isFailoverEnabled
+                          ? t("failover.tooltip.enabled", {
+                              app:
+                                sharedFeatureApp === "claude"
+                                  ? "Claude"
+                                  : sharedFeatureApp === "codex"
+                                    ? "Codex"
+                                    : sharedFeatureApp === "gemini"
+                                      ? "Gemini"
+                                      : sharedFeatureApp,
+                              defaultValue: "Provider rotation enabled",
+                            })
+                          : t("failover.tooltip.disabled", {
+                              app:
+                                sharedFeatureApp === "claude"
+                                  ? "Claude"
+                                  : sharedFeatureApp === "codex"
+                                    ? "Codex"
+                                    : sharedFeatureApp === "gemini"
+                                      ? "Gemini"
+                                      : sharedFeatureApp,
+                              defaultValue: "Enable provider rotation",
+                            })
+                      }
+                      aria-pressed={isFailoverEnabled}
+                    >
+                      {setFailoverEnabled.isPending ? (
+                        <Loader2Icon className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Recycle className="w-4 h-4" />
+                      )}
+                    </Button>
                     <Button
                       onClick={() => setIsAddOpen(true)}
                       size="icon"

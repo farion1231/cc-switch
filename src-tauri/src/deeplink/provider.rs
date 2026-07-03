@@ -269,6 +269,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         secret_access_key: None,
         team_organization_id: None,
         team_project_id: None,
+        group_id: None,
     };
 
     Ok(Some(ProviderMeta {

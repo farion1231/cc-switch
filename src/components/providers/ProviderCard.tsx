@@ -8,12 +8,18 @@ import type {
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { KeyPoolBadge, KeyPoolList } from "@/components/providers/KeyPoolBadge";
+import { useApiKeys } from "@/lib/query/apiKey";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import {
+  TokenPlanQuotaFooter,
+  isTokenPlanProvider,
+} from "@/components/TokenPlanQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
@@ -252,13 +258,22 @@ export function ProviderCard({
   const hasMultiplePlans =
     usage?.success && usage.data && usage.data.length > 1 && !isTokenPlan;
 
+  // 多 Key 池：仅在编辑后或代理接管后才会有数据，ProviderList 上多个 card 时
+  // 共享 useApiKeys 的 React Query 缓存（refetchInterval 内只发一次请求）。
+  const { data: apiKeys = [] } = useApiKeys(
+    isHermesReadOnly ? null : provider.id,
+    appId,
+  );
+  const hasKeyPool = apiKeys.length > 1;
+  const canExpand = hasMultiplePlans || hasKeyPool;
+
   const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
-    if (hasMultiplePlans) {
+    if (canExpand) {
       setIsExpanded(true);
     }
-  }, [hasMultiplePlans]);
+  }, [canExpand]);
 
   const handleOpenWebsite = () => {
     if (!isClickableUrl) {
@@ -350,6 +365,63 @@ export function ProviderCard({
                 {provider.name}
               </h3>
 
+              {/* per-provider 轮换 toggle——iOS-style switch，紧跟 provider.name。
+                  1) **位置**：放在 <h3> 之后、`flex flex-wrap` 容器里，与 name
+                     + 各种 badge 同行；不再用 ml-auto 推到最右，因为用户希望它
+                     直接挨着名字，作为「这个供应商的轮换开关」的强语义锚点。
+                  2) **样式**：白圆点 + 绿色/灰底的内联 toggle（CSS-only，
+                     不依赖 lucide ToggleLeft/Right 图标——直接画圆点更轻量
+                     且视觉一致）。
+                  3) **不放在 ProviderActions 里**：ProviderActions 整个被
+                     `opacity-0 group-hover:opacity-100` 包住做 auto-hide，
+                     toggle 嵌进去会跟着一起消失，违背「始终可见」的需求。
+                  4) **始终渲染**：onToggleFailover 缺失或 isOmo 时仅 disabled，
+                     不隐藏。tooltip 提示「在 settings 启用 failover 后可用」
+                     /「OMO 不参与轮换池」，引导用户去正确位置启用。 */}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isInFailoverQueue}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onToggleFailover && !isAnyOmo) {
+                    onToggleFailover(!isInFailoverQueue);
+                  }
+                }}
+                disabled={!onToggleFailover || isAnyOmo}
+                title={
+                  isAnyOmo
+                    ? t("failover.disabledForOmo", {
+                        defaultValue: "OMO 不参与轮换",
+                      })
+                    : !onToggleFailover
+                      ? t("failover.disabledNoRotation", {
+                          defaultValue: "在 settings 启用 failover 后可用",
+                        })
+                      : isInFailoverQueue
+                        ? t("failover.inRotation", { defaultValue: "In rotation" })
+                        : t("failover.addToRotation", { defaultValue: "Add to rotation" })
+                }
+                className={cn(
+                  "relative inline-flex flex-shrink-0 items-center",
+                  "h-5 w-9 rounded-full border transition-colors duration-200",
+                  isInFailoverQueue
+                    ? "bg-emerald-500 border-emerald-600 shadow-sm shadow-emerald-500/30"
+                    : "bg-black/[0.08] dark:bg-white/[0.12] border-black/[0.08] dark:border-white/[0.08]",
+                  (!onToggleFailover || isAnyOmo) &&
+                    "opacity-50 cursor-not-allowed",
+                )}
+              >
+                <span
+                  className={cn(
+                    "absolute top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white shadow-sm transition-all duration-200 ease-out",
+                    isInFailoverQueue
+                      ? "left-[calc(100%-1.05rem)]"
+                      : "left-[0.1rem]",
+                  )}
+                />
+              </button>
+
               {isOmo && (
                 <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                   OMO
@@ -360,6 +432,15 @@ export function ProviderCard({
                 <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                   Slim
                 </span>
+              )}
+
+              {/* 多 Key 池徽章：仅当该供应商有 ≥2 把 key 时显示 */}
+              {!isAnyOmo && (
+                <KeyPoolBadge
+                  providerId={provider.id}
+                  appId={appId}
+                  enabled={!isHermesReadOnly}
+                />
               )}
 
               {appId === "claude-desktop" &&
@@ -468,7 +549,19 @@ export function ProviderCard({
         <div className="flex items-center ml-auto min-w-0 gap-3">
           <div className="ml-auto">
             <div className="flex items-center gap-1">
-              {isCopilot ? (
+              {/* 各类 footer 的展示策略：
+                  - 有 key pool（apiKeys.length > 1）：provider 级配额
+                    显示完全隐藏。每把 key 自己在展开行里跑 queryForKey 拉
+                    自己的 5h/7d（Rust 端 queryProviderUsageForKey 走 per-key
+                    路径，不复用账号级结果），N 把 key 就有 N 份独立快照。
+                    在 provider 头再挂一条 5h/7d 会出现「N+1 条同源数据」
+                    重复——所以统一由 hasKeyPool 短路掉所有分支，避免某些
+                    provider 类型在多 key 下还残留 provider 级别的配额条。
+                  - 单 key / 0 key：以下分支按 provider 类型挑一个 footer
+                    显示。优先级 Copilot → CodexOauth → Official
+                    subscription → TokenPlan → UsageFooter / multiplePlans
+                    summary。 */}
+              {hasKeyPool ? null : isCopilot ? (
                 <CopilotQuotaFooter
                   meta={provider.meta}
                   inline={true}
@@ -480,17 +573,22 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
-              ) : isOfficial ? (
-                officialSubscriptionEnabled ? (
-                  <SubscriptionQuotaFooter
-                    appId={appId}
-                    inline={true}
-                    isCurrent={isCurrent}
-                    autoQueryInterval={
-                      provider.meta?.usage_script?.autoQueryInterval ?? 0
-                    }
-                  />
-                ) : null
+              ) : isOfficial && officialSubscriptionEnabled ? (
+                <SubscriptionQuotaFooter
+                  appId={appId}
+                  inline={true}
+                  isCurrent={isCurrent}
+                  autoQueryInterval={
+                    provider.meta?.usage_script?.autoQueryInterval ?? 0
+                  }
+                />
+              ) : isTokenPlanProvider(provider.meta) ? (
+                <TokenPlanQuotaFooter
+                  providerId={provider.id}
+                  appId={appId}
+                  meta={provider.meta}
+                  inline={true}
+                />
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">
@@ -511,8 +609,9 @@ export function ProviderCard({
                   inline={true}
                 />
               )}
-              {hasMultiplePlans && (
+              {canExpand && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsExpanded(!isExpanded);
@@ -574,9 +673,6 @@ export function ProviderCard({
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
-              isAutoFailoverEnabled={isAutoFailoverEnabled}
-              isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={onToggleFailover}
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
               onSetAsDefault={onSetAsDefault}
@@ -585,17 +681,42 @@ export function ProviderCard({
         </div>
       </div>
 
-      {isExpanded && hasMultiplePlans && (
-        <div className="mt-4 pt-4 border-t border-border-default">
-          <UsageFooter
-            provider={provider}
-            providerId={provider.id}
-            appId={appId}
-            usageEnabled={usageEnabled}
-            isCurrent={isCurrent}
-            isInConfig={isInConfig}
-            inline={false}
-          />
+      {isExpanded && canExpand && (
+        <div className="mt-4 space-y-3 pt-4 border-t border-border-default">
+          {hasMultiplePlans && (
+            <UsageFooter
+              provider={provider}
+              providerId={provider.id}
+              appId={appId}
+              usageEnabled={usageEnabled}
+              isCurrent={isCurrent}
+              isInConfig={isInConfig}
+              inline={false}
+            />
+          )}
+          {!isAnyOmo && (
+            <KeyPoolList
+              providerId={provider.id}
+              appId={appId}
+              enabled={!isHermesReadOnly}
+              // 只有在 provider 启用了 usage_script 且 query 拿到了数据时，
+              // 才把 usage 透传给 KeyPoolList——避免在未启用时多一个 "0%" 的噪声。
+              // per-key 查询由 KeyPoolList 自己用 useQueries 扇出，
+              // 这里传的 usage 仅作为 per-key 尚未返回时的兜底。
+              //
+              // **TOKEN_PLAN 也允许 per-key quota**：Coding Plan provider 的
+              // 每把 key 可以对应一个独立的 MiniMax/Kimi/Zhipu 账号，每把
+              // 自己的 5h/7d 是不同的——Rust 端 `queryProviderUsageForKey`
+              // 已经走 special-template 路径返回各自账号的 tier 列表。
+              // 账号级概览在 inline 槽由 `TokenPlanQuotaFooter` 显示，
+              // per-key 详情在展开行里各显示一行，互补不冲突。
+              usage={hasKeyPool ? usage : undefined}
+              usageEnabled={hasKeyPool && usageEnabled}
+              autoQueryInterval={
+                provider.meta?.usage_script?.autoQueryInterval ?? 0
+              }
+            />
+          )}
         </div>
       )}
     </div>

@@ -5,7 +5,8 @@
 mod endpoints;
 mod gemini_auth;
 mod live;
-mod usage;
+pub(crate) mod per_key_live;
+pub mod usage;
 
 use indexmap::IndexMap;
 use regex::Regex;
@@ -1758,6 +1759,50 @@ command = "legacy-cmd"
                 "OMO config should roll back to its previous on-disk contents"
             );
         });
+    }
+}
+
+/// Test helper shared across the provider service module's per-file tests.
+/// (E.g. `per_key_live::tests` references this instead of redeclaring a
+/// near-duplicate inside every test submodule.)
+#[cfg(test)]
+pub mod mod_test {
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    use crate::database::Database;
+    use crate::store::AppState;
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    fn guard() -> MutexGuard<'static, ()> {
+        TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
+    pub fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
+        let _g = guard();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let old_home = std::env::var_os("HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        std::env::set_var("HOME", temp.path());
+
+        let db = std::sync::Arc::new(Database::memory().expect("in-memory database"));
+        let state = AppState::new(db);
+        let result = test(&state, temp.path());
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match old_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        result
     }
 }
 

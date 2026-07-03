@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Download, Plus, Trash2, ChevronRight, Loader2 } from "lucide-react";
-import { ApiKeySection, ModelDropdown } from "./shared";
+import { ProviderKeyEditor, ModelDropdown } from "./shared";
+import type { AppId } from "@/lib/api";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -143,6 +144,9 @@ function ModelOptionKeyInput({
 }
 
 interface OpenCodeFormFieldsProps {
+  // Provider ID (for multi-key pool, only in edit mode)
+  providerId?: string;
+
   // NPM Package
   npm: string;
   onNpmChange: (value: string) => void;
@@ -170,6 +174,7 @@ interface OpenCodeFormFieldsProps {
 }
 
 export function OpenCodeFormFields({
+  providerId,
   npm,
   onNpmChange,
   apiKey,
@@ -476,15 +481,18 @@ export function OpenCodeFormFields({
         </p>
       </div>
 
-      {/* API Key */}
-      <ApiKeySection
-        value={apiKey}
-        onChange={onApiKeyChange}
+      {/* API Key——单/多 key 由 ProviderKeyEditor 按 providerId 内部切换 */}
+      <ProviderKeyEditor
+        appId={"opencode" as AppId}
+        providerId={providerId ?? null}
+        shouldShowApiKey
+        shouldShowApiKeyLink={shouldShowApiKeyLink}
         category={category}
-        shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
+        value={apiKey}
+        onChange={onApiKeyChange}
       />
 
       {/* Base URL */}

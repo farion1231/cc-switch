@@ -38,6 +38,19 @@ pub struct QuotaTier {
     /// ZenMux: 窗口上限（USD）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_value_usd: Option<f64>,
+    /// MiniMax: 已用次数（prompt 调用计数）
+    /// 当上游直接返回绝对值（如 current_interval_usage_count / 7）时填充；
+    /// 其他 provider 永远为 None，渲染层应回退到 utilization 百分比。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub used_count: Option<f64>,
+    /// MiniMax: 窗口上限次数（prompt 配额）
+    /// 语义与 used_count 配对；None 时回退到 utilization 百分比。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub total_count: Option<f64>,
+    /// 该窗口数据的单位（仅与 used_count/total_count 同时使用）：
+    /// "count"（次/条）= MiniMax, "tokens" = 智谱 etc. None 表示百分比口径。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub count_unit: Option<String>,
 }
 
 /// 超额使用信息
@@ -400,6 +413,9 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
                         resets_at: w.resets_at,
                         used_value_usd: None,
                         max_value_usd: None,
+                        used_count: None,
+                        total_count: None,
+                        count_unit: None,
                     });
                 }
             }
@@ -420,6 +436,9 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
                         resets_at: w.resets_at,
                         used_value_usd: None,
                         max_value_usd: None,
+                        used_count: None,
+                        total_count: None,
+                        count_unit: None,
                     });
                 }
             }
@@ -743,6 +762,9 @@ pub(crate) async fn query_codex_quota(
                     resets_at: window.reset_at.and_then(unix_ts_to_iso),
                     used_value_usd: None,
                     max_value_usd: None,
+                    used_count: None,
+                    total_count: None,
+                    count_unit: None,
                 });
             }
         }
@@ -1206,6 +1228,9 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
             resets_at: reset_time,
             used_value_usd: None,
             max_value_usd: None,
+            used_count: None,
+            total_count: None,
+            count_unit: None,
         })
         .collect();
 

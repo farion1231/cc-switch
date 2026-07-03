@@ -5,9 +5,7 @@ import {
   Copy,
   Edit,
   Loader2,
-  Minus,
   Play,
-  Plus,
   Terminal,
   Trash2,
   Zap,
@@ -33,9 +31,6 @@ interface ProviderActionsProps {
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
-  isAutoFailoverEnabled?: boolean;
-  isInFailoverQueue?: boolean;
-  onToggleFailover?: (enabled: boolean) => void;
   isOfficialBlockedByProxy?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
@@ -69,12 +64,8 @@ export function ProviderActions({
   onTest,
   onConfigureUsage,
   onDelete,
-  onRemoveFromConfig,
   onDisableOmo,
   onOpenTerminal,
-  isAutoFailoverEnabled = false,
-  isInFailoverQueue = false,
-  onToggleFailover,
   isOfficialBlockedByProxy = false,
   isReadOnly = false,
   // OpenClaw: default model
@@ -90,10 +81,15 @@ export function ProviderActions({
     appId === "openclaw" ||
     appId === "hermes";
 
-  // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
-  const isFailoverMode =
-    !isAdditiveMode && !isOmo && isAutoFailoverEnabled && onToggleFailover;
-
+  // 注：per-provider 轮换 toggle 不再「替换」主按钮，而是独立的右侧
+  // 图标按钮（在 onToggleFailover 存在时显示）。isFailoverMode 这个
+  // 「覆盖主按钮」的状态分支已废弃——主按钮现在统一是「启用 / 已在用」，
+  // 轮换 toggle 跟编辑、复制、检测、删除那排图标并列。
+  //
+  // 全局 auto_failover_enabled 跟 per-provider in_failover_queue
+  // 是两层独立的开关：全局决定「是否走 provider_router」，per-provider
+  // 决定「这个 provider 是否参与轮换」。它们由 forwarder 在 Rust 端
+  // 组合判断——UI 这里只暴露独立的 toggle 给用户，不做耦合。
   const handleMainButtonClick = () => {
     if (isOmo) {
       if (isCurrent) {
@@ -101,19 +97,6 @@ export function ProviderActions({
       } else {
         onSwitch();
       }
-    } else if (isAdditiveMode) {
-      // 累加模式：切换配置状态（添加/移除）
-      if (isInConfig) {
-        if (onRemoveFromConfig) {
-          onRemoveFromConfig();
-        } else {
-          onDelete();
-        }
-      } else {
-        onSwitch(); // 添加到配置
-      }
-    } else if (isFailoverMode) {
-      onToggleFailover(!isInFailoverQueue);
     } else {
       onSwitch();
     }
@@ -140,51 +123,14 @@ export function ProviderActions({
       };
     }
 
-    // 累加模式（OpenCode 非 OMO / OpenClaw）
-    if (isAdditiveMode) {
-      if (isInConfig) {
-        return {
-          disabled: isDefaultModel === true,
-          variant: "secondary" as const,
-          className: cn(
-            "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
-            isDefaultModel && "opacity-40 cursor-not-allowed",
-          ),
-          icon: <Minus className="h-4 w-4" />,
-          text: t("provider.removeFromConfig", { defaultValue: "移除" }),
-        };
-      }
-      return {
-        disabled: false,
-        variant: "default" as const,
-        className:
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
-        icon: <Plus className="h-4 w-4" />,
-        text: t("provider.addToConfig", { defaultValue: "添加" }),
-      };
-    }
-
-    if (isFailoverMode) {
-      if (isInFailoverQueue) {
-        return {
-          disabled: false,
-          variant: "secondary" as const,
-          className:
-            "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
-          icon: <Check className="h-4 w-4" />,
-          text: t("failover.inQueue", { defaultValue: "已加入" }),
-        };
-      }
-      return {
-        disabled: false,
-        variant: "default" as const,
-        className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-        icon: <Plus className="h-4 w-4" />,
-        text: t("failover.addQueue", { defaultValue: "加入" }),
-      };
-    }
-
+    // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）改为走默认分支：
+    // 按钮显示「启用 / 已在用」，点击直接 onSwitch 切换当前 provider——
+    // 恢复旧版行为。OpenCode 多 provider 共存的逻辑由后端 provider_router
+    // 处理：第一个启用的进 active，第二个启用替换第一个；不再用「+ / -」
+    // 表示「添加 / 移除」。
+    //
+    // 故障转移不再挤占主按钮——它走右侧独立的「轮询 toggle 图标按钮」
+    // （`onToggleFailover` 分支），主按钮恢复成纯启用/已在用语义。
     if (isCurrent) {
       return {
         disabled: true,

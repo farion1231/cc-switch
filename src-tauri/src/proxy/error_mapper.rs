@@ -37,6 +37,11 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
         // 所有供应商已熔断：503 Service Unavailable
         ProxyError::AllProvidersCircuitOpen => 503,
 
+        // 单 provider 内所有 key 都已耗尽（429 / 配额错误）：429 + Retry-After。
+        // 与 IntoResponse 在 proxy/error.rs 里的实现保持一致——本文件是
+        // status code 的 single source of truth，不能再走 `_ => 500` catch-all。
+        ProxyError::AllKeysRateLimited(_) => 429,
+
         // 未配置供应商：503 Service Unavailable
         ProxyError::NoProvidersConfigured => 503,
 
@@ -66,7 +71,7 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
 /// 将 ProxyError 转换为用户友好的错误消息
 pub fn get_error_message(error: &ProxyError) -> String {
     match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             if let Some(body) = body {
                 format!("上游错误 ({status}): {body}")
             } else {
@@ -77,6 +82,7 @@ pub fn get_error_message(error: &ProxyError) -> String {
         ProxyError::ForwardFailed(msg) => format!("转发失败: {msg}"),
         ProxyError::NoAvailableProvider => "无可用 Provider".to_string(),
         ProxyError::AllProvidersCircuitOpen => "所有供应商已熔断，无可用渠道".to_string(),
+        ProxyError::AllKeysRateLimited(msg) => format!("所有可用 API Key 均已限流: {msg}"),
         ProxyError::NoProvidersConfigured => "未配置供应商".to_string(),
         ProxyError::MaxRetriesExceeded => "所有 Provider 都失败，重试耗尽".to_string(),
         ProxyError::ProviderUnhealthy(msg) => format!("Provider 不健康: {msg}"),
@@ -95,6 +101,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 401,
             body: Some("Unauthorized".to_string()),
+            retry_after_secs: None,
         };
         assert_eq!(map_proxy_error_to_status(&error), 401);
     }
@@ -142,10 +149,22 @@ mod tests {
     }
 
     #[test]
+    fn test_map_all_keys_rate_limited_to_429() {
+        // 必须显式映射 429——之前 `_ => 500` 的 catch-all 会让客户端收到
+        // 与 IntoResponse 不一致的 status code。
+        let err = ProxyError::AllKeysRateLimited("min cooldown 60s".to_string());
+        assert_eq!(map_proxy_error_to_status(&err), 429);
+        let msg = get_error_message(&err);
+        assert!(msg.contains("限流"));
+        assert!(msg.contains("min cooldown 60s"));
+    }
+
+    #[test]
     fn test_get_error_message() {
         let error = ProxyError::UpstreamError {
             status: 500,
             body: Some("Internal Server Error".to_string()),
+            retry_after_secs: None,
         };
         let msg = get_error_message(&error);
         assert!(msg.contains("上游错误"));

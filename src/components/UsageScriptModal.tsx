@@ -552,10 +552,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
         // ZenMux 手填 baseUrl/apiKey；火山是 native 供应商，baseUrl 走推理配置，
-        // 另用账号 AK/SK 签名查询控制面用量。
+        // 另用账号 AK/SK 签名查询控制面用量。MiniMax 需要 GroupId 才能取到真实数据。
         const isZenMux = script.codingPlanProvider === "zenmux";
         const isVolcengine = script.codingPlanProvider === "volcengine";
         const isZhipuTeam = script.codingPlanProvider === "zhipu_team";
+        const isMiniMax = script.codingPlanProvider === "minimax";
         const baseUrl = isZenMux
           ? (script.baseUrl ?? "")
           : (providerCredentials.baseUrl ?? "");
@@ -571,6 +572,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           isZhipuTeam ? script.codingPlanProvider : undefined,
           isZhipuTeam ? script.teamOrganizationId : undefined,
           isZhipuTeam ? script.teamProjectId : undefined,
+          isMiniMax ? script.groupId : undefined,
         );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
@@ -581,13 +583,24 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             closeButton: true,
           });
           // 将结果转换为 UsageResult 格式更新缓存
-          const usageData = quota.tiers.map((tier) => ({
-            planName: tier.name,
-            remaining: 100 - tier.utilization,
-            total: 100,
-            used: tier.utilization,
-            unit: "%",
-          }));
+          // 优先用绝对值（usedCount/totalCount, MiniMax 风格 "7 / 100"），
+          // 没有再回退到 utilization 百分比（其他 provider 都走这条）。
+          const usageData = quota.tiers.map((tier) => {
+            const hasAbsolute =
+              tier.usedCount != null && tier.totalCount != null;
+            const total = hasAbsolute ? (tier.totalCount as number) : 100;
+            const used = hasAbsolute
+              ? (tier.usedCount as number)
+              : tier.utilization;
+            const unit = hasAbsolute ? (tier.countUnit || "count") : "%";
+            return {
+              planName: tier.name,
+              remaining: total - used,
+              total,
+              used,
+              unit,
+            };
+          });
           queryClient.setQueryData(["usage", provider.id, appId], {
             success: true,
             data: usageData,
@@ -1440,6 +1453,58 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 </div>
               )}
 
+            {/* MiniMax：必须提供 GroupId 才能取到真实用量（缺省时接口返回 0/100 占位） */}
+            {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+              script.codingPlanProvider === "minimax" && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      {t("usageScript.credentialsConfig")}
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {t("usageScript.minimaxGroupIdHint")}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {t("usageScript.minimaxGroupIdLink")}{" "}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const isEn = (providerCredentials.baseUrl ?? "")
+                            .toLowerCase()
+                            .includes("minimax.io");
+                          settingsApi.openExternal(
+                            isEn
+                              ? "https://platform.minimax.io/user-center/basic-information"
+                              : "https://platform.minimaxi.com/user-center/basic-information",
+                          );
+                        }}
+                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                      >
+                        {t("usageScript.minimaxGroupIdUrlLabel")}
+                        <ExternalLink size={12} className="shrink-0" />
+                      </button>
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="usage-minimax-group-id">
+                      {t("usageScript.minimaxGroupId")}
+                    </Label>
+                    <Input
+                      id="usage-minimax-group-id"
+                      type="text"
+                      value={script.groupId || ""}
+                      onChange={(e) =>
+                        setScript({ ...script, groupId: e.target.value })
+                      }
+                      placeholder="1686734307050816"
+                      autoComplete="off"
+                      className="border-white/10"
+                    />
+                  </div>
+                </div>
+              )}
+
             {/* 通用配置（始终显示） */}
             <div className="grid gap-4 md:grid-cols-2 pt-4 border-t border-white/10">
               {/* 超时时间 */}
@@ -1482,7 +1547,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   min={0}
                   max={1440}
                   value={
-                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 5
+                    script.autoQueryInterval ?? script.autoIntervalMinutes ?? 1
                   }
                   onChange={(e) =>
                     setScript({

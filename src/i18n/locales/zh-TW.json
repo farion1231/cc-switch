@@ -42,6 +42,104 @@
     "enabled": "已啟用",
     "notSet": "未設定"
   },
+  "apiKeyList": {
+    "saveProviderFirst": "請先儲存供應商，再管理 Key 池",
+    "title": "API Key 池",
+    "subtitle": "多把 key 在代理模式下自動輪換",
+    "empty": "還沒有 key，點擊下方新增。",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "active": "預設",
+    "disabled": "已停用",
+    "cooldown": "冷卻中",
+    "unnamed": "（未命名）",
+    "toggleEnabled": "啟用 / 停用",
+    "setActive": "設為預設",
+    "delete": "刪除",
+    "add": "新增 Key",
+    "createTitle": "新增 API Key",
+    "createDesc": "為該供應商新增一把 API Key",
+    "labelLabel": "標籤",
+    "valueLabel": "API Key",
+    "tagsLabel": "標籤",
+    "tagsPlaceholder": "輸入後按 Enter 加入（prod、region-east）",
+    "notesLabel": "備註",
+    "enabledLabel": "啟用",
+    "edit": "編輯",
+    "editTitle": "編輯 Key",
+    "editValueHint": "留空則保留原值",
+    "dragHandle": "拖曳以重新排序",
+    "deleteConfirmTitle": "刪除 API Key？",
+    "deleteConfirmMessage": "確認刪除 \"{{label}}\" 嗎？此操作無法復原。"
+  },
+  "apiKeys": {
+    "create": {
+      "success": "API key 已新增",
+      "error": "新增失敗：{{error}}"
+    },
+    "update": {
+      "success": "已儲存",
+      "error": "儲存失敗：{{error}}"
+    },
+    "delete": {
+      "success": "已刪除",
+      "error": "刪除失敗：{{error}}"
+    },
+    "setActive": {
+      "success": "已設為預設 key",
+      "error": "設定失敗：{{error}}"
+    }
+  },
+  "apiKeyStatusBar": {
+    "cooldownRemaining": "冷卻剩餘",
+    "cooldownHint": "（屆時自動恢復輪換）",
+    "disabled": "已停用",
+    "disabledHint": "（手動啟用後恢復輪換）",
+    "failureCount": "已失敗 {{count}} / {{threshold}} 次",
+    "failureHint": "（再失敗 {{remaining}} 次將自動輪換）",
+    "ready": "冷卻狀態：就緒",
+    "readyHint": "（{{threshold}} 次失敗後自動輪換）",
+    "fiveHour": "5h 配額",
+    "fiveHourWindow": "5小時",
+    "sevenDay": "7d 配額",
+    "sevenDayWindow": "7天",
+    "thirtyDayWindow": "30天",
+    "monthlyWindow": "月度",
+    "weeklyLimitWindow": "週限額",
+    "remaining": "剩",
+    "windowResetsIn": "將在 {{reset}} 後重置",
+    "units": {
+      "second": "秒",
+      "minute": "分鐘",
+      "hour": "小時",
+      "day": "天"
+    }
+  },
+  "keyPool": {
+    "listTitle": "API 密鑰池（{{count}}）",
+    "listHint": "代理模式下自動輪換；編輯面板在「編輯」中",
+    "active": "預設",
+    "unnamed": "（未命名）",
+    "cooldown": "冷卻",
+    "disabled": "停用",
+    "refresh": "重新整理",
+    "refreshing": "重新整理中…",
+    "setActive": "設為預設",
+    "activateLabel": "立即啟用",
+    "activatedLabel": "已啟用",
+    "toggleRotation": "加入輪換",
+    "rotationBlocked": "該 key 輪換已停用",
+    "rotationBlockedExhausted": "5h/7d 配額已用盡",
+    "rotationBlockedCooldown": "冷卻中，輪換已停用",
+    "rotationBlockedApiInvalid": "API 無回應或失效，輪換已停用",
+    "dragHandle": "拖曳以重新排序",
+    "health": {
+      "healthy": "正常",
+      "degraded": "有失敗",
+      "cooling_down": "冷卻中",
+      "disabled": "已停用"
+    }
+  },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
     "bodyDefault": "CC Switch 可以協助您在 Claude Code / Codex / Gemini CLI 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，CC Switch 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",
@@ -173,7 +271,8 @@
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "讀取設定中的供應商標識失敗，請先修復設定後再試"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -220,7 +319,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
         "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其他應用正在使用代理接管。請先在設定中關閉對應應用接管，再停止本地路由。"
     }
   },
   "notifications": {
@@ -265,7 +365,8 @@
     "backfillWarning": "切換成功，但舊供應商設定回填失敗，您手動修改的設定可能未儲存",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
-    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由"
+    "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -840,7 +941,37 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "currentVersion": "目前版本",
+    "installedNotRunnable": "已安裝但無法執行",
+    "latestVersion": "最新版本",
+    "manualInstallCommands": "手動安裝命令",
+    "toolActionDone": "{{action}}完成",
+    "toolActionFailed": "{{action}}失敗",
+    "toolActionInstalledNotRunnable": "已安裝但無法執行",
+    "toolActionPartial": "{{succeeded}} 個{{action}}成功，{{failed}} 個失敗",
+    "toolActionVersionUnchanged": "版本未變化",
+    "toolActionVersionUnchangedTitle": "已經是最新版本",
+    "toolCheckEnv": "環境檢測",
+    "toolConflictDefault": "預設",
+    "toolConflictHint": "偵測到多個安裝位置，建議選擇其中一個作為預設",
+    "toolConflictNotRunnable": "無法使用",
+    "toolConflictTitle": "偵測到多個安裝位置",
+    "toolDiagnose": "診斷",
+    "toolDiagnoseFailed": "診斷失敗",
+    "toolDiagnoseNoConflict": "未發現衝突",
+    "toolDiagnosing": "診斷中…",
+    "toolInstall": "安裝",
+    "toolNotRunnable": "無法使用",
+    "toolReady": "已就緒",
+    "toolUpdate": "更新",
+    "toolUpgradeConfirmBtn": "開始更新",
+    "toolUpgradeConfirmHint": "此操作會從套件管理員中升級到最新版本",
+    "toolUpgradeConfirmTitle": "確認更新",
+    "toolUpgradeUnanchoredHint": "將執行：",
+    "toolUpgradeWillRun": "將執行以下命令",
+    "updateAllTools": "更新所有工具",
+    "updateAvailableShort": "有新版本"
   },
   "apps": {
     "claude": "Claude",
@@ -1124,7 +1255,8 @@
     "fetchModelsAuthFailed": "API Key 無效或無權限",
     "fetchModelsNotSupported": "該供應商不支援取得模型清單",
     "fetchModelsEndpointNotFound": "未找到可用的模型清單端點，請檢查 Base URL 或確認供應商是否開放該 API",
-    "fetchModelsTimeout": "請求逾時，請檢查網路連線"
+    "fetchModelsTimeout": "請求逾時，請檢查網路連線",
+    "providerKeyStatusLoading": "正在載入供應商標識狀態，請稍後再試"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",
@@ -1285,7 +1417,8 @@
     "reasoningEffortHint": "上游支援 low/high/max 等思考深度控制時啟用。啟用後會自動啟用思考模式，並把 Codex 的 reasoning.effort 轉成上游 Chat 參數。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "預設供應商已自動設定；自訂供應商會按名稱/位址自動推斷。僅當自動識別不準時才需手動覆寫。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力與自訂 User-Agent。使用 Chat Completions 協定的供應商需開啟路由接管才能使用。"
+"advancedSectionHint": "包含本地路由映射、上游格式、模型映射、思考能力與自訂 User-Agent。供應商使用 Chat Completions 協定或非 GPT 模型時，需在此開啟本地路由映射。",
+    "noCommonConfigToApply": "通用設定片段為空或沒有可寫入的內容"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
@@ -1528,7 +1661,8 @@
     "modelsDevTruncated": "僅顯示前 {{shown}} 條，共 {{total}} 條結果，請縮小搜尋範圍",
     "modelsDevDefaultHint": "預設展示最新發布的 {{shown}} 個模型（共 {{total}} 個），輸入關鍵字可全量搜尋",
     "cacheReadCostPerMillion": "快取讀取成本 (每百萬 tokens, USD)",
-    "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)"
+    "cacheCreationCostPerMillion": "快取寫入成本 (每百萬 tokens, USD)",
+    "unpriced": "未定價"
   },
   "usageScript": {
     "title": "設定用量查詢",
@@ -1570,6 +1704,10 @@
     "organizationIdPlaceholder": "例如：org-xxxxxx",
     "projectId": "專案 ID",
     "projectIdPlaceholder": "例如：proj-xxxxxx",
+    "minimaxGroupId": "集團 ID（Group ID）",
+    "minimaxGroupIdHint": "MiniMax 用量介面需要 Group ID 才能取得真實資料；缺省時介面會回傳 0/100 占位值，會被誤顯示為 0%。",
+    "minimaxGroupIdLink": "請於 MiniMax 開放平台「帳戶管理 → 帳戶資訊 → 基本資訊」中取得。",
+    "minimaxGroupIdUrlLabel": "開啟 MiniMax 帳戶頁面",
     "defaultPlan": "預設方案",
     "queryFailedMessage": "查詢失敗",
     "queryScript": "查詢腳本（JavaScript）",
@@ -2396,24 +2534,25 @@
     "testProvider": "測試模型"
   },
   "health": {
-    "operational": "正常",
+    "operational": "輪換中",
     "degraded": "降級",
     "failed": "失敗",
-    "circuitOpen": "斷路",
+    "circuitOpen": "熔斷",
     "consecutiveFailures": "連續失敗 {{count}} 次"
   },
   "failover": {
     "enabled": "{{app}} 故障轉移已啟用",
     "disabled": "{{app}} 故障轉移已關閉",
     "toggleFailed": "操作失敗：{{detail}}",
-    "inQueue": "已加入",
-    "addQueue": "加入",
+    "inRotation": "輪換中",
+    "addToRotation": "加入輪換",
     "priority": {
       "tooltip": "故障轉移優先順序 {{priority}}"
     },
     "tooltip": {
       "enabled": "{{app}} 故障轉移已啟用\n按佇列優先順序（P1→P2→...）選擇供應商",
-      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個"
+      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個",
+      "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
     }
   },
   "proxy": {
@@ -2591,7 +2730,9 @@
     },
     "server": {
       "started": "路由服務已啟動 - {{address}}:{{port}}",
-      "startFailed": "啟動路由服務失敗：{{detail}}"
+      "startFailed": "啟動路由服務失敗：{{detail}}",
+      "stopFailed": "停止代理服務失敗：{{detail}}",
+      "stopped": "代理服務已停止"
     },
     "stoppedWithRestore": "路由服務已關閉，已還原所有路由設定",
     "stopWithRestoreFailed": "停止失敗：{{detail}}"

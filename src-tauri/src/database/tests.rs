@@ -887,3 +887,356 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
 }
+
+// ─────────── v11 → v12: 多 API Key 迁移 ───────────
+
+#[test]
+fn migration_v11_to_v12_creates_provider_api_keys_table() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    // 新表存在 + 关键列约束
+    let label_col = get_column_info(&conn, "provider_api_keys", "label");
+    assert_eq!(label_col.r#type, "TEXT");
+    assert_eq!(label_col.notnull, 1);
+
+    let enabled_col = get_column_info(&conn, "provider_api_keys", "enabled");
+    assert_eq!(enabled_col.r#type, "BOOLEAN");
+    assert_eq!(enabled_col.notnull, 1);
+    assert_eq!(normalize_default(&enabled_col.default).as_deref(), Some("1"));
+
+    let is_active_col = get_column_info(&conn, "provider_api_keys", "is_active");
+    assert_eq!(is_active_col.r#type, "BOOLEAN");
+    assert_eq!(is_active_col.notnull, 1);
+    assert_eq!(normalize_default(&is_active_col.default).as_deref(), Some("0"));
+
+    // proxy_request_logs 新增 api_key_id 列（可空 = 历史行语义）
+    let key_id_col = get_column_info(&conn, "proxy_request_logs", "api_key_id");
+    assert_eq!(key_id_col.r#type, "TEXT");
+    assert_eq!(key_id_col.notnull, 0);
+}
+
+#[test]
+fn migration_v11_to_v12_rebuilds_rollups_with_api_key_id_dimension() {
+    // 走完整 v12 schema（用 create_tables_on_conn），再回退 v12 引入的两项 schema，
+    // set user_version=11 触发迁移，验证 rollup 表被重建 + 新列/索引/表就位
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    // 把 v12 的新增物回退掉：drop 索引（依赖 api_key_id）→ drop 列 → drop 新表
+    // → 把 rollup 表回退到 v11 形状（无 api_key_id）
+    conn.execute_batch(
+        r#"
+        DROP INDEX IF EXISTS idx_request_logs_key;
+        ALTER TABLE proxy_request_logs DROP COLUMN api_key_id;
+        DROP TABLE IF EXISTS provider_api_keys;
+        DROP INDEX IF EXISTS idx_provider_api_keys_pool;
+        ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_pre12;
+        CREATE TABLE usage_daily_rollups (
+            date TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_model TEXT NOT NULL DEFAULT '',
+            pricing_model TEXT NOT NULL DEFAULT '',
+            request_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+        );
+        INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_model, pricing_model,
+             request_count, success_count, input_tokens, output_tokens,
+             cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms)
+        SELECT date, app_type, provider_id, model, request_model, pricing_model,
+             request_count, success_count, input_tokens, output_tokens,
+             cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+        FROM usage_daily_rollups_pre12;
+        DROP TABLE usage_daily_rollups_pre12;
+        "#,
+    )
+    .expect("revert to v11 schema");
+
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    // 新列存在
+    let kid_col = get_column_info(&conn, "usage_daily_rollups", "api_key_id");
+    assert_eq!(kid_col.r#type, "TEXT");
+    assert_eq!(kid_col.notnull, 1);
+    assert_eq!(normalize_default(&kid_col.default).as_deref(), Some(""));
+
+    // 明细表补上 api_key_id 列（可空 = 历史行语义）
+    // 用 has_column 检查后再调用 get_column_info，避免 panic 信息混淆
+    assert!(
+        Database::has_column(&conn, "proxy_request_logs", "api_key_id").expect("check"),
+        "proxy_request_logs.api_key_id should be added by migration"
+    );
+    let key_id_col = get_column_info(&conn, "proxy_request_logs", "api_key_id");
+    assert_eq!(key_id_col.r#type, "TEXT");
+    assert_eq!(key_id_col.notnull, 0);
+
+    // provider_api_keys 表 + 索引就位
+    assert!(
+        Database::has_column(&conn, "provider_api_keys", "label").expect("check"),
+        "provider_api_keys should exist after migration"
+    );
+
+    // 主键包含 api_key_id：同 provider + model + 维度下，'' 与具体 key_id 可共存
+    conn.execute(
+        "INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, api_key_id, model, request_model, request_count)
+         VALUES ('2026-05-01', 'claude', 'p1', 'key-1', 'kimi-k2', '', 1)",
+        [],
+    )
+    .expect("insert row with api_key_id");
+}
+
+#[test]
+fn migration_v11_to_v12_backfills_existing_single_key_providers() {
+    // 用 create_tables_on_conn 走完整 v12 schema（空 provider_api_keys 表），
+    // set v11 让迁移路径里"重建 rollup + INSERT OR IGNORE 入 key 池"再跑一遍。
+    // INSERT OR IGNORE 依赖 (provider_id, app_type, label) 唯一约束：
+    // 相同 fixture 多次重跑不会重复插入。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    conn.execute(
+        "INSERT INTO providers (id, app_type, name, settings_config)
+         VALUES ('p-claude', 'claude', 'P-Claude',
+                 '{\"env\":{\"ANTHROPIC_AUTH_TOKEN\":\"sk-claude-real\"}}')",
+        [],
+    )
+    .expect("seed claude provider");
+    conn.execute(
+        "INSERT INTO providers (id, app_type, name, settings_config)
+         VALUES ('p-codex', 'codex', 'P-Codex',
+                 '{\"auth\":{\"OPENAI_API_KEY\":\"sk-codex-real\"}}')",
+        [],
+    )
+    .expect("seed codex provider");
+    conn.execute(
+        "INSERT INTO providers (id, app_type, name, settings_config, meta)
+         VALUES ('p-copilot', 'claude', 'P-Copilot',
+                 '{\"env\":{}}',
+                 '{\"providerType\":\"github_copilot\"}')",
+        [],
+    )
+    .expect("seed copilot provider");
+    conn.execute(
+        "INSERT INTO providers (id, app_type, name, settings_config)
+         VALUES ('p-empty', 'claude', 'P-Empty', '{\"env\":{}}')",
+        [],
+    )
+    .expect("seed empty provider");
+
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    // Claude + Codex 各被 backfill 一行；copilot (OAuth) + empty 跳过
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM provider_api_keys", [], |row| row.get(0))
+        .expect("count api_keys");
+    assert_eq!(count, 2, "exactly two single-key providers should be backfilled");
+
+    let (claude_key, claude_label, claude_active): (String, String, i64) = conn
+        .query_row(
+            "SELECT api_key, label, is_active FROM provider_api_keys
+             WHERE provider_id = 'p-claude' AND app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("claude backfilled row");
+    assert_eq!(claude_key, "sk-claude-real");
+    assert_eq!(claude_label, "Default");
+    assert_eq!(claude_active, 1);
+
+    let (codex_key, codex_label): (String, String) = conn
+        .query_row(
+            "SELECT api_key, label FROM provider_api_keys
+             WHERE provider_id = 'p-codex' AND app_type = 'codex'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("codex backfilled row");
+    assert_eq!(codex_key, "sk-codex-real");
+    assert_eq!(codex_label, "Default");
+}
+
+#[test]
+fn migration_v11_to_v12_skips_official_claude_desktop_seed() {
+    // claude-desktop-official 是 v3.x 写入的内置占位，没有 key。
+    // 不能被 backfill 一行带空 api_key 的"假 key"——那会让前端把无凭据的
+    // provider 当作可轮换，污染 OAuth-style 走法。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+
+    conn.execute(
+        "INSERT INTO providers (id, app_type, name, settings_config, meta)
+        VALUES ('claude-desktop-official', 'claude-desktop', 'Official', '{}', '{}')",
+        [],
+    )
+    .expect("seed official placeholder");
+
+    Database::set_user_version(&conn, 11).expect("set user_version=11");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM provider_api_keys", [], |row| row.get(0))
+        .expect("count api_keys");
+    assert_eq!(count, 0, "official placeholder must not be backfilled");
+}
+
+#[test]
+fn migration_v11_to_v12_rollup_groups_by_api_key_id() -> Result<(), AppError> {
+    // 端到端：v12 schema 下写入带 api_key_id 的明细 → rollup_and_prune →
+    // 验证聚合按 key 拆开（同 model 不同 key 各自成行）。
+    // Database::memory() 已经走完 v12 schema，无需手动构造。
+    let db = Database::memory().expect("memory db");
+    let now = chrono::Utc::now().timestamp();
+    let old_ts = now - 40 * 86400;
+    {
+        let conn = crate::database::lock_conn!(db.conn);
+        for (i, key_id) in ["key-A", "key-B"].iter().enumerate() {
+            for j in 0..2 {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, api_key_id,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, status_code, created_at
+                     ) VALUES (?1, 'p1', 'claude', 'kimi-k2', ?2, 100, 50, '0.01', 100, 200, ?3)",
+                    rusqlite::params![format!("log-{i}-{j}"), key_id, old_ts + (i * 2 + j) as i64],
+                )
+                .expect("insert log");
+            }
+        }
+    }
+
+    let deleted = db.rollup_and_prune(30).expect("rollup");
+    assert_eq!(deleted, 4);
+
+    let conn = crate::database::lock_conn!(db.conn);
+    let mut stmt = conn
+        .prepare(
+            "SELECT api_key_id, request_count FROM usage_daily_rollups
+             WHERE model = 'kimi-k2' ORDER BY api_key_id",
+        )
+        .expect("prepare");
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("collect");
+    assert_eq!(
+        rows,
+        vec![("key-A".to_string(), 2), ("key-B".to_string(), 2)],
+        "per-key aggregation must split rollup rows"
+    );
+    Ok(())
+}
+
+/// 真实 v11→v12 迁移路径：fixture 里**没有** provider_api_keys 表。
+/// 之前 create_tables_on_conn + drop 的测试用本地 mock schema，不能保证
+/// 真实升级路径能跑通——这一条直接搭一个 v11 形状的 DB（无 api_keys 表），
+/// 跑迁移，验证：
+/// 1. provider_api_keys 表被创建
+/// 2. backfill INSERT 在表已建好的前提下成功
+/// 3. 迁移完成后 schema 与 create_tables_on_conn 输出一致
+#[test]
+fn migration_v11_to_v12_real_path_without_provider_api_keys_table() {
+    // 搭一个 v11 形状的 DB：只有 providers（无 provider_api_keys）+ v11 形状的
+    // proxy_request_logs（无 api_key_id 列）+ v11 形状的 usage_daily_rollups
+    // （主键无 api_key_id）。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL,
+            meta TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (id, app_type)
+        );
+        CREATE TABLE proxy_request_logs (
+            request_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_model TEXT,
+            pricing_model TEXT,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            latency_ms INTEGER NOT NULL,
+            first_token_ms INTEGER,
+            duration_ms INTEGER,
+            status_code INTEGER NOT NULL,
+            error_message TEXT,
+            session_id TEXT,
+            provider_type TEXT,
+            is_streaming INTEGER NOT NULL DEFAULT 0,
+            cost_multiplier TEXT NOT NULL DEFAULT '1.0',
+            created_at INTEGER NOT NULL,
+            data_source TEXT NOT NULL DEFAULT 'proxy'
+        );
+        CREATE TABLE usage_daily_rollups (
+            date TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            request_model TEXT NOT NULL DEFAULT '',
+            pricing_model TEXT NOT NULL DEFAULT '',
+            request_count INTEGER NOT NULL DEFAULT 0,
+            success_count INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd TEXT NOT NULL DEFAULT '0',
+            avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+        );
+        INSERT INTO providers (id, app_type, name, settings_config)
+        VALUES ('p1', 'claude', 'P1',
+                '{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-real"}}');
+        "#,
+    )
+    .expect("seed v11-shape DB");
+    Database::set_user_version(&conn, 11).expect("set v11");
+
+    // 真实路径：没有 create_tables_on_conn 调用，纯粹靠 migrate_v11_to_v12
+    Database::apply_schema_migrations_on_conn(&conn).expect("v11→v12 must succeed");
+
+    // provider_api_keys 表应已存在
+    assert!(
+        Database::table_exists(&conn, "provider_api_keys").expect("check"),
+        "provider_api_keys table must be created by the migration"
+    );
+
+    // backfill 应该把 p1 的 key 写入
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM provider_api_keys", [], |row| row.get(0))
+        .expect("count api_keys");
+    assert_eq!(count, 1, "exactly one backfilled key");
+
+    // 列存在且为 p1 的真实 key
+    let (api_key, label, is_active): (String, String, i64) = conn
+        .query_row(
+            "SELECT api_key, label, is_active FROM provider_api_keys
+             WHERE provider_id = 'p1' AND app_type = 'claude'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read backfilled row");
+    assert_eq!(api_key, "sk-real");
+    assert_eq!(label, "Default");
+    assert_eq!(is_active, 1);
+}

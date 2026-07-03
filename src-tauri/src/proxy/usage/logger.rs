@@ -34,6 +34,11 @@ pub struct RequestLog {
     pub is_streaming: bool,
     /// 成本倍数
     pub cost_multiplier: String,
+    /// 该请求实际使用的 API key id（v12 多 key 池引入）。
+    /// None 表示上游 proxy 未关联到具体 key（OAuth-managed、单 key pre-v12
+    /// 历史行、外部 debug 流量等）。rollup 按 `''` 归一聚合。
+    /// 没有这一列，前端 UsageFooter 的"每 key 用量"视图无法渲染。
+    pub api_key_id: Option<String>,
 }
 
 /// 使用量记录器
@@ -74,11 +79,12 @@ impl<'a> UsageLogger<'a> {
         conn.execute(
             "INSERT OR REPLACE INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model, pricing_model,
+                api_key_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 log.request_id,
                 log.provider_id,
@@ -86,6 +92,7 @@ impl<'a> UsageLogger<'a> {
                 log.model,
                 log.request_model,
                 log.pricing_model,
+                log.api_key_id,
                 log.usage.input_tokens,
                 log.usage.output_tokens,
                 log.usage.cache_read_tokens,
@@ -147,6 +154,7 @@ impl<'a> UsageLogger<'a> {
             provider_type: None,
             is_streaming: false,
             cost_multiplier: "1.0".to_string(),
+            api_key_id: None,
         };
 
         self.log_request(&log)
@@ -188,6 +196,7 @@ impl<'a> UsageLogger<'a> {
             provider_type,
             is_streaming,
             cost_multiplier: "1.0".to_string(),
+            api_key_id: None,
         };
 
         self.log_request(&log)
@@ -320,6 +329,7 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
         is_streaming: bool,
+        api_key_id: Option<String>,
     ) -> Result<(), AppError> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
@@ -356,6 +366,7 @@ impl<'a> UsageLogger<'a> {
             provider_type,
             is_streaming,
             cost_multiplier: cost_multiplier.to_string(),
+            api_key_id,
         };
 
         self.log_request(&log)
@@ -407,6 +418,7 @@ mod tests {
             None,
             Some("claude".to_string()),
             false,
+            None, // api_key_id
         )?;
 
         // 验证记录已插入
@@ -449,6 +461,79 @@ mod tests {
             .unwrap();
         assert_eq!(status, 500);
         assert_eq!(error, Some("Internal Server Error".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_log_request_persists_api_key_id() -> Result<(), AppError> {
+        // 端到端验证：传入 api_key_id 后能在 proxy_request_logs 查到——Phase 9
+        // "per-key usage footer" 视图的数据来源。没有这一列，所有请求都落入
+        // `''` legacy bucket，per-key 拆分无解。
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('test-model', 'Test Model', '3.0', '15.0')",
+                [],
+            )?;
+        }
+
+        let logger = UsageLogger::new(&db);
+        let usage = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+
+        // Case 1: 有 api_key_id → 行写入正确
+        let log_with_key = RequestLog {
+            request_id: "req-with-key".to_string(),
+            provider_id: "p1".to_string(),
+            app_type: "claude".to_string(),
+            model: "test-model".to_string(),
+            request_model: "test-model".to_string(),
+            pricing_model: "test-model".to_string(),
+            usage: usage.clone(),
+            cost: None,
+            latency_ms: 100,
+            first_token_ms: None,
+            status_code: 200,
+            error_message: None,
+            session_id: None,
+            provider_type: None,
+            is_streaming: false,
+            cost_multiplier: "1.0".to_string(),
+            api_key_id: Some("key-1".to_string()),
+        };
+        logger.log_request(&log_with_key)?;
+
+        // Case 2: None → 行写入 NULL（COALESCE 兜底成 `''`）
+        let mut log_no_key = log_with_key.clone();
+        log_no_key.request_id = "req-no-key".to_string();
+        log_no_key.api_key_id = None;
+        logger.log_request(&log_no_key)?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let stored: (Option<String>, Option<String>) = conn.query_row(
+            "SELECT api_key_id, COALESCE(api_key_id, '') FROM proxy_request_logs
+             WHERE request_id = 'req-with-key'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(stored.0.as_deref(), Some("key-1"));
+        assert_eq!(stored.1.as_deref(), Some("key-1"));
+
+        let fallback: Option<String> = conn
+            .query_row(
+                "SELECT api_key_id FROM proxy_request_logs WHERE request_id = 'req-no-key'",
+                [],
+                |row| row.get(0),
+            )?;
+        assert_eq!(fallback, None, "no api_key_id stored as NULL");
         Ok(())
     }
 }

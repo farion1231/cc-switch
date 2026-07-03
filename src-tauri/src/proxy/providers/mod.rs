@@ -11,7 +11,7 @@
 //! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
-mod adapter;
+pub mod adapter;
 mod auth;
 mod claude;
 mod codex;
@@ -23,6 +23,7 @@ pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
+pub mod key_ring;
 pub mod models;
 pub mod streaming;
 pub mod streaming_codex_chat;

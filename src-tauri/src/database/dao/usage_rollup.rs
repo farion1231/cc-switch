@@ -116,17 +116,18 @@ impl Database {
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
         // request_model 维度保留路由接管的「客户端别名 → 真实模型」映射，
-        // pricing_model 维度保留写入时的计价基准（request 计价模式下与 model 分叉）；
-        // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
+        // pricing_model 维度保留写入时的计价基准（request 计价模式下与 model 分叉），
+        // api_key_id 维度区分同一 provider 下不同 key 的用量（v12 引入）。
+        // 明细行的这三列可能为 NULL（历史/手工数据），归一为 ''。
         let aggregation_sql = format!(
             "INSERT OR REPLACE INTO usage_daily_rollups
-                (date, app_type, provider_id, model, request_model, pricing_model,
+                (date, app_type, provider_id, api_key_id, model, request_model, pricing_model,
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
                  total_cost_usd, avg_latency_ms)
             SELECT
-                d, a, p, m, rm, pm,
+                d, a, p, kid, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
                 COALESCE(old.input_tokens, 0) + new_in,
@@ -142,7 +143,9 @@ impl Database {
             FROM (
                 SELECT
                     date(l.created_at, 'unixepoch', 'localtime') as d,
-                    l.app_type as a, l.provider_id as p, l.model as m,
+                    l.app_type as a, l.provider_id as p,
+                    COALESCE(l.api_key_id, '') as kid,
+                    l.model as m,
                     COALESCE(l.request_model, '') as rm,
                     COALESCE(l.pricing_model, '') as pm,
                     COUNT(*) as new_req,
@@ -155,11 +158,12 @@ impl Database {
                     COALESCE(AVG(l.latency_ms), 0) as new_lat
                 FROM proxy_request_logs l
                 WHERE l.created_at < ?1 AND {effective_filter}
-                GROUP BY d, a, p, m, rm, pm
+                GROUP BY d, a, p, kid, m, rm, pm
             ) agg
             LEFT JOIN usage_daily_rollups old
                 ON old.date = agg.d AND old.app_type = agg.a
-                AND old.provider_id = agg.p AND old.model = agg.m
+                AND old.provider_id = agg.p AND old.api_key_id = agg.kid
+                AND old.model = agg.m
                 AND old.request_model = agg.rm AND old.pricing_model = agg.pm"
         );
 
@@ -177,6 +181,177 @@ impl Database {
 
         Ok(deleted as u64)
     }
+
+    /// 读取某把 API key 在 `range_days` 内的用量聚合（明细粒度）。
+    ///
+    /// 注：明细表只保留 30 天内数据（30 天前的已被 rollup_and_prune 折叠并删除）。
+    /// 这个接口只读明细——UI 在展示"最近 N 天"时足够；超过 30 天的数据需要走
+    /// rollup 表合并（不在本接口范围内，留作 follow-up）。
+    pub fn get_usage_by_key(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        key_id: &str,
+        range_days: u32,
+    ) -> Result<KeyUsage, AppError> {
+        let now = chrono::Utc::now().timestamp();
+        let since = now - (range_days as i64) * 86400;
+        let conn = lock_conn!(self.conn);
+
+        // 明细按 day 聚合
+        let sql = format!(
+            "SELECT
+                 date(created_at, 'unixepoch', 'localtime') as d,
+                 COUNT(*) as req,
+                 SUM(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END) as succ,
+                 COALESCE(SUM(input_tokens), 0) as in_t,
+                 COALESCE(SUM(output_tokens), 0) as out_t,
+                 COALESCE(SUM(cache_read_tokens), 0) as cr_t,
+                 COALESCE(SUM(cache_creation_tokens), 0) as cc_t,
+                 COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) as cost
+             FROM proxy_request_logs
+             WHERE app_type = ?1 AND provider_id = ?2 AND api_key_id = ?3
+               AND created_at >= ?4
+             GROUP BY d
+             ORDER BY d DESC"
+        );
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut daily: Vec<KeyUsageDay> = Vec::new();
+        let rows = stmt
+            .query_map(
+                rusqlite::params![app_type, provider_id, key_id, since],
+                |row| {
+                    Ok(KeyUsageDay {
+                        date: row.get(0)?,
+                        request_count: row.get::<_, i64>(1)? as u32,
+                        success_count: row.get::<_, i64>(2)? as u32,
+                        input_tokens: row.get(3)?,
+                        output_tokens: row.get(4)?,
+                        cache_read_tokens: row.get(5)?,
+                        cache_creation_tokens: row.get(6)?,
+                        total_cost_usd: format!("{:.6}", row.get::<_, f64>(7)?),
+                    })
+                },
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for r in rows {
+            daily.push(r.map_err(|e| AppError::Database(e.to_string()))?);
+        }
+
+        let total = KeyUsageTotal::from_days(&daily);
+        Ok(KeyUsage {
+            key_id: key_id.to_string(),
+            daily,
+            total,
+        })
+    }
+
+    /// 读取某个 provider 所有 key 的并行聚合。
+    /// 返回 Vec 长度等于该 provider 的 key 数（已 order by sort_index）。
+    /// 任何 key 在 range 内没有请求时也出现在结果中，全 0。
+    pub fn get_usage_by_provider_keys(
+        &self,
+        app_type: &str,
+        provider_id: &str,
+        range_days: u32,
+    ) -> Result<Vec<KeyUsageSummary>, AppError> {
+        let keys = self.list_api_keys(provider_id, app_type)?;
+        let mut out = Vec::with_capacity(keys.len());
+        for k in &keys {
+            let usage = self.get_usage_by_key(app_type, provider_id, &k.id, range_days)?;
+            out.push(KeyUsageSummary {
+                key_id: k.id.clone(),
+                label: k.label.clone(),
+                is_active: k.is_active,
+                enabled: k.enabled,
+                cooldown_until: k.cooldown_until,
+                total: usage.total,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// One day of usage for a single key. `total_cost_usd` 是固定精度字符串，
+/// 与 `proxy_request_logs.total_cost_usd` / `usage_daily_rollups.total_cost_usd` 口径一致。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KeyUsageDay {
+    pub date: String,
+    pub request_count: u32,
+    pub success_count: u32,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub total_cost_usd: String,
+}
+
+/// 单 key 的总用量。`success_rate` 是 success / request 浮点百分比（0.0-100.0）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KeyUsageTotal {
+    pub request_count: u32,
+    pub success_count: u32,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
+    pub total_cost_usd: String,
+    pub success_rate: f32,
+}
+
+impl KeyUsageTotal {
+    fn from_days(days: &[KeyUsageDay]) -> Self {
+        let mut total = Self {
+            request_count: 0,
+            success_count: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            total_cost_usd: "0".to_string(),
+            success_rate: 0.0,
+        };
+        let mut cost: f64 = 0.0;
+        for d in days {
+            total.request_count = total.request_count.saturating_add(d.request_count);
+            total.success_count = total.success_count.saturating_add(d.success_count);
+            total.input_tokens = total.input_tokens.saturating_add(d.input_tokens);
+            total.output_tokens = total.output_tokens.saturating_add(d.output_tokens);
+            total.cache_read_tokens =
+                total.cache_read_tokens.saturating_add(d.cache_read_tokens);
+            total.cache_creation_tokens =
+                total.cache_creation_tokens.saturating_add(d.cache_creation_tokens);
+            cost += d.total_cost_usd.parse::<f64>().unwrap_or(0.0);
+        }
+        total.total_cost_usd = format!("{:.6}", cost);
+        if total.request_count > 0 {
+            total.success_rate =
+                (total.success_count as f32 / total.request_count as f32) * 100.0;
+        }
+        total
+    }
+}
+
+/// 完整返回值：daily 数组 + 折叠后的 total。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KeyUsage {
+    pub key_id: String,
+    pub daily: Vec<KeyUsageDay>,
+    pub total: KeyUsageTotal,
+}
+
+/// `get_usage_by_provider_keys` 的行项：包含 key 元数据 + total，
+/// 供前端 ProviderCard 的 per-key 列表直接展示。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KeyUsageSummary {
+    pub key_id: String,
+    pub label: String,
+    pub is_active: bool,
+    pub enabled: bool,
+    pub cooldown_until: i64,
+    pub total: KeyUsageTotal,
 }
 
 #[cfg(test)]
@@ -530,6 +705,180 @@ mod tests {
         )?;
         assert_eq!(count, 13, "10 existing + 3 new");
         assert_eq!(input, 1300, "1000 existing + 300 new");
+        Ok(())
+    }
+
+    // ─────── per-key 用量查询 ───────
+
+    fn insert_log(
+        conn: &rusqlite::Connection,
+        req_id: &str,
+        key_id: Option<&str>,
+        ts: i64,
+        status: i64,
+        in_t: i64,
+        out_t: i64,
+        cost: f64,
+    ) {
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, api_key_id,
+                input_tokens, output_tokens, total_cost_usd,
+                latency_ms, status_code, created_at, data_source
+             ) VALUES (?1, 'p1', 'claude', 'kimi-k2', ?2, ?3, ?4, ?5, 100, ?6, ?7, 'proxy')",
+            rusqlite::params![
+                req_id,
+                key_id,
+                in_t,
+                out_t,
+                format!("{cost}"),
+                status,
+                ts,
+            ],
+        )
+        .expect("insert log");
+    }
+
+    fn seed_provider(db: &Database) -> Result<(), AppError> {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR IGNORE INTO providers (id, app_type, name, settings_config)
+             VALUES ('p1', 'claude', 'P1', '{}')",
+            [],
+        )
+        .expect("seed provider");
+        drop(conn);
+        Ok(())
+    }
+
+    #[test]
+    fn get_usage_by_key_aggregates_only_that_key() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        seed_provider(&db)?;
+
+        // 为 key-A 和 key-B 各写两条成功 + 一条 429 失败的行
+        let now = chrono::Utc::now().timestamp();
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for key in ["key-A", "key-B"] {
+                for i in 0..3 {
+                    let status = if i == 2 { 429 } else { 200 };
+                    insert_log(
+                        &conn,
+                        &format!("log-{key}-{i}"),
+                        Some(key),
+                        now - i * 3600,
+                        status,
+                        100,
+                        50,
+                        0.01,
+                    );
+                }
+            }
+        }
+
+        let usage = db.get_usage_by_key("claude", "p1", "key-A", 7)?;
+        assert_eq!(usage.total.request_count, 3);
+        assert_eq!(usage.total.success_count, 2);
+        // 100 + 50 tokens × 3 行 = 300 + 150
+        assert_eq!(usage.total.input_tokens, 300);
+        assert_eq!(usage.total.output_tokens, 150);
+        // success_rate ≈ 66.67%
+        assert!((usage.total.success_rate - 66.66666).abs() < 0.1);
+        assert!((usage.total.total_cost_usd.parse::<f64>().unwrap() - 0.03).abs() < 1e-6);
+
+        // key-B 是独立聚合：被 key-A 测试隔离
+        let usage_b = db.get_usage_by_key("claude", "p1", "key-B", 7)?;
+        assert_eq!(usage_b.total.request_count, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn get_usage_by_provider_keys_returns_one_summary_per_key() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        seed_provider(&db)?;
+
+        // 写两把 key，每把各一行
+        let now = chrono::Utc::now().timestamp();
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            insert_log(&conn, "log-1", Some("k-1"), now, 200, 100, 50, 0.01);
+            insert_log(&conn, "log-2", Some("k-2"), now, 500, 200, 80, 0.02);
+            // 还有一行没绑 key（api_key_id NULL）：v11 历史数据
+            insert_log(&conn, "log-3", None, now, 200, 50, 25, 0.005);
+        }
+
+        // 没插入 api_keys 时返回空 Vec（list_api_keys → 空）
+        let empty = db.get_usage_by_provider_keys("claude", "p1", 7)?;
+        assert!(empty.is_empty());
+
+        // 插入两把 key
+        let now = chrono::Utc::now().timestamp();
+        let key1 = crate::database::dao::api_keys::ProviderApiKey {
+            id: "k-1".to_string(),
+            provider_id: "p1".to_string(),
+            app_type: "claude".to_string(),
+            label: "Primary".to_string(),
+            api_key: "sk-1".to_string(),
+            tags: vec![],
+            notes: String::new(),
+            enabled: true,
+            sort_index: 0,
+            is_active: true,
+            cooldown_until: 0,
+            failure_count: 0,
+            last_used_at: None,
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let mut key2 = key1.clone();
+        key2.id = "k-2".to_string();
+        key2.label = "Backup".to_string();
+        key2.is_active = false;
+        key2.sort_index = 1;
+        db.insert_api_key(&key1)?;
+        db.insert_api_key(&key2)?;
+
+        let summaries = db.get_usage_by_provider_keys("claude", "p1", 7)?;
+        assert_eq!(summaries.len(), 2, "two keys both surfaced");
+        // 按 sort_index 排：k-1 在前
+        assert_eq!(summaries[0].key_id, "k-1");
+        assert_eq!(summaries[1].key_id, "k-2");
+        assert!(summaries[0].is_active);
+        assert!(!summaries[1].is_active);
+        assert_eq!(summaries[0].label, "Primary");
+        Ok(())
+    }
+
+    #[test]
+    fn get_usage_by_key_returns_empty_for_unknown_key() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        seed_provider(&db)?;
+        let usage = db.get_usage_by_key("claude", "p1", "nope", 7)?;
+        assert_eq!(usage.total.request_count, 0);
+        assert_eq!(usage.daily.len(), 0);
+        assert_eq!(usage.total.success_rate, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn get_usage_by_key_respects_range_days() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        seed_provider(&db)?;
+
+        // 8 天前一条 + 1 天前一条；range=3 应该只看 1 天前那条
+        let now = chrono::Utc::now().timestamp();
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            insert_log(&conn, "old", Some("k1"), now - 8 * 86400, 200, 100, 50, 0.01);
+            insert_log(&conn, "recent", Some("k1"), now - 86400, 200, 100, 50, 0.01);
+        }
+
+        let usage_3d = db.get_usage_by_key("claude", "p1", "k1", 3)?;
+        assert_eq!(usage_3d.total.request_count, 1);
+        let usage_14d = db.get_usage_by_key("claude", "p1", "k1", 14)?;
+        assert_eq!(usage_14d.total.request_count, 2);
         Ok(())
     }
 }

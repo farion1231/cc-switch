@@ -315,6 +315,9 @@ export const TierBadge: React.FC<{
   const countdown = countdownStr(tier.resetsAt);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
+  // MiniMax: 绝对次数（usedCount/totalCount, unit 通常 "count"）
+  const hasAbsolute =
+    tier.usedCount != null && tier.totalCount != null;
 
   return (
     <div className="flex items-center gap-0.5">
@@ -324,6 +327,13 @@ export const TierBadge: React.FC<{
       >
         {t("subscription.utilization", { value: Math.round(tier.utilization) })}
       </span>
+      {hasAbsolute && (
+        <span className="text-muted-foreground/60">
+          ({Math.round(tier.usedCount as number)}/
+          {Math.round(tier.totalCount as number)}
+          {tier.countUnit ? ` ${tier.countUnit}` : ""})
+        </span>
+      )}
       {hasUsd && (
         <span className="text-muted-foreground/60">
           (${tier.usedValueUsd!.toFixed(2)}/${tier.maxValueUsd!.toFixed(2)})
@@ -402,7 +412,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   appId,
   inline = false,
   isCurrent = false,
-  autoQueryInterval = 5,
+  autoQueryInterval = 1,
 }) => {
   const {
     data: quota,

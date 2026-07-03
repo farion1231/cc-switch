@@ -465,7 +465,11 @@ impl ProxyService {
         }
 
         // 5. 保存服务器实例
-        *self.server.write().await = Some(server);
+        *self.server.write().await = Some(server.clone());
+
+        // 6. 启动 30s KeyRing flush tick（runtime 改动落盘）。
+        //    clone 出来再 spawn，避免借用 self.server 的 RwLock。
+        Self::spawn_flush_task(&server).await;
 
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
         Ok(info)
@@ -1088,6 +1092,156 @@ impl ProxyService {
         Ok(())
     }
 
+    /// 同步 reload 某个 provider 的 KeyRing 池——用户在 UI 上把某把
+    /// key 设为 active 时调用，让代理进程立刻看到新排序/新 active 标记，
+    /// 不必等 30s flush tick。
+    ///
+    /// 仅在代理运行时有意义（KeyRing 跟随 ProxyServer 生命周期）。
+    /// 代理未运行时直接成功返回。
+    pub async fn reload_provider_keys(
+        &self,
+        provider_id: &str,
+        app_type: &AppType,
+    ) -> Result<(), String> {
+        let server_guard = self.server.read().await;
+        let Some(server) = server_guard.as_ref() else {
+            return Ok(());
+        };
+        server
+            .state
+            .key_ring
+            .reload_provider(&self.db, provider_id, app_type.as_str())
+            .await
+            .map_err(|e| format!("reload KeyRing 失败: {e}"))
+    }
+
+    /// 把某 provider 的 round-robin 游标重置到 active key 的位置。
+    /// `set_active_api_key` 后调用——让下一次 next_key 直接落到新 active 上，
+    /// 避免 cursor 仍指在老 key / 已 disable 的位置上。
+    /// 注意：`reload_provider_keys` 内部也会重置 cursor，但主动调一次
+    /// 能确保 reload 失败时 cursor 至少被拨到正确位置。
+    /// 代理未运行时 no-op。
+    pub async fn reset_provider_cursor(&self, provider_id: &str, app_type: &AppType) {
+        let server_guard = self.server.read().await;
+        let Some(server) = server_guard.as_ref() else {
+            return;
+        };
+        server
+            .state
+            .key_ring
+            .reset_cursor(provider_id, app_type)
+            .await;
+    }
+
+    /// 通知 KeyRing「这把 key 已被用户重新启用」——内存里把它的
+    /// failure_count / cooldown_until / last_error 全部清零。
+    /// 代理未运行时 no-op（reload 时会从 DB 读到 0 值）。
+    ///
+    /// 配合 `cmd_update_api_key` 的「disabled → enabled」重置：DB 落盘 + 内存同步，
+    /// 不必等下一个 30s flush tick 才让 next_key 看到清零后的状态。
+    pub async fn notify_key_re_enabled(&self, key_id: &str) {
+        let server_guard = self.server.read().await;
+        let Some(server) = server_guard.as_ref() else {
+            return;
+        };
+        server.state.key_ring.mark_success(key_id).await;
+    }
+
+    /// 通知 KeyRing「这把 key 用量已接近上限」——proactive rotation
+    /// 的入口点。前端 autoQueryInterval 触发 `keyUsage` 查询时，如果
+    /// 任何窗口（5h/7d/30d）的 `usage_percent >= 90%`，调用本接口把
+    /// key 提前送进 cooldown：
+    ///
+    /// - 90% ≤ p < 100%：cooldown_until = reset_at（5h 窗口重置后恢复）
+    /// - p ≥ 100%：cooldown_until = max(reset_at, now + 30min)，给一个
+    ///   额外缓冲避免反复打爆
+    ///
+    /// 代理未运行时 no-op（KeyRing 尚未加载到内存）。
+    /// 失败时返回 false（让前端可以选择降级为只显示 UI 提示，不阻塞）。
+    pub async fn notify_key_usage_high(
+        &self,
+        key_id: &str,
+        usage_percent: f64,
+        reset_at: i64,
+    ) -> bool {
+        let server_guard = self.server.read().await;
+        let Some(server) = server_guard.as_ref() else {
+            return false;
+        };
+        server
+            .state
+            .key_ring
+            .mark_usage_high(key_id, usage_percent, reset_at)
+            .await
+    }
+
+    /// 启动 30s 周期的 KeyRing 内存 → DB flush tick。
+    /// 每次 tick 调用 `key_ring.flush_dirty(&db)` 把 runtime 改动
+    /// (cooldown、failure_count、last_used_at、last_error) 落盘。
+    /// 任务句柄存在 `ProxyServer` 内的 slot 上，stop 时通过
+    /// `cancel_flush_task` 收回。
+    pub async fn spawn_flush_task(server: &ProxyServer) {
+        let key_ring = server.state.key_ring.clone();
+        let db = server.state.db.clone();
+        let cancel = server.state.flush_cancel.clone();
+        // 槽里已有旧句柄就不再 spawn——避免重复 tick。
+        //
+        // 用 lock().await 而不是 try_lock：start_proxy_server 是 async，
+        // 两个并发启动会同时进 try_lock → 一个 silently 失败。改为 await
+        // 让两个实例串行化，第二个看到 slot.is_some() 后直接返回。
+        let mut slot = server.state.flush_task.lock().await;
+        if slot.is_some() {
+            return;
+        }
+            let handle = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+                // 第一次 tick 立即触发（interval 的 first tick 行为）。
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            log::info!("[KeyRing] flush tick 收到停止信号，退出");
+                            break;
+                        }
+                        _ = ticker.tick() => {
+                            // 先扫一遍过期的 cooldown——把"cooldown 已过、可用了"
+                            // 的 key 的 failure_count 清零、标 dirty；这把 key 的
+                            // 失败状态从这一刻起是"诚实的就绪"，下一次失败才重新
+                            // 计数。否则一把 key rate-limit 一次后，UI 永远挂着
+                            // "1/5"，直到下一次失败把它推到 2/5——观感很怪。
+                            let reaped = key_ring.reap_expired_cooldowns().await;
+                            if reaped > 0 {
+                                log::debug!("[KeyRing] flush tick reaped {reaped} expired cooldowns");
+                            }
+                            match key_ring.flush_dirty(&db).await {
+                                Ok(n) if n > 0 => {
+                                    log::debug!("[KeyRing] flush tick 写回 {n} 个 dirty key");
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    log::warn!("[KeyRing] flush tick 失败: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            *slot = Some(handle);
+    }
+
+    /// 收回 30s flush tick。
+    pub async fn cancel_flush_task(server: &ProxyServer) {
+        // 先发信号，再 join。
+        server.state.flush_cancel.cancel();
+        let handle_opt = {
+            let mut slot = server.state.flush_task.lock().await;
+            slot.take()
+        };
+        if let Some(handle) = handle_opt {
+            let _ = handle.await;
+        }
+    }
+
     /// 停止代理服务器
     pub async fn stop(&self) -> Result<(), String> {
         if let Some(server) = self.server.write().await.take() {
@@ -1095,6 +1249,9 @@ impl ProxyService {
                 .stop()
                 .await
                 .map_err(|e| format!("停止代理服务器失败: {e}"))?;
+
+            // 取消 30s 一次的 KeyRing flush tick（如果之前启动过）。
+            Self::cancel_flush_task(&server).await;
 
             // 停止时设置 proxy_enabled = false
             let mut global_config = self

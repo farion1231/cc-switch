@@ -291,6 +291,23 @@ pub struct LocalMigrations {
     /// 这样重新开启能把"关闭期间"落入 openai 桶的官方会话补迁进来。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
+    /// Per-key live config 写入迁移标记（v1）。N-key 池的每把 key 都会
+    /// 在 `{config_dir}/keys/{provider_id}/{key_id}.<ext>` 下写一份可独立
+    /// 使用的副本。该 migration 在第一次启动时跑一遍所有 multi-key
+    /// provider，把存量数据写到 on-disk；后续 regen 由 cmd_* mutation
+    /// 钩子按需触发。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multi_api_keys_files_v1: Option<MultiApiKeysFilesMigration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiApiKeysFilesMigration {
+    pub completed_at: String,
+    #[serde(default)]
+    pub providers_scanned: usize,
+    #[serde(default)]
+    pub files_written: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -11,6 +11,8 @@ pub async fn get_coding_plan_quota(
     coding_plan_provider: Option<String>,
     team_organization_id: Option<String>,
     team_project_id: Option<String>,
+    // MiniMax Coding Plan 集团 ID；缺省时接口返回占位零值导致误显示 0%。
+    group_id: Option<String>,
 ) -> Result<SubscriptionQuota, String> {
     crate::services::coding_plan::get_coding_plan_quota(
         &base_url,
@@ -20,6 +22,7 @@ pub async fn get_coding_plan_quota(
         coding_plan_provider.as_deref(),
         team_organization_id.as_deref(),
         team_project_id.as_deref(),
+        group_id.as_deref(),
     )
     .await
 }

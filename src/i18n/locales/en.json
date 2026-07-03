@@ -42,6 +42,104 @@
     "enabled": "Enabled",
     "notSet": "Not Set"
   },
+  "apiKeyList": {
+    "saveProviderFirst": "Please save the provider first before managing the API key pool",
+    "title": "API Key Pool",
+    "subtitle": "Multiple keys auto-rotate in proxy mode",
+    "empty": "No keys yet. Click below to add one.",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "active": "Active",
+    "disabled": "Disabled",
+    "cooldown": "Cooling down",
+    "unnamed": "(unnamed)",
+    "toggleEnabled": "Enable / Disable",
+    "setActive": "Set as default",
+    "delete": "Delete",
+    "add": "Add Key",
+    "createTitle": "Add API Key",
+    "createDesc": "Add a new API key for this provider",
+    "labelLabel": "Label",
+    "valueLabel": "API Key",
+    "tagsLabel": "Tags",
+    "tagsPlaceholder": "Type a tag and press Enter (prod, region-east)",
+    "notesLabel": "Notes",
+    "enabledLabel": "Enabled",
+    "edit": "Edit",
+    "editTitle": "Edit Key",
+    "editValueHint": "Leave blank to keep the existing value",
+    "dragHandle": "Drag to reorder",
+    "deleteConfirmTitle": "Delete API Key?",
+    "deleteConfirmMessage": "Are you sure you want to delete \"{{label}}\"? This action cannot be undone."
+  },
+  "apiKeys": {
+    "create": {
+      "success": "API key added",
+      "error": "Failed to add: {{error}}"
+    },
+    "update": {
+      "success": "Saved",
+      "error": "Failed to save: {{error}}"
+    },
+    "delete": {
+      "success": "Deleted",
+      "error": "Failed to delete: {{error}}"
+    },
+    "setActive": {
+      "success": "Set as default key",
+      "error": "Failed to set as default: {{error}}"
+    }
+  },
+  "apiKeyStatusBar": {
+    "cooldownRemaining": "Cooldown remaining",
+    "cooldownHint": "(auto-resume rotation when ends)",
+    "disabled": "Disabled",
+    "disabledHint": "(re-enable manually to resume rotation)",
+    "failureCount": "Failed {{count}} / {{threshold}} times",
+    "failureHint": "({{remaining}} more failure(s) will auto-rotate)",
+    "ready": "Cooldown: ready",
+    "readyHint": "(auto-rotate after {{threshold}} failures)",
+    "fiveHour": "5h quota",
+    "fiveHourWindow": "5h",
+    "sevenDay": "7d quota",
+    "sevenDayWindow": "7d",
+    "thirtyDayWindow": "30d",
+    "monthlyWindow": "Monthly",
+    "weeklyLimitWindow": "Weekly",
+    "remaining": "left",
+    "windowResetsIn": "Resets in {{reset}}",
+    "units": {
+      "second": "s",
+      "minute": "m",
+      "hour": "h",
+      "day": "d"
+    }
+  },
+  "keyPool": {
+    "listTitle": "API Key Pool ({{count}})",
+    "listHint": "Auto-rotate in proxy mode; manage in the editor",
+    "active": "Default",
+    "unnamed": "(unnamed)",
+    "cooldown": "Cooling",
+    "disabled": "Disabled",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "setActive": "Set as default",
+    "activateLabel": "Activate now",
+    "activatedLabel": "Activated",
+    "toggleRotation": "Join rotation",
+    "rotationBlocked": "Rotation disabled for this key",
+    "rotationBlockedExhausted": "5h/7d quota exhausted",
+    "rotationBlockedCooldown": "In cooldown, rotation disabled",
+    "rotationBlockedApiInvalid": "API invalid or unresponsive, rotation disabled",
+    "dragHandle": "Drag to reorder",
+    "health": {
+      "healthy": "Healthy",
+      "degraded": "Some failures",
+      "cooling_down": "Cooling down",
+      "disabled": "Disabled"
+    }
+  },
   "firstRunNotice": {
     "title": "Welcome to CC Switch",
     "bodyDefault": "CC Switch lets you switch between multiple Claude Code / Codex / Gemini CLI providers with a single click. If you already had these tools configured, CC Switch has saved your existing setup as a provider named “default” so none of your previous configuration is lost.",
@@ -166,6 +264,7 @@
     "usageSaveFailed": "Failed to save usage query configuration",
     "geminiConfig": "Gemini Configuration",
     "geminiConfigHint": "Use .env format to configure Gemini",
+    "duplicateLiveIdsLoadFailed": "Failed to read provider IDs from config. Please fix the config first.",
     "form": {
       "gemini": {
         "model": "Model",
@@ -220,7 +319,8 @@
       "tooltip": {
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
         "inactive": "Turn on Claude Desktop local routing for providers that need model mapping or format conversion. Configured address: {{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "Another app is using routing takeover. Turn off that app's takeover in Settings before stopping local routing."
     }
   },
   "notifications": {
@@ -255,6 +355,7 @@
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
     "proxyReasonFullUrl": "has full URL connection mode enabled",
+    "proxyReasonClaudeDesktop": "uses Claude Desktop local routing mode",
     "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
     "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
@@ -1152,7 +1253,8 @@
     "fetchModelsAuthFailed": "API Key is invalid or lacks permission",
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
-    "fetchModelsTimeout": "Request timed out, please check network connection"
+    "fetchModelsTimeout": "Request timed out, please check network connection",
+    "providerKeyStatusLoading": "Loading provider ID status, please try again later"
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
@@ -1295,6 +1397,7 @@
     "autoCompactLimit": "Auto Compact Limit",
     "autoCompactLimitPlaceholder": "e.g., 90000",
     "autoCompactLimitHint": "Auto-compacts history when context reaches this token limit",
+    "noCommonConfigToApply": "Common config snippet is empty or has no applicable entries",
     "modelMetadataAdvanced": "Model Metadata Advanced Options",
     "modelMetadataAdvancedHint": "Overrides Codex metadata for unknown models; clearing a field removes the matching config.toml entry.",
     "modelMappingTitle": "Model Mapping",
@@ -1396,6 +1499,7 @@
     "preset7d": "7d",
     "preset14d": "14d",
     "preset30d": "30d",
+    "unpriced": "Unpriced",
     "totalRequests": "Total Requests",
     "totalCost": "Total Cost",
     "cost": "Cost",
@@ -1598,6 +1702,10 @@
     "organizationIdPlaceholder": "e.g. org-xxxxxx",
     "projectId": "Project ID",
     "projectIdPlaceholder": "e.g. proj-xxxxxx",
+    "minimaxGroupId": "Group ID",
+    "minimaxGroupIdHint": "MiniMax usage API requires a Group ID; without it the endpoint returns placeholder zeros (showing 0% even when you have usage).",
+    "minimaxGroupIdLink": "Find it in the MiniMax open platform under Account → Basic Information.",
+    "minimaxGroupIdUrlLabel": "Open MiniMax account page",
     "defaultPlan": "Default Plan",
     "queryFailedMessage": "Query failed",
     "queryScript": "Query script (JavaScript)",
@@ -2424,7 +2532,7 @@
     "testProvider": "Test model"
   },
   "health": {
-    "operational": "Operational",
+    "operational": "In rotation",
     "degraded": "Degraded",
     "failed": "Failed",
     "circuitOpen": "Circuit Open",
@@ -2434,14 +2542,17 @@
     "enabled": "{{app}} failover enabled",
     "disabled": "{{app}} failover disabled",
     "toggleFailed": "Operation failed: {{detail}}",
-    "inQueue": "In queue",
-    "addQueue": "Add",
+    "inRotation": "In rotation",
+    "addToRotation": "Add to rotation",
+    "disabledForOmo": "OMO providers don't participate in rotation",
+    "disabledNoRotation": "Enable failover in Settings to use rotation",
     "priority": {
       "tooltip": "Failover priority {{priority}}"
     },
     "tooltip": {
       "enabled": "{{app}} failover enabled\nRequests follow queue priority (P1→P2→...)",
-      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures"
+      "disabled": "Enable {{app}} failover\nSwitches to queue P1 immediately, then falls back on failures",
+      "takeoverRequired": "Take over {{app}} first, then enable failover"
     }
   },
   "proxy": {
@@ -2619,7 +2730,9 @@
     },
     "server": {
       "started": "Routing service started - {{address}}:{{port}}",
-      "startFailed": "Failed to start routing service: {{detail}}"
+      "startFailed": "Failed to start routing service: {{detail}}",
+      "stopped": "Routing service stopped",
+      "stopFailed": "Failed to stop routing service: {{detail}}"
     },
     "stoppedWithRestore": "Routing service stopped, all routing configs restored",
     "stopWithRestoreFailed": "Stop failed: {{detail}}"

@@ -886,6 +886,60 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn nudge_main_window_on_macos(window: tauri::WebviewWindow) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        match window.inner_size() {
+            Ok(original) => {
+                let bumped = tauri::PhysicalSize::new(
+                    original.width.saturating_add(1),
+                    original.height,
+                );
+                let _ = window.set_size(bumped);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let _ = window.set_size(original);
+                log::info!("macOS: 已对主窗口执行伪 resize 修复渲染");
+            }
+            Err(e) => {
+                log::warn!("macOS nudge: 读取 inner_size 失败，跳过伪 resize: {e}");
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "macos")]
+/// Debounce nudge：每次调用都取消上一次的定时任务并重新安排 500ms 后的
+/// nudge。这样只在用户停止拖动/缩放 500ms 后才真正触发一次伪 resize，
+/// 避免 nudge 自身的 `set_size` 触发新的 `Resized` 事件形成回调风暴。
+/// 当前未在 on_window_event 中使用（Resized 事件会被 nudge 自身反复触发），
+/// 保留供将来需要时调用。
+#[allow(dead_code)]
+static NUDGE_DEBOUNCE: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+pub fn schedule_nudge_after_resize(window: tauri::WebviewWindow) {
+    let mut guard = match NUDGE_DEBOUNCE.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+
+    // 取消上一次未执行的 nudge
+    if let Some(handle) = guard.take() {
+        handle.abort();
+    }
+
+    let handle = tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        nudge_main_window_on_macos(window);
+    });
+
+    *guard = Some(handle);
+}
+
 /// 处理托盘菜单事件
 pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {event_id}");
@@ -907,6 +961,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 #[cfg(target_os = "macos")]
                 {
                     apply_tray_policy(app, true);
+                    nudge_main_window_on_macos(window.clone());
                 }
             } else if crate::lightweight::is_lightweight_mode() {
                 if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
@@ -1102,6 +1157,9 @@ mod tests {
             resets_at: None,
             used_value_usd: None,
             max_value_usd: None,
+            used_count: None,
+            total_count: None,
+            count_unit: None,
         }
     }
 

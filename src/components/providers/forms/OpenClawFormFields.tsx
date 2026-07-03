@@ -34,7 +34,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ApiKeySection } from "./shared";
+import { ProviderKeyEditor } from "./shared";
+import type { AppId } from "@/lib/api";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -44,6 +45,9 @@ import { openclawApiProtocols } from "@/config/openclawProviderPresets";
 import type { ProviderCategory, OpenClawModel } from "@/types";
 
 interface OpenClawFormFieldsProps {
+  // Provider ID (for multi-key pool, only in edit mode)
+  providerId?: string;
+
   // Base URL
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
@@ -71,6 +75,7 @@ interface OpenClawFormFieldsProps {
 }
 
 export function OpenClawFormFields({
+  providerId,
   baseUrl,
   onBaseUrlChange,
   apiKey,
@@ -253,17 +258,18 @@ export function OpenClawFormFields({
         </p>
       </div>
 
-      {/* API Key */}
-      <ApiKeySection
-        value={apiKey}
-        onChange={onApiKeyChange}
-        // OpenClaw 的 API key 始终由用户自填，没有 OAuth-only 的免 key 官方供应商，
-        // 故不让 official 禁用输入框（与 Hermes 对齐）。
-        category={category === "official" ? undefined : category}
-        shouldShowLink={shouldShowApiKeyLink}
+{/* API Key——单/多 key 由 ProviderKeyEditor 按 providerId 内部切换 */}
+      <ProviderKeyEditor
+        appId={"openclaw" as AppId}
+        providerId={providerId ?? null}
+        shouldShowApiKey
+        shouldShowApiKeyLink={shouldShowApiKeyLink}
+        category={category}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
+        value={apiKey}
+        onChange={onApiKeyChange}
       />
 
       {/* User-Agent */}

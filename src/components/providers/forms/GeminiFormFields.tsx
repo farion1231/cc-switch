@@ -5,7 +5,8 @@ import { Download, Info, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { ProviderKeyEditor, EndpointField, ModelInputWithFetch } from "./shared";
+import type { AppId } from "@/lib/api";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -131,16 +132,19 @@ export function GeminiFormFields({
         </div>
       )}
 
-      {/* API Key 输入框 */}
-      {shouldShowApiKey && !isGoogleOfficial && (
-        <ApiKeySection
-          value={apiKey}
-          onChange={onApiKeyChange}
+      {/* API Key 输入框——单/多 key 视图由 ProviderKeyEditor 内部按 providerId 切换 */}
+      {!isGoogleOfficial && (
+        <ProviderKeyEditor
+          appId={"gemini" as AppId}
+          providerId={providerId ?? null}
+          shouldShowApiKey={shouldShowApiKey}
+          shouldShowApiKeyLink={shouldShowApiKeyLink}
           category={category}
-          shouldShowLink={shouldShowApiKeyLink}
           websiteUrl={websiteUrl}
           isPartner={isPartner}
           partnerPromotionKey={partnerPromotionKey}
+          value={apiKey}
+          onChange={onApiKeyChange}
         />
       )}
 

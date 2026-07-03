@@ -210,6 +210,11 @@ async fn handle_messages_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    // v12 多 key 池：把 forwarder 选中的 key_id 透传回 ctx，
+    // log_usage 路径里再透传到 RequestLog.api_key_id。
+    // forwarder.rs::ForwardResult.api_key_id 是 Some(key_id) 当且仅当本次走了
+    // KeyRing 轮换；None 表示 provider 自身单 key（无池化）。
+    ctx.current_key_id = result.api_key_id.take();
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -669,6 +674,11 @@ pub async fn handle_chat_completions(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    // v12 多 key 池：把 forwarder 选中的 key_id 透传回 ctx，
+    // log_usage 路径里再透传到 RequestLog.api_key_id。
+    // forwarder.rs::ForwardResult.api_key_id 是 Some(key_id) 当且仅当本次走了
+    // KeyRing 轮换；None 表示 provider 自身单 key（无池化）。
+    ctx.current_key_id = result.api_key_id.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -736,6 +746,11 @@ pub async fn handle_responses(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    // v12 多 key 池：把 forwarder 选中的 key_id 透传回 ctx，
+    // log_usage 路径里再透传到 RequestLog.api_key_id。
+    // forwarder.rs::ForwardResult.api_key_id 是 Some(key_id) 当且仅当本次走了
+    // KeyRing 轮换；None 表示 provider 自身单 key（无池化）。
+    ctx.current_key_id = result.api_key_id.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -815,6 +830,11 @@ pub async fn handle_responses_compact(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    // v12 多 key 池：把 forwarder 选中的 key_id 透传回 ctx，
+    // log_usage 路径里再透传到 RequestLog.api_key_id。
+    // forwarder.rs::ForwardResult.api_key_id 是 Some(key_id) 当且仅当本次走了
+    // KeyRing 轮换；None 表示 provider 自身单 key（无池化）。
+    ctx.current_key_id = result.api_key_id.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -1175,7 +1195,7 @@ fn codex_proxy_error_json(
     error: &ProxyError,
 ) -> Value {
     let (mut body, upstream_status) = match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             let parsed_body = body
                 .as_deref()
                 .map(|body| serde_json::from_str::<Value>(body).unwrap_or_else(|_| json!(body)));
@@ -1288,6 +1308,7 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
         ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
+        ProxyError::AllKeysRateLimited(_) => "cc_switch_all_keys_rate_limited",
         ProxyError::AllProvidersCircuitOpen => "cc_switch_all_providers_circuit_open",
         ProxyError::NoProvidersConfigured => "cc_switch_no_providers_configured",
         ProxyError::MaxRetriesExceeded => "cc_switch_max_retries_exceeded",
@@ -1391,6 +1412,11 @@ pub async fn handle_gemini(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    // v12 多 key 池：把 forwarder 选中的 key_id 透传回 ctx，
+    // log_usage 路径里再透传到 RequestLog.api_key_id。
+    // forwarder.rs::ForwardResult.api_key_id 是 Some(key_id) 当且仅当本次走了
+    // KeyRing 轮换；None 表示 provider 自身单 key（无池化）。
+    ctx.current_key_id = result.api_key_id.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -2036,6 +2062,7 @@ async fn log_usage(
         session_id,
         None, // provider_type
         is_streaming,
+        None, // api_key_id（v12 Phase 6 forwarder 会接进来；现在都是 None）
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
@@ -2682,6 +2709,7 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
                 r#"{"base_resp":{"status_code":2013,"status_msg":"upstream gateway failed"}}"#
                     .to_string(),
             ),
+            retry_after_secs: None,
         };
         let body = codex_proxy_error_json("MiniMax", "abab6.5s", "/responses", &error);
 
@@ -2704,6 +2732,7 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
                  <hr><center>nginx/1.29.6</center>\r\n</body>\r\n</html>"
                     .to_string(),
             ),
+            retry_after_secs: None,
         };
         let body = codex_proxy_error_json("HCAI", "gpt-5.5", "/responses", &error);
 

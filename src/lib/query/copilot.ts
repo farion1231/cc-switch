@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import type { QuotaTier } from "@/types/subscription";
 
-const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const REFETCH_INTERVAL = 1 * 60 * 1000; // 1 minute
 
 export interface CopilotQuota {
   success: boolean;

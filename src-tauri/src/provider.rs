@@ -206,7 +206,58 @@ impl Provider {
         // and `{{baseUrl}}/path` concatenation never produces a double slash.
         (base_url.trim_end_matches('/').to_string(), api_key)
     }
+
+    /// 写入 API Key 到当前 `settings_config` 的正确位置——多 key 池里切换
+    /// active key 时调用，让 `write_live_with_common_config` 把新 key
+    /// 写到 settings.json。
+    ///
+    /// 写入位置与 `resolve_usage_credentials` 读取位置严格对称。
+    /// app_type 由调用方提供（Provider 自身不存 app_type 字段）。
+    pub fn set_api_key(&mut self, new_key: &str, app_type: &crate::app_config::AppType) {
+        let settings = &mut self.settings_config;
+        // 单一真理来源：`AppType::api_key_settings_path()` 决定写哪组字段。
+        // 第一个存在的字段会被更新；都不存在时创建第一个。
+        // 这与 `resolve_usage_credentials` 读取路径顺序对称——避免读/写在不同位置。
+        let paths = app_type.api_key_settings_path();
+        let root = settings
+            .as_object_mut()
+            .expect("settings_config 必须是 object");
+        for (parent, child) in paths.iter() {
+            // 进入父级 object（不存在就创建空 object）
+            let entry = root
+                .entry(parent.to_string())
+                .or_insert_with(|| Value::Object(Default::default()));
+            let parent_obj = match entry.as_object_mut() {
+                Some(o) => o,
+                None => {
+                    // 父级不是 object（例如之前是字符串）——覆盖为新 object。
+                    *entry = Value::Object(Default::default());
+                    entry.as_object_mut().expect("刚刚插入")
+                }
+            };
+            // 任何 path 里的字段已存在 → 在该 path 写入
+            if parent_obj.contains_key(*child) {
+                parent_obj.insert(child.to_string(), Value::String(new_key.to_string()));
+                return;
+            }
+        }
+        // 所有 path 都不存在：写入第一个 path（preferred 默认）
+        let (parent, child) = paths[0];
+        let entry = root
+            .entry(parent.to_string())
+            .or_insert_with(|| Value::Object(Default::default()));
+        let parent_obj = match entry.as_object_mut() {
+            Some(o) => o,
+            None => {
+                *entry = Value::Object(Default::default());
+                entry.as_object_mut().expect("刚刚插入")
+            }
+        };
+        parent_obj.insert(child.to_string(), Value::String(new_key.to_string()));
+    }
 }
+
+
 
 /// 供应商管理器
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -267,6 +318,11 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "teamProjectId")]
     pub team_project_id: Option<String>,
+    /// MiniMax Coding Plan 集团 ID（必填项，缺省时接口返回占位零值导致误显示 0%）。
+    /// 在 MiniMax 开放平台「账户管理 → 账户信息 → 基本信息」获取。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "groupId")]
+    pub group_id: Option<String>,
 }
 
 /// 用量数据

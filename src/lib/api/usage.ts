@@ -23,6 +23,55 @@ export const usageApi = {
     return invoke("queryProviderUsage", { providerId, app: appId });
   },
 
+  /**
+   * Per-key usage query: same `usage_script` as `query()`, but the
+   * `api_key` is read from the specific row in `provider_api_keys`.
+   * Lets the editor show each key's quota independently — the legacy
+   * provider-level query only reflects the *active* key.
+   *
+   * Backend returns `Ok(UsageResult { success: false, .. })` for
+   * disabled / mismatched keys, and `Err(String)` for transport / DB
+   * failures — same shape as `query()`.
+   */
+  queryForKey: async (
+    providerId: string,
+    keyId: string,
+    appId: AppId,
+  ): Promise<UsageResult> => {
+    return invoke("queryProviderUsageForKey", {
+      providerId,
+      keyId,
+      app: appId,
+    });
+  },
+
+  /**
+   * Proactive rotation：通知 KeyRing 把这把 key 提前送进 cooldown。
+   * 由 `useKeyUsageQuery` 的 onSuccess 副作用触发——当某把 key 的
+   * `usage_percent >= 90%` 时调用。返回 `true` 表示 KeyRing 应用了
+   * cooldown；`false` 表示用量还在安全区、KeyRing 不动。
+   *
+   * **Fire-and-forget**：调用方不 await，UI 不会因 backend 错误
+   * 而崩溃——命令侧把异常全部 swallow 成 `Ok(false)`。
+   */
+  markKeyUsageHigh: async (
+    keyId: string,
+    usagePercent: number,
+    resetAtUnix: number,
+  ): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("cmd_mark_key_usage_high", {
+        keyId,
+        usagePercent,
+        resetAt: resetAtUnix,
+      });
+    } catch {
+      // KeyRing 未加载 / proxy 未运行 / 其它 backend 错误——静默失败，
+      // 不影响 autoQuery 的后续轮询周期。
+      return false;
+    }
+  },
+
   testScript: async (
     providerId: string,
     appId: AppId,

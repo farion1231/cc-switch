@@ -33,10 +33,16 @@ use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// 5xx/timeout 这类「非限流」失败时给 key 设的短冷却——避免同一 key 在
+/// 短时间内被反复打。reap_expired_cooldowns 在 30s tick 会清掉这个冷却。
+/// 选 30s 与限流路径的最小冷却对齐：限流至少 30s，5xx 也至少 30s，
+/// 下次请求有机会自动回到这把 key（如果上游恢复了的话）。
+const KEY_FAILURE_COOLDOWN_SECS: u64 = 30;
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -47,7 +53,11 @@ pub struct ForwardResult {
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
-    /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
+    /// 本次请求实际用到的 KeyRing key_id（v12 多 key 池引入）。
+    /// None 表示走 provider 自身 settings_config 里的 key（非池化或池为空）。
+    /// usage 日志路径里把这个值塞进 `RequestLog.api_key_id`，让 per-key 用量统计生效。
+    pub api_key_id: Option<String>,
+    /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform,
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
 }
@@ -118,6 +128,12 @@ pub struct RequestForwarder {
     optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 共享 KeyRing——forwarder 用它做限流后 key 轮换。
+    /// 进程内只读视图：mark_* 立即生效，flush_dirty 由 ProxyService 调度。
+    key_ring: Arc<crate::proxy::providers::key_ring::KeyRing>,
+    /// 单个 provider 内最多尝试的 key 数。
+    /// 来自 AppProxyConfig.max_key_attempts；0 表示禁用轮换（永远用 1 把 key）。
+    max_key_attempts: u32,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
@@ -194,6 +210,8 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        key_ring: Arc<crate::proxy::providers::key_ring::KeyRing>,
+        max_key_attempts: u32,
         max_retries: u32,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
@@ -213,6 +231,8 @@ impl RequestForwarder {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            key_ring,
+            max_key_attempts,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
@@ -390,17 +410,44 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
+        // 记录每把 key 在本次请求中的失败次数；key_id → count。
+        // 超过 max_key_attempts 时把这把 key 标记成长冷却 + 轮换到下一把。
+        // 旧的（provider 级计数）会让两把 key 各失败一次就被判「轮换耗尽」
+        // ——用户在「1 把 key 失败 3 次才轮换」的语义下得不到期望行为。
+        let mut key_failures: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
         let bypass_circuit_breaker = providers.len() == 1;
 
-        // 依次尝试每个供应商
-        for provider in providers.iter() {
+        // 用 `provider_iter` + 手动 loop 而非 `for provider in providers.iter()`——
+        // 关键轮换需要在同一 provider 上重试（不改 provider、只换 key），而 `for` 的
+        // `continue` 会直接跳到下一个 provider，永远轮换不生效。手写 loop 让
+        // rotation 分支 `continue` 重跑本 provider 的 body，advance_iter 时
+        // 才真正换 provider。
+        let mut provider_iter = providers.iter().peekable();
+        // 'rotate 是 key-failover 内层 loop 的标签——rotation 'continue 'rotate'
+        // 重试同一 provider + 新 key；'break 'rotate 让外层 while 推进下一家。
+        while let Some(provider) = provider_iter.next() {
+            'rotate: loop {
             // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            // KeyRing 选中的 API key 字符串。None = 走 provider 自身 key（即不轮换）。
+            // 由限流/配额触发轮换时更新；整流/媒体重试沿用同一把 key。
+            //
+            // 初始化：从 DB 取该 provider 的 active key，把 api_key 也带过来。
+            // 这是 Blocker #3 的修复：之前 current_key_id 一律 None，
+            // 第一次 429 的 `if let Some(key_id)` 早返回，**原始 key 永远没被打 mark**。
+            // 初始化后，第一次 429 能正确把当前 active key 标为冷却并轮换。
+            let mut current_key_override: Option<String> = None;
+            let mut current_key_id: Option<String> = None;
+            if let Some(active) = self.key_ring.active_key(&provider.id, app_type).await {
+                current_key_override = Some(active.api_key.clone());
+                current_key_id = Some(active.key_id.clone());
+            }
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -426,7 +473,8 @@ impl RequestForwarder {
             };
 
             if !allowed {
-                continue;
+                // 熔断器拒绝——跳到下一家 provider
+                break 'rotate;
             }
 
             // PRE-SEND 优化器：每个 provider 独立决定是否优化
@@ -459,24 +507,36 @@ impl RequestForwarder {
             }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
-            match self
+            // api_key_override 来自 KeyRing 轮换：首次为 None（走 provider 自身 key），
+            // 限流/配额命中后取下一把 key 重试。
+            let api_key_override: Option<&str> = current_key_override.as_deref();
+            let forward_result = self
                 .forward(
                     app_type,
                     &method,
                     provider,
+                    api_key_override,
                     endpoint,
                     &provider_body,
                     &headers,
                     &extensions,
                     adapter.as_ref(),
                 )
-                .await
-            {
+                .await;
+            match forward_result {
                 Ok((response, claude_api_format, outbound_model)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
                         .await;
+
+                    // 成功路径同时清空当前 key 的 failure_count + cooldown。
+                    // 这是"成功 = key 恢复"的语义——之前 mark_success 是死代码，
+                    // 任何 key 限流后只能等 30s 冷却窗口过才被 next_key 重新选中。
+                    // 现在 key 走完 30s 冷却后如果成功请求到达，立刻被认可。
+                    if let Some(ref key_id) = current_key_id {
+                        self.key_ring.mark_success(key_id).await;
+                    }
 
                     // 更新当前应用类型使用的 provider
                     {
@@ -521,6 +581,7 @@ impl RequestForwarder {
                         provider: provider.clone(),
                         claude_api_format,
                         outbound_model,
+                        api_key_id: current_key_id.clone(),
                         connection_guard: None,
                     });
                 }
@@ -563,6 +624,7 @@ impl RequestForwarder {
                                     app_type,
                                     &method,
                                     provider,
+                                    current_key_override.as_deref(),
                                     endpoint,
                                     &media_body,
                                     &headers,
@@ -624,6 +686,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        api_key_id: current_key_id.clone(),
                                         connection_guard: None,
                                     });
                                 }
@@ -645,7 +708,8 @@ impl RequestForwarder {
                                     {
                                         return Err(err);
                                     }
-                                    continue;
+                                    // 同 provider + 同 key 重试一次（整流器反应式重试）
+                                    continue 'rotate;
                                 }
                             }
                         }
@@ -709,6 +773,7 @@ impl RequestForwarder {
                                         app_type,
                                         &method,
                                         provider,
+                                        current_key_override.as_deref(),
                                         endpoint,
                                         &provider_body,
                                         &headers,
@@ -773,6 +838,7 @@ impl RequestForwarder {
                                             provider: provider.clone(),
                                             claude_api_format,
                                             outbound_model,
+                                            api_key_id: current_key_id.clone(),
                                             connection_guard: None,
                                         });
                                     }
@@ -794,7 +860,8 @@ impl RequestForwarder {
                                         {
                                             return Err(err);
                                         }
-                                        continue;
+                                        // 同 provider + 同 key 重试一次
+                                        continue 'rotate;
                                     }
                                 }
                             }
@@ -875,6 +942,7 @@ impl RequestForwarder {
                                     app_type,
                                     &method,
                                     provider,
+                                    current_key_override.as_deref(),
                                     endpoint,
                                     &provider_body,
                                     &headers,
@@ -933,6 +1001,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        api_key_id: current_key_id.clone(),
                                         connection_guard: None,
                                     });
                                 }
@@ -954,7 +1023,8 @@ impl RequestForwarder {
                                     {
                                         return Err(err);
                                     }
-                                    continue;
+                                    // 同 provider + 同 key 重试一次（整流器反应式重试）
+                                    continue 'rotate;
                                 }
                             }
                         }
@@ -989,17 +1059,237 @@ impl RequestForwarder {
 
                     match category {
                         ErrorCategory::Retryable => {
-                            // 可重试：真正的 provider 故障 → 记录失败并更新熔断器/DB 健康度
-                            let _ = self
-                                .router
-                                .record_result(
-                                    &provider.id,
+                            // ============ KeyRing 轮换分支 ============
+                            // 仅当上游错误被分类为「限流/配额信号」时，触发 key 轮换；
+                            // 其它可重试错误（5xx/timeout）走下面的 `record_result(false)`
+                            // 路径，标记熔断器失败 + 切下家。
+                            //
+                            // 关键不变量：if let 块内的两个出口 `continue 'rotate`
+                            // （轮换成功）和 `break 'rotate`（轮换耗尽）都会跳离此块——
+                            // 不会 fall through 到下面的 5xx/timeout 分支，
+                            // 也就不会把"429 由 key 限流"误计为 provider 自身熔断失败。
+                            // 下方代码仅在 `classify_limit_signal` 返回 `None` 时执行。
+                            if let Some(signal) = super::limit_signal::classify_limit_signal(&e, None)
+                            {
+                                // 「一把 key 失败 N 次才轮换」语义：key_failures 是
+                                // 本次请求内 key_id → 失败次数。失败未到阈值时
+                                // 不轮换，直接同 key 重试（'rotate continue）——
+                                // 这是用户期望的「同一 key 试 N 次再换」行为；
+                                // 旧的 provider 级计数让两把 key 各失败一次就被
+                                // 判「轮换耗尽」，跟用户语义不符。
+                                //
+                                // `max_key_attempts` 在 DB 默认是 3（参见 dao/proxy.rs:263），
+                                // 0 = 显式禁用 key 轮换（永远走当前 key，不轮换），
+                                // 与 forwarder 字段 docstring 一致。
+                                let current_key_id_for_failures = current_key_id.clone();
+                                let failure_count = if let Some(kid) = &current_key_id_for_failures {
+                                    *key_failures.entry(kid.clone()).and_modify(|c| *c += 1).or_insert(1)
+                                } else {
+                                    // 没有 key_id（用 provider 自身 key）——一次就当耗尽，
+                                    // 不能在 KeyRing 里 rotate（无 pool）。
+                                    u32::MAX
+                                };
+
+                                // 已经超过这把 key 的阈值 → 把它放进 cooldown + 轮换
+                                let should_rotate_now = self.max_key_attempts > 0
+                                    && failure_count >= self.max_key_attempts
+                                    && current_key_id.is_some();
+
+                                if should_rotate_now {
+                                    let kid = current_key_id.as_ref().unwrap();
+                                    self.key_ring
+                                        .mark_rate_limited(
+                                            kid,
+                                            signal.retry_after_secs,
+                                        )
+                                        .await;
+
+                                    // 5h / 7d 这种「真配额窗口」冷却命中时，
+                                    // 通知前端刷新该 provider 的 apiKeys 缓存。
+                                    const QUOTA_REFRESH_THRESHOLD_SECS: i64 = 5 * 60;
+                                    const KEY_MIN_COOLDOWN_SECS: i64 = 30;
+                                    let cooldown_secs =
+                                        signal.retry_after_secs.unwrap_or(0) as i64;
+                                    let cooldown_secs =
+                                        cooldown_secs.max(KEY_MIN_COOLDOWN_SECS);
+                                    if cooldown_secs >= QUOTA_REFRESH_THRESHOLD_SECS {
+                                        if let Some(app) = self.app_handle.as_ref() {
+                                            let event = serde_json::json!({
+                                                "appType": app_type_str,
+                                                "providerId": provider.id,
+                                                "keyId": kid,
+                                                "reason": signal.reason,
+                                                "cooldownUntil":
+                                                    chrono::Utc::now().timestamp()
+                                                        + cooldown_secs,
+                                            });
+                                            if let Err(e) = app.emit("key-rate-limited", event) {
+                                                log::warn!(
+                                                    "[{app_type_str}] 发射 key-rate-limited 事件失败: {e}"
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(next) =
+                                        self.key_ring.next_key(&provider.id, app_type).await
+                                    {
+                                        log::warn!(
+                                            "[{app_type_str}] [KeyRotate] provider={} key_failures={}/{} reason={} cooldown={}s key={}→{}",
+                                            provider.id,
+                                            failure_count,
+                                            self.max_key_attempts,
+                                            signal.reason,
+                                            signal.retry_after_secs.unwrap_or(0),
+                                            kid,
+                                            next.key_id,
+                                        );
+                                        current_key_override = Some(next.api_key.clone());
+                                        current_key_id = Some(next.key_id.clone());
+                                        self.router
+                                            .release_permit_neutral(
+                                                &provider.id,
+                                                app_type_str,
+                                                used_half_open_permit,
+                                            )
+                                            .await;
+                                        let _ = (&current_key_override, &current_key_id);
+                                        continue 'rotate;
+                                    }
+                                    // 池里没有别的可用 key 了（全部进 cooldown）→
+                                    // provider 整体不可用，强制走下家。
+                                    log::warn!(
+                                        "[{app_type_str}] [KeyRotate] provider={} all keys exhausted after {} failures on key {:?}",
+                                        provider.id,
+                                        failure_count,
+                                        current_key_id_for_failures,
+                                    );
+                                    last_error = Some(ProxyError::AllKeysRateLimited(provider.id.clone()));
+                                    last_provider = Some(provider.clone());
+                                    self.router
+                                        .release_permit_neutral(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
+                                    break 'rotate;
+                                } else {
+                                    // 还没到这把 key 的阈值——同 key 重试。
+                                    // 不 mark rate_limited（避免短暂冷却干扰重试节奏），
+                                    // 把 attempt 计数更新到 key_failures，下一次迭代再判断。
+                                    self.router
+                                        .release_permit_neutral(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
+                                    let _ = (&current_key_override, &current_key_id);
+                                    log::warn!(
+                                        "[{app_type_str}] [KeyRetry] provider={} key={:?} failures={}/{} same-key retry",
+                                        app_type_str,
+                                        current_key_id_for_failures,
+                                        failure_count,
+                                        self.max_key_attempts,
+                                    );
+                                    continue 'rotate;
+                                }
+                            }
+                            // 5xx/timeout（非限流信号）走 key 重试/轮换路径——
+                            // 失败计数以 key_id 为键（与限流路径共用 key_failures），
+                            // 未到阈值同 key 重试，达到阈值才送进 cooldown + 轮换。
+                            // mark_rate_limited 与 mark_failure 由下面的旋转分支决定是否触发。
+                            // 这里只记一次内联调用：防止读后修改竞态，但实际写库留
+                            // 给专门分支处理。
+                            //
+                            // 5xx 暂不计入 provider 熔断器失败——这把 key 是问题源，
+                            // 但 provider 池里可能还有别的可用 key。失败打点推迟到
+                            // 下面「轮换耗尽」分支统一处理，避免单把坏 key 把整家
+                            // provider 打掉熔断器。
+
+                            // 5xx 失败计数（per-key，与限流路径一致）：
+                            // 未到阈值时同 key 重试，达到阈值才把它送进 cooldown + 轮换。
+                            let current_key_id_for_failures = current_key_id.clone();
+                            let failure_count_5xx =
+                                if let Some(kid) = &current_key_id_for_failures {
+                                    *key_failures.entry(kid.clone()).and_modify(|c| *c += 1).or_insert(1)
+                                } else {
+                                    u32::MAX
+                                };
+
+                            let should_rotate_5xx = self.max_key_attempts > 0
+                                && failure_count_5xx >= self.max_key_attempts
+                                && current_key_id.is_some();
+
+                            if should_rotate_5xx {
+                                let kid = current_key_id.as_ref().unwrap();
+                                self.key_ring
+                                    .mark_rate_limited(
+                                        kid,
+                                        Some(KEY_FAILURE_COOLDOWN_SECS),
+                                    )
+                                    .await;
+                                self.key_ring.mark_failure(kid, &e.to_string()).await;
+
+                                if let Some(next) =
+                                    self.key_ring.next_key(&provider.id, app_type).await
+                                {
+                                    if Some(&next.key_id) == current_key_id.as_ref() {
+                                        log::warn!(
+                                            "[{app_type_str}] [KeyRotate] provider={} 5xx 后无其他可用 key (pool exhausted or cursor stuck)",
+                                            provider.id,
+                                        );
+                                        last_error = Some(e);
+                                        last_provider = Some(provider.clone());
+                                        break 'rotate;
+                                    }
+                                    log::warn!(
+                                        "[{app_type_str}] [KeyRotate] provider={} key_failures={}/{} reason=5xx key={}→{}",
+                                        provider.id,
+                                        failure_count_5xx,
+                                        self.max_key_attempts,
+                                        kid,
+                                        next.key_id,
+                                    );
+                                    current_key_override = Some(next.api_key.clone());
+                                    current_key_id = Some(next.key_id.clone());
+                                    self.router
+                                        .release_permit_neutral(
+                                            &provider.id,
+                                            app_type_str,
+                                            used_half_open_permit,
+                                        )
+                                        .await;
+                                    let _ = (&current_key_override, &current_key_id);
+                                    continue 'rotate;
+                                }
+                            } else {
+                                // 没到这把 key 的阈值——同 key 重试。
+                                self.router
+                                    .release_permit_neutral(
+                                        &provider.id,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                    )
+                                    .await;
+                                if let Some(ref kid) = current_key_id {
+                                    // mark_failure 仍然累加 failure_count（UI 用），
+                                    // 但暂不进 cooldown——避免短暂冻结干扰重试节奏。
+                                    self.key_ring.mark_failure(kid, &e.to_string()).await;
+                                }
+                                let _ = (&current_key_override, &current_key_id);
+                                log::warn!(
+                                    "[{app_type_str}] [KeyRetry] provider={} key={:?} failures={}/{} same-key retry (5xx)",
                                     app_type_str,
-                                    used_half_open_permit,
-                                    false,
-                                    Some(e.to_string()),
-                                )
-                                .await;
+                                    current_key_id_for_failures,
+                                    failure_count_5xx,
+                                    self.max_key_attempts,
+                                );
+                                continue 'rotate;
+                            }
+
+                            // 轮换耗尽（max_key_attempts 达上限或 KeyRing 返回 None）
 
                             {
                                 let mut status = self.status.write().await;
@@ -1015,10 +1305,26 @@ impl RequestForwarder {
                             );
                             log::warn!("[{app_type_str}] [{log_code}] {log_message}");
 
+                            // KeyRing 轮换耗尽（max_key_attempts 达上限或 next_key 返回 None）
+                            // —— 整家 provider 真的不行了，记入熔断器失败。
+                            // 之前把这条 call_result 放在每次 5xx 都触发，单把坏 key
+                            // 就能把整家 provider 打掉，与「先 key 轮换、再 provider
+                            // 轮换」的优先级策略相悖。
+                            let _ = self
+                                .router
+                                .record_result(
+                                    &provider.id,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                    false,
+                                    Some(e.to_string()),
+                                )
+                                .await;
+
                             last_error = Some(e);
                             last_provider = Some(provider.clone());
-                            // 继续尝试下一个供应商
-                            continue;
+                            // 5xx/timeout 不可轮换——break 出 'rotate 推进下一家 provider
+                            break 'rotate;
                         }
                         ErrorCategory::NonRetryable | ErrorCategory::ClientAbort => {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
@@ -1047,7 +1353,8 @@ impl RequestForwarder {
                     }
                 }
             }
-        }
+            } // end 'rotate loop
+        } // end 'per_provider while loop
 
         if attempted_providers == 0 {
             // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
@@ -1099,23 +1406,40 @@ impl RequestForwarder {
         app_type: &AppType,
         method: &http::Method,
         provider: &Provider,
+        api_key_override: Option<&str>,
         endpoint: &str,
         body: &Value,
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
-        // 使用适配器提取 base_url
-        let mut base_url = adapter.extract_base_url(provider)?;
+        // KeyRing 轮换：把当前选中的 key 注入到 provider.settings_config
+        // 临时覆盖 auth 字段。None 走 provider 自身配置（不修改）。
+        let effective_provider = if let Some(api_key) = api_key_override {
+            // inject_key_into_provider 可能在未知 adapter 上返回 None——
+            // 此时退回到原 provider（仍走 settings_config 里的占位 key，
+            // 会得到原版 401，但至少不会让请求路径 panic）。
+            super::providers::adapter::inject_key_into_provider(
+                provider,
+                api_key,
+                adapter.name(),
+            )
+            .unwrap_or_else(|| provider.clone())
+        } else {
+            provider.clone()
+        };
 
-        let is_full_url = provider
+        // 使用适配器提取 base_url
+        let mut base_url = adapter.extract_base_url(&effective_provider)?;
+
+        let is_full_url = effective_provider
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
             .unwrap_or(false);
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
-        let is_copilot = provider
+        let is_copilot = effective_provider
             .meta
             .as_ref()
             .and_then(|m| m.provider_type.as_deref())
@@ -1126,11 +1450,11 @@ impl RequestForwarder {
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+            crate::claude_desktop_config::map_proxy_request_model(body.clone(), &effective_provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
             let (mapped_body, _original_model, _mapped_model) =
-                super::model_mapper::apply_model_mapping(body.clone(), provider);
+                super::model_mapper::apply_model_mapping(body.clone(), &effective_provider);
             mapped_body
         };
 
@@ -1140,7 +1464,7 @@ impl RequestForwarder {
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
-            self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
+            self.apply_copilot_live_model_resolution(&effective_provider, &mut mapped_body)
                 .await;
         } else {
             mapped_body =
@@ -1428,7 +1752,9 @@ impl RequestForwarder {
         let mut should_send_codex_oauth_session_headers = false;
 
         // 获取认证头（提前准备，用于内联替换）
-        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+        // 注意：必须用 effective_provider（key 注入后的版本），否则 settings_config
+        // 里的 env.ANTHROPIC_AUTH_TOKEN 仍是占位值，注入的 api_key 不会生效。
+        let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(&effective_provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -1969,7 +2295,15 @@ impl RequestForwarder {
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
             // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
             // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
-            let encoding = get_content_encoding(response.headers());
+            // 注：response.headers() 与 response.bytes() 互斥（bytes() 会消耗
+            // response），先 clone headers 备用——既给 Retry-After 解析用，
+            // 也给 content-encoding 检测用。
+            let headers = response.headers().clone();
+            let encoding = get_content_encoding(&headers);
+            // 在构造 UpstreamError 前预解析 Retry-After 头，让限流分类器
+            // 在没有 `HeaderMap` 的下游（KeyRing / limit_signal）也能拿到
+            // 冷却时长。
+            let retry_after_secs = super::limit_signal::extract_retry_after_secs(&headers);
             let raw = response.bytes().await?;
             let decoded = match encoding {
                 Some(encoding) => match decompress_body(&encoding, &raw) {
@@ -1984,6 +2318,7 @@ impl RequestForwarder {
             Err(ProxyError::UpstreamError {
                 status: status_code,
                 body: body_text,
+                retry_after_secs,
             })
         }
     }
@@ -2260,7 +2595,7 @@ fn build_terminal_failure_log(
 
 fn summarize_proxy_error(error: &ProxyError) -> String {
     match error {
-        ProxyError::UpstreamError { status, body } => {
+        ProxyError::UpstreamError { status, body, .. } => {
             let body_summary = body
                 .as_deref()
                 .map(summarize_upstream_body)
@@ -2841,6 +3176,8 @@ mod tests {
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
+            key_ring: Arc::new(crate::proxy::providers::key_ring::KeyRing::new()),
+            max_key_attempts: 0,
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
@@ -2852,6 +3189,7 @@ mod tests {
         let error = ProxyError::UpstreamError {
             status: 429,
             body: Some(r#"{"error":{"message":"rate limit exceeded"}}"#.to_string()),
+            retry_after_secs: None,
         };
 
         let (code, message) = build_retryable_failure_log("PackyCode-response", 1, 1, &error);
@@ -3677,6 +4015,7 @@ mod tests {
             body: Some(
                 r#"{"error":{"message":"This model does not support image input"}}"#.to_string(),
             ),
+            retry_after_secs: None,
         }
     }
     #[test]
@@ -3768,6 +4107,7 @@ mod tests {
                 r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
                     .to_string(),
             ),
+            retry_after_secs: None,
         };
 
         assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
