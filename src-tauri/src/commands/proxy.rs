@@ -3,6 +3,7 @@
 //! 提供前端调用的 API 接口
 
 use crate::error::AppError;
+use crate::provider::{ModelRoute, ModelRouteInput};
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
@@ -144,6 +145,53 @@ pub async fn update_proxy_config_for_app(
         .proxy_service
         .update_circuit_breaker_config_for_app(&app_type, circuit_config)
         .await
+}
+
+// ==================== Model Route Config ====================
+
+#[tauri::command]
+pub async fn get_model_routes(
+    state: tauri::State<'_, AppState>,
+    app_type: String,
+) -> Result<Vec<ModelRoute>, String> {
+    state
+        .db
+        .get_model_routes(&app_type)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_model_route(
+    state: tauri::State<'_, AppState>,
+    route: ModelRouteInput,
+) -> Result<ModelRoute, String> {
+    state
+        .db
+        .create_model_route(route)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_model_route(
+    state: tauri::State<'_, AppState>,
+    route_id: String,
+    route: ModelRouteInput,
+) -> Result<ModelRoute, String> {
+    state
+        .db
+        .update_model_route(&route_id, route)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_model_route(
+    state: tauri::State<'_, AppState>,
+    route_id: String,
+) -> Result<bool, String> {
+    state
+        .db
+        .delete_model_route(&route_id)
+        .map_err(|e| e.to_string())
 }
 
 async fn get_default_cost_multiplier_internal(

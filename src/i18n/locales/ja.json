@@ -2579,7 +2579,26 @@
       "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
     },
     "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
-    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"
+    "stopWithRestoreFailed": "停止に失敗しました: {{detail}}",
+    "modelRoutes": {
+      "title": "モデルルート",
+      "description": "Claude Code リクエストの model フィールドに応じて既存 Provider を選択します。未一致のモデルは既定ルートを使います。",
+      "pattern": "Pattern",
+      "provider": "Provider",
+      "priority": "Priority",
+      "enabled": "Enabled",
+      "selectProvider": "Provider を選択",
+      "conflict": "Pattern と Priority は有効なルート間で重複できません。",
+      "empty": "モデルルートはまだありません。ルールを追加すると、一致したモデルが指定 Provider に送られます。",
+      "toast": {
+        "created": "モデルルートを作成しました",
+        "createFailed": "モデルルートの作成に失敗しました: {{error}}",
+        "updated": "モデルルートを更新しました",
+        "updateFailed": "モデルルートの更新に失敗しました: {{error}}",
+        "deleted": "モデルルートを削除しました",
+        "deleteFailed": "モデルルートの削除に失敗しました: {{error}}"
+      }
+    }
   },
   "streamCheck": {
     "reachable": "{{providerName}} は接続可能 ({{responseTimeMs}}ms)",

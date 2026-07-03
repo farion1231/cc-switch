@@ -2,7 +2,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { proxyApi } from "@/lib/api/proxy";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import type { GlobalProxyConfig, AppProxyConfig } from "@/types/proxy";
+import type {
+  GlobalProxyConfig,
+  AppProxyConfig,
+  ModelRouteInput,
+} from "@/types/proxy";
 
 // ========== 代理服务器状态 Hooks ==========
 
@@ -237,6 +241,102 @@ export function useUpdateAppProxyConfig() {
     onError: (error: Error) => {
       toast.error(
         t("proxy.settings.toast.saveFailed", { error: error.message }),
+      );
+    },
+  });
+}
+
+export function useModelRoutes(appType: string) {
+  return useQuery({
+    queryKey: ["modelRoutes", appType],
+    queryFn: () => proxyApi.getModelRoutes(appType),
+    enabled: !!appType,
+  });
+}
+
+export function useCreateModelRoute() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: (route: ModelRouteInput) => proxyApi.createModelRoute(route),
+    onSuccess: (_, route) => {
+      toast.success(
+        t("proxy.modelRoutes.toast.created", {
+          defaultValue: "模型路由已创建",
+        }),
+        { closeButton: true },
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["modelRoutes", route.appType],
+      });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("proxy.modelRoutes.toast.createFailed", {
+          error: error.message,
+          defaultValue: "创建模型路由失败: {{error}}",
+        }),
+      );
+    },
+  });
+}
+
+export function useUpdateModelRoute() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: ({
+      routeId,
+      route,
+    }: {
+      routeId: string;
+      route: ModelRouteInput;
+    }) => proxyApi.updateModelRoute(routeId, route),
+    onSuccess: (_, variables) => {
+      toast.success(
+        t("proxy.modelRoutes.toast.updated", {
+          defaultValue: "模型路由已更新",
+        }),
+        { closeButton: true },
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["modelRoutes", variables.route.appType],
+      });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("proxy.modelRoutes.toast.updateFailed", {
+          error: error.message,
+          defaultValue: "更新模型路由失败: {{error}}",
+        }),
+      );
+    },
+  });
+}
+
+export function useDeleteModelRoute(appType: string) {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: (routeId: string) => proxyApi.deleteModelRoute(routeId),
+    onSuccess: () => {
+      toast.success(
+        t("proxy.modelRoutes.toast.deleted", {
+          defaultValue: "模型路由已删除",
+        }),
+        { closeButton: true },
+      );
+      queryClient.invalidateQueries({ queryKey: ["modelRoutes", appType] });
+    },
+    onError: (error: Error) => {
+      toast.error(
+        t("proxy.modelRoutes.toast.deleteFailed", {
+          error: error.message,
+          defaultValue: "删除模型路由失败: {{error}}",
+        }),
       );
     },
   });

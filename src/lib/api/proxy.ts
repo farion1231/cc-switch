@@ -6,6 +6,8 @@ import type {
   ProxyTakeoverStatus,
   GlobalProxyConfig,
   AppProxyConfig,
+  ModelRoute,
+  ModelRouteInput,
 } from "@/types/proxy";
 
 export const proxyApi = {
@@ -91,6 +93,27 @@ export const proxyApi = {
   // 更新指定应用的代理配置
   async updateProxyConfigForApp(config: AppProxyConfig): Promise<void> {
     return invoke("update_proxy_config_for_app", { config });
+  },
+
+  // ========== 模型路由 API ==========
+
+  async getModelRoutes(appType: string): Promise<ModelRoute[]> {
+    return invoke("get_model_routes", { appType });
+  },
+
+  async createModelRoute(route: ModelRouteInput): Promise<ModelRoute> {
+    return invoke("create_model_route", { route });
+  },
+
+  async updateModelRoute(
+    routeId: string,
+    route: ModelRouteInput,
+  ): Promise<ModelRoute> {
+    return invoke("update_model_route", { routeId, route });
+  },
+
+  async deleteModelRoute(routeId: string): Promise<boolean> {
+    return invoke("delete_model_route", { routeId });
   },
 
   // ========== 计费默认配置 API ==========
