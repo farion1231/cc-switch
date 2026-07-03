@@ -877,7 +877,9 @@ pub fn copy_provider_to_apps(
     // 从源供应商提取凭证（base_url + api_key），这是跨应用转换的中间表示
     let (base_url, api_key) = source_provider.resolve_usage_credentials(&source_app_type);
 
-    if base_url.is_empty() && api_key.is_empty() {
+    // OAuth/托管认证（GitHub Copilot、Codex OAuth 等）的凭证是 OAuth token 而非 API Key，
+    // 无法跨应用复制；同时也要拒绝无法提取 API Key 的源（如仅有 base_url 的托管供应商）。
+    if source_provider.uses_managed_account_auth() || api_key.is_empty() {
         return Err(format!(
             "无法从源供应商提取 API Key 和 Base URL，可能是官方/OAuth 供应商，不支持跨应用复制"
         ));
@@ -960,10 +962,15 @@ fn build_converted_provider(
             api_key.to_string(),
         );
 
-        // 当目标是 Claude 时，保留源的 API 格式信息。
-        // 否则 Codex/OpenCode 等 OpenAI 兼容源会被 to_claude_provider 默认写成
-        // Anthropic 原生模式，导致 Claude 向 OpenAI 端点发送错误格式的请求。
-        if matches!(target_app, AppType::Claude | AppType::ClaudeDesktop) {
+        // 当目标是 Claude / Codex 时，保留源的 API 格式信息。
+        // - Claude: 否则 Codex/OpenCode 等 OpenAI 兼容源会被 to_claude_provider 默认写成
+        //   Anthropic 原生模式，导致 Claude 向 OpenAI 端点发送错误格式的请求。
+        // - Codex: to_codex_provider 默认 wire_api="responses"，OpenAI 兼容源（chat 格式）
+        //   复制过来会坏。保留 api_format 让 to_codex_provider 据此选择 wire_api。
+        if matches!(
+            target_app,
+            AppType::Claude | AppType::ClaudeDesktop | AppType::Codex
+        ) {
             let source_api_format = source
                 .meta
                 .as_ref()

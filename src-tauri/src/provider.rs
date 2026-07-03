@@ -806,6 +806,14 @@ impl UniversalProvider {
             base_trimmed.to_string()
         };
 
+        // 根据源的 API 格式选择 wire_api：
+        // - openai_chat → "chat"（OpenAI Chat Completions 端点，兼容第三方中转）
+        // - 其他/缺省 → "responses"（OpenAI 原生 Responses API）
+        let wire_api = match self.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+            Some("openai_chat") => "chat",
+            _ => "responses",
+        };
+
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
             r#"model_provider = "custom"
@@ -816,7 +824,7 @@ disable_response_storage = true
 [model_providers.custom]
 name = "NewAPI"
 base_url = "{codex_base_url}"
-wire_api = "responses"
+wire_api = "{wire_api}"
 requires_openai_auth = true"#
         );
 
