@@ -8,8 +8,10 @@ use regex::Regex;
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::Value;
+use toml_edit::DocumentMut;
 
-use crate::codex_config::get_codex_config_dir;
+use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
+use crate::config::get_home_dir;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
@@ -20,6 +22,7 @@ use super::utils::{
 const PROVIDER_ID: &str = "codex";
 const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
 const CODEX_SESSION_INDEX_FILENAME: &str = "session_index.jsonl";
+const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
 const VSCODE_CONTEXT_PREFIX: &str = "# Context from my IDE setup:";
 const CODEX_REQUEST_MARKER: &str = "my request for codex";
 
@@ -73,18 +76,67 @@ fn scan_sessions_in_roots_with_titles(
 
 fn load_thread_titles() -> HashMap<String, String> {
     let config_dir = get_codex_config_dir();
-    load_thread_titles_from_paths(
-        &config_dir.join(CODEX_SESSION_INDEX_FILENAME),
-        &config_dir.join(CODEX_STATE_DB_FILENAME),
-    )
+    let config_text = read_codex_config_text().unwrap_or_default();
+    let db_paths = codex_state_db_paths(&config_dir, &config_text);
+    load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
+}
+
+fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    push_unique_path(&mut paths, config_dir.join(CODEX_STATE_DB_FILENAME));
+    if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
+        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
+    } else if let Some(sqlite_home) = sqlite_home_from_env() {
+        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
+    }
+    paths
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.contains(&path) {
+        paths.push(path);
+    }
+}
+
+fn sqlite_home_from_codex_config(config_text: &str) -> Option<PathBuf> {
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    let raw = doc.get("sqlite_home")?.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(resolve_user_path(raw))
+}
+
+fn sqlite_home_from_env() -> Option<PathBuf> {
+    let raw = std::env::var(CODEX_SQLITE_HOME_ENV).ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(resolve_user_path(raw))
+}
+
+fn resolve_user_path(raw: &str) -> PathBuf {
+    if raw == "~" {
+        return get_home_dir();
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        return get_home_dir().join(rest);
+    }
+    if let Some(rest) = raw.strip_prefix("~\\") {
+        return get_home_dir().join(rest);
+    }
+    PathBuf::from(raw)
 }
 
 fn load_thread_titles_from_paths(
     session_index_path: &Path,
-    db_path: &Path,
+    db_paths: &[PathBuf],
 ) -> HashMap<String, String> {
     let mut titles = load_thread_titles_from_session_index(session_index_path);
-    titles.extend(load_thread_titles_from_db(db_path));
+    for db_path in db_paths {
+        titles.extend(load_thread_titles_from_db(db_path));
+    }
     titles
 }
 
@@ -698,7 +750,7 @@ mod tests {
         .expect("insert first-message sqlite title");
         drop(conn);
 
-        let titles = load_thread_titles_from_paths(&index_path, &db_path);
+        let titles = load_thread_titles_from_paths(&index_path, &[db_path]);
 
         assert_eq!(
             titles.get("thread-1").map(String::as_str),
@@ -707,6 +759,23 @@ mod tests {
         assert_eq!(
             titles.get("thread-2").map(String::as_str),
             Some("Legacy fallback")
+        );
+    }
+
+    #[test]
+    fn codex_state_db_paths_include_config_sqlite_home() {
+        let temp = tempdir().expect("tempdir");
+        let sqlite_home = temp.path().join("sqlite-home");
+        let config_text = format!("sqlite_home = \"{}\"\n", sqlite_home.display());
+
+        let paths = codex_state_db_paths(temp.path(), &config_text);
+
+        assert_eq!(
+            paths,
+            vec![
+                temp.path().join(CODEX_STATE_DB_FILENAME),
+                sqlite_home.join(CODEX_STATE_DB_FILENAME),
+            ]
         );
     }
 
