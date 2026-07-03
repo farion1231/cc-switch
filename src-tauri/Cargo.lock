@@ -798,6 +798,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "serial_test",
+ "sha1",
  "sha2",
  "tauri",
  "tauri-build",
