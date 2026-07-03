@@ -61,6 +61,8 @@ interface CodexFormFieldsProps {
   shouldShowSpeedTest: boolean;
   codexBaseUrl: string;
   onBaseUrlChange: (url: string) => void;
+  /** 覆盖端点输入框下方的提示文案（仅特定预设，如 AiHubMix） */
+  endpointHint?: string;
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
   isEndpointModalOpen: boolean;
@@ -149,6 +151,7 @@ export function CodexFormFields({
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
+  endpointHint,
   isFullUrl,
   onFullUrlChange,
   isEndpointModalOpen,
@@ -375,7 +378,7 @@ export function CodexFormFields({
           value={codexBaseUrl}
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.codexApiEndpointPlaceholder")}
-          hint={t("providerForm.codexApiHint")}
+          hint={endpointHint ?? t("providerForm.codexApiHint")}
           showFullUrlToggle
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}

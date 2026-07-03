@@ -60,6 +60,8 @@ export interface ClaudeDesktopProviderPreset {
   requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
+  // 端点输入框下方的提示文案覆盖（仅设置的预设生效；未设置则用表单默认提示）
+  endpointHint?: string;
   theme?: PresetTheme;
   icon?: string;
   iconColor?: string;
@@ -638,7 +640,14 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
+    // 默认 aihubmix.com，api.inferera.com 作备用网关（同后端、同 Key）
+    endpointCandidates: [
+      "https://aihubmix.com",
+      "https://api.aihubmix.com",
+      "https://api.inferera.com",
+    ],
+    endpointHint:
+      "💡 aihubmix.com 为默认端点，api.inferera.com 为备用网关（同一后端、Key 通用）",
     icon: "aihubmix",
     iconColor: "#006FFB",
   },

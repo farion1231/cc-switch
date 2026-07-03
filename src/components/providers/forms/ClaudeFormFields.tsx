@@ -114,6 +114,8 @@ interface ClaudeFormFieldsProps {
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
   showEndpointTools?: boolean;
+  /** 覆盖端点输入框下方的提示文案（仅特定预设，如 AiHubMix） */
+  endpointHint?: string;
 
   // Model Selector
   shouldShowModelSelector: boolean;
@@ -186,6 +188,7 @@ export function ClaudeFormFields({
   autoSelect,
   onAutoSelectChange,
   showEndpointTools = true,
+  endpointHint,
   shouldShowModelSelector,
   claudeModel,
   defaultHaikuModel,
@@ -662,13 +665,14 @@ export function ClaudeFormFields({
           onChange={onBaseUrlChange}
           placeholder={t("providerForm.apiEndpointPlaceholder")}
           hint={
-            apiFormat === "openai_responses"
+            endpointHint ??
+            (apiFormat === "openai_responses"
               ? t("providerForm.apiHintResponses")
               : apiFormat === "openai_chat"
                 ? t("providerForm.apiHintOAI")
                 : apiFormat === "gemini_native"
                   ? t("providerForm.apiHintGeminiNative")
-                  : t("providerForm.apiHint")
+                  : t("providerForm.apiHint"))
           }
           fullUrlHint={
             apiFormat === "gemini_native"

@@ -40,6 +40,8 @@ export interface ProviderPreset {
   templateValues?: Record<string, TemplateValueConfig>; // editorValue 存储编辑器中的实时输入值
   // 新增：请求地址候选列表（用于地址管理/测速）
   endpointCandidates?: string[];
+  // 端点输入框下方的提示文案覆盖（仅设置的预设生效；未设置则用表单默认提示）
+  endpointHint?: string;
   // 新增：视觉主题配置
   theme?: PresetTheme;
   // 图标配置
@@ -676,9 +678,15 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_API_KEY: "",
       },
     },
-    // 请求地址候选（用于地址管理/测速），用户可自行选择/覆盖
-    endpointCandidates: ["https://aihubmix.com", "https://api.aihubmix.com"],
+    // 请求地址候选（用于地址管理/测速）：默认 aihubmix.com，api.inferera.com 作备用网关（同后端、同 Key）
+    endpointCandidates: [
+      "https://aihubmix.com",
+      "https://api.aihubmix.com",
+      "https://api.inferera.com",
+    ],
     category: "aggregator",
+    endpointHint:
+      "💡 aihubmix.com 为默认端点，api.inferera.com 为备用网关（同一后端、Key 通用）",
     icon: "aihubmix",
     iconColor: "#006FFB",
   },

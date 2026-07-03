@@ -25,6 +25,8 @@ export interface CodexProviderPreset {
   isCustomTemplate?: boolean; // 标识是否为自定义模板
   // 新增：请求地址候选列表（用于地址管理/测速）
   endpointCandidates?: string[];
+  // 端点输入框下方的提示文案覆盖（仅设置的预设生效；未设置则用表单默认提示）
+  endpointHint?: string;
   // 新增：视觉主题配置
   theme?: PresetTheme;
   // 图标配置
@@ -1059,10 +1061,14 @@ requires_openai_auth = true`,
       "https://aihubmix.com/v1",
       "gpt-5.5",
     ),
+    // 默认 aihubmix.com，api.inferera.com 作备用网关（同后端、同 Key）
     endpointCandidates: [
       "https://aihubmix.com/v1",
       "https://api.aihubmix.com/v1",
+      "https://api.inferera.com/v1",
     ],
+    endpointHint:
+      "💡 aihubmix.com 为默认端点，api.inferera.com 为备用网关（同一后端、Key 通用）",
   },
   {
     name: "CherryIN",

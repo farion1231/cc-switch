@@ -688,6 +688,13 @@ function ProviderFormFull({
       }));
   }, [appId]);
 
+  // 预设可自定义端点提示（endpointHint），覆盖表单默认提示；未设置则为 undefined，走原文案
+  const selectedEndpointHint = useMemo<string | undefined>(() => {
+    const entry = presetEntries.find((e) => e.id === selectedPresetId);
+    return (entry?.preset as { endpointHint?: string } | undefined)
+      ?.endpointHint;
+  }, [presetEntries, selectedPresetId]);
+
   const {
     templateValues,
     templateValueEntries,
@@ -2037,6 +2044,7 @@ function ProviderFormFull({
           {appId === "claude" && (
             <ClaudeFormFields
               providerId={providerId}
+              endpointHint={selectedEndpointHint}
               shouldShowApiKey={
                 (category !== "cloud_provider" ||
                   hasApiKeyField(form.getValues("settingsConfig"), "claude")) &&
@@ -2119,6 +2127,7 @@ function ProviderFormFull({
           {appId === "codex" && (
             <CodexFormFields
               providerId={providerId}
+              endpointHint={selectedEndpointHint}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
               category={category}
