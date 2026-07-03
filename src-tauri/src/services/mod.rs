@@ -7,6 +7,7 @@ pub mod env_manager;
 pub mod mcp;
 pub mod model_fetch;
 pub mod omo;
+pub mod pi_provider;
 pub mod prompt;
 pub mod provider;
 pub mod proxy;

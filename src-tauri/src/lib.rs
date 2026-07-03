@@ -22,6 +22,7 @@ mod mcp;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
+pub mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -1492,6 +1493,11 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
+            // Pi Agent provider management
+            commands::list_pi_providers,
+            commands::preview_pi_provider_patch,
+            commands::apply_pi_provider_patch,
+            commands::delete_pi_provider,
             // lightweight mode (for testing or low-resource environments)
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,

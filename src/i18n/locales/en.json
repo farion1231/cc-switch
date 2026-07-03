@@ -880,7 +880,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "piAgent": "Pi Agent"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1691,7 +1692,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "piAgent": "Pi Agent"
       }
     },
     "userLevelPath": "User-level MCP path",

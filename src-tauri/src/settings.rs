@@ -45,6 +45,8 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default = "default_true")]
+    pub pi: bool,
 }
 
 impl Default for VisibleApps {
@@ -57,6 +59,7 @@ impl Default for VisibleApps {
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
+            pi: true,
         }
     }
 }
@@ -73,6 +76,11 @@ impl VisibleApps {
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
         }
+    }
+
+    /// Check if Pi Agent tab is visible
+    pub fn is_pi_visible(&self) -> bool {
+        self.pi
     }
 }
 

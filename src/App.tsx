@@ -94,6 +94,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { PiAgentPanel } from "@/components/pi/PiAgentPanel";
 
 type View =
   | "providers"
@@ -129,6 +130,7 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
 
 const getInitialApp = (): AppId => {
@@ -177,6 +179,7 @@ function App() {
     useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [piAddTrigger, setPiAddTrigger] = useState(0);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   useEffect(() => {
@@ -196,6 +199,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    pi: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -206,6 +210,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.pi) return "pi";
     return "claude"; // fallback
   };
 
@@ -286,7 +291,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -949,6 +955,9 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         default:
+          if (activeApp === "pi") {
+            return <PiAgentPanel addTrigger={piAddTrigger} />;
+          }
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1533,13 +1542,24 @@ function App() {
                       </AnimatePresence>
                     </div>
 
-                    <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
-                    >
-                      <Plus className="w-5 h-5" />
-                    </Button>
+                    {activeApp !== "pi" && (
+                      <Button
+                        onClick={() => setIsAddOpen(true)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
+                    {activeApp === "pi" && (
+                      <Button
+                        onClick={() => setPiAddTrigger((n) => n + 1)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
