@@ -1451,6 +1451,7 @@
     "dataSource": {
       "proxy": "路由",
       "session_log": "工作階段日誌",
+      "cowork_session_log": "Cowork 工作階段日誌",
       "codex_db": "Codex 資料庫",
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",

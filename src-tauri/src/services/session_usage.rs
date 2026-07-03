@@ -82,7 +82,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path) {
+        match sync_single_file(db, file_path, "session_log") {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -118,7 +118,10 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 /// agent 多嵌套一层 `workflows/wf_<ID>/`。漏掉这一层会让 Workflow 的 token
 /// 用量完全不计入统计；`journal.jsonl` 不含 `type=="assistant"` 行，解析时
 /// 会被 `sync_single_file` 天然跳过，因此这里无需按文件名过滤。
-fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
+///
+/// Cowork 会话沙箱内嵌的 projects 目录与此布局完全一致，
+/// session_usage_cowork 复用本函数。
+pub(crate) fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
     let entries = match fs::read_dir(projects_dir) {
@@ -179,7 +182,14 @@ fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
-fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+///
+/// `data_source` 写入 proxy_request_logs.data_source，用于区分来源
+/// （Claude Code 为 "session_log"，Cowork 为 "cowork_session_log"）。
+pub(crate) fn sync_single_file(
+    db: &Database,
+    file_path: &Path,
+    data_source: &str,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 获取文件元数据
@@ -340,7 +350,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             msg.message_id
         );
 
-        match insert_session_log_entry(db, &request_id, msg) {
+        match insert_session_log_entry(db, &request_id, msg, data_source) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
@@ -411,6 +421,7 @@ fn insert_session_log_entry(
     db: &Database,
     request_id: &str,
     msg: &ParsedAssistantUsage,
+    data_source: &str,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -504,11 +515,11 @@ fn insert_session_log_entry(
                 200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
                 Option::<String>::None, // error_message
                 msg.session_id,
-                Some("session_log"), // provider_type
+                Some(data_source),  // provider_type: 与 data_source 同值，同 codex/gemini/opencode
                 1i64,               // is_streaming: Claude Code 通常使用流式
                 "1.0",              // cost_multiplier
                 created_at,
-                "session_log",      // data_source
+                data_source,
             ],
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
@@ -685,7 +696,7 @@ mod tests {
             session_id: Some("session-1".to_string()),
         };
 
-        let inserted = insert_session_log_entry(&db, "session:msg_1", &msg)?;
+        let inserted = insert_session_log_entry(&db, "session:msg_1", &msg, "session_log")?;
         assert!(!inserted);
 
         let conn = lock_conn!(db.conn);
@@ -771,7 +782,7 @@ mod tests {
         let empty = r#"{"type":"assistant","message":{"id":"msg_empty","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:24Z","sessionId":"session-wf"}"#;
         fs::write(&file, format!("{billable}\n{empty}\n")).unwrap();
 
-        let (imported, _skipped) = sync_single_file(&db, &file)?;
+        let (imported, _skipped) = sync_single_file(&db, &file, "session_log")?;
         assert_eq!(
             imported, 1,
             "有 cache 成本但无 stop_reason 的 message 必须被导入"
