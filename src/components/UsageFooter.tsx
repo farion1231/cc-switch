@@ -150,8 +150,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const isAliyunBalance = usageDataList.some(isAliyunBalanceUsage);
 
   if (isAliyunBalance) {
-    const firstUsage = usageDataList[0];
-    const cashAmount = firstUsage.remaining ?? 0;
+    const aliyunUsage = usageDataList.find(isAliyunBalanceUsage) ?? usageDataList[0];
+    const cashAmount = aliyunUsage.remaining ?? 0;
 
     return (
       <div
@@ -198,8 +198,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
             {formatCompactNumber(cashAmount)}
           </span>
-          {firstUsage.unit && (
-            <span className="text-gray-500 dark:text-gray-400">{firstUsage.unit}</span>
+          {aliyunUsage.unit && (
+            <span className="text-gray-500 dark:text-gray-400">{aliyunUsage.unit}</span>
           )}
         </div>
       </div>

@@ -434,11 +434,13 @@ fn resolve_balance_credentials(
     usage_script: Option<&crate::provider::UsageScript>,
 ) -> (String, String, Option<String>) {
     let (mut base_url, mut api_key) = resolve_native_credentials(app_type, provider);
+    base_url = base_url.trim().trim_end_matches('/').to_string();
+    api_key = api_key.trim().to_string();
     let mut secret_access_key = None;
 
     if let Some(script) = usage_script {
         if let Some(script_base_url) = script.base_url.as_deref() {
-            let trimmed = script_base_url.trim_end_matches('/').to_string();
+            let trimmed = script_base_url.trim().trim_end_matches('/').to_string();
             if !trimmed.is_empty() {
                 base_url = trimmed;
             }
@@ -467,6 +469,7 @@ fn resolve_balance_credentials(
 fn is_aliyun_mainland_provider(app_type: &AppType, provider: Option<&Provider>) -> bool {
     provider
         .map(|p| p.resolve_usage_credentials(app_type).0)
+        .map(|base_url| base_url.trim().to_lowercase())
         .map(|base_url| base_url.contains("dashscope.aliyuncs.com"))
         .unwrap_or(false)
 }

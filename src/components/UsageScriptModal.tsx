@@ -1372,7 +1372,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
                           <div className="space-y-2">
                             <Label htmlFor="usage-aliyun-balance-sk">
-                              {t("usageScript.secretAccessKey", {
+                              {t("usageScript.accessKeySecret", {
                                 defaultValue: "AccessKey Secret",
                               })}
                             </Label>
@@ -1387,7 +1387,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                                     secretAccessKey: e.target.value,
                                   })
                                 }
-                                placeholder="••••••••"
+                                placeholder={t(
+                                  "usageScript.accessKeySecretPlaceholder",
+                                  {
+                                    defaultValue: "Leave empty to keep the existing secret",
+                                  },
+                                )}
                                 autoComplete="off"
                                 className="border-white/10"
                               />
