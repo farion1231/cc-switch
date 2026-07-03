@@ -176,10 +176,6 @@
       "invalidJson": "無效的 JSON 格式",
       "readError": "讀取檔案失敗"
     },
-    "copyToApps": {
-      "success": "已成功複製到 {{count}} 個應用程式",
-      "error": "複製供應商失敗"
-    },
     "name": "供應商名稱",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官網連結",

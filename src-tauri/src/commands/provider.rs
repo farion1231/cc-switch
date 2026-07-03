@@ -1090,6 +1090,15 @@ pub fn import_providers(
         return Err(format!("不支持的导出版本: {}", export.version));
     }
 
+    // Validate app type match — import is for same-app restore only.
+    // Cross-app migration should use "copy to other apps" which does format conversion.
+    if export.app_type != app {
+        return Err(format!(
+            "导入文件的应用类型 ({}) 与当前选择的应用 ({}) 不匹配。跨应用迁移请使用「复制到其他应用」功能。",
+            export.app_type, app
+        ));
+    }
+
     // Validate provider count
     if export.providers.len() > 1000 {
         return Err("导入文件包含的供应商数量过多（最多 1000 个）".to_string());

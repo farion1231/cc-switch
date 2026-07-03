@@ -176,10 +176,6 @@
       "invalidJson": "無効な JSON 形式です",
       "readError": "ファイルの読み取りに失敗しました"
     },
-    "copyToApps": {
-      "success": "{{count}} 個のアプリにコピーしました",
-      "error": "プロバイダーのコピーに失敗しました"
-    },
     "name": "プロバイダー名",
     "namePlaceholder": "例: Claude Official",
     "websiteUrl": "Web サイト URL",

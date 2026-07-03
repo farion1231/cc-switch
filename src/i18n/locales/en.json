@@ -176,10 +176,6 @@
       "invalidJson": "Invalid JSON format",
       "readError": "Failed to read file"
     },
-    "copyToApps": {
-      "success": "Successfully copied to {{count}} apps",
-      "error": "Failed to copy provider"
-    },
     "name": "Provider Name",
     "namePlaceholder": "e.g., Claude Official",
     "websiteUrl": "Website URL",

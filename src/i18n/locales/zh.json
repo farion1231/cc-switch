@@ -176,10 +176,6 @@
       "invalidJson": "无效的 JSON 格式",
       "readError": "读取文件失败"
     },
-    "copyToApps": {
-      "success": "已成功复制到 {{count}} 个应用",
-      "error": "复制供应商失败"
-    },
     "name": "供应商名称",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官网链接",
