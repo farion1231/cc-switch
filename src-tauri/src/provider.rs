@@ -449,10 +449,13 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
-    /// Claude API 格式（仅 Claude 供应商使用）
+    /// API 格式标记（Claude / Codex 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
+    ///
+    /// Claude 读取该字段决定是否做格式转换（`get_claude_api_format`）；
+    /// Codex 读取该字段选择 `wire_api`（chat / responses）以及 catalog 工具配置。
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
     /// 通用认证绑定（provider_config / managed_account）
