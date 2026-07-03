@@ -625,21 +625,8 @@ fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError>
 /// 视为受管，允许在重写时被清理，避免与新写入的 `http_headers` 共存。
 const CC_SWITCH_MANAGED_SUBTABLE_KEYS: &[&str] = &["env", "http_headers", "headers"];
 
-/// 抓取 `[mcp_servers.<server_id>]` 下所有非 cc-switch 管辖的子表，
-/// 用于在 sync 重写前快照、重写后再 restore。
-fn snapshot_unmanaged_subtables(
-    doc: &toml_edit::DocumentMut,
-    server_id: &str,
-) -> Vec<(String, toml_edit::Table)> {
-    let Some(server_tbl) = doc
-        .get("mcp_servers")
-        .and_then(|item| item.as_table())
-        .and_then(|t| t.get(server_id))
-        .and_then(|item| item.as_table())
-    else {
-        return Vec::new();
-    };
-
+/// 列出单个 server 表下所有非 cc-switch 管辖的子表（克隆返回）。
+fn unmanaged_subtables_of(server_tbl: &toml_edit::Table) -> Vec<(String, toml_edit::Table)> {
     server_tbl
         .iter()
         .filter_map(|(k, v)| {
@@ -651,10 +638,26 @@ fn snapshot_unmanaged_subtables(
         .collect()
 }
 
+/// 抓取 `[mcp_servers.<server_id>]` 下所有非 cc-switch 管辖的子表，
+/// 用于在 sync 重写前快照、重写后再 restore。
+fn snapshot_unmanaged_subtables(
+    doc: &toml_edit::DocumentMut,
+    server_id: &str,
+) -> Vec<(String, toml_edit::Table)> {
+    doc.get("mcp_servers")
+        .and_then(|item| item.as_table())
+        .and_then(|t| t.get(server_id))
+        .and_then(|item| item.as_table())
+        .map(unmanaged_subtables_of)
+        .unwrap_or_default()
+}
+
 /// 分类只认标准子表（`v.as_table()`）。Codex CLI 始终以
 /// `[mcp_servers.<id>.tools.<tool>]` 标准表写入 runtime 权限，所以这个判定足够。
-/// 内联表形式（`tools = { ... }`）不在覆盖范围：遇到时既不剥离也不保留，按原样
-/// 透传——`snapshot_unmanaged_subtables` 与 Layer 2 的 new/old 遍历同此约定。
+/// 内联表形式（`tools = { ... }`）不在覆盖范围：既不剥离、也不快照。唯一的边角是
+/// 恢复步骤的整表写入：若旧 live 有同名标准子表，new 侧同名的内联值会被它替换——
+/// 这是「旧 live 是 runtime 子表唯一权威」主契约的自然结果，不属于透传的例外。
+/// `snapshot_unmanaged_subtables` 与 Layer 2 的 new/old 遍历同此约定。
 fn remove_unmanaged_subtables(server_tbl: &mut toml_edit::Table) -> bool {
     let keys: Vec<String> = server_tbl
         .iter()
@@ -667,6 +670,30 @@ fn remove_unmanaged_subtables(server_tbl: &mut toml_edit::Table) -> bool {
         server_tbl.remove(&key);
     }
     removed_any
+}
+
+/// 对 `[mcp_servers]` 下每个 server 执行 `remove_unmanaged_subtables`，
+/// 返回是否有任何改动。merge / strip 的公共清理步骤。
+fn remove_unmanaged_subtables_from_servers(mcp_servers: &mut toml_edit::Table) -> bool {
+    let mut changed = false;
+    for (_, server_item) in mcp_servers.iter_mut() {
+        if let Some(server_tbl) = server_item.as_table_mut() {
+            changed |= remove_unmanaged_subtables(server_tbl);
+        }
+    }
+    changed
+}
+
+/// 清理历史版本误写的 `[mcp.servers]` 格式（正确格式为顶层 `[mcp_servers]`）。
+fn remove_legacy_mcp_dot_servers(doc: &mut toml_edit::DocumentMut) {
+    if let Some(mcp_item) = doc.get_mut("mcp") {
+        if let Some(tbl) = mcp_item.as_table_like_mut() {
+            if tbl.contains_key("servers") {
+                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
+                tbl.remove("servers");
+            }
+        }
+    }
 }
 
 /// 把 snapshot_unmanaged_subtables 抓到的子表写回 `[mcp_servers.<server_id>]`。
@@ -697,13 +724,13 @@ fn restore_unmanaged_subtables(
     }
 }
 
-/// **Layer 2 纯函数**：把 `old_text` 中所有非 cc-switch 管辖的子表
+/// **Layer 2 纯函数**：把 `old_text`（旧 live）中所有非 cc-switch 管辖的子表
 /// （典型为 Codex CLI 运行时写入的 `[mcp_servers.<id>.tools.<tool>]`）
 /// 合并进 `new_text`，返回合并后的 TOML 文本。
 ///
-/// 用于 Codex live 写入边界：provider switch / common-config save 会用新 provider
-/// 的 stored config 整张覆盖 `~/.codex/config.toml`，但 stored config 不带 runtime
-/// 子表，本函数在写入前把旧 live 中的 runtime 子表抢救出来合并进去。
+/// 用于 Codex live 写入边界：provider 驱动的写入会用新 provider 的 stored config
+/// 整张覆盖 `~/.codex/config.toml`，但 stored config 不带 runtime 子表，本函数在
+/// 写入前把旧 live 中的 runtime 子表抢救出来合并进去。
 ///
 /// 语义：
 /// - "受管子表"（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`）跳过——它们由 cc-switch 自己负责。
@@ -711,11 +738,14 @@ fn restore_unmanaged_subtables(
 ///   当前仍存在的子表作为唯一权威恢复；live 中已删除的 `tools.*` 不会被 provider 重新带回。
 ///   恢复时整表写入旧 live 的子表——new 侧同名子表已在上一步清空，旧 live 即唯一
 ///   权威，从而避免 provider 中被 backfill 的 stale runtime 副本覆盖 Codex CLI 最新权限。
-/// - **不为新文本中不存在的 server 凭空建父表**：新文本没有的 server 说明切换后的
-///   provider 配置不含它。切换后确实仍会跑 MCP sync（`McpService::sync_all_enabled`
-///   → `sync_single_server_to_codex`），但它只为 cc-switch enabled 列表中的 server
-///   补全 command/url；新文本不含的 server 同样不在该列表，sync 不会重建它。为它
-///   建一个只有 `tools.*` 的残缺 server 会让 Codex 无法加载——这类孤儿 runtime 子表直接丢弃。
+/// - **不为新文本中不存在的 server 凭空建父表**：只有 `tools.*`、没有 command/url
+///   的残缺 server 会让 Codex 无法加载。cc-switch enabled 的 server 由各写入路径在
+///   进入本函数前整表带入新文本（普通切换/保存见 `services::provider::live::
+///   preserve_enabled_codex_mcp_servers_from_live`，接管路径见 `ProxyService::
+///   preserve_codex_mcp_servers_from_existing_config`），其 runtime 子表随父表就位
+///   后再由本步骤以旧 live 为权威刷新。因此走到这里仍缺父表的 server 均非
+///   cc-switch 管辖，其孤儿子表随「provider 文本决定这类 server 存在性」的既有
+///   语义一并丢弃。
 /// - 解析失败 / 旧文件不可读时退回原文本；新文本没有 `[mcp_servers]` 时不创建父表，
 ///   best-effort 不阻塞底层写入。
 pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> String {
@@ -724,34 +754,27 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
     let Ok(old_doc) = old_text.parse::<DocumentMut>() else {
         return new_text.to_string();
     };
-    // server_id, subtable_key, table
-    let mut preserved: Vec<(String, String, toml_edit::Table)> = Vec::new();
+    // 旧 live 的非管辖子表，按 server 分组快照。
+    let mut preserved: Vec<(String, Vec<(String, toml_edit::Table)>)> = Vec::new();
     if let Some(old_mcp_servers) = old_doc.get("mcp_servers").and_then(|item| item.as_table()) {
         for (server_id, server_item) in old_mcp_servers.iter() {
             let Some(server_tbl) = server_item.as_table() else {
                 continue;
             };
-            for (k, v) in server_tbl.iter() {
-                if CC_SWITCH_MANAGED_SUBTABLE_KEYS.contains(&k) {
-                    continue;
-                }
-                if let Some(tbl) = v.as_table() {
-                    preserved.push((server_id.to_string(), k.to_string(), tbl.clone()));
-                }
+            let subtables = unmanaged_subtables_of(server_tbl);
+            if !subtables.is_empty() {
+                preserved.push((server_id.to_string(), subtables));
             }
         }
     }
 
-    let mut new_doc = if new_text.trim().is_empty() {
-        DocumentMut::default()
-    } else {
-        match new_text.parse::<DocumentMut>() {
-            Ok(doc) => doc,
-            Err(_) => return new_text.to_string(),
-        }
+    let mut new_doc = match new_text.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(_) => return new_text.to_string(),
     };
 
-    // P1：只把 runtime 子表回写到新文本中已存在的 server，不凭空创建残缺父表。
+    // 只把 runtime 子表回写到新文本中已存在的 server，不凭空创建残缺父表
+    // （enabled server 的父表已由调用路径在写入前整表带入，见函数文档）。
     let Some(mcp_servers) = new_doc
         .get_mut("mcp_servers")
         .and_then(|item| item.as_table_mut())
@@ -762,14 +785,9 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
     // provider 存储可能已经被旧 backfill 种下 stale runtime 子表。先清掉 new 侧所有
     // 非管辖子表，再恢复 old live 当前仍存在的 runtime 状态；这样 live 删除的 tools.*
     // 不会被 stale provider config 重新带回。
-    let mut changed = false;
-    for (_, server_item) in mcp_servers.iter_mut() {
-        if let Some(server_tbl) = server_item.as_table_mut() {
-            changed |= remove_unmanaged_subtables(server_tbl);
-        }
-    }
+    let mut changed = remove_unmanaged_subtables_from_servers(mcp_servers);
 
-    for (server_id, key, tbl) in preserved {
+    for (server_id, subtables) in preserved {
         let Some(server_tbl) = mcp_servers
             .get_mut(&server_id)
             .and_then(|item| item.as_table_mut())
@@ -779,8 +797,10 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
         // new 侧的非管辖子表已在上面整体清空，old live 是 runtime 子表的唯一权威，
         // 直接写入即可：既保住 Codex CLI 最新写入的 per-tool 授权，又不会复活 live
         // 中已删除、仅残留于 provider stored config 的 stale tools.*。
-        server_tbl.insert(&key, toml_edit::Item::Table(tbl));
-        changed = true;
+        for (key, tbl) in subtables {
+            server_tbl.insert(&key, toml_edit::Item::Table(tbl));
+            changed = true;
+        }
     }
 
     if changed {
@@ -793,21 +813,16 @@ pub(crate) fn merge_codex_runtime_subtables(new_text: &str, old_text: &str) -> S
 /// 剥离 `[mcp_servers.<id>]` 下所有非 cc-switch 管辖的子表（典型为 Codex CLI
 /// 运行时写入的 `tools.*`），返回处理后的 TOML 文本。
 ///
-/// 用于 backfill 边界（两个入口都接：`ConfigService::sync_codex_live` 的
-/// common-config save，以及 `ProviderService::switch_provider` 经
-/// `restore_live_settings_for_provider_backfill` 的 provider 切换）：回填会把
-/// live config 文本写进 provider 的 stored config，但 cc-switch 数据库不应持有
-/// Codex runtime 状态。先剥离再回填，可确保 stored config 不会种下 stale
-/// `tools.*`——live 才是 runtime 子表的唯一权威。
+/// 用于 backfill 边界（`restore_live_settings_for_provider_backfill`，
+/// provider 切换回填的必经之路）：回填会把 live config 文本写进 provider 的
+/// stored config，但 cc-switch 数据库不应持有 Codex runtime 状态。先剥离再回填，
+/// 可确保 stored config 不会种下 stale `tools.*`——live 才是 runtime 子表的唯一权威。
 ///
 /// 受管子表（`CC_SWITCH_MANAGED_SUBTABLE_KEYS`，即 `env`/`http_headers`/`headers`）保留。
 /// 空文本 / 解析失败 / 无 `[mcp_servers]` 时原样返回，best-effort 不阻塞回填。
 pub(crate) fn strip_codex_runtime_subtables(config_text: &str) -> String {
     use toml_edit::DocumentMut;
 
-    if config_text.trim().is_empty() {
-        return config_text.to_string();
-    }
     let mut doc = match config_text.parse::<DocumentMut>() {
         Ok(doc) => doc,
         Err(_) => return config_text.to_string(),
@@ -820,14 +835,7 @@ pub(crate) fn strip_codex_runtime_subtables(config_text: &str) -> String {
         return config_text.to_string();
     };
 
-    let mut changed = false;
-    for (_, server_item) in mcp_servers.iter_mut() {
-        if let Some(server_tbl) = server_item.as_table_mut() {
-            changed |= remove_unmanaged_subtables(server_tbl);
-        }
-    }
-
-    if changed {
+    if remove_unmanaged_subtables_from_servers(mcp_servers) {
         doc.to_string()
     } else {
         config_text.to_string()
@@ -845,15 +853,7 @@ fn apply_single_server_to_doc(
 
     let preserved = snapshot_unmanaged_subtables(doc, id);
 
-    // 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
-            }
-        }
-    }
+    remove_legacy_mcp_dot_servers(doc);
 
     if !doc.contains_key("mcp_servers") {
         doc["mcp_servers"] = toml_edit::table();
@@ -868,7 +868,8 @@ fn apply_single_server_to_doc(
 }
 
 /// 纯逻辑：把 enabled servers 批量应用到 DocumentMut，保留 enabled server 自己的非托管子表。
-/// 未在 enabled 中的 server 沿用原有"整体抹除"行为（pre-existing），本 PR 不调整这一语义。
+/// 未在 enabled 中的 server 沿用原有「整体抹除」语义
+/// （见 `sync_enabled_drops_unmentioned_server_including_its_tools` 测试）。
 /// `sync_enabled_to_codex` 的可单测内核。
 fn apply_enabled_servers_to_doc(
     doc: &mut toml_edit::DocumentMut,
@@ -885,15 +886,7 @@ fn apply_enabled_servers_to_doc(
         })
         .collect();
 
-    // 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
-            }
-        }
-    }
+    remove_legacy_mcp_dot_servers(doc);
 
     if enabled.is_empty() {
         // pre-existing behavior：无 enabled 时整体移除 [mcp_servers]。
@@ -1331,8 +1324,9 @@ approval_mode = "approve"
 
     #[test]
     fn merge_runtime_drops_orphan_tools_when_new_lacks_server() {
-        // P1：新文本里没有该 server（切换后的 provider 不含它，且之后不会再跑 MCP sync）。
-        // 不能为了塞 tools.* 而凭空建一个没有 command/url 的残缺 server——Codex 无法加载它。
+        // 新文本里没有该 server，且它不属于写入路径预先整表带入的 cc-switch enabled
+        // server（例如非 cc-switch 管理的手工条目，见 merge 函数文档）。不能为了塞
+        // tools.* 而凭空建一个没有 command/url 的残缺 server——Codex 无法加载它。
         let old = r#"
 [mcp_servers.x.tools.t1]
 approval_mode = "approve"
@@ -1462,5 +1456,55 @@ command = "x"
             stripped, config,
             "只有受管子表时应原样返回，不引入无谓 reformat"
         );
+    }
+
+    #[test]
+    fn merge_runtime_returns_new_verbatim_when_new_unparseable() {
+        // 与 old 侧解析失败对称：新文本无法解析时原样返回，
+        // 交给底层写入路径的 TOML 校验报错，不在这里吞掉或改写。
+        let old = "[mcp_servers.x.tools.t1]\napproval_mode = \"approve\"\n";
+        let new = "this is :: not toml";
+        let merged = merge_codex_runtime_subtables(new, old);
+        assert_eq!(merged, new, "新文本无法解析时应原样返回");
+    }
+
+    #[test]
+    fn strip_runtime_returns_verbatim_when_unparseable() {
+        let config = "this is :: not toml";
+        assert_eq!(
+            strip_codex_runtime_subtables(config),
+            config,
+            "无法解析时应原样返回，best-effort 不阻塞回填"
+        );
+    }
+
+    #[test]
+    fn strip_then_merge_round_trips_runtime_subtables() {
+        // 完整生命周期：切走时 backfill 剥离（strip），切回时以 live 为权威恢复（merge）。
+        // 保证 2a/2b 两个半边互为逆变换，DB 不持有 runtime 状态也不会造成授权丢失。
+        let live = r#"
+model_provider = "openai"
+
+[mcp_servers.x]
+type = "stdio"
+command = "x"
+
+[mcp_servers.x.env]
+TOKEN = "1"
+
+[mcp_servers.x.tools.search]
+approval_mode = "approve"
+"#;
+        let stored = strip_codex_runtime_subtables(live);
+        let stored_v: toml::Value = toml::from_str(&stored).expect("stored is valid toml");
+        assert!(
+            stored_v["mcp_servers"]["x"].get("tools").is_none(),
+            "backfill 副本不应含 runtime 子表"
+        );
+
+        let restored = merge_codex_runtime_subtables(&stored, live);
+        let live_v: toml::Value = toml::from_str(live).expect("live is valid toml");
+        let restored_v: toml::Value = toml::from_str(&restored).expect("restored is valid toml");
+        assert_eq!(restored_v, live_v, "strip→merge 往返后应与原 live 语义等价");
     }
 }

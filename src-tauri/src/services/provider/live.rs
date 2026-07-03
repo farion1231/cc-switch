@@ -2,7 +2,7 @@
 //!
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -549,6 +549,10 @@ pub(crate) fn write_live_with_common_config(
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
 
+    if matches!(app_type, AppType::Codex) {
+        preserve_enabled_codex_mcp_servers_from_live(db, &mut effective_provider.settings_config);
+    }
+
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, &effective_provider)?;
         log::info!(
@@ -560,6 +564,115 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+/// Codex live 写入前置步骤：把旧 live 中「MCP DB 里启用了 Codex、但新 effective
+/// 配置文本缺失」的 server **整表**带进新文本。与接管路径的
+/// `ProxyService::preserve_codex_mcp_servers_from_existing_config` 同型，但只限
+/// cc-switch enabled 的 server——不复活非 cc-switch 管辖的手工条目。
+///
+/// 这些 server 的存在性由 MCP DB 管辖：provider stored config 在 backfill 时会主动
+/// 剥离 `[mcp_servers]`，新建 provider 也天然没有它们；切换尾部再由
+/// `McpService::sync_all_enabled` 按 DB spec 重建/移除。若不在写入前带上它们，
+/// Layer 2（`merge_codex_runtime_subtables`）就没有父表可挂 runtime 子表，
+/// per-tool 授权会在「切到从未持有该 server 的 provider」时永久丢失。整表拷贝
+/// 绝不产生残缺条目：即使后续 MCP sync 因故未跑，live 里仍是完整可加载的定义。
+///
+/// best-effort：任何一步失败只记日志返回，不阻断底层写入；新文本无 `config`
+/// 字段（该写入不会重写 config.toml）或无法解析（交给底层写入校验报错）时跳过。
+fn preserve_enabled_codex_mcp_servers_from_live(db: &Database, settings: &mut Value) {
+    let Some(config_text) = settings.get("config").and_then(Value::as_str) else {
+        return;
+    };
+
+    let live_path = get_codex_config_path();
+    let live_text = match std::fs::read_to_string(&live_path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => {
+            log::warn!("读取 Codex live 配置失败，跳过 enabled MCP server 保留: {err}");
+            return;
+        }
+    };
+
+    let enabled_ids: HashSet<String> = match db.get_all_mcp_servers() {
+        Ok(servers) => servers
+            .values()
+            .filter(|server| server.apps.is_enabled_for(&AppType::Codex))
+            .map(|server| server.id.clone())
+            .collect(),
+        Err(err) => {
+            log::warn!("读取 MCP 服务器列表失败，跳过 enabled MCP server 保留: {err}");
+            return;
+        }
+    };
+
+    if let Some(updated) =
+        merge_enabled_live_servers_into_config(config_text, &live_text, &enabled_ids)
+    {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(updated));
+        }
+    }
+}
+
+/// `preserve_enabled_codex_mcp_servers_from_live` 的可单测内核：把 `live_text` 中
+/// enabled 且 `config_text` 缺失的 server 整表并入，返回并入后的文本；
+/// 无可并入（或 live/新文本形态不满足前提）时返回 `None`，调用方保持原文本字节不变。
+fn merge_enabled_live_servers_into_config(
+    config_text: &str,
+    live_text: &str,
+    enabled_ids: &HashSet<String>,
+) -> Option<String> {
+    if enabled_ids.is_empty() {
+        return None;
+    }
+    let live_doc = match live_text.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(_) => {
+            log::warn!("Codex live 配置无法解析，跳过 enabled MCP server 保留");
+            return None;
+        }
+    };
+    let live_servers = live_doc
+        .get("mcp_servers")
+        .and_then(|item| item.as_table())?;
+
+    let mut target_doc = config_text.parse::<DocumentMut>().ok()?;
+
+    let mut copied = false;
+    for (server_id, server_item) in live_servers.iter() {
+        if !enabled_ids.contains(server_id) {
+            continue;
+        }
+        // 内联形式（x = { ... }）不在覆盖范围，按既有约定透传给现有语义处理。
+        let Some(server_tbl) = server_item.as_table() else {
+            continue;
+        };
+        let exists_in_target = target_doc
+            .get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .map(|t| t.get(server_id).is_some())
+            .unwrap_or(false);
+        if exists_in_target {
+            continue;
+        }
+
+        if !target_doc.contains_key("mcp_servers") {
+            let mut parent = toml_edit::Table::new();
+            parent.set_implicit(true);
+            target_doc.insert("mcp_servers", Item::Table(parent));
+        }
+        if let Some(servers_tbl) = target_doc
+            .get_mut("mcp_servers")
+            .and_then(|item| item.as_table_mut())
+        {
+            servers_tbl.insert(server_id, Item::Table(server_tbl.clone()));
+            copied = true;
+        }
+    }
+
+    copied.then(|| target_doc.to_string())
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
@@ -649,19 +762,6 @@ fn restore_live_settings_for_provider_backfill(
                 "Failed to strip unified session bucket while backfilling '{}': {err}",
                 provider.id
             );
-        }
-    }
-
-    // Codex CLI 运行时写入的 `[mcp_servers.<id>.tools.<tool>]` 授权只属于 live，
-    // backfill 进 DB 前必须剥离，否则 provider stored config 会积累 stale runtime
-    // 状态（让“编辑通用配置”冒出 runtime `tools.*`，也给 live 写入埋下脏 DB）。
-    // 这与 `ConfigService::sync_codex_live` 的 backfill 剥离保持一致，确保
-    // provider switch 与 common-config save 两个 backfill 入口都不把 runtime
-    // 子表写进 DB——live 才是 runtime 子表的唯一权威。
-    if let Some(config_text) = settings.get("config").and_then(Value::as_str) {
-        let stripped = crate::mcp::strip_codex_runtime_subtables(config_text);
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("config".to_string(), Value::String(stripped));
         }
     }
 
@@ -2020,6 +2120,107 @@ base_url = "https://a.example/v1"
         assert!(
             config_text.contains("model = \"gpt-5.5\""),
             "non-MCP content must survive the strip"
+        );
+    }
+
+    // ====== preserve_enabled_codex_mcp_servers_from_live 内核 ======
+
+    fn enabled_ids(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn preserve_enabled_servers_copies_missing_server_with_runtime_subtables() {
+        // 切到「从未持有该 server」的 provider（典型：新建 provider）：enabled server
+        // 必须整表带进新文本，per-tool 授权随之保留，Layer 2 再以 live 为权威刷新。
+        let live = r#"
+[mcp_servers.x]
+type = "stdio"
+command = "x"
+
+[mcp_servers.x.env]
+TOKEN = "1"
+
+[mcp_servers.x.tools.search]
+approval_mode = "approve"
+"#;
+        let target = "model_provider = \"b\"\n";
+
+        let merged = merge_enabled_live_servers_into_config(target, live, &enabled_ids(&["x"]))
+            .expect("enabled server should be copied");
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        assert_eq!(v["model_provider"].as_str(), Some("b"));
+        assert_eq!(
+            v["mcp_servers"]["x"]["command"].as_str(),
+            Some("x"),
+            "整表拷贝必须带上 command，绝不产生残缺条目"
+        );
+        assert_eq!(v["mcp_servers"]["x"]["env"]["TOKEN"].as_str(), Some("1"));
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
+            Some("approve"),
+            "per-tool 授权必须随整表拷贝保留"
+        );
+    }
+
+    #[test]
+    fn preserve_enabled_servers_skips_non_enabled_and_existing_servers() {
+        let live = r#"
+[mcp_servers.mine]
+command = "mine"
+
+[mcp_servers.mine.tools.t]
+approval_mode = "approve"
+
+[mcp_servers.manual]
+command = "manual"
+
+[mcp_servers.present]
+command = "live-version"
+"#;
+        // target 已含 present（stored 投影），manual 非 enabled（非 cc-switch 管辖）。
+        let target = "[mcp_servers.present]\ncommand = \"stored-version\"\n";
+
+        let merged = merge_enabled_live_servers_into_config(
+            target,
+            live,
+            &enabled_ids(&["mine", "present"]),
+        )
+        .expect("mine should be copied");
+        let v: toml::Value = toml::from_str(&merged).expect("merged is valid toml");
+
+        assert_eq!(
+            v["mcp_servers"]["mine"]["tools"]["t"]["approval_mode"].as_str(),
+            Some("approve")
+        );
+        assert!(
+            v["mcp_servers"].get("manual").is_none(),
+            "非 enabled 的 server 维持 provider 文本语义，不得复活"
+        );
+        assert_eq!(
+            v["mcp_servers"]["present"]["command"].as_str(),
+            Some("stored-version"),
+            "target 已含的 server 不得被 live 版本覆盖（子表交给 Layer 2 处理）"
+        );
+    }
+
+    #[test]
+    fn preserve_enabled_servers_returns_none_when_nothing_to_copy() {
+        // 无可并入时返回 None，调用方保持原文本字节不变（不引入无谓 reformat）。
+        let live = "[mcp_servers.x]\ncommand = \"x\"\n";
+        let target = "[mcp_servers.x]\ncommand = \"stored\"\n";
+        assert!(
+            merge_enabled_live_servers_into_config(target, live, &enabled_ids(&["x"])).is_none()
+        );
+        assert!(
+            merge_enabled_live_servers_into_config(target, live, &HashSet::new()).is_none(),
+            "enabled 集合为空时不做任何事"
+        );
+        assert!(
+            merge_enabled_live_servers_into_config(target, "not :: toml", &enabled_ids(&["x"]))
+                .is_none(),
+            "live 无法解析时跳过，best-effort 不阻断写入"
         );
     }
 }
