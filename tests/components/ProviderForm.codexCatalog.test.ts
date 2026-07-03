@@ -16,7 +16,7 @@ describe("ProviderForm Codex catalog helpers", () => {
     ]);
   });
 
-  it("preserves native-profile overrides (parallel tool calls + input modalities + base instructions)", () => {
+  it("preserves native-profile overrides and reasoning metadata", () => {
     expect(
       normalizeCodexCatalogModelsForSave([
         {
@@ -27,6 +27,11 @@ describe("ProviderForm Codex catalog helpers", () => {
           inputModalities: ["text", "image"],
           baseInstructions:
             "  You are Codex, a coding agent based on MiniMax-M3.  ",
+          defaultReasoningLevel: " medium ",
+          supportedReasoningLevels: [
+            "low",
+            { effort: " high ", description: "Deep thinking" },
+          ],
         },
         // false must be preserved (not dropped as falsy); empty modalities dropped;
         // empty/whitespace baseInstructions dropped
@@ -45,6 +50,11 @@ describe("ProviderForm Codex catalog helpers", () => {
         supportsParallelToolCalls: true,
         inputModalities: ["text", "image"],
         baseInstructions: "You are Codex, a coding agent based on MiniMax-M3.",
+        defaultReasoningLevel: "medium",
+        supportedReasoningLevels: [
+          "low",
+          { effort: "high", description: "Deep thinking" },
+        ],
       },
       { model: "mimo-v2.5-pro", supportsParallelToolCalls: false },
     ]);

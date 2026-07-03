@@ -420,6 +420,7 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
 
 fn codex_catalog_model_entry(
     template: &Value,
+    reasoning_template: &Value,
     spec: &CodexCatalogModelSpec,
     priority: usize,
     profile: CodexCatalogToolProfile,
@@ -439,6 +440,22 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+
+    let default_reasoning_level = spec.default_reasoning_level.as_ref().map_or_else(
+        || reasoning_template.get("default_reasoning_level").cloned(),
+        |level| Some(json!(level)),
+    );
+    if let Some(level) = default_reasoning_level {
+        entry_obj.insert("default_reasoning_level".to_string(), level);
+    }
+    let supported_reasoning_levels = spec.supported_reasoning_levels.clone().or_else(|| {
+        reasoning_template
+            .get("supported_reasoning_levels")
+            .cloned()
+    });
+    if let Some(levels) = supported_reasoning_levels {
+        entry_obj.insert("supported_reasoning_levels".to_string(), levels);
+    }
 
     if profile == CodexCatalogToolProfile::NativeResponses {
         // Native `/responses` gateways reject Codex's freeform `apply_patch`
@@ -497,6 +514,66 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    /// Optional per-model Codex reasoning default. When omitted, generated
+    /// entries inherit the reasoning metadata from the real Codex model template
+    /// instead of the native tool-compatibility template.
+    default_reasoning_level: Option<String>,
+    /// Optional per-model Codex reasoning capabilities. Stored as the exact
+    /// catalog JSON shape so descriptions survive round-trips.
+    supported_reasoning_levels: Option<Value>,
+}
+
+fn normalize_codex_reasoning_levels(
+    value: Option<&Value>,
+    template: Option<&Value>,
+) -> Option<Value> {
+    let levels = value?.as_array()?;
+    let mut normalized = Vec::new();
+
+    for level in levels {
+        if let Some(effort) = level.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(template_level) = find_reasoning_level_by_effort(template, effort) {
+                normalized.push(template_level.clone());
+            } else {
+                normalized.push(json!({
+                    "description": effort,
+                    "effort": effort,
+                }));
+            }
+            continue;
+        }
+
+        if let Some(obj) = level.as_object() {
+            let Some(effort) = obj
+                .get("effort")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let mut normalized_obj = obj.clone();
+            normalized_obj.insert("effort".to_string(), json!(effort));
+            normalized.push(Value::Object(normalized_obj));
+        }
+    }
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(Value::Array(normalized))
+    }
+}
+
+fn find_reasoning_level_by_effort<'a>(
+    template: Option<&'a Value>,
+    effort: &str,
+) -> Option<&'a Value> {
+    template?
+        .get("supported_reasoning_levels")
+        .and_then(|value| value.as_array())?
+        .iter()
+        .find(|level| level.get("effort").and_then(|value| value.as_str()) == Some(effort))
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -566,6 +643,20 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .filter(|text| !text.is_empty())
             .map(str::to_string);
 
+        let default_reasoning_level = model_config
+            .get("defaultReasoningLevel")
+            .or_else(|| model_config.get("default_reasoning_level"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string);
+        let supported_reasoning_levels = normalize_codex_reasoning_levels(
+            model_config
+                .get("supportedReasoningLevels")
+                .or_else(|| model_config.get("supported_reasoning_levels")),
+            None,
+        );
+
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
             display_name: display_name.to_string(),
@@ -573,6 +664,8 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            default_reasoning_level,
+            supported_reasoning_levels,
         });
     }
 
@@ -845,12 +938,15 @@ fn load_codex_model_catalog_template() -> Result<Value, AppError> {
 fn codex_model_catalog_from_specs(
     specs: &[CodexCatalogModelSpec],
     template: &Value,
+    reasoning_template: &Value,
     profile: CodexCatalogToolProfile,
 ) -> Value {
     let entries: Vec<Value> = specs
         .iter()
         .enumerate()
-        .map(|(index, spec)| codex_catalog_model_entry(template, spec, index, profile))
+        .map(|(index, spec)| {
+            codex_catalog_model_entry(template, reasoning_template, spec, index, profile)
+        })
         .collect();
 
     json!({ "models": entries })
@@ -869,12 +965,21 @@ fn codex_model_catalog_from_settings(
     // Native providers use the bundled clean template (no freeform apply_patch,
     // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
     // entry so the proxy can rewrite custom<->function tools as before.
-    let template = match profile {
-        CodexCatalogToolProfile::NativeResponses => load_codex_native_responses_template(),
-        CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
+    let (template, reasoning_template) = match profile {
+        CodexCatalogToolProfile::NativeResponses => (
+            load_codex_native_responses_template(),
+            load_codex_model_catalog_template()?,
+        ),
+        CodexCatalogToolProfile::ProxyChat => {
+            let template = load_codex_model_catalog_template()?;
+            (template.clone(), template)
+        }
     };
     Ok(Some(codex_model_catalog_from_specs(
-        &specs, &template, profile,
+        &specs,
+        &template,
+        &reasoning_template,
+        profile,
     )))
 }
 
@@ -2332,8 +2437,12 @@ base_url = "https://production.api/v1"
             }
         });
         let specs = codex_catalog_model_specs(&settings, r#"model_context_window = 128000"#);
-        let catalog =
-            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            &template,
+            CodexCatalogToolProfile::ProxyChat,
+        );
         let models = catalog
             .get("models")
             .and_then(|value| value.as_array())
@@ -2456,6 +2565,79 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn native_responses_catalog_inherits_full_codex_reasoning_by_default() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{ "model": "gpt-5.5" }]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("native catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("medium"),
+            "native tool cleanup must not downgrade Codex reasoning defaults"
+        );
+        let efforts: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported reasoning levels")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts, vec!["low", "medium", "high", "xhigh"]);
+        assert!(
+            entry.get("apply_patch_tool_type").is_none(),
+            "native entries must still suppress the freeform apply_patch tool"
+        );
+    }
+
+    #[test]
+    fn native_responses_catalog_keeps_explicit_reasoning_overrides() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "vendor-thinking-toggle",
+                    "defaultReasoningLevel": "high",
+                    "supportedReasoningLevels": ["none", "high"]
+                }]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("native catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let entry = &catalog["models"][0];
+        assert_eq!(
+            entry
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str()),
+            Some("high")
+        );
+        let efforts: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported reasoning levels")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(efforts, vec!["none", "high"]);
+    }
+
+    #[test]
     fn native_responses_catalog_always_carries_base_instructions() {
         // Regression guard for the "missing field `base_instructions`" parse
         // error: Codex refuses to load a model catalog whose entries lack
@@ -2495,6 +2677,8 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            default_reasoning_level: None,
+            supported_reasoning_levels: None,
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
         // apply_patch_tool_type. (The native template lacks it, so synthesize
@@ -2503,6 +2687,7 @@ base_url = "https://production.api/v1"
         proxy_template["apply_patch_tool_type"] = json!("freeform");
         let catalog = codex_model_catalog_from_specs(
             &specs,
+            &proxy_template,
             &proxy_template,
             CodexCatalogToolProfile::ProxyChat,
         );

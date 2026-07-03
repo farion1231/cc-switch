@@ -267,6 +267,17 @@ export interface CodexCatalogModel {
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
   baseInstructions?: string;
+  // Optional Codex model-catalog reasoning metadata. Hidden in the compact row UI
+  // for now, but preserved so generated catalogs do not collapse all models to a
+  // single thinking level after load -> save.
+  defaultReasoningLevel?: string;
+  supportedReasoningLevels?: Array<
+    | string
+    | {
+        effort: string;
+        description?: string;
+      }
+  >;
 }
 
 // Claude 认证字段类型

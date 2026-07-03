@@ -88,6 +88,19 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : typeof item?.base_instructions === "string"
                   ? item.base_instructions
                   : undefined;
+            const defaultReasoningLevel =
+              typeof item?.defaultReasoningLevel === "string"
+                ? item.defaultReasoningLevel
+                : typeof item?.default_reasoning_level === "string"
+                  ? item.default_reasoning_level
+                  : undefined;
+            const supportedReasoningLevels = Array.isArray(
+              item?.supportedReasoningLevels,
+            )
+              ? item.supportedReasoningLevels
+              : Array.isArray(item?.supported_reasoning_levels)
+                ? item.supported_reasoning_levels
+                : undefined;
             return {
               model: typeof item?.model === "string" ? item.model : "",
               displayName:
@@ -109,6 +122,8 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps) {
                 : {}),
               ...(inputModalities ? { inputModalities } : {}),
               ...(baseInstructions ? { baseInstructions } : {}),
+              ...(defaultReasoningLevel ? { defaultReasoningLevel } : {}),
+              ...(supportedReasoningLevels ? { supportedReasoningLevels } : {}),
             };
           })
           .filter((item: CodexCatalogModel) => item.model.trim()),
