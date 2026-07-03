@@ -3,15 +3,15 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use regex::Regex;
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::Value;
-use toml_edit::DocumentMut;
 
 use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
-use crate::config::get_home_dir;
+use crate::codex_state_db::codex_state_db_paths;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
@@ -20,9 +20,7 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "codex";
-const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
 const CODEX_SESSION_INDEX_FILENAME: &str = "session_index.jsonl";
-const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
 const VSCODE_CONTEXT_PREFIX: &str = "# Context from my IDE setup:";
 const CODEX_REQUEST_MARKER: &str = "my request for codex";
 
@@ -79,54 +77,6 @@ fn load_thread_titles() -> HashMap<String, String> {
     let config_text = read_codex_config_text().unwrap_or_default();
     let db_paths = codex_state_db_paths(&config_dir, &config_text);
     load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
-}
-
-fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    push_unique_path(&mut paths, config_dir.join(CODEX_STATE_DB_FILENAME));
-    if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
-        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
-    } else if let Some(sqlite_home) = sqlite_home_from_env() {
-        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
-    }
-    paths
-}
-
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.contains(&path) {
-        paths.push(path);
-    }
-}
-
-fn sqlite_home_from_codex_config(config_text: &str) -> Option<PathBuf> {
-    let doc = config_text.parse::<DocumentMut>().ok()?;
-    let raw = doc.get("sqlite_home")?.as_str()?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    Some(resolve_user_path(raw))
-}
-
-fn sqlite_home_from_env() -> Option<PathBuf> {
-    let raw = std::env::var(CODEX_SQLITE_HOME_ENV).ok()?;
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    Some(resolve_user_path(raw))
-}
-
-fn resolve_user_path(raw: &str) -> PathBuf {
-    if raw == "~" {
-        return get_home_dir();
-    }
-    if let Some(rest) = raw.strip_prefix("~/") {
-        return get_home_dir().join(rest);
-    }
-    if let Some(rest) = raw.strip_prefix("~\\") {
-        return get_home_dir().join(rest);
-    }
-    PathBuf::from(raw)
 }
 
 fn load_thread_titles_from_paths(
@@ -194,24 +144,39 @@ fn load_thread_titles_from_db(db_path: &Path) -> HashMap<String, String> {
             return HashMap::new();
         }
     };
+    // Codex keeps this DB open and write-locked while running; without a busy
+    // timeout a read during a write fails immediately and titles silently drop.
+    if let Err(err) = conn.busy_timeout(Duration::from_secs(2)) {
+        log::warn!(
+            "Failed to set Codex state database busy timeout for {}: {err}",
+            db_path.display()
+        );
+        return HashMap::new();
+    }
 
-    let mut stmt =
-        match conn.prepare("SELECT id, title, first_user_message FROM threads WHERE title <> ''") {
-            Ok(stmt) => stmt,
-            Err(err) => {
-                log::warn!(
-                    "Failed to prepare Codex thread title query for {}: {err}",
-                    db_path.display()
-                );
-                return HashMap::new();
-            }
-        };
+    // Mirror Codex's own `distinct_thread_metadata_title`: keep a title only
+    // when it differs from the first user message. Push the comparison into SQL
+    // (NULL-safe) so we never SELECT the unbounded `first_user_message` blob —
+    // it can grow large enough to OOM (openai/codex#29007).
+    let mut stmt = match conn.prepare(
+        "SELECT id, title FROM threads \
+         WHERE title <> '' \
+         AND (first_user_message IS NULL OR TRIM(title) <> TRIM(first_user_message))",
+    ) {
+        Ok(stmt) => stmt,
+        Err(err) => {
+            log::warn!(
+                "Failed to prepare Codex thread title query for {}: {err}",
+                db_path.display()
+            );
+            return HashMap::new();
+        }
+    };
 
     let rows = match stmt.query_map([], |row| {
         let id: String = row.get(0)?;
         let title: String = row.get(1)?;
-        let first_user_message: String = row.get(2)?;
-        Ok((id, title, first_user_message))
+        Ok((id, title))
     }) {
         Ok(rows) => rows,
         Err(err) => {
@@ -224,11 +189,10 @@ fn load_thread_titles_from_db(db_path: &Path) -> HashMap<String, String> {
     };
 
     rows.flatten()
-        .filter_map(|(id, title, first_user_message)| {
+        .filter_map(|(id, title)| {
             let id = id.trim();
             let title = title.trim();
-            let first_user_message = first_user_message.trim();
-            if id.is_empty() || title.is_empty() || title == first_user_message {
+            if id.is_empty() || title.is_empty() {
                 None
             } else {
                 Some((id.to_string(), title.to_string()))
@@ -560,6 +524,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
     use tempfile::tempdir;
 
     fn write_codex_session(path: &Path, session_id: &str, message: &str) {
@@ -698,6 +663,41 @@ mod tests {
     }
 
     #[test]
+    fn load_thread_titles_from_state_db_keeps_title_when_first_user_message_null() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        // Codex stores first_user_message as a nullable column (Option<String>);
+        // a renamed thread can have a title before any first message is synced.
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, first_user_message TEXT)",
+            [],
+        )
+        .expect("create threads table");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, NULL)",
+            ("thread-1", "Renamed thread"),
+        )
+        .expect("insert renamed thread without first message");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-2", "First prompt", "First prompt"),
+        )
+        .expect("insert first-message title");
+        drop(conn);
+
+        let titles = load_thread_titles_from_db(&db_path);
+
+        // Kept: title present and no first message to compare against.
+        assert_eq!(
+            titles.get("thread-1").map(String::as_str),
+            Some("Renamed thread")
+        );
+        // Filtered: title equals the first user message.
+        assert!(!titles.contains_key("thread-2"));
+    }
+
+    #[test]
     fn load_thread_titles_from_session_index_uses_latest_name() {
         let temp = tempdir().expect("tempdir");
         let index_path = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
@@ -759,23 +759,6 @@ mod tests {
         assert_eq!(
             titles.get("thread-2").map(String::as_str),
             Some("Legacy fallback")
-        );
-    }
-
-    #[test]
-    fn codex_state_db_paths_include_config_sqlite_home() {
-        let temp = tempdir().expect("tempdir");
-        let sqlite_home = temp.path().join("sqlite-home");
-        let config_text = format!("sqlite_home = \"{}\"\n", sqlite_home.display());
-
-        let paths = codex_state_db_paths(temp.path(), &config_text);
-
-        assert_eq!(
-            paths,
-            vec![
-                temp.path().join(CODEX_STATE_DB_FILENAME),
-                sqlite_home.join(CODEX_STATE_DB_FILENAME),
-            ]
         );
     }
 
