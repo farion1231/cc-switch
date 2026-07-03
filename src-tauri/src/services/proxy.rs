@@ -2076,6 +2076,15 @@ impl ProxyService {
                     &mut effective_settings,
                     existing_value,
                 )?;
+                // preserve_codex_mcp_servers_… 只整表拷贝目标缺失的 server；两边都有
+                // 的 server 用的是 provider stored config 版本，而 backfill 剥离保证
+                // 了它不含 runtime 子表（tools.*）。备份是接管释放时 byte-for-byte
+                // 恢复 live 的来源——这里不合并的话，热切换过一次的接管周期结束后，
+                // per-tool 授权会随恢复被确定性抹掉。
+                Self::merge_codex_runtime_subtables_into_backup(
+                    &mut effective_settings,
+                    existing_value,
+                );
                 Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
             }
 
@@ -2279,6 +2288,33 @@ impl ProxyService {
 
         target_obj.insert("config".to_string(), json!(target_doc.to_string()));
         Ok(())
+    }
+
+    /// 把旧备份 config 文本中的 Codex runtime 子表（如 `tools.*`）合并进重建后的
+    /// 备份 config 文本。语义同 live 写入边界的 Layer 2
+    /// （`mcp::merge_codex_runtime_subtables`），old 侧换成旧备份——接管期间
+    /// 旧备份是「释放接管时应恢复的 runtime 状态」的唯一持有者。
+    /// best-effort：任一侧缺 `config` 文本时不动 target。
+    fn merge_codex_runtime_subtables_into_backup(
+        target_settings: &mut Value,
+        existing_config: &Value,
+    ) {
+        let Some(new_cfg) = target_settings
+            .get("config")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let Some(old_cfg) = existing_config.get("config").and_then(|v| v.as_str()) else {
+            return;
+        };
+        let merged = crate::mcp::merge_codex_runtime_subtables(&new_cfg, old_cfg);
+        if merged != new_cfg {
+            if let Some(obj) = target_settings.as_object_mut() {
+                obj.insert("config".to_string(), json!(merged));
+            }
+        }
     }
 
     fn preserve_codex_oauth_auth_in_backup(
@@ -2496,6 +2532,13 @@ impl ProxyService {
                         config, config_str, profile,
                     )
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                // 与下方 else 分支对齐：else 走 codex_config::write_codex_live_for_provider，
+                // 其 Layer 2 会以旧 live 为权威恢复 runtime 子表（tools.*）；本分支绕过
+                // 该函数直接原子写盘，必须显式做同一步合并，否则接管期热切换会把
+                // live 中的 per-tool 授权覆盖丢失，且同一操作的行为会随
+                // preserve_codex_official_auth_on_switch 开关分裂。
+                let prepared_config =
+                    crate::codex_config::preserve_runtime_codex_mcp_state(&prepared_config);
                 let live_config =
                     crate::codex_config::prepare_codex_provider_live_config(auth, &prepared_config)
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
@@ -3357,6 +3400,131 @@ wire_api = "responses"
         assert!(
             live_config.contains(PROXY_TOKEN_PLACEHOLDER),
             "live config should carry the proxy placeholder token"
+        );
+
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+    }
+
+    #[test]
+    fn backup_rebuild_merges_runtime_tools_from_existing_backup() {
+        // 热切换重建备份：两边都有的 server 取 provider stored config 版本（已被
+        // backfill 剥离 tools.*），必须从旧备份把 runtime 子表合并回来，否则释放
+        // 接管时 byte-for-byte 恢复的备份会确定性抹掉 per-tool 授权。
+        let mut target = json!({
+            "auth": {},
+            "config": "[mcp_servers.x]\ncommand = \"x\"\n"
+        });
+        let existing = json!({
+            "auth": {},
+            "config": "[mcp_servers.x]\ncommand = \"x\"\n\n[mcp_servers.x.tools.search]\napproval_mode = \"approve\"\n"
+        });
+
+        ProxyService::merge_codex_runtime_subtables_into_backup(&mut target, &existing);
+
+        let config = target["config"].as_str().expect("backup config text");
+        let v: toml::Value = toml::from_str(config).expect("backup config is valid toml");
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
+            Some("approve"),
+            "重建后的备份必须保留旧备份中的 runtime 子表"
+        );
+
+        // 任一侧缺 config 文本时不动 target（best-effort）。
+        let mut no_config = json!({ "auth": {} });
+        ProxyService::merge_codex_runtime_subtables_into_backup(&mut no_config, &existing);
+        assert!(no_config.get("config").is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn codex_provider_live_write_rescues_runtime_tools_before_overwrite() {
+        // Layer 2 接线验证（codex_config::write_codex_live_for_provider）：
+        // provider 驱动的 live 写入必须以旧 live 为权威——保住 CLI 新授予的
+        // tools.*，同时不让 stored config 中的 stale 副本复活已撤销授权。
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({ "OPENAI_API_KEY": "old-key" }),
+            Some("[mcp_servers.x]\ncommand = \"x\"\n\n[mcp_servers.x.tools.search]\napproval_mode = \"approve\"\n"),
+        )
+        .expect("seed live config with runtime tools");
+
+        crate::codex_config::write_codex_live_for_provider(
+            Some("custom"),
+            &json!({ "OPENAI_API_KEY": "new-key" }),
+            Some("model_provider = \"b\"\n\n[mcp_servers.x]\ncommand = \"x\"\n\n[mcp_servers.x.tools.stale]\napproval_mode = \"approve\"\n"),
+        )
+        .expect("provider-driven live write");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        let v: toml::Value = toml::from_str(&live_config).expect("live config is valid toml");
+        assert_eq!(v["model_provider"].as_str(), Some("b"));
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
+            Some("approve"),
+            "live 中的 per-tool 授权必须在 provider 写入后保留"
+        );
+        assert!(
+            v["mcp_servers"]["x"]["tools"].get("stale").is_none(),
+            "stored config 中 live 已不存在的 stale tool 不得复活"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn codex_takeover_placeholder_write_preserves_runtime_tools_from_live() {
+        // preserve_codex_official_auth_on_switch=true 时，接管写入走占位符分支
+        // （绕过 codex_config::write_codex_live_for_provider 直接原子写盘）；
+        // 该分支必须与 else 分支一样保留 live 中的 per-tool 授权，
+        // 行为不得随这个 auth 兼容开关分裂。
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            preserve_codex_official_auth_on_switch: true,
+            ..Default::default()
+        })
+        .expect("enable Codex official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db);
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({ "tokens": { "id_token": "id", "access_token": "at" } }),
+            Some("[mcp_servers.x]\ncommand = \"x\"\n\n[mcp_servers.x.tools.search]\napproval_mode = \"approve\"\n"),
+        )
+        .expect("seed live config with runtime tools");
+
+        let mut provider = Provider::with_id(
+            "b".to_string(),
+            "ProviderB".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": "model_provider = \"b\"\n"
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        // 模拟接管期热切换的写入形态：占位符 auth + 已被 backfill 剥离 tools.* 的
+        // provider stored config（含同名 server）。
+        let takeover_settings = json!({
+            "auth": { "OPENAI_API_KEY": PROXY_TOKEN_PLACEHOLDER },
+            "config": "model_provider = \"b\"\n\n[mcp_servers.x]\ncommand = \"x\"\n"
+        });
+
+        service
+            .write_codex_takeover_live_for_provider(&takeover_settings, Some(&provider))
+            .expect("takeover placeholder-branch write");
+
+        let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        let v: toml::Value = toml::from_str(&live_config).expect("live config is valid toml");
+        assert_eq!(
+            v["mcp_servers"]["x"]["tools"]["search"]["approval_mode"].as_str(),
+            Some("approve"),
+            "占位符分支必须保留 live 中的 per-tool 授权"
         );
 
         crate::settings::update_settings(crate::settings::AppSettings::default())

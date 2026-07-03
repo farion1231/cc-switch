@@ -1516,18 +1516,22 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 /// 运行时子表（典型为 `[mcp_servers.<id>.tools.<tool>]`），把它们合并进即将写入的
 /// 新文本。详细语义见 `mcp::codex::merge_codex_runtime_subtables`。
 ///
-/// 最佳努力（best-effort）：旧文件不存在时按空 live 处理，读失败时返回
-/// `new_text` 的拷贝，绝不阻断底层写入。
+/// 最佳努力（best-effort）：旧文件不存在时按空 live 处理，读失败时记 warning 并
+/// 返回 `new_text` 的拷贝（此时 runtime 子表无法抢救，等价于本保护引入前的行为），
+/// 绝不阻断底层写入。
 ///
 /// 注意：read-then-write 不是原子的。若 Codex CLI 在本函数读取旧 live 之后、
 /// 底层 atomic 写入之前并发写入 `config.toml`，那次写入的 runtime 变更会被本次
 /// 覆盖丢失。对单用户桌面场景可接受，故不额外加锁。
-fn preserve_runtime_codex_mcp_state(new_text: &str) -> String {
+pub(crate) fn preserve_runtime_codex_mcp_state(new_text: &str) -> String {
     let live_path = get_codex_config_path();
     let old_text = if live_path.exists() {
         match std::fs::read_to_string(&live_path) {
             Ok(text) => text,
-            Err(_) => return new_text.to_string(),
+            Err(err) => {
+                log::warn!("读取 Codex live 配置失败，本次写入无法保留 runtime 子表: {err}");
+                return new_text.to_string();
+            }
         }
     } else {
         String::new()
@@ -1560,8 +1564,12 @@ pub fn write_codex_live_for_provider(
     let config_text = unified_official_config.as_deref().or(config_text);
 
     // Layer 2：provider 驱动的 live 写入前，把旧 live 中 cc-switch 不管辖的 runtime
-    // 子表（典型 [mcp_servers.<id>.tools.<tool>]）合并进新文本。仅作用于 provider
-    // 写入路径；byte-for-byte restore 走裸 write_codex_live_atomic，不受影响。
+    // 子表（典型 [mcp_servers.<id>.tools.<tool>]）合并进新文本。下方 auth 路由的两个
+    // 分支都在合并之后写盘；接管期热切换绕开本函数的占位符分支在
+    // `ProxyService::write_codex_takeover_live_for_provider` 里做同一步合并。
+    // byte-for-byte restore 走裸 write_codex_live_atomic / write_codex_live_verbatim，
+    // 保持精确还原语义，不在写盘时合并——接管备份已在重建时合并过 runtime 子表
+    // （见 `ProxyService::update_live_backup_from_provider_inner`）。
     // 作用在 Layer 1 注入后的文本上，确保两层变换都落到最终写盘内容。
     let preserved = config_text.map(preserve_runtime_codex_mcp_state);
     let config_text = preserved.as_deref();
