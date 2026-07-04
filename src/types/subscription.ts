@@ -17,6 +17,9 @@ export interface QuotaTier {
   usedCount?: number | null;
   totalCount?: number | null;
   countUnit?: string | null;
+  // 服务端精确剩余毫秒数（来自 MiniMax *_remains_time 等字段）。
+  // 优先于前端 end_time - Date.now() 计算（避免本地时钟漂移 + 拿到毫秒精度）。
+  remainsTimeMs?: number | null;
 }
 
 export interface ExtraUsage {

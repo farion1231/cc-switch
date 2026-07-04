@@ -333,6 +333,11 @@ mod tests {
     use crate::provider::Provider;
     use crate::services::provider::mod_test::with_test_home;
     use serde_json::json;
+    // 与 mod.rs::with_test_home 共享同一进程级 lock，否则并行 cargo test
+    // 时会出现「mod_test::guard」与「mod.rs::test_guard」不同静态变量
+    // 导致 home 隔离失效（同一进程下两个 `with_test_home` 互相覆盖 env），
+    // 进而让本文件的 test 看到对方创建的 .claude/keys/ 但内容被覆盖。
+    use serial_test::serial;
 
     fn make_provider(id: &str, kind: &str, api_key_field: &str) -> Provider {
         Provider::with_id(
@@ -373,6 +378,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn claude_writes_one_file_per_key() {
         with_test_home(|state, home| {
             let db = state.db.as_ref();
@@ -431,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn codex_writes_pair_per_key() {
         with_test_home(|state, home| {
             let db = state.db.as_ref();
@@ -467,6 +474,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn stale_files_are_cleaned_on_delete() {
         with_test_home(|state, _home| {
             let db = state.db.as_ref();
@@ -536,6 +544,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn regeneration_is_idempotent() {
         with_test_home(|state, _home| {
             let db = state.db.as_ref();
@@ -573,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn disabled_keys_skip_write_but_keep_file() {
         with_test_home(|state, _home| {
             let db = state.db.as_ref();
@@ -618,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn sanitize_blocks_path_traversal_in_provider_id() {
         let raw = "../escape/attempt";
         let safe = sanitize_provider_name(raw);

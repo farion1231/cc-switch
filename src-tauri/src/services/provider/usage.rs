@@ -96,10 +96,26 @@ pub(crate) async fn query_special_template(
                 let total = 100.0;
                 let used = tier.utilization;
                 let remaining = total - used;
-                let extra = if has_usd {
-                    let mut extra_json = serde_json::json!({
-                        "resetsAt": tier.resets_at,
-                    });
+                // 统一走 JSON extra 路径：把 resetsAt 与所有可选结构化字段塞进去，
+                // 让前端 toQuotaTier / parseExtraObject 解析。
+                // - usedCount/totalCount/countUnit：MiniMax / Zhipu 等提供绝对次数的 provider
+                // - usedValueUsd / maxValueUsd / planLabel：ZenMux
+                let mut extra_json = serde_json::json!({
+                    "resetsAt": tier.resets_at,
+                });
+                if let (Some(used_count), Some(total_count), Some(unit)) =
+                    (tier.used_count, tier.total_count, tier.count_unit.as_ref())
+                {
+                    extra_json["usedCount"] = serde_json::json!(used_count);
+                    extra_json["totalCount"] = serde_json::json!(total_count);
+                    extra_json["countUnit"] = serde_json::json!(unit);
+                }
+                if let Some(remains_ms) = tier.remains_time_ms {
+                    // 服务端精确剩余毫秒数,优先于前端 end_time - Date.now() 计算
+                    // （避免本地时钟漂移 + 拿到毫秒精度而非秒级）
+                    extra_json["remainsTimeMs"] = serde_json::json!(remains_ms);
+                }
+                if has_usd {
                     if let Some(v) = tier.used_value_usd {
                         extra_json["usedValueUsd"] = serde_json::json!(v);
                     }
@@ -112,10 +128,7 @@ pub(crate) async fn query_special_template(
                         }
                         first_tier = false;
                     }
-                    Some(extra_json.to_string())
-                } else {
-                    tier.resets_at.clone()
-                };
+                }
                 UsageData {
                     plan_name: Some(tier.name.clone()),
                     remaining: Some(remaining),
@@ -124,7 +137,7 @@ pub(crate) async fn query_special_template(
                     unit: Some("%".to_string()),
                     is_valid: Some(true),
                     invalid_message: None,
-                    extra,
+                    extra: Some(extra_json.to_string()),
                 }
             })
             .collect();

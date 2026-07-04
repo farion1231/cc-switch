@@ -247,19 +247,21 @@ export function ApiKeyStatusBar({
   // 同时把 reset 字符串还原回毫秒——下面 `primaryResetLabel` 用「XhYm」/
   // 「XdYh」双单位格式重打，"12m"/"2h" 这种单单位粒度太粗，主进度条不
   // 该用这种简化版。
-  const primaryReset: string = (() => {
-    if (fiveHourWindow?.reset) return fiveHourWindow.reset;
-    if (primaryForDisplay) {
-      const isoReset = parseResetsAtForBar(primaryForDisplay.extra);
-      if (isoReset) return isoReset;
-    }
-    return "";
-  })();
-  // `parseResetsAtForBar` 拿到的是 ISO 串走 formatRemaining 出来的紧凑
-  // 字符串（"12m" / "2h" / "3d"），需要再 `parseCompactDurationToMs` 回到
-  // ms 才能喂给 `formatDualCountdown` 走双单位分支。
-  // `fiveHourWindow.reset` 同源（"5小时:100%12m" 里的 "12m"）—— 同样路径。
-  const primaryResetMs = primaryReset ? parseCompactDurationToMs(primaryReset) : 0;
+  // ─── 5h 窗口剩余时间（精确到毫秒） ───────────────────────
+  // 数据源优先级（与旧版保持一致,精确化处理）：
+  //   1) `fiveHourWindow.reset` —— 来自 raw text "5小时:100%12m" 解析出的单
+  //      段字符串,精度被 `parseUsageWindows` 截到单单位（"12m" / "2h"），
+  //      round-trip 回去会丢次级单位。只能继续用 parseCompactDurationToMs。
+  //   2) primaryForDisplay.extra —— 我方 token_plan 路径返回的 JSON
+  //      (含 remainsTimeMs + resetsAt)。优先用 remainsTimeMs 拿精确 ms,
+  //      不再走 formatRemaining/parseCompactDurationToMs 的 round-trip。
+  // `primaryResetMs` 给 `formatDualCountdown` 走双单位分支("XhYm" / "XdYh")。
+  let primaryResetMs = 0;
+  if (fiveHourWindow?.reset) {
+    primaryResetMs = parseCompactDurationToMs(fiveHourWindow.reset);
+  } else if (primaryForDisplay) {
+    primaryResetMs = parseResetsAtMsForBar(primaryForDisplay.extra);
+  }
 
   // ─── 5h 配额窗口到点重置 ───────────────────────────────────
   // primaryResetMs 是「距下次重置的剩余 ms」——挂一个 setTimeout，到点时
@@ -331,7 +333,8 @@ export function ApiKeyStatusBar({
   const additionalTiers: Array<{
     name: string;
     used: number;
-    reset: string;
+    resetMs: number;
+    resetDisplay: string; // fallback 字符串（compact format 用于精度丢失的 JS script path）
   }> = [];
   if (usageEnabled && usage?.success && usage.data && primaryUsage) {
     for (const d of usage.data) {
@@ -344,8 +347,11 @@ export function ApiKeyStatusBar({
           : d.total && d.total > 0
             ? Math.max(0, Math.min(100, ((d.used ?? 0) / d.total) * 100))
             : 0;
-      const reset = parseResetsAtForBar(d.extra);
-      additionalTiers.push({ name, used, reset });
+      // 优先用服务端精确毫秒（无 round-trip 精度损失）;fallback 到 compact
+      // 字符串（用于 JS script path,精度本来就被截到单单位）。
+      const resetMs = parseResetsAtMsForBar(d.extra);
+      const resetDisplay = resetMs > 0 ? "" : parseResetsAtForBar(d.extra);
+      additionalTiers.push({ name, used, resetMs, resetDisplay });
     }
   }
 
@@ -614,8 +620,7 @@ export function ApiKeyStatusBar({
                   "text-foreground/70",
                 )}
                 title={t("apiKeyStatusBar.windowResetsIn", {
-                  defaultValue: `将在 ${primaryReset} 后重置`,
-                  reset: primaryReset,
+                  defaultValue: `将在 ${localizeCompactDuration(formatDualCountdown(primaryResetMs, "5h"), t)} 后重置`,
                 })}
               >
                 <Timer className="h-2.5 w-2.5" />
@@ -736,14 +741,11 @@ export function ApiKeyStatusBar({
               : sevenDayRe.test(w.name)
                 ? "7d"
                 : "30d";
-            const wResetMs = parseCompactDurationToMs(w.reset);
+            const wResetMs = w.resetMs;
             const wResetLabel =
               wResetMs > 0
-                            ? localizeCompactDuration(
-                                formatDualCountdown(wResetMs, horizon),
-                                t,
-                              )
-                            : w.reset;
+                ? localizeCompactDuration(formatDualCountdown(wResetMs, horizon), t)
+                : w.resetDisplay;
             return (
               <div key={`${w.name}-${i}`} className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
@@ -787,23 +789,33 @@ export function ApiKeyStatusBar({
                       ? t(TIER_I18N_KEYS[w.name], { defaultValue: w.name })
                       : labelForWindowName(w.name, t)}
                   </span>
-                  {w.reset ? (
+                  {w.resetMs > 0 ? (
                     <span
                       className={cn(
                         "inline-flex items-center gap-0.5 font-mono tabular-nums",
                         "text-foreground/70",
                       )}
                       title={t("apiKeyStatusBar.windowResetsIn", {
-                        defaultValue: `将在 ${w.reset} 后重置`,
-                        reset: w.reset,
+                        defaultValue: `将在 ${wResetLabel} 后重置`,
                       })}
                     >
                       <Timer className="h-2.5 w-2.5" />
                       {wResetLabel}
                     </span>
-                  ) : (
-                    <span />
-                  )}
+                  ) : w.resetDisplay ? (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-0.5 font-mono tabular-nums",
+                        "text-foreground/70",
+                      )}
+                      title={t("apiKeyStatusBar.windowResetsIn", {
+                        defaultValue: `将在 ${w.resetDisplay} 后重置`,
+                      })}
+                    >
+                      <Timer className="h-2.5 w-2.5" />
+                      {localizeCompactDuration(w.resetDisplay, t)}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             );
@@ -977,6 +989,43 @@ function parseResetsAtForBar(extra: string | undefined | null): string {
   const diff = t1 - Date.now();
   if (diff <= 0) return "";
   return formatRemaining(diff);
+}
+
+/**
+ * 解析 UsageData.extra 里的精确剩余毫秒数（不经过 formatRemaining/parseCompactDurationToMs
+ * 的 round-trip,避免单单位粒度丢失次级单位）。
+ *
+ * 优先用 `remainsTimeMs`（服务端给的精确 ms,如 MiniMax *_remains_time）;
+ * 否则 fallback 到 resetsAt - Date.now()。
+ *
+ * 返回 0 表示无法识别 / 已过期,调用方按 falsy 跳过。
+ */
+function parseResetsAtMsForBar(extra: string | undefined | null): number {
+  if (!extra) return 0;
+  const trimmed = extra.trim();
+  if (!trimmed) return 0;
+  let iso: string | null = null;
+  let remainsMs = 0;
+  if (trimmed.startsWith("{")) {
+    try {
+      const obj = JSON.parse(trimmed);
+      if (typeof obj?.remainsTimeMs === "number" && obj.remainsTimeMs > 0) {
+        remainsMs = obj.remainsTimeMs;
+      }
+      if (typeof obj?.resetsAt === "string") {
+        iso = obj.resetsAt;
+      }
+    } catch {
+      // fall through
+    }
+  } else {
+    iso = trimmed;
+  }
+  if (remainsMs > 0) return remainsMs;
+  if (!iso) return 0;
+  const t1 = new Date(iso).getTime();
+  if (!Number.isFinite(t1)) return 0;
+  return Math.max(0, t1 - Date.now());
 }
 
 /**

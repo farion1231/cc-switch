@@ -32,21 +32,43 @@ function formatRelativeTime(
   return t("usage.daysAgo", { count: Math.floor(diff / 86400) });
 }
 
-/** 从 UsageData.extra 里解析 resets_at：可能是 ISO 字符串也可能是 JSON。 */
-function parseResetsAt(extra: string | undefined | null): string | null {
-  if (!extra) return null;
+/** 从 UsageData.extra 里解析结构化字段：可能是 JSON（含 resetsAt/usedCount/totalCount/countUnit），
+ *  也可能只是 ISO 字符串（旧 OFFICIAL_SUBSCRIPTION 路径）。
+ */
+function parseExtraObject(extra: string | undefined | null): {
+  resetsAt: string | null;
+  usedCount: number | null;
+  totalCount: number | null;
+  countUnit: string | null;
+  remainsTimeMs: number | null;
+} {
+  const empty = {
+    resetsAt: null,
+    usedCount: null,
+    totalCount: null,
+    countUnit: null,
+    remainsTimeMs: null,
+  };
+  if (!extra) return empty;
   const trimmed = extra.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("{")) {
-    try {
-      const obj = JSON.parse(trimmed);
-      const v = obj?.resetsAt;
-      return typeof v === "string" ? v : null;
-    } catch {
-      return null;
-    }
+  if (!trimmed) return empty;
+  if (!trimmed.startsWith("{")) {
+    // 纯 ISO 字符串（旧路径：直接当 resetsAt 用）
+    return { ...empty, resetsAt: trimmed };
   }
-  return trimmed;
+  try {
+    const obj = JSON.parse(trimmed);
+    return {
+      resetsAt: typeof obj?.resetsAt === "string" ? obj.resetsAt : null,
+      usedCount: typeof obj?.usedCount === "number" ? obj.usedCount : null,
+      totalCount: typeof obj?.totalCount === "number" ? obj.totalCount : null,
+      countUnit: typeof obj?.countUnit === "string" ? obj.countUnit : null,
+      remainsTimeMs:
+        typeof obj?.remainsTimeMs === "number" ? obj.remainsTimeMs : null,
+    };
+  } catch {
+    return empty;
+  }
 }
 
 /**
@@ -143,17 +165,27 @@ export const TokenPlanQuotaFooter: React.FC<TokenPlanQuotaFooterProps> = ({
           </button>
         </div>
         <div className="flex items-center gap-2">
-          {tiers.map((tier) => (
-            <TierBadge
-              key={(tier.planName ?? "").trim()}
-              tier={{
-                name: (tier.planName ?? "").trim(),
-                utilization: tier.used ?? 0,
-                resetsAt: parseResetsAt(tier.extra),
-              }}
-              t={t}
-            />
-          ))}
+          {tiers.map((tier) => {
+            const parsed = parseExtraObject(tier.extra);
+            return (
+              <TierBadge
+                key={(tier.planName ?? "").trim()}
+                tier={{
+                  name: (tier.planName ?? "").trim(),
+                  utilization: tier.used ?? 0,
+                  resetsAt: parsed.resetsAt,
+                  // 透传 absolute count（MiniMax / Zhipu），让 TierBadge 走 hasAbsolute 分支
+                  // 渲染「X / Y count」+ 真实百分比（可超 100%）。
+                  usedCount: parsed.usedCount,
+                  totalCount: parsed.totalCount,
+                  countUnit: parsed.countUnit,
+                  // 透传服务端精确剩余毫秒数,优先于 end_time - Date.now()。
+                  remainsTimeMs: parsed.remainsTimeMs,
+                }}
+                t={t}
+              />
+            );
+          })}
         </div>
       </div>
     );

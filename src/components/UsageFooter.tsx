@@ -30,6 +30,14 @@ function toQuotaTier(data: UsageData): QuotaTier {
         usedValueUsd: parsed.usedValueUsd ?? null,
         maxValueUsd: parsed.maxValueUsd ?? null,
         planLabel: parsed.planLabel ?? null,
+        // MiniMax / Zhipu 绝对次数（与官方 web "X / Y" 对齐）。
+        // 后端 query_special_template 在 extra JSON 中提供；
+        // 旧 provider 没塞时保持 undefined，由 TierBadge 走百分比路径。
+        usedCount: typeof parsed.usedCount === "number" ? parsed.usedCount : null,
+        totalCount: typeof parsed.totalCount === "number" ? parsed.totalCount : null,
+        countUnit: typeof parsed.countUnit === "string" ? parsed.countUnit : null,
+        remainsTimeMs:
+          typeof parsed.remainsTimeMs === "number" ? parsed.remainsTimeMs : null,
       };
     } catch {
       // fall through to plain string

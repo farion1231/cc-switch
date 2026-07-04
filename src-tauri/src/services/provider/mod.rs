@@ -276,6 +276,7 @@ mod tests {
             secret_access_key: Some("sk-test".to_string()),
             team_organization_id: None,
             team_project_id: None,
+            group_id: None,
         }
     }
 
@@ -1100,11 +1101,20 @@ command = "legacy-cmd"
                 .expect("update app proxy config");
         }
 
-        state
+        // 测试隔离：把全局 proxy listen_port 设为 0（OS 分配 ephemeral port），
+        // 避免与本地 dev app（默认 127.0.0.1:15721）撞端口导致 bind 失败。
+        {
+            let mut global_config = db.get_proxy_config().await.expect("get proxy config");
+            global_config.listen_port = 0;
+            db.update_proxy_config(global_config).await.expect("set ephemeral port");
+        }
+
+        let actual_port = state
             .proxy_service
             .start()
             .await
-            .expect("start proxy service");
+            .expect("start proxy service")
+            .port;
 
         let mut updated = Provider::with_id(
             "p1".into(),
@@ -1148,7 +1158,7 @@ command = "legacy-cmd"
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!("http://127.0.0.1:{actual_port}/claude-desktop")),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -1954,6 +1964,16 @@ impl ProviderService {
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
 
+        // Seed `provider_api_keys` 表：用户在 ProviderKeyEditor 新建 provider
+        // 时只填了一把 API key，写到 settings_config.apiKey。如果不显式 seed，
+        // 下次编辑模式打开时 ApiKeyListSection 渲染为空——这把 key 在 UI
+        // 上看不见，也不在轮换池里（review P2 修复）。
+        //
+        // 与 schema.rs 的 migrate_v11_to_v12 (legacy backfill) 行为对齐：
+        // 同 app_type 已有 key → 跳过；OAuth / 无静态 key → 跳过；其它情况
+        // 插入 is_active=true、sort_index=0、label="Default"。
+        Self::seed_default_api_key_if_absent(state.db.as_ref(), &provider, app_type.as_str());
+
         // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
         if app_type.is_additive_mode() {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
@@ -1982,6 +2002,85 @@ impl ProviderService {
         }
 
         Ok(true)
+    }
+
+    /// Seed `provider_api_keys` 表：在新建 provider 时若 settings_config 里有
+    /// 静态 API key（且该 provider 还没有任何 pool row），把 key 写入池，
+    /// `is_active=true`、`sort_index=0`、`label="Default"`。
+    ///
+    /// **不阻塞 add 主流程**：失败仅 `log::warn!`，UI 路径不会因 seed 失败
+    /// 而回滚——用户可在 ApiKeyListSection 里手动补 key。
+    ///
+    /// **现有 pool 已有 row 时跳过**：`ProviderService::update()` 在某些
+    /// 路径下也会触发 save_provider（即使不直接调用 add）；跳过能避免
+    /// `UNIQUE(provider_id, app_type, label)` 冲突错误。
+    ///
+    /// **OAuth / 无静态 key**：`extract_legacy_api_key` 返回空字符串 →
+    /// 整个 helper 直接 return，不动 DB。
+    ///
+    /// **确定性 id** `default-<provider_id>-<app_type>`：让同一 provider
+    /// 的重复 seed 在多次 save_provider 时幂等（即使 list_api_keys 检查失败
+    /// 或并发路径上绕过，重复 insert 会因 UNIQUE label 约束报错并被 warn
+    /// 吞掉，不会污染池）。
+    fn seed_default_api_key_if_absent(
+        db: &crate::database::Database,
+        provider: &crate::provider::Provider,
+        app_type_str: &str,
+    ) {
+        use crate::database::dao::api_keys::ProviderApiKey;
+
+        // 现有 pool 已有 row → 跳过（包括用户已经手动加过 key、迁移已 backfill 等）。
+        match db.list_api_keys(&provider.id, app_type_str) {
+            Ok(keys) if !keys.is_empty() => return,
+            Ok(_) => {} // empty pool, continue
+            Err(e) => {
+                log::warn!(
+                    "[provider::add] seed: list_api_keys 失败 (provider={}): {e}",
+                    provider.id
+                );
+                return;
+            }
+        }
+
+        // provider.settings_config 是 serde_json::Value；extract_legacy_api_key
+        // 接受 &str，所以这里序列化为字符串。失败回退 "{}"（= 提取出空字符串，
+        // 下面的过滤会跳过）。
+        let settings_str = serde_json::to_string(&provider.settings_config)
+            .unwrap_or_else(|_| "{}".to_string());
+        let api_key =
+            crate::database::Database::extract_legacy_api_key(&settings_str, app_type_str);
+        if api_key.is_empty() {
+            // OAuth / 官方占位 / 未配置 key——无 seed 必要。
+            return;
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        let row = ProviderApiKey {
+            id: format!("default-{}-{}", provider.id, app_type_str),
+            provider_id: provider.id.clone(),
+            app_type: app_type_str.to_string(),
+            label: "Default".to_string(),
+            api_key,
+            tags: Vec::new(),
+            notes: String::new(),
+            enabled: true,
+            sort_index: 0,
+            is_active: true,
+            cooldown_until: 0,
+            failure_count: 0,
+            last_used_at: None,
+            last_error: None,
+            created_at: now,
+            updated_at: now,
+        };
+        if let Err(e) = db.insert_api_key(&row) {
+            // 最常见原因：UNIQUE(provider_id, app_type, label) 冲突（重复 seed）。
+            // 这种"幂等冲突"在 warn 之外不需额外处理——池里已有 key。
+            log::warn!(
+                "[provider::add] seed provider_api_keys 失败 (provider={}): {e}",
+                provider.id
+            );
+        }
     }
 
     /// Update a provider

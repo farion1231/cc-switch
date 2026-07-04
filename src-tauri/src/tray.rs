@@ -1154,12 +1154,7 @@ mod tests {
         QuotaTier {
             name: name.to_string(),
             utilization,
-            resets_at: None,
-            used_value_usd: None,
-            max_value_usd: None,
-            used_count: None,
-            total_count: None,
-            count_unit: None,
+            ..Default::default()
         }
     }
 
