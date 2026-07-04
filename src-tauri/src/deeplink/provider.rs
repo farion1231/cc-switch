@@ -148,6 +148,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::ZCode => build_zcode_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -465,6 +466,32 @@ fn build_opencode_settings(request: &DeepLinkImportRequest) -> serde_json::Value
     json!({
         "npm": "@ai-sdk/openai-compatible",
         "options": options,
+        "models": models
+    })
+}
+
+fn build_zcode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut options = serde_json::Map::new();
+    if !endpoint.is_empty() {
+        options.insert("baseURL".to_string(), json!(endpoint));
+    }
+    if let Some(api_key) = &request.api_key {
+        options.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    let mut models = serde_json::Map::new();
+    if let Some(model) = &request.model {
+        models.insert(model.clone(), json!({ "name": model }));
+    }
+
+    json!({
+        "name": request.name.clone().unwrap_or_else(|| "Custom Provider".to_string()),
+        "kind": "openai-compatible",
+        "options": options,
+        "enabled": true,
+        "source": "custom",
         "models": models
     })
 }

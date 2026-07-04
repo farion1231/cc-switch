@@ -880,7 +880,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "zcode": "ZCode"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1435,7 +1436,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "Raw",
     "dataSources": "Data Sources",
@@ -1445,7 +1447,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
       "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session"
+      "opencode_session": "OpenCode Session",
+      "zcode_session": "ZCode Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",

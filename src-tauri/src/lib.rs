@@ -31,6 +31,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod zcode_config;
 
 mod tray;
 mod usage_events;
@@ -667,9 +668,9 @@ pub fn run() {
                 log::info!("✓ First-run welcome notice pending");
             }
 
-            // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
+            // 1.6. 自动同步 OpenCode / OpenClaw / Hermes / ZCode 的 live providers 到数据库
             //
-            // additive 模式（OpenCode / OpenClaw）的 import 函数本身按 id 幂等，
+            // additive 模式（OpenCode / OpenClaw / Hermes / ZCode）的 import 函数本身按 id 幂等，
             // 已有的 provider 会被跳过，所以每次启动都跑是安全的——既保证新装
             // 用户开箱可见 live 中的供应商，也让外部修改的 live 文件能在重启
             // 后同步到数据库（与之前依赖前端"导入当前配置"按钮手动触发不同）。
@@ -696,6 +697,13 @@ pub fn run() {
                 }
                 Ok(_) => log::debug!("○ No new Hermes providers to import"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
+            }
+            match crate::services::provider::import_zcode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Imported {count} ZCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No new ZCode providers to import"),
+                Err(e) => log::warn!("✗ Failed to import ZCode providers: {e}"),
             }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
@@ -805,6 +813,7 @@ pub fn run() {
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
+                    crate::app_config::AppType::ZCode,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1436,6 +1445,9 @@ pub fn run() {
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
             commands::get_hermes_live_provider,
+            // ZCode specific
+            commands::import_zcode_providers_from_live,
+            commands::get_zcode_live_provider_ids,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
             commands::launch_hermes_dashboard,

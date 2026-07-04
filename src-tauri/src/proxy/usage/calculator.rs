@@ -59,7 +59,7 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read = matches!(app_type, "codex" | "gemini");
+        let input_includes_cache_read = matches!(app_type, "codex" | "gemini" | "zcode");
         Self::calculate_with_cache_semantics(
             usage,
             pricing,

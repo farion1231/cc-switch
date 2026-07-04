@@ -320,6 +320,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 ZCode 使用数据
+    match crate::services::session_usage_zcode::sync_zcode_usage(&state.db) {
+        Ok(zcode_result) => {
+            result.imported += zcode_result.imported;
+            result.skipped += zcode_result.skipped;
+            result.files_scanned += zcode_result.files_scanned;
+            result.errors.extend(zcode_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("ZCode 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 

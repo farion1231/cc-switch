@@ -467,6 +467,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["hermes", "agent", "nous", "nousresearch"],
     defaultColor: "#000000",
   },
+  zcode: {
+    name: "zcode",
+    displayName: "ZCode",
+    category: "ai-provider",
+    keywords: ["zcode", "zai", "z.ai", "glm"],
+    defaultColor: "#7c3aed",
+  },
   packycode: {
     name: "packycode",
     displayName: "PackyCode",

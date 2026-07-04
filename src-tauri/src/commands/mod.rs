@@ -33,6 +33,7 @@ mod s3_sync;
 mod usage;
 mod webdav_sync;
 mod workspace;
+mod zcode;
 
 pub use auth::*;
 pub use balance::*;
@@ -66,3 +67,4 @@ pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;
+pub use zcode::*;
