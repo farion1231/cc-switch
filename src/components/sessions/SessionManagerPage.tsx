@@ -21,6 +21,9 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
+  ArrowDownToLine,
+  ArrowUpDown,
+  ArrowUpToLine,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -38,6 +41,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -55,6 +59,7 @@ import {
 } from "@/components/ui/tooltip";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isMac } from "@/lib/platform";
+import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { SessionItem } from "./SessionItem";
 import { SessionMessageItem } from "./SessionMessageItem";
@@ -79,6 +84,13 @@ const SESSION_LIST_VIEW_MODE_STORAGE_KEY =
   "cc-switch.sessionManager.listViewMode";
 const SESSION_GROUP_EXPANSION_STORAGE_KEY =
   "cc-switch.sessionManager.groupExpansionState";
+const SESSION_MESSAGE_ORDER_STORAGE_KEY =
+  "cc-switch.sessionManager.messageOrder";
+const SESSION_REFRESH_INTERVAL_STORAGE_KEY =
+  "cc-switch.sessionManager.refreshIntervalMs";
+const SESSION_REFRESH_INTERVAL_OPTIONS_MS = [
+  0, 5000, 10000, 30000, 60000,
+] as const;
 
 type ProviderFilter =
   | "all"
@@ -90,6 +102,9 @@ type ProviderFilter =
   | "hermes";
 
 type SessionListViewMode = "flat" | "grouped";
+type SessionMessageOrder = "asc" | "desc";
+type SessionRefreshIntervalMs =
+  (typeof SESSION_REFRESH_INTERVAL_OPTIONS_MS)[number];
 
 type GroupSelectionState = {
   checked: boolean | "indeterminate";
@@ -109,6 +124,27 @@ const readInitialSessionListViewMode = (): SessionListViewMode => {
     SESSION_LIST_VIEW_MODE_STORAGE_KEY,
   );
   return stored === "grouped" || stored === "flat" ? stored : "flat";
+};
+
+const readInitialSessionMessageOrder = (): SessionMessageOrder => {
+  if (typeof window === "undefined") return "asc";
+  const stored = window.localStorage.getItem(SESSION_MESSAGE_ORDER_STORAGE_KEY);
+  return stored === "asc" || stored === "desc" ? stored : "asc";
+};
+
+const isSessionRefreshIntervalMs = (
+  value: number,
+): value is SessionRefreshIntervalMs =>
+  SESSION_REFRESH_INTERVAL_OPTIONS_MS.some((option) => option === value);
+
+const readInitialSessionRefreshIntervalMs = (): SessionRefreshIntervalMs => {
+  if (typeof window === "undefined") return 0;
+  const stored = window.localStorage.getItem(
+    SESSION_REFRESH_INTERVAL_STORAGE_KEY,
+  );
+  if (!stored) return 0;
+  const parsed = Number(stored);
+  return isSessionRefreshIntervalMs(parsed) ? parsed : 0;
 };
 
 const readInitialSessionGroupExpansionState =
@@ -192,6 +228,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const sessions = data ?? [];
   const detailRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const isRefreshingCurrentSessionRef = useRef(false);
   const [activeMessageIndex, setActiveMessageIndex] = useState<number | null>(
     null,
   );
@@ -215,6 +252,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const [listViewMode, setListViewMode] = useState<SessionListViewMode>(
     readInitialSessionListViewMode,
   );
+  const [messageOrder, setMessageOrder] = useState<SessionMessageOrder>(
+    readInitialSessionMessageOrder,
+  );
+  const [sessionRefreshIntervalMs, setSessionRefreshIntervalMs] =
+    useState<SessionRefreshIntervalMs>(readInitialSessionRefreshIntervalMs);
   const [initialGroupExpansionState] = useState(
     readInitialSessionGroupExpansionState,
   );
@@ -264,6 +306,20 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       listViewMode,
     );
   }, [listViewMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SESSION_MESSAGE_ORDER_STORAGE_KEY,
+      messageOrder,
+    );
+  }, [messageOrder]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      SESSION_REFRESH_INTERVAL_STORAGE_KEY,
+      String(sessionRefreshIntervalMs),
+    );
+  }, [sessionRefreshIntervalMs]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -319,16 +375,38 @@ export function SessionManagerPage({ appId }: { appId: string }) {
           defaultValue: "列表",
         });
 
-  const { data: messages = [], isLoading: isLoadingMessages } =
-    useSessionMessagesQuery(
-      selectedSession?.providerId,
-      selectedSession?.sourcePath,
-    );
+  const {
+    data: messages = [],
+    isLoading: isLoadingMessages,
+    isFetching: isFetchingMessages,
+    refetch: refetchMessages,
+  } = useSessionMessagesQuery(
+    selectedSession?.providerId,
+    selectedSession?.sourcePath,
+  );
   const deleteSessionMutation = useDeleteSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
+  const isRefreshingCurrentSession = isFetchingMessages;
+
+  useEffect(() => {
+    isRefreshingCurrentSessionRef.current = isRefreshingCurrentSession;
+  }, [isRefreshingCurrentSession]);
+
+  const displayMessages = useMemo(() => {
+    return messageOrder === "desc" ? [...messages].reverse() : messages;
+  }, [messageOrder, messages]);
+
+  const messageOrderLabel =
+    messageOrder === "desc"
+      ? t("sessionManager.messageOrderNewestFirst", {
+          defaultValue: "最新在前",
+        })
+      : t("sessionManager.messageOrderOldestFirst", {
+          defaultValue: "最早在前",
+        });
 
   const virtualizer = useVirtualizer({
-    count: messages.length,
+    count: displayMessages.length,
     getScrollElement: () => scrollContainerRef.current,
     estimateSize: () => 120,
     overscan: 5,
@@ -336,10 +414,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   });
 
   useEffect(() => {
+    virtualizer.measure();
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
-  }, [selectedKey]);
+  }, [messageOrder, selectedKey]);
 
   useEffect(() => {
     const validKeys = new Set(
@@ -363,7 +442,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
   // 提取用户消息用于目录
   const userMessagesToc = useMemo(() => {
-    return messages
+    return displayMessages
       .map((msg, index) => ({ msg, index }))
       .filter(({ msg }) => {
         if (msg.role.toLowerCase() !== "user") return false;
@@ -380,12 +459,24 @@ export function SessionManagerPage({ appId }: { appId: string }) {
           ts: msg.ts,
         };
       });
-  }, [isCodexSession, messages]);
+  }, [displayMessages, isCodexSession]);
 
   const scrollToMessage = (index: number) => {
     virtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
     setActiveMessageIndex(index);
     setTocDialogOpen(false);
+    setTimeout(() => setActiveMessageIndex(null), 2000);
+  };
+
+  const scrollToLatestMessage = () => {
+    if (displayMessages.length === 0) return;
+    const latestIndex =
+      messageOrder === "desc" ? 0 : displayMessages.length - 1;
+    virtualizer.scrollToIndex(latestIndex, {
+      align: messageOrder === "desc" ? "start" : "end",
+      behavior: "smooth",
+    });
+    setActiveMessageIndex(latestIndex);
     setTimeout(() => setActiveMessageIndex(null), 2000);
   };
 
@@ -413,6 +504,61 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     },
     [handleCopy, t],
   );
+
+  const handleRefreshCurrentSession = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!selectedSession?.sourcePath) return;
+
+      try {
+        const messagesResult = await refetchMessages();
+        if (messagesResult.error) throw messagesResult.error;
+        if (!silent) {
+          toast.success(
+            t("sessionManager.currentSessionRefreshed", {
+              defaultValue: "当前会话已刷新",
+            }),
+          );
+        }
+      } catch (error) {
+        if (silent) {
+          console.error("自动刷新当前会话失败:", error);
+          return;
+        }
+        toast.error(
+          extractErrorMessage(error) ||
+            t("sessionManager.currentSessionRefreshFailed", {
+              defaultValue: "刷新当前会话失败",
+            }),
+        );
+      }
+    },
+    [refetchMessages, selectedSession?.sourcePath, t],
+  );
+
+  const changeSessionRefreshInterval = useCallback(
+    (next: SessionRefreshIntervalMs) => {
+      setSessionRefreshIntervalMs(next);
+      if (next > 0) {
+        void handleRefreshCurrentSession({ silent: true });
+      }
+    },
+    [handleRefreshCurrentSession],
+  );
+
+  useEffect(() => {
+    if (sessionRefreshIntervalMs <= 0 || !selectedSession?.sourcePath) return;
+
+    const timerId = window.setInterval(() => {
+      if (isRefreshingCurrentSessionRef.current) return;
+      void handleRefreshCurrentSession({ silent: true });
+    }, sessionRefreshIntervalMs);
+
+    return () => window.clearInterval(timerId);
+  }, [
+    handleRefreshCurrentSession,
+    selectedSession?.sourcePath,
+    sessionRefreshIntervalMs,
+  ]);
 
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
@@ -1607,66 +1753,243 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       {/* 消息列表 */}
                       <div className="flex-1 min-w-0 flex flex-col">
                         <div className="px-4 pt-4 pb-2 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <MessageSquare className="size-4 text-muted-foreground" />
-                            <span className="text-sm font-medium">
-                              {t("sessionManager.conversationHistory", {
-                                defaultValue: "对话记录",
-                              })}
-                            </span>
-                            <Badge variant="secondary" className="text-xs">
-                              {messages.length}
-                            </Badge>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <MessageSquare className="size-4 shrink-0 text-muted-foreground" />
+                              <span className="truncate text-sm font-medium">
+                                {t("sessionManager.conversationHistory", {
+                                  defaultValue: "对话记录",
+                                })}
+                              </span>
+                              <Badge variant="secondary" className="text-xs">
+                                {messages.length}
+                              </Badge>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Select
+                                value={String(sessionRefreshIntervalMs)}
+                                onValueChange={(value) => {
+                                  const next = Number(value);
+                                  if (isSessionRefreshIntervalMs(next)) {
+                                    changeSessionRefreshInterval(next);
+                                  }
+                                }}
+                              >
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SelectTrigger
+                                      className="h-7 w-[84px] bg-background text-xs focus:border-border-default"
+                                      title={t(
+                                        "sessionManager.autoRefreshInterval",
+                                        {
+                                          defaultValue: "自动刷新间隔",
+                                        },
+                                      )}
+                                      aria-label={t(
+                                        "sessionManager.autoRefreshInterval",
+                                        {
+                                          defaultValue: "自动刷新间隔",
+                                        },
+                                      )}
+                                    >
+                                      <span className="flex min-w-0 items-center gap-1.5">
+                                        <RefreshCw className="size-3.5 shrink-0" />
+                                        <SelectValue />
+                                      </span>
+                                    </SelectTrigger>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {t("sessionManager.autoRefreshInterval", {
+                                      defaultValue: "自动刷新间隔",
+                                    })}
+                                  </TooltipContent>
+                                </Tooltip>
+                                <SelectContent>
+                                  {SESSION_REFRESH_INTERVAL_OPTIONS_MS.map(
+                                    (ms) => (
+                                      <SelectItem key={ms} value={String(ms)}>
+                                        {ms > 0
+                                          ? `${ms / 1000}s`
+                                          : t("sessionManager.autoRefreshOff", {
+                                              defaultValue: "关闭",
+                                            })}
+                                      </SelectItem>
+                                    ),
+                                  )}
+                                </SelectContent>
+                              </Select>
+                              <Select
+                                value={messageOrder}
+                                onValueChange={(value) =>
+                                  setMessageOrder(value as SessionMessageOrder)
+                                }
+                              >
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SelectTrigger
+                                      className="size-7 p-0 justify-center border-0 bg-transparent hover:bg-muted"
+                                      aria-label={t(
+                                        "sessionManager.messageOrderTooltip",
+                                        {
+                                          defaultValue: "消息顺序",
+                                        },
+                                      )}
+                                    >
+                                      <span className="sr-only">
+                                        {t(
+                                          "sessionManager.messageOrderTooltip",
+                                          {
+                                            defaultValue: "消息顺序",
+                                          },
+                                        )}
+                                      </span>
+                                      <ArrowUpDown className="size-3.5" />
+                                    </SelectTrigger>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {messageOrderLabel}
+                                  </TooltipContent>
+                                </Tooltip>
+                                <SelectContent className="w-40">
+                                  <SelectItem value="asc">
+                                    {t(
+                                      "sessionManager.messageOrderOldestFirst",
+                                      {
+                                        defaultValue: "最早在前",
+                                      },
+                                    )}
+                                  </SelectItem>
+                                  <SelectItem value="desc">
+                                    {t(
+                                      "sessionManager.messageOrderNewestFirst",
+                                      {
+                                        defaultValue: "最新在前",
+                                      },
+                                    )}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7"
+                                    aria-label={t(
+                                      "sessionManager.refreshCurrentSession",
+                                      {
+                                        defaultValue: "刷新当前会话",
+                                      },
+                                    )}
+                                    disabled={
+                                      !selectedSession.sourcePath ||
+                                      isRefreshingCurrentSession
+                                    }
+                                    onClick={() =>
+                                      void handleRefreshCurrentSession()
+                                    }
+                                  >
+                                    <RefreshCw
+                                      className={cn(
+                                        "size-3.5",
+                                        isRefreshingCurrentSession &&
+                                          "animate-spin",
+                                      )}
+                                    />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {t("sessionManager.refreshCurrentSession", {
+                                    defaultValue: "刷新当前会话",
+                                  })}
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
                           </div>
                         </div>
-                        <div
-                          ref={scrollContainerRef}
-                          className="flex-1 overflow-y-auto px-4 pb-4 min-w-0"
-                        >
-                          {isLoadingMessages ? (
-                            <div className="flex items-center justify-center py-12">
-                              <RefreshCw className="size-5 animate-spin text-muted-foreground" />
-                            </div>
-                          ) : messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-12 text-center">
-                              <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
-                              <p className="text-sm text-muted-foreground">
-                                {t("sessionManager.emptySession")}
-                              </p>
-                            </div>
-                          ) : (
-                            <div
-                              style={{
-                                height: virtualizer.getTotalSize(),
-                                position: "relative",
-                              }}
-                            >
-                              {virtualizer
-                                .getVirtualItems()
-                                .map((virtualRow) => (
-                                  <div
-                                    key={virtualRow.key}
-                                    data-index={virtualRow.index}
-                                    ref={virtualizer.measureElement}
-                                    style={{
-                                      position: "absolute",
-                                      top: 0,
-                                      left: 0,
-                                      width: "100%",
-                                      transform: `translateY(${virtualRow.start}px)`,
-                                    }}
-                                  >
-                                    <SessionMessageItem
-                                      message={messages[virtualRow.index]}
-                                      isActive={
-                                        activeMessageIndex === virtualRow.index
-                                      }
-                                      searchQuery={search}
-                                      onCopy={handleMessageCopy}
-                                    />
-                                  </div>
-                                ))}
-                            </div>
+                        <div className="relative flex-1 min-h-0">
+                          <div
+                            ref={scrollContainerRef}
+                            className="h-full overflow-y-auto px-4 pb-4 min-w-0"
+                          >
+                            {isLoadingMessages ? (
+                              <div className="flex items-center justify-center py-12">
+                                <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+                              </div>
+                            ) : displayMessages.length === 0 ? (
+                              <div className="flex flex-col items-center justify-center py-12 text-center">
+                                <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
+                                <p className="text-sm text-muted-foreground">
+                                  {t("sessionManager.emptySession")}
+                                </p>
+                              </div>
+                            ) : (
+                              <div
+                                style={{
+                                  height: virtualizer.getTotalSize(),
+                                  position: "relative",
+                                }}
+                              >
+                                {virtualizer
+                                  .getVirtualItems()
+                                  .map((virtualRow) => (
+                                    <div
+                                      key={virtualRow.key}
+                                      data-index={virtualRow.index}
+                                      ref={virtualizer.measureElement}
+                                      style={{
+                                        position: "absolute",
+                                        top: 0,
+                                        left: 0,
+                                        width: "100%",
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                      }}
+                                    >
+                                      <SessionMessageItem
+                                        message={
+                                          displayMessages[virtualRow.index]
+                                        }
+                                        isActive={
+                                          activeMessageIndex ===
+                                          virtualRow.index
+                                        }
+                                        searchQuery={search}
+                                        onCopy={handleMessageCopy}
+                                      />
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {displayMessages.length > 0 && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="absolute bottom-4 right-4 size-9 rounded-full bg-background/95 shadow-md backdrop-blur"
+                                  aria-label={t(
+                                    "sessionManager.jumpToLatestMessage",
+                                    {
+                                      defaultValue: "跳到最新消息",
+                                    },
+                                  )}
+                                  onClick={scrollToLatestMessage}
+                                >
+                                  {messageOrder === "desc" ? (
+                                    <ArrowUpToLine className="size-4" />
+                                  ) : (
+                                    <ArrowDownToLine className="size-4" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {t("sessionManager.jumpToLatestMessage", {
+                                  defaultValue: "跳到最新消息",
+                                })}
+                              </TooltipContent>
+                            </Tooltip>
                           )}
                         </div>
                       </div>
