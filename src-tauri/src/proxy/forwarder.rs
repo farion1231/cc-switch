@@ -1131,6 +1131,9 @@ impl RequestForwarder {
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
+            let mut mapped_body = mapped_body;
+            // Classifier model hijacking (only for standard Anthropic handler path)
+            super::model_mapper::apply_classifier_override_from_provider(&mut mapped_body, provider);
             mapped_body
         };
 

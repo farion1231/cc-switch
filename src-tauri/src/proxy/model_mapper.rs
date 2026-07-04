@@ -13,6 +13,7 @@ pub struct ModelMapping {
     pub opus_model: Option<String>,
     pub fable_model: Option<String>,
     pub default_model: Option<String>,
+    pub classifier_model: Option<String>,
 }
 
 impl ModelMapping {
@@ -43,6 +44,11 @@ impl ModelMapping {
                 .map(String::from),
             default_model: env
                 .and_then(|e| e.get("ANTHROPIC_MODEL"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from),
+            classifier_model: env
+                .and_then(|e| e.get("ANTHROPIC_CLASSIFIER_MODEL"))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(String::from),
@@ -155,6 +161,61 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
         body["model"] = serde_json::json!(stripped);
     }
     body
+}
+
+/// Determine whether an Anthropic Messages request is a classifier request.
+///
+/// Classifier requests are identified by max_tokens ≤ 256.
+/// Normal coding requests use max_tokens ≥ 1024 (typically 8192–64000).
+/// Returns `false` when `max_tokens` is absent or not an integer.
+pub fn is_classifier_request(body: &Value) -> bool {
+    match body.get("max_tokens").and_then(|v| v.as_i64()) {
+        Some(n) if n <= 256 => true,
+        _ => false,
+    }
+}
+
+/// Apply classifier model override when a classifier request is detected.
+///
+/// When the request body has max_tokens ≤ 256 and a classifier_model is
+/// configured, replaces the model field. Returns true if an override was applied.
+pub fn apply_classifier_override(body: &mut Value, classifier_model: Option<&str>) -> bool {
+    if !is_classifier_request(body) {
+        log::debug!(
+            "[Classifier] max_tokens={}, is_classifier=false",
+            body.get("max_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1)
+        );
+        return false;
+    }
+    let Some(classifier) = classifier_model else {
+        log::debug!(
+            "[Classifier] max_tokens={}, is_classifier=true, no override configured",
+            body.get("max_tokens")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1)
+        );
+        return false;
+    };
+    let original = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<unknown>");
+    log::info!(
+        "[Classifier] 分类器请求: model={} -> {}",
+        original,
+        classifier
+    );
+    body["model"] = serde_json::json!(classifier);
+    true
+}
+
+/// Public wrapper that extracts classifier_model from a Provider and applies
+/// the override. For use by the forwarder pipeline.
+pub fn apply_classifier_override_from_provider(body: &mut Value, provider: &Provider) {
+    let mapping = ModelMapping::from_provider(provider);
+    apply_classifier_override(body, mapping.classifier_model.as_deref());
 }
 
 #[cfg(test)]
@@ -374,5 +435,200 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    // --- is_classifier_request tests ---
+
+    #[test]
+    fn classifier_fast_path_max_tokens_64() {
+        let body = json!({"max_tokens": 64});
+        assert!(is_classifier_request(&body));
+    }
+
+    #[test]
+    fn classifier_thinking_path_max_tokens_128() {
+        let body = json!({"max_tokens": 128});
+        assert!(is_classifier_request(&body));
+    }
+
+    #[test]
+    fn classifier_boundary_max_tokens_256() {
+        let body = json!({"max_tokens": 256});
+        assert!(is_classifier_request(&body));
+    }
+
+    #[test]
+    fn normal_boundary_max_tokens_1024() {
+        let body = json!({"max_tokens": 1024});
+        assert!(!is_classifier_request(&body));
+    }
+
+    #[test]
+    fn normal_max_tokens_64000() {
+        let body = json!({"max_tokens": 64000});
+        assert!(!is_classifier_request(&body));
+    }
+
+    #[test]
+    fn max_tokens_absent_returns_false() {
+        let body = json!({"model": "claude-sonnet-4-6"});
+        assert!(!is_classifier_request(&body));
+    }
+
+    #[test]
+    fn max_tokens_zero_is_classifier() {
+        let body = json!({"max_tokens": 0});
+        assert!(is_classifier_request(&body));
+    }
+
+    // --- apply_classifier_override tests ---
+
+    #[test]
+    fn classifier_request_with_override_replaces_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 128});
+        let result = apply_classifier_override(&mut body, Some("claude-haiku-4-5"));
+        assert!(result);
+        assert_eq!(body["model"], "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn classifier_request_without_override_keeps_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 128});
+        let result = apply_classifier_override(&mut body, None);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn non_classifier_request_with_override_keeps_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 1024});
+        let result = apply_classifier_override(&mut body, Some("claude-haiku-4-5"));
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn non_classifier_request_without_override_keeps_model() {
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 1024});
+        let result = apply_classifier_override(&mut body, None);
+        assert!(!result);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn classifier_model_extracted_from_provider_config() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": "claude-haiku-4-5"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(
+            mapping.classifier_model,
+            Some("claude-haiku-4-5".to_string())
+        );
+    }
+
+    #[test]
+    fn classifier_model_empty_string_treated_as_none() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": ""
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(mapping.classifier_model, None);
+    }
+
+    #[test]
+    fn classifier_model_absent_from_config_treated_as_none() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({"env": {}}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mapping = ModelMapping::from_provider(&provider);
+        assert_eq!(mapping.classifier_model, None);
+    }
+
+    #[test]
+    fn apply_classifier_override_from_provider_replaces_model() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_CLASSIFIER_MODEL": "claude-haiku-4-5"
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 64});
+        apply_classifier_override_from_provider(&mut body, &provider);
+        assert_eq!(body["model"], "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn apply_classifier_override_from_provider_without_config_is_noop() {
+        let provider = Provider {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            settings_config: json!({"env": {}}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 64});
+        apply_classifier_override_from_provider(&mut body, &provider);
+        assert_eq!(body["model"], "claude-sonnet-4-6");
     }
 }

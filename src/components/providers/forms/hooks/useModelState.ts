@@ -14,7 +14,8 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_OPUS_MODEL"
   | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL"
-  | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME";
+  | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"
+  | "ANTHROPIC_CLASSIFIER_MODEL";
 
 export const CLAUDE_ONE_M_MARKER = "[1M]";
 
@@ -82,6 +83,11 @@ function parseModelsFromConfig(settingsConfig: string) {
         ? env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
         : stripClaudeOneMMarker(fable);
 
+    const classifierModel =
+      typeof env.ANTHROPIC_CLASSIFIER_MODEL === "string"
+        ? env.ANTHROPIC_CLASSIFIER_MODEL
+        : "";
+
     return {
       model,
       haiku,
@@ -92,6 +98,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       opusName,
       fable,
       fableName,
+      classifierModel,
     };
   } catch {
     return {
@@ -104,6 +111,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       opusName: "",
       fable: "",
       fableName: "",
+      classifierModel: "",
     };
   }
 }
@@ -133,6 +141,9 @@ export function useModelState({
   const [defaultFableModel, setDefaultFableModel] = useState(initial.fable);
   const [defaultFableModelName, setDefaultFableModelName] = useState(
     initial.fableName,
+  );
+  const [classifierModel, setClassifierModel] = useState(
+    initial.classifierModel,
   );
 
   const isUserEditingRef = useRef(false);
@@ -164,6 +175,7 @@ export function useModelState({
     setDefaultOpusModelName(parsed.opusName);
     setDefaultFableModel(parsed.fable);
     setDefaultFableModelName(parsed.fableName);
+    setClassifierModel(parsed.classifierModel);
   }, [settingsConfig]);
 
   const handleModelChange = useCallback(
@@ -186,6 +198,8 @@ export function useModelState({
         setDefaultFableModel(value);
       if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
         setDefaultFableModelName(value);
+      if (field === "ANTHROPIC_CLASSIFIER_MODEL")
+        setClassifierModel(value);
 
       try {
         const currentConfig = latestConfigRef.current
@@ -233,6 +247,8 @@ export function useModelState({
     setDefaultFableModel,
     defaultFableModelName,
     setDefaultFableModelName,
+    classifierModel,
+    setClassifierModel,
     handleModelChange,
   };
 }

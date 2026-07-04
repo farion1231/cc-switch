@@ -489,6 +489,7 @@ function ProviderFormFull({
     defaultOpusModelName,
     defaultFableModel,
     defaultFableModelName,
+    classifierModel,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -2099,6 +2100,7 @@ function ProviderFormFull({
               defaultOpusModelName={defaultOpusModelName}
               defaultFableModel={defaultFableModel}
               defaultFableModelName={defaultFableModelName}
+              classifierModel={classifierModel}
               onModelChange={handleModelChange}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
