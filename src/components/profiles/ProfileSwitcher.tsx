@@ -32,7 +32,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import type { VisibleApps } from "@/types";
+import type { AppId } from "@/lib/api/types";
 import {
   useApplyProfileMutation,
   useClearProfileMutation,
@@ -41,17 +41,20 @@ import {
 } from "@/lib/query/profiles";
 import { ProfileManageDialog } from "./ProfileManageDialog";
 
+/** 后端 services/profile.rs 的 PROFILE_APPS 前端镜像，扩展支持范围时两处同步 */
+const PROFILE_SUPPORTED_APPS: AppId[] = ["claude", "codex"];
+
 interface ProfileSwitcherProps {
-  visibleApps: VisibleApps;
+  activeApp: AppId;
 }
 
 /**
- * 项目 Profile 切换器（header 左侧全局入口）
+ * 项目 Profile 切换器（header 左侧入口）
  *
  * Profile 是跨应用的配置快照（Claude Code + Codex 的供应商/MCP/Skills/记忆文件），
  * 与右侧 AppSwitcher（仅切换查看的应用）语义不同。
  */
-export function ProfileSwitcher({ visibleApps }: ProfileSwitcherProps) {
+export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -63,8 +66,9 @@ export function ProfileSwitcher({ visibleApps }: ProfileSwitcherProps) {
   const clearMutation = useClearProfileMutation();
   const createMutation = useCreateProfileMutation();
 
-  // Profile 仅支持 Claude Code + Codex，两者都被隐藏时该功能无意义
-  if (!visibleApps.claude && !visibleApps.codex) {
+  // Profile 仅作用于 Claude Code + Codex——在其他应用的标签页展示会误导用户
+  // 以为当前应用也被切换了，因此只在受支持应用的页面渲染
+  if (!PROFILE_SUPPORTED_APPS.includes(activeApp)) {
     return null;
   }
 

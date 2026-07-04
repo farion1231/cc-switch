@@ -1197,7 +1197,6 @@ function App() {
                     CC Switch
                   </a>
                 </div>
-                <ProfileSwitcher visibleApps={visibleApps} />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -1258,6 +1257,14 @@ function App() {
                     )}
                 </div>
               )}
+            {currentView === "providers" && (
+              <div
+                className="flex shrink-0 items-center"
+                style={{ WebkitAppRegion: "no-drag" } as any}
+              >
+                <ProfileSwitcher activeApp={activeApp} />
+              </div>
+            )}
             <div
               ref={toolbarRef}
               className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
