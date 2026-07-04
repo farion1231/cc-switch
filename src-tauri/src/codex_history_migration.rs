@@ -1,7 +1,7 @@
-//! Codex 第三方历史会话归桶迁移。
+﻿//! Codex 绗笁鏂瑰巻鍙蹭細璇濆綊妗惰縼绉汇€?
 //!
-//! 只迁移本机 `~/.codex` 历史数据；完成标记写入设备级 `settings.json`，
-//! 失败时不写标记，下一次启动自动重试。
+//! 鍙縼绉绘湰鏈?`~/.codex` 鍘嗗彶鏁版嵁锛涘畬鎴愭爣璁板啓鍏ヨ澶囩骇 `settings.json`锛?
+//! 澶辫触鏃朵笉鍐欐爣璁帮紝涓嬩竴娆″惎鍔ㄨ嚜鍔ㄩ噸璇曘€?
 
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
@@ -26,14 +26,14 @@ use toml_edit::DocumentMut;
 
 const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
 const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-unify-v1";
-/// 还原操作自身的备份目录（与迁移备份分开，保持迁移账本目录纯净）。
+/// 杩樺師鎿嶄綔鑷韩鐨勫浠界洰褰曪紙涓庤縼绉诲浠藉垎寮€锛屼繚鎸佽縼绉昏处鏈洰褰曠函鍑€锛夈€?
 const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-restore-v1";
 const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
-/// SQLite 变量上限保守值，IN 列表按此分块。
+/// SQLite 鍙橀噺涓婇檺淇濆畧鍊硷紝IN 鍒楄〃鎸夋鍒嗗潡銆?
 const STATE_DB_ID_CHUNK: usize = 500;
 
-/// 串行化官方历史的迁移与还原：开启迁移（启动重试 + 设置保存后台任务）和
-/// 关闭还原可能在毫秒级先后被触发，对同一批 jsonl / state DB 双向改写。
+/// 涓茶鍖栧畼鏂瑰巻鍙茬殑杩佺Щ涓庤繕鍘燂細寮€鍚縼绉伙紙鍚姩閲嶈瘯 + 璁剧疆淇濆瓨鍚庡彴浠诲姟锛夊拰
+/// 鍏抽棴杩樺師鍙兘鍦ㄦ绉掔骇鍏堝悗琚Е鍙戯紝瀵瑰悓涓€鎵?jsonl / state DB 鍙屽悜鏀瑰啓銆?
 static CODEX_OFFICIAL_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
@@ -41,8 +41,8 @@ fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-/// Codex 内建默认 provider id：config.toml 没有 `model_provider` 键时会话归入此桶。
-/// 官方订阅（ChatGPT OAuth / OpenAI API key）的历史会话都记录这个 id。
+/// Codex 鍐呭缓榛樿 provider id锛歝onfig.toml 娌℃湁 `model_provider` 閿椂浼氳瘽褰掑叆姝ゆ《銆?
+/// 瀹樻柟璁㈤槄锛圕hatGPT OAuth / OpenAI API key锛夌殑鍘嗗彶浼氳瘽閮借褰曡繖涓?id銆?
 const OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID: &str = "openai";
 const LEGACY_CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "ccswitch";
 // If a Codex preset ever used a temporary routing key, keep that old key here
@@ -187,14 +187,14 @@ pub fn maybe_migrate_codex_provider_template_bucket(
     Ok(outcome)
 }
 
-/// 统一会话开关的存量迁移：把官方会话（内建 "openai" 桶）迁入共享 "custom" 桶。
+/// 缁熶竴浼氳瘽寮€鍏崇殑瀛橀噺杩佺Щ锛氭妸瀹樻柟浼氳瘽锛堝唴寤?"openai" 妗讹級杩佸叆鍏变韩 "custom" 妗躲€?
 ///
-/// 仅当用户在开启弹窗里勾选了"迁入既有官方会话"（`unify_codex_migrate_existing`）
-/// 且本轮未完成时执行；开关关闭时标记与勾选意愿都会被清除（见 `save_settings`），
-/// 重新开启并再次勾选即可补迁关闭期间产生的官方会话。
-/// custom 桶里官方与第三方会话无法区分，自动逻辑绝不反向搬回；
-/// 用户可在关闭开关时选择按备份账本精确还原（见 `restore_codex_official_history_from_backups`）。
-/// 迁移前 jsonl / state DB 均备份到 `~/.cc-switch/backups/codex-official-history-unify-v1/`。
+/// 浠呭綋鐢ㄦ埛鍦ㄥ紑鍚脊绐楅噷鍕鹃€変簡"杩佸叆鏃㈡湁瀹樻柟浼氳瘽"锛坄unify_codex_migrate_existing`锛?
+/// 涓旀湰杞湭瀹屾垚鏃舵墽琛岋紱寮€鍏冲叧闂椂鏍囪涓庡嬀閫夋剰鎰块兘浼氳娓呴櫎锛堣 `save_settings`锛夛紝
+/// 閲嶆柊寮€鍚苟鍐嶆鍕鹃€夊嵆鍙ˉ杩佸叧闂湡闂翠骇鐢熺殑瀹樻柟浼氳瘽銆?
+/// custom 妗堕噷瀹樻柟涓庣涓夋柟浼氳瘽鏃犳硶鍖哄垎锛岃嚜鍔ㄩ€昏緫缁濅笉鍙嶅悜鎼洖锛?
+/// 鐢ㄦ埛鍙湪鍏抽棴寮€鍏虫椂閫夋嫨鎸夊浠借处鏈簿纭繕鍘燂紙瑙?`restore_codex_official_history_from_backups`锛夈€?
+/// 杩佺Щ鍓?jsonl / state DB 鍧囧浠藉埌 `~/.cc-switch/backups/codex-official-history-unify-v1/`銆?
 pub fn maybe_migrate_codex_official_history_to_unified_bucket(
 ) -> Result<CodexHistoryProviderBucketMigrationOutcome, AppError> {
     if !crate::settings::unify_codex_session_history() {
@@ -211,8 +211,8 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     }
     let _op_guard = lock_codex_official_history_op();
     let codex_dir = get_codex_config_dir();
-    // marker 绑定迁移时的 Codex 目录：切换 codex_config_dir 后旧 marker 不再
-    // 挡住新目录的迁移（迁移幂等，重跑无害）。
+    // marker 缁戝畾杩佺Щ鏃剁殑 Codex 鐩綍锛氬垏鎹?codex_config_dir 鍚庢棫 marker 涓嶅啀
+    // 鎸′綇鏂扮洰褰曠殑杩佺Щ锛堣縼绉诲箓绛夛紝閲嶈窇鏃犲锛夈€?
     let codex_dir_key = canonical_dir_string(&codex_dir);
     if crate::settings::is_codex_official_history_unify_migrated_for_dir(&codex_dir_key) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
@@ -220,12 +220,12 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
             ..Default::default()
         });
     }
-    // live 必须已实际路由到共享 custom 桶才允许迁移：官方配置的注入可能被拒
-    // （已有显式 model_provider / 形态冲突的 custom 表，见
-    // `inject_codex_unified_session_bucket`），代理接管期间的 live 也不带统一
-    // 路由（注入只进备份）。这些状态下新会话仍落 "openai" 桶，迁移只会把
-    // 历史搬进当前 live 看不见的桶里。开关与迁移意愿保持不动，待 live 真正
-    // 统一后（下次切换 / 接管释放后的启动重试）再迁。
+    // live 蹇呴』宸插疄闄呰矾鐢卞埌鍏变韩 custom 妗舵墠鍏佽杩佺Щ锛氬畼鏂归厤缃殑娉ㄥ叆鍙兘琚嫆
+    // 锛堝凡鏈夋樉寮?model_provider / 褰㈡€佸啿绐佺殑 custom 琛紝瑙?
+    // `inject_codex_unified_session_bucket`锛夛紝浠ｇ悊鎺ョ鏈熼棿鐨?live 涔熶笉甯︾粺涓€
+    // 璺敱锛堟敞鍏ュ彧杩涘浠斤級銆傝繖浜涚姸鎬佷笅鏂颁細璇濅粛钀?"openai" 妗讹紝杩佺Щ鍙細鎶?
+    // 鍘嗗彶鎼繘褰撳墠 live 鐪嬩笉瑙佺殑妗堕噷銆傚紑鍏充笌杩佺Щ鎰忔効淇濇寔涓嶅姩锛屽緟 live 鐪熸
+    // 缁熶竴鍚庯紙涓嬫鍒囨崲 / 鎺ョ閲婃斁鍚庣殑鍚姩閲嶈瘯锛夊啀杩併€?
     if !codex_config_text_routes_custom(&read_codex_config_text().unwrap_or_default()) {
         return Ok(CodexHistoryProviderBucketMigrationOutcome {
             skipped_reason: Some("live_not_unified".to_string()),
@@ -240,7 +240,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)?;
     let migrated_state_rows =
         migrate_codex_state_dbs(&codex_dir, &source_provider_ids, &backup_root)?;
-    // 备份代际记录来源目录，restore 据此只取当前目录的账本。
+    // 澶囦唤浠ｉ檯璁板綍鏉ユ簮鐩綍锛宺estore 鎹鍙彇褰撳墠鐩綍鐨勮处鏈€?
     write_backup_generation_meta(&backup_root, &codex_dir_key)?;
 
     let outcome = CodexHistoryProviderBucketMigrationOutcome {
@@ -250,9 +250,9 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
         skipped_reason: None,
     };
 
-    // 条件写入在 settings 写锁内原子完成："迁移期间开关被关掉"时不写完成标记，
-    // 避免下一次开启被标记挡住而漏迁"关闭期间"新产生的 openai 桶会话。
-    // 与关闭路径（update_settings + 清标记）共用同一把锁，无检查-写入窗口。
+    // 鏉′欢鍐欏叆鍦?settings 鍐欓攣鍐呭師瀛愬畬鎴愶細"杩佺Щ鏈熼棿寮€鍏宠鍏虫帀"鏃朵笉鍐欏畬鎴愭爣璁帮紝
+    // 閬垮厤涓嬩竴娆″紑鍚鏍囪鎸′綇鑰屾紡杩?鍏抽棴鏈熼棿"鏂颁骇鐢熺殑 openai 妗朵細璇濄€?
+    // 涓庡叧闂矾寰勶紙update_settings + 娓呮爣璁帮級鍏辩敤鍚屼竴鎶婇攣锛屾棤妫€鏌?鍐欏叆绐楀彛銆?
     let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
         CodexOfficialHistoryUnifyMigration {
             completed_at: Utc::now().to_rfc3339(),
@@ -272,8 +272,8 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     Ok(outcome)
 }
 
-/// live config.toml 是否路由到共享 custom 桶（会话分桶只看这个实态：
-/// base_url / 接管与否都不影响 session_meta 记录的 model_provider）。
+/// live config.toml 鏄惁璺敱鍒板叡浜?custom 妗讹紙浼氳瘽鍒嗘《鍙湅杩欎釜瀹炴€侊細
+/// base_url / 鎺ョ涓庡惁閮戒笉褰卞搷 session_meta 璁板綍鐨?model_provider锛夈€?
 fn codex_config_text_routes_custom(config_text: &str) -> bool {
     config_text
         .parse::<DocumentMut>()
@@ -286,8 +286,8 @@ fn codex_config_text_routes_custom(config_text: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 目录的规范化字符串形式，用作 marker / 备份代际的目录身份。
-/// canonicalize 失败（目录尚不存在等）时退回原始路径字符串。
+/// 鐩綍鐨勮鑼冨寲瀛楃涓插舰寮忥紝鐢ㄤ綔 marker / 澶囦唤浠ｉ檯鐨勭洰褰曡韩浠姐€?
+/// canonicalize 澶辫触锛堢洰褰曞皻涓嶅瓨鍦ㄧ瓑锛夋椂閫€鍥炲師濮嬭矾寰勫瓧绗︿覆銆?
 fn canonical_dir_string(dir: &Path) -> String {
     fs::canonicalize(dir)
         .unwrap_or_else(|_| dir.to_path_buf())
@@ -295,8 +295,8 @@ fn canonical_dir_string(dir: &Path) -> String {
         .to_string()
 }
 
-/// 在备份代际根目录写入 meta.json，记录这批备份来自哪个 Codex 目录。
-/// 代际目录不存在（本轮没有任何文件被迁移）时跳过。
+/// 鍦ㄥ浠戒唬闄呮牴鐩綍鍐欏叆 meta.json锛岃褰曡繖鎵瑰浠芥潵鑷摢涓?Codex 鐩綍銆?
+/// 浠ｉ檯鐩綍涓嶅瓨鍦紙鏈疆娌℃湁浠讳綍鏂囦欢琚縼绉伙級鏃惰烦杩囥€?
 fn write_backup_generation_meta(backup_root: &Path, codex_dir_key: &str) -> Result<(), AppError> {
     if !backup_root.exists() {
         return Ok(());
@@ -314,17 +314,17 @@ pub struct CodexOfficialHistoryRestoreOutcome {
     pub skipped_reason: Option<String>,
 }
 
-/// 统一会话开关迁移备份的父目录（其下每次迁移一个时间戳代际目录）。
+/// 缁熶竴浼氳瘽寮€鍏宠縼绉诲浠界殑鐖剁洰褰曪紙鍏朵笅姣忔杩佺Щ涓€涓椂闂存埑浠ｉ檯鐩綍锛夈€?
 fn official_history_unify_backup_parent() -> PathBuf {
     get_app_config_dir()
         .join("backups")
         .join(OFFICIAL_UNIFY_MIGRATION_NAME)
 }
 
-/// 是否存在可用于还原的迁移备份（给前端决定要不要显示"恢复备份"勾选）。
-/// 与 restore 的账本收集共用同一目录匹配口径：只认属于当前 Codex 目录的
-/// 代际，避免切换 codex_config_dir 后弹出注定空跑的勾选。
-/// 精确账本内容仍在真正还原时才解析。
+/// 鏄惁瀛樺湪鍙敤浜庤繕鍘熺殑杩佺Щ澶囦唤锛堢粰鍓嶇鍐冲畾瑕佷笉瑕佹樉绀?鎭㈠澶囦唤"鍕鹃€夛級銆?
+/// 涓?restore 鐨勮处鏈敹闆嗗叡鐢ㄥ悓涓€鐩綍鍖归厤鍙ｅ緞锛氬彧璁ゅ睘浜庡綋鍓?Codex 鐩綍鐨?
+/// 浠ｉ檯锛岄伩鍏嶅垏鎹?codex_config_dir 鍚庡脊鍑烘敞瀹氱┖璺戠殑鍕鹃€夈€?
+/// 绮剧‘璐︽湰鍐呭浠嶅湪鐪熸杩樺師鏃舵墠瑙ｆ瀽銆?
 pub fn has_codex_official_history_unify_backup() -> bool {
     has_official_history_unify_backup_for_dir(
         &official_history_unify_backup_parent(),
@@ -342,21 +342,21 @@ fn has_official_history_unify_backup_for_dir(ledger_parent: &Path, codex_dir_key
     })
 }
 
-/// 关闭统一会话开关时的可选还原：按迁移备份账本，把当时迁入共享 custom 桶的
-/// 官方会话精确翻回 "openai" 桶。
+/// 鍏抽棴缁熶竴浼氳瘽寮€鍏虫椂鐨勫彲閫夎繕鍘燂細鎸夎縼绉诲浠借处鏈紝鎶婂綋鏃惰縼鍏ュ叡浜?custom 妗剁殑
+/// 瀹樻柟浼氳瘽绮剧‘缈诲洖 "openai" 妗躲€?
 ///
-/// 备份是唯一可信的归属证据：备份里 model_provider=="openai" 的会话必定源自
-/// 官方桶。开启期间新产生的会话不在任何备份里，**永不触碰**——它们可能来自
-/// 第三方，方向无法判定（产品决策：宁可留在第三方历史）。
-/// 扫描全部备份代际取并集，多次开关循环后仍能还原早期迁入的会话；
-/// 还原前改动目标先备份到独立的 restore 目录（保持迁移账本目录纯净），
-/// 且只改写当前仍为 custom 的目标，重复执行无害。
+/// 澶囦唤鏄敮涓€鍙俊鐨勫綊灞炶瘉鎹細澶囦唤閲?model_provider=="openai" 鐨勪細璇濆繀瀹氭簮鑷?
+/// 瀹樻柟妗躲€傚紑鍚湡闂存柊浜х敓鐨勪細璇濅笉鍦ㄤ换浣曞浠介噷锛?*姘镐笉瑙︾**鈥斺€斿畠浠彲鑳芥潵鑷?
+/// 绗笁鏂癸紝鏂瑰悜鏃犳硶鍒ゅ畾锛堜骇鍝佸喅绛栵細瀹佸彲鐣欏湪绗笁鏂瑰巻鍙诧級銆?
+/// 鎵弿鍏ㄩ儴澶囦唤浠ｉ檯鍙栧苟闆嗭紝澶氭寮€鍏冲惊鐜悗浠嶈兘杩樺師鏃╂湡杩佸叆鐨勪細璇濓紱
+/// 杩樺師鍓嶆敼鍔ㄧ洰鏍囧厛澶囦唤鍒扮嫭绔嬬殑 restore 鐩綍锛堜繚鎸佽縼绉昏处鏈洰褰曠函鍑€锛夛紝
+/// 涓斿彧鏀瑰啓褰撳墠浠嶄负 custom 鐨勭洰鏍囷紝閲嶅鎵ц鏃犲銆?
 pub fn restore_codex_official_history_from_backups(
 ) -> Result<CodexOfficialHistoryRestoreOutcome, AppError> {
     let _op_guard = lock_codex_official_history_op();
-    // 开关已（重新）开启时拒绝还原：live 正路由 custom，把账本会话翻回
-    // openai 桶等于亲手制造分裂。覆盖"关闭保存成功后用户立刻重新开启，
-    // 还原排在重开迁移之后才拿到 op lock"的时序。
+    // 寮€鍏冲凡锛堥噸鏂帮級寮€鍚椂鎷掔粷杩樺師锛歭ive 姝ｈ矾鐢?custom锛屾妸璐︽湰浼氳瘽缈诲洖
+    // openai 妗剁瓑浜庝翰鎵嬪埗閫犲垎瑁傘€傝鐩?鍏抽棴淇濆瓨鎴愬姛鍚庣敤鎴风珛鍒婚噸鏂板紑鍚紝
+    // 杩樺師鎺掑湪閲嶅紑杩佺Щ涔嬪悗鎵嶆嬁鍒?op lock"鐨勬椂搴忋€?
     if crate::settings::unify_codex_session_history() {
         return Ok(CodexOfficialHistoryRestoreOutcome {
             skipped_reason: Some("unify_toggle_on".to_string()),
@@ -411,8 +411,8 @@ fn restore_codex_official_history_inner(
     }
 
     if restored_jsonl_files == 0 && restored_state_rows == 0 {
-        // 账本非空但没有任何"当前仍为 custom"的目标（如重复还原）：
-        // 以 reason 告知前端，避免误报"已还原 0 项"为成功。
+        // 璐︽湰闈炵┖浣嗘病鏈変换浣?褰撳墠浠嶄负 custom"鐨勭洰鏍囷紙濡傞噸澶嶈繕鍘燂級锛?
+        // 浠?reason 鍛婄煡鍓嶇锛岄伩鍏嶈鎶?宸茶繕鍘?0 椤?涓烘垚鍔熴€?
         return Ok(CodexOfficialHistoryRestoreOutcome {
             skipped_reason: Some("nothing_to_restore".to_string()),
             ..Default::default()
@@ -426,12 +426,12 @@ fn restore_codex_official_history_inner(
     })
 }
 
-/// 从备份代际收集官方会话账本：jsonl 备份里 session_meta 为 "openai" 的
-/// 会话 id + state DB 备份里 model_provider 为 "openai" 的 thread id。
-/// 只采纳 meta.json 目录与当前 Codex 目录一致的代际，避免切换
-/// codex_config_dir 后拿旧目录的账本作用到新目录。
-/// 还原操作自身的备份（restore 目录）天然不会混入：那些副本里的 id 都是
-/// custom，解析后贡献为空。
+/// 浠庡浠戒唬闄呮敹闆嗗畼鏂逛細璇濊处鏈細jsonl 澶囦唤閲?session_meta 涓?"openai" 鐨?
+/// 浼氳瘽 id + state DB 澶囦唤閲?model_provider 涓?"openai" 鐨?thread id銆?
+/// 鍙噰绾?meta.json 鐩綍涓庡綋鍓?Codex 鐩綍涓€鑷寸殑浠ｉ檯锛岄伩鍏嶅垏鎹?
+/// codex_config_dir 鍚庢嬁鏃х洰褰曠殑璐︽湰浣滅敤鍒版柊鐩綍銆?
+/// 杩樺師鎿嶄綔鑷韩鐨勫浠斤紙restore 鐩綍锛夊ぉ鐒朵笉浼氭贩鍏ワ細閭ｄ簺鍓湰閲岀殑 id 閮芥槸
+/// custom锛岃В鏋愬悗璐＄尞涓虹┖銆?
 fn collect_official_ledger(
     ledger_parent: &Path,
     codex_dir_key: &str,
@@ -464,9 +464,9 @@ fn collect_official_ledger(
     Ok((session_ids, thread_ids))
 }
 
-/// 备份代际是否属于指定 Codex 目录。无 meta.json 或解析失败时宽容接受：
-/// 早期版本的备份没有 meta，而那个时期不存在切目录场景；误纳的代价也被
-/// "按会话 id 精确匹配 + 仅改写 custom"双重条件兜底。
+/// 澶囦唤浠ｉ檯鏄惁灞炰簬鎸囧畾 Codex 鐩綍銆傛棤 meta.json 鎴栬В鏋愬け璐ユ椂瀹藉鎺ュ彈锛?
+/// 鏃╂湡鐗堟湰鐨勫浠芥病鏈?meta锛岃€岄偅涓椂鏈熶笉瀛樺湪鍒囩洰褰曞満鏅紱璇撼鐨勪唬浠蜂篃琚?
+/// "鎸変細璇?id 绮剧‘鍖归厤 + 浠呮敼鍐?custom"鍙岄噸鏉′欢鍏滃簳銆?
 fn backup_generation_matches_dir(generation: &Path, codex_dir_key: &str) -> bool {
     let Ok(text) = fs::read_to_string(generation.join("meta.json")) else {
         return true;
@@ -601,9 +601,9 @@ fn restore_codex_state_db_official_threads(
     }
 
     let mut conn = Connection::open(db_path)
-        .map_err(|e| AppError::Database(format!("打开 Codex state DB 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鎵撳紑 Codex state DB 澶辫触: {e}")))?;
     conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| AppError::Database(format!("设置 Codex state DB busy_timeout 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("璁剧疆 Codex state DB busy_timeout 澶辫触: {e}")))?;
 
     if !Database::table_exists(&conn, "threads")?
         || !Database::has_column(&conn, "threads", "model_provider")?
@@ -625,7 +625,7 @@ fn restore_codex_state_db_official_threads(
             .query_row(&count_sql, params_from_iter(values.iter()), |row| {
                 row.get(0)
             })
-            .map_err(|e| AppError::Database(format!("统计 Codex state DB 待还原行失败: {e}")))?;
+            .map_err(|e| AppError::Database(format!("缁熻 Codex state DB 寰呰繕鍘熻澶辫触: {e}")))?;
         matching_rows += count;
     }
     if matching_rows == 0 {
@@ -636,7 +636,7 @@ fn restore_codex_state_db_official_threads(
 
     let tx = conn
         .transaction()
-        .map_err(|e| AppError::Database(format!("开启 Codex state DB 还原事务失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("寮€鍚?Codex state DB 杩樺師浜嬪姟澶辫触: {e}")))?;
     let mut changed = 0;
     for chunk in ids.chunks(STATE_DB_ID_CHUNK) {
         let placeholders = placeholders(chunk.len());
@@ -649,10 +649,10 @@ fn restore_codex_state_db_official_threads(
         values.extend(chunk.iter().map(|id| (*id).clone()));
         changed += tx
             .execute(&update_sql, params_from_iter(values.iter()))
-            .map_err(|e| AppError::Database(format!("还原 Codex state DB provider 失败: {e}")))?;
+            .map_err(|e| AppError::Database(format!("杩樺師 Codex state DB provider 澶辫触: {e}")))?;
     }
     tx.commit()
-        .map_err(|e| AppError::Database(format!("提交 Codex state DB 还原事务失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鎻愪氦 Codex state DB 杩樺師浜嬪姟澶辫触: {e}")))?;
     Ok(changed)
 }
 
@@ -1116,22 +1116,55 @@ fn migrate_codex_state_dbs(
     Ok(migrated)
 }
 
-fn codex_state_db_paths(codex_dir: &Path, config_text: &str) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    push_unique_path(&mut paths, codex_dir.join(CODEX_STATE_DB_FILENAME));
-    // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
-    if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
-        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
-    } else if let Some(sqlite_home) = sqlite_home_from_env() {
-        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
+
+/// Read a directory and return all state_*.sqlite file paths found inside.
+fn find_state_db_files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut results = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("sqlite") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|n| n.to_str()).unwrap_or("");
+        if name.starts_with("state_") {
+            results.push(path);
+        }
     }
-    paths
+    results.sort();
+    results
 }
 
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.contains(&path) {
-        paths.push(path);
+/// Discover all state DB paths across all known Codex directories.
+///
+/// Scans codex_dir, codex_dir/sqlite, and sqlite_home (from config.toml or
+/// CODEX_SQLITE_HOME env var) for any state_*.sqlite files.
+fn codex_state_db_paths(codex_dir: &Path, config_text: &str) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for dir in [codex_dir, &codex_dir.join("sqlite")] {
+        for found in find_state_db_files_in(dir) {
+            if !paths.contains(&found) {
+                paths.push(found);
+            }
+        }
     }
+    // sqlite_home from config.toml takes precedence over CODEX_SQLITE_HOME env var
+    if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
+        for found in find_state_db_files_in(&sqlite_home) {
+            if !paths.contains(&found) {
+                paths.push(found);
+            }
+        }
+    } else if let Some(sqlite_home) = sqlite_home_from_env() {
+        for found in find_state_db_files_in(&sqlite_home) {
+            if !paths.contains(&found) {
+                paths.push(found);
+            }
+        }
+    }
+    paths
 }
 
 fn sqlite_home_from_codex_config(config_text: &str) -> Option<PathBuf> {
@@ -1176,9 +1209,9 @@ fn migrate_codex_state_db_provider_bucket(
     }
 
     let mut conn = Connection::open(db_path)
-        .map_err(|e| AppError::Database(format!("打开 Codex state DB 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鎵撳紑 Codex state DB 澶辫触: {e}")))?;
     conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| AppError::Database(format!("设置 Codex state DB busy_timeout 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("璁剧疆 Codex state DB busy_timeout 澶辫触: {e}")))?;
 
     if !Database::table_exists(&conn, "threads")?
         || !Database::has_column(&conn, "threads", "model_provider")?
@@ -1195,7 +1228,7 @@ fn migrate_codex_state_db_provider_bucket(
             params_from_iter(source_provider_ids.iter()),
             |row| row.get(0),
         )
-        .map_err(|e| AppError::Database(format!("统计 Codex state DB 待迁移行失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("缁熻 Codex state DB 寰呰縼绉昏澶辫触: {e}")))?;
     if matching_rows == 0 {
         return Ok(0);
     }
@@ -1209,12 +1242,12 @@ fn migrate_codex_state_db_provider_bucket(
     values.extend(source_provider_ids.iter().cloned());
     let tx = conn
         .transaction()
-        .map_err(|e| AppError::Database(format!("开启 Codex state DB 迁移事务失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("寮€鍚?Codex state DB 杩佺Щ浜嬪姟澶辫触: {e}")))?;
     let changed = tx
         .execute(&update_sql, params_from_iter(values.iter()))
-        .map_err(|e| AppError::Database(format!("迁移 Codex state DB provider 失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("杩佺Щ Codex state DB provider 澶辫触: {e}")))?;
     tx.commit()
-        .map_err(|e| AppError::Database(format!("提交 Codex state DB 迁移事务失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鎻愪氦 Codex state DB 杩佺Щ浜嬪姟澶辫触: {e}")))?;
     Ok(changed)
 }
 
@@ -1249,12 +1282,12 @@ fn backup_codex_state_db(
     }
 
     let mut backup_conn = Connection::open(&backup_path)
-        .map_err(|e| AppError::Database(format!("创建 Codex state DB 备份失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鍒涘缓 Codex state DB 澶囦唤澶辫触: {e}")))?;
     let backup = Backup::new(source_conn, &mut backup_conn)
-        .map_err(|e| AppError::Database(format!("初始化 Codex state DB 备份失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鍒濆鍖?Codex state DB 澶囦唤澶辫触: {e}")))?;
     backup
         .run_to_completion(5, Duration::from_millis(25), None)
-        .map_err(|e| AppError::Database(format!("写入 Codex state DB 备份失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("鍐欏叆 Codex state DB 澶囦唤澶辫触: {e}")))?;
     Ok(())
 }
 
@@ -1363,7 +1396,7 @@ mod tests {
 
     #[test]
     fn detects_custom_routed_codex_config_for_unify_gate() {
-        // 注入产物（官方 + 统一开关）
+        // 娉ㄥ叆浜х墿锛堝畼鏂?+ 缁熶竴寮€鍏筹級
         assert!(codex_config_text_routes_custom(
             r#"model_provider = "custom"
 
@@ -1374,7 +1407,7 @@ supports_websockets = true
 wire_api = "responses"
 "#
         ));
-        // 第三方供应商的常规 custom 路由（带 base_url）同样算已统一
+        // 绗笁鏂逛緵搴斿晢鐨勫父瑙?custom 璺敱锛堝甫 base_url锛夊悓鏍风畻宸茬粺涓€
         assert!(codex_config_text_routes_custom(
             r#"model_provider = "custom"
 
@@ -1383,7 +1416,7 @@ name = "AIHubMix"
 base_url = "https://aihubmix.example/v1"
 "#
         ));
-        // 注入被拒的形态：显式 openai 路由 / 无 model_provider（接管期间、空配置）
+        // 娉ㄥ叆琚嫆鐨勫舰鎬侊細鏄惧紡 openai 璺敱 / 鏃?model_provider锛堟帴绠℃湡闂淬€佺┖閰嶇疆锛?
         assert!(!codex_config_text_routes_custom(
             "model_provider = \"openai\"\n"
         ));
@@ -1709,7 +1742,7 @@ base_url = "https://proxy.example/v1"
             .join("jsonl/sessions/2026/06/12/official-sim.jsonl")
             .exists());
 
-        // 第二次执行应当无事可做（幂等）
+        // 绗簩娆℃墽琛屽簲褰撴棤浜嬪彲鍋氾紙骞傜瓑锛?
         let rerun = migrate_codex_jsonl_files(&codex_dir, &source_provider_ids, &backup_root)
             .expect("rerun migrate jsonl");
         assert_eq!(rerun, 0);
@@ -1759,7 +1792,7 @@ base_url = "https://proxy.example/v1"
         let ledger_parent = dir.path().join("ledger");
         let restore_backup_root = dir.path().join("restore-backup");
 
-        // 备份账本：一个代际，jsonl 备份里 s1 是 openai；state 备份里 t1 是 openai
+        // 澶囦唤璐︽湰锛氫竴涓唬闄咃紝jsonl 澶囦唤閲?s1 鏄?openai锛泂tate 澶囦唤閲?t1 鏄?openai
         let generation = ledger_parent.join("20260612_010101");
         let backup_session_dir = generation.join("jsonl/sessions/2026/06/01");
         fs::create_dir_all(&backup_session_dir).expect("create backup session dir");
@@ -1780,8 +1813,8 @@ base_url = "https://proxy.example/v1"
             .expect("seed backup db");
         drop(backup_db);
 
-        // 当前数据：s1（账本内，custom）应还原；s2（开启期间新会话，不在账本）
-        // 与 s3（手工 relay）必须原样保留
+        // 褰撳墠鏁版嵁锛歴1锛堣处鏈唴锛宑ustom锛夊簲杩樺師锛泂2锛堝紑鍚湡闂存柊浼氳瘽锛屼笉鍦ㄨ处鏈級
+        // 涓?s3锛堟墜宸?relay锛夊繀椤诲師鏍蜂繚鐣?
         let session_dir = codex_dir.join("sessions/2026/06/01");
         fs::create_dir_all(&session_dir).expect("create session dir");
         let official_path = session_dir.join("official.jsonl");
@@ -1814,7 +1847,7 @@ base_url = "https://proxy.example/v1"
         .expect("seed state db");
         drop(conn);
 
-        // 代际 meta 指向当前 Codex 目录：精确匹配分支生效（而非无 meta 的宽容分支）
+        // 浠ｉ檯 meta 鎸囧悜褰撳墠 Codex 鐩綍锛氱簿纭尮閰嶅垎鏀敓鏁堬紙鑰岄潪鏃?meta 鐨勫瀹瑰垎鏀級
         fs::write(
             generation.join("meta.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
@@ -1855,7 +1888,7 @@ base_url = "https://proxy.example/v1"
         assert_eq!(provider_of("t3"), "openai");
         drop(conn);
 
-        // 还原前的现场已备份到独立目录
+        // 杩樺師鍓嶇殑鐜板満宸插浠藉埌鐙珛鐩綍
         assert!(restore_backup_root
             .join("jsonl/sessions/2026/06/01/official.jsonl")
             .exists());
@@ -1864,7 +1897,7 @@ base_url = "https://proxy.example/v1"
             .join(CODEX_STATE_DB_FILENAME)
             .exists());
 
-        // 幂等：第二次还原无事可做
+        // 骞傜瓑锛氱浜屾杩樺師鏃犱簨鍙仛
         let rerun = restore_codex_official_history_inner(
             &codex_dir,
             &ledger_parent,
@@ -1883,7 +1916,7 @@ base_url = "https://proxy.example/v1"
         let codex_dir = dir.path().join(".codex");
         let ledger_parent = dir.path().join("ledger");
 
-        // 账本代际属于另一个 Codex 目录
+        // 璐︽湰浠ｉ檯灞炰簬鍙︿竴涓?Codex 鐩綍
         let generation = ledger_parent.join("20260612_010101");
         let backup_session_dir = generation.join("jsonl/sessions/2026/06/01");
         fs::create_dir_all(&backup_session_dir).expect("create backup session dir");
@@ -1925,13 +1958,13 @@ base_url = "https://proxy.example/v1"
         let ledger_parent = dir.path().join("ledger");
         let codex_dir_key = "/current/codex-dir";
 
-        // 空父目录 / 父目录不存在：无备份
+        // 绌虹埗鐩綍 / 鐖剁洰褰曚笉瀛樺湪锛氭棤澶囦唤
         assert!(!has_official_history_unify_backup_for_dir(
             &ledger_parent,
             codex_dir_key
         ));
 
-        // 只有其他目录的代际：不算有备份
+        // 鍙湁鍏朵粬鐩綍鐨勪唬闄咃細涓嶇畻鏈夊浠?
         let other = ledger_parent.join("20260612_010101");
         fs::create_dir_all(&other).expect("create generation");
         fs::write(
@@ -1944,14 +1977,14 @@ base_url = "https://proxy.example/v1"
             codex_dir_key
         ));
 
-        // 无 meta 的早期代际：宽容接受（与 restore 的账本口径一致）
+        // 鏃?meta 鐨勬棭鏈熶唬闄咃細瀹藉鎺ュ彈锛堜笌 restore 鐨勮处鏈彛寰勪竴鑷达級
         fs::create_dir_all(ledger_parent.join("20260612_020202")).expect("create legacy gen");
         assert!(has_official_history_unify_backup_for_dir(
             &ledger_parent,
             codex_dir_key
         ));
 
-        // 精确匹配当前目录的代际
+        // 绮剧‘鍖归厤褰撳墠鐩綍鐨勪唬闄?
         fs::remove_dir_all(ledger_parent.join("20260612_020202")).expect("remove legacy gen");
         let matched = ledger_parent.join("20260612_030303");
         fs::create_dir_all(&matched).expect("create matched gen");
@@ -2165,6 +2198,10 @@ base_url = "https://proxy.example/v1"
         let codex_dir = dir.path().join(".codex");
         let sqlite_home = dir.path().join("sqlite-home");
         let _guard = EnvVarGuard::set("CODEX_SQLITE_HOME", &sqlite_home);
+        std::fs::create_dir_all(&codex_dir).expect("create codex_dir");
+        std::fs::create_dir_all(&sqlite_home).expect("create sqlite_home");
+        let _ = std::fs::write(codex_dir.join(CODEX_STATE_DB_FILENAME), b"");
+        let _ = std::fs::write(sqlite_home.join(CODEX_STATE_DB_FILENAME), b"");
 
         let paths = codex_state_db_paths(&codex_dir, "");
 
@@ -2185,7 +2222,11 @@ base_url = "https://proxy.example/v1"
         let env_sqlite_home = dir.path().join("env-sqlite-home");
         let config_sqlite_home = dir.path().join("config-sqlite-home");
         let _guard = EnvVarGuard::set("CODEX_SQLITE_HOME", &env_sqlite_home);
-        let config_text = format!("sqlite_home = \"{}\"\n", config_sqlite_home.display());
+        let config_text = format!("sqlite_home = \"{}\"\n", config_sqlite_home.to_string_lossy().replace('\\', "/"));
+        std::fs::create_dir_all(&codex_dir).expect("create codex_dir");
+        std::fs::create_dir_all(&config_sqlite_home).expect("create config_sqlite_home");
+        let _ = std::fs::write(codex_dir.join(CODEX_STATE_DB_FILENAME), b"");
+        let _ = std::fs::write(config_sqlite_home.join(CODEX_STATE_DB_FILENAME), b"");
 
         let paths = codex_state_db_paths(&codex_dir, &config_text);
 
