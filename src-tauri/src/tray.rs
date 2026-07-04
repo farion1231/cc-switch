@@ -40,12 +40,28 @@ static TRAY_SECTION_SUBMENUS: Lazy<
     std::sync::Mutex<std::collections::HashMap<AppType, Submenu<tauri::Wry>>>,
 > = Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// "今日用量"菜单项句柄，用于 usage 更新时就地改 label。
+/// `create_tray_menu` 每次重建覆盖写入。
+static TRAY_TODAY_USAGE_ITEM: Lazy<std::sync::Mutex<Option<MenuItem<tauri::Wry>>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
+/// 轻量模式下点击"今日用量"时主窗口尚未重建，`tray-open-usage` 事件会早于
+/// 前端监听注册而丢失，改为落一个待消费标记，由前端挂载后主动拉取。
+static PENDING_OPEN_USAGE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 取出并清除"待打开用量页"标记（`take_pending_tray_navigation` 命令调用）。
+pub fn take_pending_open_usage() -> bool {
+    PENDING_OPEN_USAGE.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
 /// 托盘菜单文本（国际化）
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
     pub open_website: &'static str,
     pub no_providers_label: &'static str,
+    pub today_prefix: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
@@ -58,6 +74,7 @@ impl TrayTexts {
                 show_main: "Open main window",
                 open_website: "Open Official Website",
                 no_providers_label: "(no providers)",
+                today_prefix: "Today",
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
@@ -66,6 +83,7 @@ impl TrayTexts {
                 show_main: "メインウィンドウを開く",
                 open_website: "公式サイトを開く",
                 no_providers_label: "(プロバイダーなし)",
+                today_prefix: "本日",
                 lightweight_mode: "軽量モード",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
@@ -74,6 +92,7 @@ impl TrayTexts {
                 show_main: "開啟主介面",
                 open_website: "開啟官方網站",
                 no_providers_label: "(無供應商)",
+                today_prefix: "今日",
                 lightweight_mode: "輕量模式",
                 quit: "退出",
                 _auto_label: "自動 (故障轉移)",
@@ -82,6 +101,7 @@ impl TrayTexts {
                 show_main: "打开主界面",
                 open_website: "打开官方网站",
                 no_providers_label: "(无供应商)",
+                today_prefix: "今日",
                 lightweight_mode: "轻量模式",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
@@ -102,6 +122,7 @@ pub struct TrayAppSection {
 /// Auto 菜单项后缀
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
+pub const USAGE_TODAY_ID: &str = "usage_today";
 
 pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
     TrayAppSection {
@@ -191,6 +212,113 @@ fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
         }
     }
     parts
+}
+
+/// u64 千分位格式化（8432 → "8,432"）。
+fn add_thousands_separators(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 换算后的值 < 100 保留一位小数（尾零省略），≥ 100 取整加千分位。
+fn format_scaled(value: f64) -> String {
+    if value < 100.0 {
+        let rounded = (value * 10.0).round() / 10.0;
+        if rounded.fract() == 0.0 {
+            format!("{}", rounded.trunc() as u64)
+        } else {
+            format!("{rounded:.1}")
+        }
+    } else {
+        add_thousands_separators(value.round() as u64)
+    }
+}
+
+/// 今日 token 数按语言本地化：zh 万/亿、zh-TW 萬/億、ja 万/億、en K/M/B。
+fn format_token_count(tokens: u64, language: &str) -> String {
+    if language == "en" {
+        if tokens < 1_000 {
+            return tokens.to_string();
+        }
+        let (value, unit) = if tokens >= 1_000_000_000 {
+            (tokens as f64 / 1e9, "B")
+        } else if tokens >= 1_000_000 {
+            (tokens as f64 / 1e6, "M")
+        } else {
+            (tokens as f64 / 1e3, "K")
+        };
+        return format!("{}{unit}", format_scaled(value));
+    }
+
+    let (wan, yi) = match language {
+        "zh-TW" => ("萬", "億"),
+        "ja" => ("万", "億"),
+        _ => ("万", "亿"),
+    };
+    if tokens < 10_000 {
+        add_thousands_separators(tokens)
+    } else if tokens < 100_000_000 {
+        format!("{}{wan}", format_scaled(tokens as f64 / 1e4))
+    } else {
+        format!("{}{yi}", format_scaled(tokens as f64 / 1e8))
+    }
+}
+
+/// 美元费用两位小数 + 千分位；解析失败按 $0.00 兜底。
+fn format_cost_usd(cost: &str) -> String {
+    let value = cost.parse::<f64>().unwrap_or(0.0).max(0.0);
+    let total_cents = (value * 100.0).round() as u64;
+    format!(
+        "${}.{:02}",
+        add_thousands_separators(total_cents / 100),
+        total_cents % 100
+    )
+}
+
+/// 拼装"今日用量"整行文案，如 "今日 · 1,234万 tokens · $12.34"。
+fn format_today_usage_label(
+    summary: &crate::services::usage_stats::UsageSummary,
+    language: &str,
+    prefix: &str,
+) -> String {
+    format!(
+        "{prefix} · {} tokens · {}",
+        format_token_count(summary.real_total_tokens, language),
+        format_cost_usd(&summary.total_cost)
+    )
+}
+
+/// 本地时区今日 0 点的 Unix 秒时间戳；夏令时等歧义场景返回 None。
+fn local_midnight_ts() -> Option<i64> {
+    use chrono::TimeZone;
+    let now = chrono::Local::now();
+    let midnight = now.date_naive().and_hms_opt(0, 0, 0)?;
+    chrono::Local
+        .from_local_datetime(&midnight)
+        .single()
+        .map(|dt| dt.timestamp())
+}
+
+/// 查询今日汇总并渲染整行文案；查库失败时渲染 0 值行并记日志。
+fn today_usage_label(app_state: &AppState, language: &str, prefix: &str) -> String {
+    let summary = local_midnight_ts().and_then(|start| {
+        app_state
+            .db
+            .get_usage_summary(Some(start), None, None, None, None)
+            .map_err(|e| log::warn!("[Tray] 查询今日用量失败: {e}"))
+            .ok()
+    });
+    match summary {
+        Some(s) => format_today_usage_label(&s, language, prefix),
+        None => format!("{prefix} · 0 tokens · $0.00"),
+    }
 }
 
 fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
@@ -493,7 +621,8 @@ pub fn create_tray_menu(
     app_state: &AppState,
 ) -> Result<Menu<tauri::Wry>, AppError> {
     let app_settings = crate::settings::get_settings();
-    let tray_texts = TrayTexts::from_language(app_settings.language.as_deref().unwrap_or("zh"));
+    let language = app_settings.language.as_deref().unwrap_or("zh").to_string();
+    let tray_texts = TrayTexts::from_language(&language);
 
     // Get visible apps setting, default to all visible
     let visible_apps = app_settings.visible_apps.unwrap_or_default();
@@ -600,6 +729,15 @@ pub fn create_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
+    // 今日用量信息行（#4977）：本地库查询，点击跳转主界面用量页。
+    let today_label = today_usage_label(app_state, &language, tray_texts.today_prefix);
+    let today_item = MenuItem::with_id(app, USAGE_TODAY_ID, &today_label, true, None::<&str>)
+        .map_err(|e| AppError::Message(format!("创建今日用量菜单失败: {e}")))?;
+    menu_builder = menu_builder.item(&today_item).separator();
+    *TRAY_TODAY_USAGE_ITEM
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(today_item);
+
     let lightweight_item = CheckMenuItem::with_id(
         app,
         "lightweight_mode",
@@ -663,6 +801,28 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
             log::debug!("[Tray] 更新{}子菜单标题失败: {e}", section.log_name);
         }
     }
+
+    // 今日用量行：查询成功才更新，失败保留旧文本（与订阅后缀行为一致）。
+    let language = crate::settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string());
+    let texts = TrayTexts::from_language(&language);
+    let guard = TRAY_TODAY_USAGE_ITEM
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(item) = guard.as_ref() {
+        if let Some(start) = local_midnight_ts() {
+            if let Ok(summary) = app_state
+                .db
+                .get_usage_summary(Some(start), None, None, None, None)
+            {
+                let label = format_today_usage_label(&summary, &language, texts.today_prefix);
+                if let Err(e) = item.set_text(&label) {
+                    log::debug!("[Tray] 更新今日用量标题失败: {e}");
+                }
+            }
+        }
+    }
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
@@ -698,32 +858,46 @@ pub fn apply_tray_policy(app: &tauri::AppHandle, dock_visible: bool) {
     }
 }
 
+/// 显示主窗口：还原/聚焦；轻量模式下重建窗口。
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = window.set_skip_taskbar(false);
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_fix::nudge_main_window(window.clone());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            apply_tray_policy(app, true);
+        }
+    } else if crate::lightweight::is_lightweight_mode() {
+        if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            log::error!("退出轻量模式重建窗口失败: {e}");
+        }
+    }
+}
+
 /// 处理托盘菜单事件
 pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("处理托盘菜单事件: {event_id}");
 
     match event_id {
-        "show_main" => {
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = window.set_skip_taskbar(false);
-                }
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "linux")]
-                {
-                    crate::linux_fix::nudge_main_window(window.clone());
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    apply_tray_policy(app, true);
-                }
-            } else if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
-                    log::error!("退出轻量模式重建窗口失败: {e}");
-                }
+        "show_main" => show_main_window(app),
+        id if id == USAGE_TODAY_ID => {
+            let window_missing = app.get_webview_window("main").is_none();
+            show_main_window(app);
+            if window_missing {
+                // 窗口重建路径（轻量模式）：事件必然早于前端监听注册，
+                // 改走待消费标记，前端挂载后通过命令拉取。
+                PENDING_OPEN_USAGE.store(true, std::sync::atomic::Ordering::Release);
+            } else if let Err(e) = app.emit("tray-open-usage", ()) {
+                log::error!("发射 tray-open-usage 事件失败: {e}");
             }
         }
         "open_website" => {
@@ -807,6 +981,24 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         return;
     };
 
+    // 增量同步会话日志（#4977）：让"今日用量"行反映最新数据。
+    // 按文件 mtime + 行偏移增量扫描，无新数据时近乎零开销；
+    // 失败不阻塞后续查询，降级为展示库内现有数据。
+    let db = app_state.db.clone();
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::services::session_usage::sync_all_session_usage(&db)
+    })
+    .await
+    {
+        Ok(Ok(result)) => {
+            if !result.errors.is_empty() {
+                log::warn!("[Tray] 会话用量同步部分失败: {:?}", result.errors);
+            }
+        }
+        Ok(Err(e)) => log::warn!("[Tray] 会话用量同步失败: {e}"),
+        Err(e) => log::warn!("[Tray] 会话用量同步任务失败: {e}"),
+    }
+
     // 与 `create_tray_menu` 保持一致：用户隐藏的 app 不参与外部 API 查询，
     // 避免在未使用的 app 上浪费请求、撞 rate limit 或反复触发鉴权失败日志。
     let visible_apps = crate::settings::get_settings()
@@ -873,6 +1065,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     }
 
     join_all(script_futures).await;
+
+    // 同步/查询完成后就地更新今日用量行（50ms 合窗防抖）。
+    schedule_tray_refresh(app);
 }
 
 #[cfg(test)]
@@ -1209,5 +1404,81 @@ mod tests {
     fn script_summary_empty_data_returns_none() {
         let r = usage_result(true, vec![]);
         assert!(format_script_summary(&r).is_none());
+    }
+
+    fn summary_with(tokens: u64, cost: &str) -> crate::services::usage_stats::UsageSummary {
+        crate::services::usage_stats::UsageSummary {
+            total_requests: 1,
+            total_cost: cost.to_string(),
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            success_rate: 100.0,
+            real_total_tokens: tokens,
+            cache_hit_rate: 0.0,
+        }
+    }
+
+    #[test]
+    fn token_count_zh_uses_wan_and_yi() {
+        use super::format_token_count;
+        assert_eq!(format_token_count(0, "zh"), "0");
+        assert_eq!(format_token_count(9_999, "zh"), "9,999");
+        assert_eq!(format_token_count(10_000, "zh"), "1万");
+        assert_eq!(format_token_count(120_000, "zh"), "12万"); // 尾零省略
+        assert_eq!(format_token_count(123_000, "zh"), "12.3万");
+        assert_eq!(format_token_count(994_000, "zh"), "99.4万");
+        assert_eq!(format_token_count(1_000_000, "zh"), "100万");
+        assert_eq!(format_token_count(12_345_678, "zh"), "1,235万");
+        assert_eq!(format_token_count(100_000_000, "zh"), "1亿");
+        assert_eq!(format_token_count(120_000_000, "zh"), "1.2亿");
+        assert_eq!(format_token_count(12_300_000_000, "zh"), "123亿");
+    }
+
+    #[test]
+    fn token_count_zh_tw_and_ja_glyphs() {
+        use super::format_token_count;
+        assert_eq!(format_token_count(120_000, "zh-TW"), "12萬");
+        assert_eq!(format_token_count(120_000_000, "zh-TW"), "1.2億");
+        assert_eq!(format_token_count(120_000, "ja"), "12万");
+        assert_eq!(format_token_count(120_000_000, "ja"), "1.2億");
+    }
+
+    #[test]
+    fn token_count_en_uses_kmb() {
+        use super::format_token_count;
+        assert_eq!(format_token_count(843, "en"), "843");
+        assert_eq!(format_token_count(999, "en"), "999");
+        assert_eq!(format_token_count(1_000, "en"), "1K");
+        assert_eq!(format_token_count(9_940, "en"), "9.9K");
+        assert_eq!(format_token_count(99_900, "en"), "99.9K");
+        assert_eq!(format_token_count(100_000, "en"), "100K");
+        assert_eq!(format_token_count(12_300_000, "en"), "12.3M");
+        assert_eq!(format_token_count(1_200_000_000, "en"), "1.2B");
+    }
+
+    #[test]
+    fn cost_usd_two_decimals_with_separators() {
+        use super::format_cost_usd;
+        assert_eq!(format_cost_usd("0"), "$0.00");
+        assert_eq!(format_cost_usd("12.34"), "$12.34");
+        assert_eq!(format_cost_usd("12.345678"), "$12.35");
+        assert_eq!(format_cost_usd("1234.567"), "$1,234.57");
+        assert_eq!(format_cost_usd("not-a-number"), "$0.00");
+    }
+
+    #[test]
+    fn today_usage_label_full_line() {
+        use super::format_today_usage_label;
+        let s = summary_with(12_340_000, "12.34");
+        assert_eq!(
+            format_today_usage_label(&s, "zh", "今日"),
+            "今日 · 1,234万 tokens · $12.34"
+        );
+        assert_eq!(
+            format_today_usage_label(&s, "en", "Today"),
+            "Today · 12.3M tokens · $12.34"
+        );
     }
 }

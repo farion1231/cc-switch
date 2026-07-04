@@ -426,6 +426,24 @@ function App() {
     },
   );
 
+  useTauriEvent("tray-open-usage", () => {
+    setSettingsDefaultTab("usage");
+    setCurrentView("settings");
+  });
+
+  useEffect(() => {
+    // 轻量模式下点击托盘"今日用量"时窗口需要重建，事件会早于监听注册而丢失，
+    // 后端改为落待消费标记，挂载后拉取一次。
+    invoke<boolean>("take_pending_tray_navigation")
+      .then((pending) => {
+        if (pending) {
+          setSettingsDefaultTab("usage");
+          setCurrentView("settings");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     let active = true;
     let unlistenResize: (() => void) | undefined;
