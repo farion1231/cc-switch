@@ -52,10 +52,27 @@ impl DeltaTokens {
 
 /// 单文件解析时的运行状态
 struct FileParseState {
-    session_id: Option<String>,
+    root_session_id: Option<String>,
+    active_session_id: Option<String>,
     current_model: String,
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
+}
+
+impl FileParseState {
+    fn is_active_root_session(&self) -> bool {
+        match (&self.root_session_id, &self.active_session_id) {
+            (Some(root), Some(active)) => root == active,
+            (None, _) => true,
+            _ => false,
+        }
+    }
+
+    fn session_id_for_insert(&self) -> Option<&str> {
+        self.root_session_id
+            .as_deref()
+            .or(self.active_session_id.as_deref())
+    }
 }
 
 /// 归一化 Codex 模型名
@@ -140,6 +157,17 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
     })
+}
+
+fn parse_session_id(payload: Option<&serde_json::Value>) -> Option<String> {
+    payload
+        .and_then(|p| {
+            p.get("session_id")
+                .or_else(|| p.get("sessionId"))
+                .or_else(|| p.get("id"))
+        })
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
@@ -251,7 +279,8 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     let reader = BufReader::new(file);
 
     let mut state = FileParseState {
-        session_id: None,
+        root_session_id: None,
+        active_session_id: None,
         current_model: "unknown".to_string(),
         prev_total: None,
         event_index: 0,
@@ -296,16 +325,12 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         };
 
         match event_type {
-            "session_meta" if state.session_id.is_none() => {
-                let payload = value.get("payload");
-                state.session_id = payload
-                    .and_then(|p| {
-                        p.get("session_id")
-                            .or_else(|| p.get("sessionId"))
-                            .or_else(|| p.get("id"))
-                    })
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+            "session_meta" => {
+                let session_id = parse_session_id(value.get("payload"));
+                if state.root_session_id.is_none() {
+                    state.root_session_id = session_id.clone();
+                }
+                state.active_session_id = session_id;
             }
             "turn_context" => {
                 if let Some(payload) = value.get("payload") {
@@ -385,13 +410,23 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
 
                 state.event_index += 1;
 
+                // Fork 后的 Codex 会话文件会包含复制来的父会话历史。
+                // token_count 归属到最近的前置 session_meta 片段，只有属于
+                // 本文件根 session 的事件才导入。非根片段仍会在上面更新
+                // prev_total，这样子会话第一条真实 delta 会基于复制历史后的
+                // 累计值计算。event_index 保持文件内 token_count 的全局序号，
+                // 避免导入器升级后 request_id 变化。
+                if !state.is_active_root_session() {
+                    continue;
+                }
+
                 // 跳过已处理的行（但仍需解析以恢复状态）
                 if line_offset <= last_offset {
                     continue;
                 }
 
                 // 生成唯一 request_id
-                let session_id_str = state.session_id.as_deref().unwrap_or("unknown");
+                let session_id_str = state.session_id_for_insert().unwrap_or("unknown");
                 let request_id = format!("codex_session:{}:{}", session_id_str, state.event_index);
 
                 // 提取时间戳
@@ -405,7 +440,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     &request_id,
                     &delta,
                     &state.current_model,
-                    state.session_id.as_deref(),
+                    state.session_id_for_insert(),
                     timestamp.as_deref(),
                 ) {
                     Ok(true) => imported += 1,
@@ -709,6 +744,326 @@ mod tests {
             row.get(0)
         })?;
         assert_eq!(count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_codex_fork_skips_parent_history_and_imports_child_delta() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("fork.jsonl");
+
+        let lines = vec![
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "session_id": "child-session",
+                    "forked_from_id": "parent-session"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T07:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "parent-session",
+                    "session_id": "parent-session"
+                }
+            }),
+            serde_json::json!({
+                "type": "turn_context",
+                "payload": {
+                    "model": "gpt-5.5"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:00:01Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 400,
+                            "output_tokens": 50
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:00:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1500,
+                            "cached_input_tokens": 800,
+                            "output_tokens": 80
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:01:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "session_id": "child-session",
+                    "forked_from_id": "parent-session"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:01:01Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1500,
+                            "cached_input_tokens": 800,
+                            "output_tokens": 80
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:01:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1900,
+                            "cached_input_tokens": 1000,
+                            "output_tokens": 90
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:01:03Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 2200,
+                            "cached_input_tokens": 1100,
+                            "output_tokens": 120
+                        }
+                    }
+                }
+            }),
+        ];
+        let content = lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&file, format!("{content}\n")).expect("write fixture");
+
+        let (imported, skipped) = sync_single_codex_file(&db, &file)?;
+        assert_eq!(imported, 2);
+        assert_eq!(skipped, 0);
+
+        let conn = lock_conn!(db.conn);
+        let rows = {
+            let mut stmt = conn.prepare(
+                "SELECT request_id, session_id, input_tokens, cache_read_tokens, output_tokens
+                 FROM proxy_request_logs
+                 ORDER BY request_id",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u32>(2)?,
+                        row.get::<_, u32>(3)?,
+                        row.get::<_, u32>(4)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "codex_session:child-session:3".to_string(),
+                    "child-session".to_string(),
+                    400,
+                    200,
+                    10,
+                ),
+                (
+                    "codex_session:child-session:4".to_string(),
+                    "child-session".to_string(),
+                    300,
+                    100,
+                    30,
+                ),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sync_codex_nested_fork_skips_ancestor_segments() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("nested-fork.jsonl");
+
+        let lines = vec![
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "grandchild-session",
+                    "session_id": "grandchild-session",
+                    "forked_from_id": "child-session"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T08:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "session_id": "child-session",
+                    "forked_from_id": "parent-session"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T07:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "parent-session",
+                    "session_id": "parent-session"
+                }
+            }),
+            serde_json::json!({
+                "type": "turn_context",
+                "payload": {
+                    "model": "gpt-5.5"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:00:01Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1000,
+                            "cached_input_tokens": 500,
+                            "output_tokens": 50
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:00:02Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-session",
+                    "session_id": "child-session",
+                    "forked_from_id": "parent-session"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:00:03Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1300,
+                            "cached_input_tokens": 700,
+                            "output_tokens": 70
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:01:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "grandchild-session",
+                    "session_id": "grandchild-session",
+                    "forked_from_id": "child-session"
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:01:01Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1300,
+                            "cached_input_tokens": 700,
+                            "output_tokens": 70
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-04T09:01:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 1500,
+                            "cached_input_tokens": 800,
+                            "output_tokens": 95
+                        }
+                    }
+                }
+            }),
+        ];
+        let content = lines
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&file, format!("{content}\n")).expect("write fixture");
+
+        let (imported, skipped) = sync_single_codex_file(&db, &file)?;
+        assert_eq!(imported, 1);
+        assert_eq!(skipped, 0);
+
+        let conn = lock_conn!(db.conn);
+        let row = conn.query_row(
+            "SELECT request_id, session_id, input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, u32>(4)?,
+                ))
+            },
+        )?;
+
+        assert_eq!(
+            row,
+            (
+                "codex_session:grandchild-session:3".to_string(),
+                "grandchild-session".to_string(),
+                200,
+                100,
+                25,
+            )
+        );
 
         Ok(())
     }
