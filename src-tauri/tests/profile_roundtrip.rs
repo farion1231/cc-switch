@@ -639,3 +639,108 @@ fn switching_profile_autosaves_previous_profile_state() {
     assert_eq!(payload_b.mcp.claude, Some(vec!["m1".to_string()]));
     assert_eq!(payload_b.prompts.claude.as_deref(), Some("pr1"));
 }
+
+#[test]
+fn profile_switch_auto_disables_takeover_before_apply() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    // 使用临时端口，避免测试机器端口冲突
+    futures::executor::block_on(async {
+        let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        state
+            .db
+            .update_proxy_config(proxy_config)
+            .await
+            .expect("set ephemeral proxy port");
+    });
+
+    // ---- 两个 Claude 供应商：custom1 与 custom2 ----
+    let mut custom1 = claude_provider("custom1", "custom-key-1");
+    custom1.category = Some("custom".to_string());
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &custom1)
+        .expect("save custom1 provider");
+
+    let mut custom2 = claude_provider("custom2", "custom-key-2");
+    custom2.category = Some("custom".to_string());
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &custom2)
+        .expect("save custom2 provider");
+
+    // 初始状态：custom1 + 代理接管
+    ProviderService::switch(&state, AppType::Claude, "custom1").expect("switch to custom1");
+    let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
+    rt.block_on(state.proxy_service.set_takeover_for_app("claude", true))
+        .expect("enable claude takeover");
+
+    let (proxy_enabled_before, _) = state.db.get_proxy_flags_sync("claude");
+    assert!(
+        proxy_enabled_before,
+        "takeover should be active before apply"
+    );
+
+    // ---- 构造一个目标为 custom2 的项目快照 ----
+    let project = ProfileService::create(&state, "Custom2 Project", ProfileScope::Claude)
+        .expect("create project");
+    let mut project = state
+        .db
+        .get_profile(&project.id)
+        .expect("get project")
+        .expect("project exists");
+    let mut payload: ProfilePayload =
+        serde_json::from_str(&project.payload).expect("parse project payload");
+    payload.providers.claude = Some("custom2".to_string());
+    project.payload = serde_json::to_string(&payload).expect("serialize payload");
+    state
+        .db
+        .save_profile(&project)
+        .expect("save updated project");
+
+    // ---- 应用项目：应无条件自动关闭接管，再切换到 custom2 ----
+    let warnings = ProfileService::apply(&state, &project.id, ProfileScope::Claude)
+        .expect("apply custom2 project");
+    assert!(
+        warnings.is_empty(),
+        "switching project should not warn: {warnings:?}"
+    );
+
+    // 接管已关闭
+    let (proxy_enabled_after, _) = state.db.get_proxy_flags_sync("claude");
+    assert!(
+        !proxy_enabled_after,
+        "proxy takeover should be auto-disabled before applying profile"
+    );
+
+    // 当前供应商已切到 custom2
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("get current provider")
+            .as_deref(),
+        Some("custom2"),
+        "current provider should be custom2"
+    );
+
+    // live 配置应指向 custom2 的真实 endpoint，而非代理地址
+    let settings_path = home.join(".claude/settings.json");
+    let settings: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&settings_path).expect("read settings"))
+            .expect("parse settings");
+    let base_url = settings
+        .get("env")
+        .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        base_url,
+        Some("https://api.test"),
+        "live config should point to real endpoint after auto-disable"
+    );
+}

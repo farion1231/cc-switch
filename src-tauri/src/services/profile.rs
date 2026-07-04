@@ -355,7 +355,16 @@ impl ProfileService {
         for app in scope.apps().iter() {
             let app_str = app.as_str();
 
-            // 1. 供应商
+            // 1. 切换项目前无条件关闭当前应用的代理接管。
+            // 接管态下 live 文件属于代理；用户希望切换工作目录时总是退出当前
+            // 代理环境，再按快照写入真实供应商配置。
+            if let Err(e) = state.proxy_service.disable_takeover_for_app_sync(app) {
+                warnings.push(format!(
+                    "[{app_str}] auto-disable proxy takeover before profile switch failed: {e}"
+                ));
+            }
+
+            // 2. 供应商
             if let Some(Some(target_pid)) = payload.providers.get(app) {
                 let providers = state.db.get_all_providers(app_str)?;
                 if !providers.contains_key(target_pid) {
@@ -375,7 +384,7 @@ impl ProfileService {
                 }
             }
 
-            // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
+            // 3. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
             if let Some(Some(target_ids)) = payload.mcp.get(app) {
                 let servers = state.db.get_all_mcp_servers()?;
                 let current: Vec<(String, bool)> = servers
@@ -395,7 +404,7 @@ impl ProfileService {
                 }
             }
 
-            // 3. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
+            // 4. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
             if let Some(Some(target_ids)) = payload.skills.get(app) {
                 let skills = state.db.get_all_installed_skills()?;
                 let current: Vec<(String, bool)> = skills
@@ -417,7 +426,7 @@ impl ProfileService {
                 }
             }
 
-            // 4. Prompt（None = 不动；已激活则幂等跳过，避免无谓的文件写与备份）
+            // 5. Prompt（None = 不动；已激活则幂等跳过，避免无谓的文件写与备份）
             if let Some(Some(target_prompt)) = payload.prompts.get(app) {
                 let prompts = state.db.get_prompts(app_str)?;
                 match prompts.get(target_prompt) {

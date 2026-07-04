@@ -799,6 +799,46 @@ impl ProxyService {
         Ok(())
     }
 
+    /// 同步关闭指定应用的 Live 接管（恢复配置并清标志，不停止代理服务）。
+    ///
+    /// 用于 `ProfileService::apply` 等 sync 路径：调用者所在线程可能没有 Tokio
+    /// runtime，无法执行 `set_takeover_for_app(false)` 里的停止服务/等待任务等
+    /// Tokio IO。这里只恢复 Live 文件、删除备份、清除 DB 接管标志，让后续
+    /// `ProviderService::switch` 能正常写入官方供应商配置。
+    ///
+    /// 代理服务本身保持运行；当最后一个应用也关闭接管后，下次用户手动关闭
+    /// 代理或程序退出时会自然停止。
+    pub fn disable_takeover_for_app_sync(&self, app_type: &AppType) -> Result<(), String> {
+        let app_type_str = app_type.as_str();
+
+        // 1) 恢复原始 Live 配置（备份 → SSOT → 清理占位符 三层兜底）
+        futures::executor::block_on(self.restore_live_config_for_app_with_fallback_inner(app_type))
+            .map_err(|e| format!("恢复 {app_type_str} Live 配置失败: {e}"))?;
+
+        // 2) 删除该 app 的备份
+        futures::executor::block_on(self.db.delete_live_backup(app_type_str))
+            .map_err(|e| format!("删除 {app_type_str} Live 备份失败: {e}"))?;
+
+        // 3) 设置 proxy_config.enabled = false
+        let mut config =
+            futures::executor::block_on(self.db.get_proxy_config_for_app(app_type_str))
+                .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+        if config.enabled {
+            config.enabled = false;
+            futures::executor::block_on(self.db.update_proxy_config_for_app(config))
+                .map_err(|e| format!("清除 {app_type_str} enabled 状态失败: {e}"))?;
+        }
+
+        // 4) 清除该应用的健康状态
+        futures::executor::block_on(self.db.clear_provider_health_for_app(app_type_str))
+            .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
+
+        // 5) 清旧标志
+        let _ = futures::executor::block_on(self.db.set_live_takeover_active(false));
+
+        Ok(())
+    }
+
     /// 同步 Live 配置中的 Token 到数据库
     ///
     /// 在清空 Live Token 之前调用，确保数据库中的 Provider 配置有最新的 Token。
@@ -1560,7 +1600,7 @@ impl ProxyService {
             .await
     }
 
-    async fn restore_live_config_for_app_with_fallback_inner(
+    pub(crate) async fn restore_live_config_for_app_with_fallback_inner(
         &self,
         app_type: &AppType,
     ) -> Result<(), String> {
