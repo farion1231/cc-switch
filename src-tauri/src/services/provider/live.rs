@@ -306,6 +306,34 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+/// 移除 Codex common config 中不属于“跨 provider 用户配置”的字段。
+///
+/// common config 可以保存 `[features]`、`[mcp_servers]`、`[projects]` 等全局偏好；
+/// 但不能保存当前 provider 的模型、base_url、catalog 指针或 provider 表，否则切换
+/// official/provider 时会把旧路由或本地代理地址重新注入 live config。
+fn strip_codex_common_config_provider_fields(doc: &mut DocumentMut) {
+    for key in [
+        "model",
+        "model_provider",
+        "model_context_window",
+        "model_catalog_json",
+        "openai_base_url",
+        "experimental_bearer_token",
+    ] {
+        doc.as_table_mut().remove(key);
+    }
+    doc.as_table_mut().remove("model_providers");
+}
+
+/// 解析 Codex common config 片段，并在参与检测、应用或移除前净化 provider 私有字段。
+fn parse_codex_common_config_snippet(snippet: &str) -> Result<DocumentMut, AppError> {
+    let mut doc = snippet
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+    strip_codex_common_config_provider_fields(&mut doc);
+    Ok(doc)
+}
+
 fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
@@ -328,7 +356,13 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
                 Err(_) => return false,
             };
             let source_doc = match trimmed.parse::<DocumentMut>() {
-                Ok(doc) => doc,
+                Ok(mut doc) => {
+                    strip_codex_common_config_provider_fields(&mut doc);
+                    if doc.as_table().is_empty() {
+                        return false;
+                    }
+                    doc
+                }
                 Err(_) => return false,
             };
 
@@ -398,9 +432,10 @@ pub(crate) fn remove_common_config_from_settings(
                     ))
                 })?
             };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
+            let source_doc = parse_codex_common_config_snippet(trimmed)?;
+            if source_doc.as_table().is_empty() {
+                return Ok(settings.clone());
+            }
 
             remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
             if let Some(obj) = result.as_object_mut() {
@@ -453,9 +488,10 @@ fn apply_common_config_to_settings(
                     ))
                 })?
             };
-            let source_doc = trimmed.parse::<DocumentMut>().map_err(|e| {
-                AppError::Message(format!("Invalid Codex common config snippet: {e}"))
-            })?;
+            let source_doc = parse_codex_common_config_snippet(trimmed)?;
+            if source_doc.as_table().is_empty() {
+                return Ok(settings.clone());
+            }
 
             merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
             if let Some(obj) = result.as_object_mut() {
@@ -1649,6 +1685,60 @@ mod tests {
 
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
+        assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    fn codex_common_config_does_not_import_provider_owned_router_fields() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model_provider = \"openai\"\n[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\n"
+        });
+        let snippet = r#"model_provider = "router"
+model_catalog_json = "cc-switch-model-catalog.json"
+openai_base_url = "http://127.0.0.1:15721/v1"
+experimental_bearer_token = "sk-router"
+
+[model_providers.router]
+base_url = "http://127.0.0.1:15721/v1"
+
+[features]
+web_search = true
+"#;
+
+        let applied = apply_common_config_to_settings(&AppType::Codex, &settings, snippet).unwrap();
+        let applied_config = applied["config"].as_str().unwrap_or_default();
+
+        assert!(applied_config.contains("model_provider = \"openai\""));
+        assert!(applied_config.contains("https://api.openai.com/v1"));
+        assert!(applied_config.contains("[features]"));
+        assert!(applied_config.contains("web_search = true"));
+        assert!(!applied_config.contains("model_catalog_json"));
+        assert!(!applied_config.contains("openai_base_url"));
+        assert!(!applied_config.contains("experimental_bearer_token"));
+        assert!(!applied_config.contains("127.0.0.1:15721"));
+        assert!(!applied_config.contains("[model_providers.router]"));
+    }
+
+    #[test]
+    fn codex_common_config_provider_only_snippet_is_not_detected_or_removed() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": "model_provider = \"router\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n[model_providers.router]\nbase_url = \"http://127.0.0.1:15721/v1\"\n"
+        });
+        let snippet = "model_provider = \"router\"\n[model_providers.router]\nbase_url = \"http://127.0.0.1:15721/v1\"\n";
+
+        assert!(!settings_contain_common_config(
+            &AppType::Codex,
+            &settings,
+            snippet
+        ));
+        let stripped =
+            remove_common_config_from_settings(&AppType::Codex, &settings, snippet).unwrap();
         assert_eq!(stripped, settings);
     }
 
