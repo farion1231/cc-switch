@@ -317,13 +317,16 @@ impl ProfileService {
     /// 旧项目仍保留离开时的配置，回来时状态一致。自动保存失败时作为 warning
     /// 继续，不阻塞切换。
     ///
-    /// 顺序不可换：供应商切换（switch_normal 内部会按 DB 当前标志跑 MCP
-    /// sync_all_enabled）必须先于 MCP diff，否则 profile 的 MCP 目标态会被冲掉。
+    /// 应用指定项目的快照到当前分组内的所有应用。
+    ///
+    /// 返回 `(warnings, should_stop_proxy)`：当当前分组内所有接管都被关闭、且
+    /// 其它应用也没有接管时，建议调用者停止代理服务，以便 Claude Desktop 的
+    /// "本地路由"总开关同步显示为关闭。
     pub fn apply(
         state: &AppState,
         profile_id: &str,
         scope: ProfileScope,
-    ) -> Result<Vec<String>, AppError> {
+    ) -> Result<(Vec<String>, bool), AppError> {
         let mut warnings = Vec::new();
 
         // 自动保存旧项目当前状态（仅当前分组），失败不阻塞切换
@@ -450,7 +453,11 @@ impl ProfileService {
         state
             .db
             .set_current_profile_id(scope.as_str(), Some(profile_id))?;
-        Ok(warnings)
+
+        // 当前分组内所有接管已关闭；若其它应用也无接管，可停止代理服务。
+        let should_stop_proxy = !state.db.is_live_takeover_active_sync();
+
+        Ok((warnings, should_stop_proxy))
     }
 }
 

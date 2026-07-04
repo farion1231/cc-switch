@@ -212,7 +212,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("enable pr2");
 
     // ---- 应用项目 A（Claude 组）：全部复原 ----
-    let warnings = ProfileService::apply(&state, &profile_a.id, ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, &profile_a.id, ProfileScope::Claude)
         .expect("apply profile A");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
@@ -319,7 +319,7 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
     assert_eq!(payload.mcp.codex, Some(vec![]), "codex side captured");
 
     // 按 Codex 组应用：只动 codex 组的 current 标记，Claude 侧原样不动
-    let warnings = ProfileService::apply(&state, &project.id, ProfileScope::Codex)
+    let (warnings, _) = ProfileService::apply(&state, &project.id, ProfileScope::Codex)
         .expect("apply project on codex side");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
@@ -355,7 +355,7 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
     );
 
     // 同一共享项目在 Claude 页应用：该侧未拍过快照 → 不动配置、标记 current、返回提示
-    let warnings = ProfileService::apply(&state, &project.id, ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, &project.id, ProfileScope::Claude)
         .expect("apply project on claude side");
     assert_eq!(warnings.len(), 1, "uncaptured side yields one hint");
     assert!(warnings[0].contains("no claude configuration captured"));
@@ -419,7 +419,7 @@ fn profile_apply_reports_dangling_references_and_continues() {
     };
     state.db.save_profile(&profile).expect("save profile");
 
-    let warnings = ProfileService::apply(&state, "dangling-test", ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, "dangling-test", ProfileScope::Claude)
         .expect("apply succeeds");
     assert_eq!(
         warnings.len(),
@@ -536,7 +536,7 @@ fn switching_profile_autosaves_previous_profile_state() {
     // ---- Project A：状态 X（p1 / m1 / pr1）----
     let project_a = ProfileService::create(&state, "Project A", ProfileScope::Claude)
         .expect("create project A");
-    let warnings = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
         .expect("apply project A");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
@@ -550,7 +550,7 @@ fn switching_profile_autosaves_previous_profile_state() {
         .expect("create project B");
 
     // ---- 从 A 切换到 B：自动把当前状态 Y 保存到 A，再加载 B 的 Y ----
-    let warnings = ProfileService::apply(&state, &project_b.id, ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, &project_b.id, ProfileScope::Claude)
         .expect("switch to project B");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
@@ -591,7 +591,7 @@ fn switching_profile_autosaves_previous_profile_state() {
     McpService::toggle_app(&state, "m2", AppType::Claude, false).expect("disable m2");
     PromptService::enable_prompt(&state, AppType::Claude, "pr1").expect("enable pr1");
 
-    let warnings = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
         .expect("switch back to project A");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
@@ -704,7 +704,7 @@ fn profile_switch_auto_disables_takeover_before_apply() {
         .expect("save updated project");
 
     // ---- 应用项目：应无条件自动关闭接管，再切换到 custom2 ----
-    let warnings = ProfileService::apply(&state, &project.id, ProfileScope::Claude)
+    let (warnings, _) = ProfileService::apply(&state, &project.id, ProfileScope::Claude)
         .expect("apply custom2 project");
     assert!(
         warnings.is_empty(),

@@ -386,16 +386,35 @@ pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool
         };
         match crate::services::profile::ProfileService::apply(app_state.inner(), &profile_id, scope)
         {
-            Ok(warnings) => {
+            Ok((warnings, should_stop_proxy)) => {
                 for warning in &warnings {
                     log::warn!("[Profile] 应用项目 {profile_id} 警告: {warning}");
                 }
-                crate::commands::emit_profile_apply_events(
-                    &app_handle,
-                    app_state.inner(),
-                    &profile_id,
-                    scope,
-                );
+
+                if should_stop_proxy {
+                    let app_handle2 = app_handle.clone();
+                    let proxy_service = app_state.proxy_service.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = proxy_service.stop().await {
+                            log::warn!("托盘切换项目后停止代理服务失败: {e}");
+                        }
+                        if let Some(state) = app_handle2.try_state::<AppState>() {
+                            crate::commands::emit_profile_apply_events(
+                                &app_handle2,
+                                state.inner(),
+                                &profile_id,
+                                scope,
+                            );
+                        }
+                    });
+                } else {
+                    crate::commands::emit_profile_apply_events(
+                        &app_handle,
+                        app_state.inner(),
+                        &profile_id,
+                        scope,
+                    );
+                }
             }
             Err(e) => {
                 log::error!("应用项目 {profile_id} 失败: {e}");
