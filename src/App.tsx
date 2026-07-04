@@ -58,6 +58,7 @@ import {
   DRAG_REGION_STYLE,
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
+import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
@@ -379,6 +380,13 @@ function App() {
     } catch (error) {
       console.error("[App] Failed to update tray menu", error);
     }
+  });
+
+  // 托盘应用项目后刷新相关缓存（providers 由既有 provider-switched 监听承接）
+  useTauriEvent("profile-applied", async () => {
+    await queryClient.invalidateQueries({ queryKey: ["profiles"] });
+    await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
+    await queryClient.invalidateQueries({ queryKey: ["skills"] });
   });
 
   useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
@@ -1189,6 +1197,7 @@ function App() {
                     CC Switch
                   </a>
                 </div>
+                <ProfileSwitcher visibleApps={visibleApps} />
                 <Button
                   variant="ghost"
                   size="icon"

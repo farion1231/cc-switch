@@ -54,6 +54,8 @@ pub struct TrayTexts {
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
+    pub projects_label: &'static str,
+    pub no_project_label: &'static str,
 }
 
 impl TrayTexts {
@@ -66,6 +68,8 @@ impl TrayTexts {
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
+                projects_label: "Projects",
+                no_project_label: "No project",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
@@ -74,6 +78,8 @@ impl TrayTexts {
                 lightweight_mode: "軽量モード",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
+                projects_label: "プロジェクト",
+                no_project_label: "プロジェクトを使用しない",
             },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
@@ -82,6 +88,8 @@ impl TrayTexts {
                 lightweight_mode: "輕量模式",
                 quit: "退出",
                 _auto_label: "自動 (故障轉移)",
+                projects_label: "專案",
+                no_project_label: "不使用專案",
             },
             _ => Self {
                 show_main: "打开主界面",
@@ -90,6 +98,8 @@ impl TrayTexts {
                 lightweight_mode: "轻量模式",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
+                projects_label: "项目",
+                no_project_label: "不使用项目",
             },
         }
     }
@@ -324,6 +334,55 @@ fn sort_providers(
         a.name.cmp(&b.name)
     });
     sorted
+}
+
+/// 处理项目 Profile 托盘事件，返回是否已处理
+///
+/// 事件 id 形如 `profile_<uuid>`；`profile_none` 表示"不使用项目"（只清标记，不动配置）。
+pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
+    let Some(suffix) = event_id.strip_prefix("profile_") else {
+        return false;
+    };
+
+    if suffix == "none" {
+        if let Some(app_state) = app.try_state::<AppState>() {
+            if let Err(e) = app_state.db.set_current_profile_id(None) {
+                log::error!("清除当前项目失败: {e}");
+            }
+        }
+        // 通知主窗口刷新（profileId=null 表示已清除当前项目）
+        if let Err(e) = app.emit("profile-applied", serde_json::json!({ "profileId": null })) {
+            log::error!("发射 profile-applied 事件失败: {e}");
+        }
+        refresh_tray_menu(app);
+        return true;
+    }
+
+    log::info!("应用项目: {suffix}");
+    let app_handle = app.clone();
+    let profile_id = suffix.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(app_state) = app_handle.try_state::<AppState>() else {
+            return;
+        };
+        match crate::services::profile::ProfileService::apply(app_state.inner(), &profile_id) {
+            Ok(warnings) => {
+                for warning in &warnings {
+                    log::warn!("[Profile] 应用项目 {profile_id} 警告: {warning}");
+                }
+                crate::commands::emit_profile_apply_events(
+                    &app_handle,
+                    app_state.inner(),
+                    &profile_id,
+                );
+            }
+            Err(e) => {
+                log::error!("应用项目 {profile_id} 失败: {e}");
+                refresh_tray_menu(&app_handle);
+            }
+        }
+    });
+    true
 }
 
 /// 处理供应商托盘事件
@@ -605,6 +664,43 @@ pub fn create_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
+    // 项目 Profile 子菜单（Claude/Codex 至少一个可见且存在项目时才显示）
+    if visible_apps.is_visible(&AppType::Claude) || visible_apps.is_visible(&AppType::Codex) {
+        let profiles = app_state.db.get_all_profiles()?;
+        if !profiles.is_empty() {
+            let current_profile_id = app_state.db.get_current_profile_id()?.unwrap_or_default();
+            let mut profiles_builder =
+                SubmenuBuilder::with_id(app, "submenu_profiles", tray_texts.projects_label);
+            for profile in &profiles {
+                let item = CheckMenuItem::with_id(
+                    app,
+                    format!("profile_{}", profile.id),
+                    &profile.name,
+                    true,
+                    current_profile_id == profile.id,
+                    None::<&str>,
+                )
+                .map_err(|e| AppError::Message(format!("创建项目菜单项失败: {e}")))?;
+                profiles_builder = profiles_builder.item(&item);
+            }
+            let none_item = CheckMenuItem::with_id(
+                app,
+                "profile_none",
+                tray_texts.no_project_label,
+                true,
+                current_profile_id.is_empty(),
+                None::<&str>,
+            )
+            .map_err(|e| AppError::Message(format!("创建不使用项目菜单项失败: {e}")))?;
+            let profiles_submenu = profiles_builder
+                .separator()
+                .item(&none_item)
+                .build()
+                .map_err(|e| AppError::Message(format!("构建项目子菜单失败: {e}")))?;
+            menu_builder = menu_builder.item(&profiles_submenu).separator();
+        }
+    }
+
     let lightweight_item = CheckMenuItem::with_id(
         app,
         "lightweight_mode",
@@ -750,6 +846,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             app.exit(0);
         }
         _ => {
+            if handle_profile_tray_event(app, event_id) {
+                return;
+            }
             if handle_provider_tray_event(app, event_id) {
                 return;
             }
