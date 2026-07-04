@@ -1868,7 +1868,8 @@
   },
   "profiles": {
     "switcherTooltip": {
-      "claude": "项目：一键切换 Claude Code 的供应商 / MCP / Skills / 记忆文件，及 Claude Desktop 的供应商",
+      "claude": "项目：一键切换 Claude Code 的供应商 / MCP / Skills / 记忆文件",
+      "claude-desktop": "项目：一键切换 Claude Desktop 的供应商",
       "codex": "项目：一键切换 Codex 的供应商 / MCP / Skills / 记忆文件"
     },
     "none": "不使用项目",
@@ -1876,7 +1877,8 @@
     "empty": "暂无项目",
     "createFromCurrent": "新建项目",
     "createDescription": {
-      "claude": "把 Claude Code 当前的供应商、MCP、Skills、记忆文件（及 Claude Desktop 的供应商）保存为一个项目，之后可一键切换。",
+      "claude": "把 Claude Code 当前的供应商、MCP、Skills、记忆文件保存为一个项目，之后可一键切换。",
+      "claude-desktop": "把 Claude Desktop 当前的供应商保存为一个项目，之后可一键切换。",
       "codex": "把 Codex 当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。"
     },
     "manage": "管理项目…",

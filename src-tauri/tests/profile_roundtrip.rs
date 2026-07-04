@@ -174,7 +174,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         .save_prompt(AppType::Claude.as_str(), &prompt("pr2", false))
         .expect("save prompt pr2");
 
-    // ---- 保存项目 A（在 Claude 页新建：只拍 Claude + Desktop 当前状态）----
+    // ---- 保存项目 A（在 Claude 页新建：只拍 Claude 当前状态）----
     let profile_a = ProfileService::create(&state, "Project A", ProfileScope::Claude)
         .expect("create profile A");
     let payload: ProfilePayload =
@@ -191,18 +191,14 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         "codex side not captured when creating from the claude group"
     );
     assert_eq!(payload.mcp.codex, None, "uncaptured side stays None");
-    assert_eq!(payload.providers.claude_desktop.as_deref(), Some("d1"));
     assert_eq!(
-        (payload.mcp.claude_desktop, payload.skills.claude_desktop),
-        (Some(vec![]), Some(vec![])),
-        "desktop has no MCP/Skills dimension (captured as empty)"
+        payload.providers.claude_desktop, None,
+        "claude desktop has its own profile scope"
     );
-    assert_eq!(payload.prompts.claude_desktop, None);
 
     // ---- 改动全部四类配置（走真实切换路径）----
     ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
-    // Desktop live 写入仅 macOS/Windows 可用；其他平台不动 d1，
-    // apply 时命中幂等跳过（这正是 Linux 上带 Desktop 槽的 payload 应有行为）
+    // Desktop 现在有自己的项目分组；Claude 分组 apply 不应再影响 Desktop
     #[cfg(any(target_os = "macos", windows))]
     ProviderService::switch(&state, AppType::ClaudeDesktop, "d2").expect("switch desktop to d2");
     McpService::toggle_app(&state, "m1", AppType::Claude, false).expect("disable m1");
@@ -211,7 +207,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         .expect("disable skill");
     PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("enable pr2");
 
-    // ---- 应用项目 A（Claude 组）：全部复原 ----
+    // ---- 应用项目 A（Claude 组）：只复原 Claude 侧 ----
     let (warnings, _) = ProfileService::apply(&state, &profile_a.id, ProfileScope::Claude)
         .expect("apply profile A");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
@@ -222,14 +218,15 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         .expect("get current provider");
     assert_eq!(current.as_deref(), Some("p1"), "provider restored to p1");
 
+    // Claude 分组不再管理 Desktop：Desktop 保持 d2 不变
     let current_desktop = state
         .db
         .get_current_provider(AppType::ClaudeDesktop.as_str())
         .expect("get current desktop provider");
     assert_eq!(
         current_desktop.as_deref(),
-        Some("d1"),
-        "desktop provider restored to d1"
+        Some("d2"),
+        "desktop provider stays at d2 after claude-scope apply"
     );
 
     let servers = state.db.get_all_mcp_servers().expect("get mcp servers");
@@ -742,5 +739,70 @@ fn profile_switch_auto_disables_takeover_before_apply() {
         base_url,
         Some("https://api.test"),
         "live config should point to real endpoint after auto-disable"
+    );
+}
+
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn claude_desktop_profile_scope_is_independent() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    state
+        .db
+        .save_provider(
+            AppType::ClaudeDesktop.as_str(),
+            &desktop_provider("d1", "dk-1"),
+        )
+        .expect("save desktop provider d1");
+    state
+        .db
+        .save_provider(
+            AppType::ClaudeDesktop.as_str(),
+            &desktop_provider("d2", "dk-2"),
+        )
+        .expect("save desktop provider d2");
+    state
+        .db
+        .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")
+        .expect("set current desktop provider d1");
+
+    // 在 Desktop 页新建项目：只拍 Desktop 供应商
+    let project = ProfileService::create(&state, "Desktop Project", ProfileScope::ClaudeDesktop)
+        .expect("create desktop profile");
+    let payload: ProfilePayload =
+        serde_json::from_str(&project.payload).expect("parse desktop payload");
+    assert_eq!(payload.providers.claude_desktop.as_deref(), Some("d1"));
+    assert_eq!(payload.providers.claude, None, "claude slot untouched");
+    assert_eq!(payload.providers.codex, None, "codex slot untouched");
+
+    // 切到 d2
+    ProviderService::switch(&state, AppType::ClaudeDesktop, "d2").expect("switch desktop to d2");
+
+    // 应用 Desktop 项目：恢复 d1
+    let (warnings, _) = ProfileService::apply(&state, &project.id, ProfileScope::ClaudeDesktop)
+        .expect("apply desktop profile");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::ClaudeDesktop.as_str())
+            .expect("get current desktop provider")
+            .as_deref(),
+        Some("d1"),
+        "desktop provider restored by desktop-scope apply"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_profile_id(ProfileScope::ClaudeDesktop.as_str())
+            .expect("get desktop current profile id")
+            .as_deref(),
+        Some(project.id.as_str()),
+        "desktop scope marker set"
     );
 }

@@ -44,6 +44,7 @@ impl From<Profile> for ProfileDto {
 #[serde(rename_all = "camelCase")]
 pub struct CurrentProfileIds {
     pub claude: Option<String>,
+    pub claude_desktop: Option<String>,
     pub codex: Option<String>,
 }
 
@@ -98,6 +99,10 @@ pub fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesResponse, Str
         claude: state
             .db
             .get_current_profile_id(ProfileScope::Claude.as_str())
+            .map_err(|e| e.to_string())?,
+        claude_desktop: state
+            .db
+            .get_current_profile_id(ProfileScope::ClaudeDesktop.as_str())
             .map_err(|e| e.to_string())?,
         codex: state
             .db

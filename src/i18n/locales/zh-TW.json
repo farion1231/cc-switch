@@ -1840,7 +1840,8 @@
   },
   "profiles": {
     "switcherTooltip": {
-      "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案，及 Claude Desktop 的供應商",
+      "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
+      "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
       "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案"
     },
     "none": "不使用專案",
@@ -1848,7 +1849,8 @@
     "empty": "尚無專案",
     "createFromCurrent": "新建專案",
     "createDescription": {
-      "claude": "把 Claude Code 目前的供應商、MCP、Skills、記憶檔案（及 Claude Desktop 的供應商）儲存為一個專案，之後可一鍵切換。",
+      "claude": "把 Claude Code 目前的供應商、MCP、Skills、記憶檔案儲存為一個專案，之後可一鍵切換。",
+      "claude-desktop": "把 Claude Desktop 目前的供應商儲存為一個專案，之後可一鍵切換。",
       "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
     },
     "manage": "管理專案…",

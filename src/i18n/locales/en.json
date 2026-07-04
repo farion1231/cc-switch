@@ -1868,7 +1868,8 @@
   },
   "profiles": {
     "switcherTooltip": {
-      "claude": "Projects: switch the Claude Code provider / MCP / Skills / memory files, plus the Claude Desktop provider, in one click",
+      "claude": "Projects: switch the Claude Code provider / MCP / Skills / memory files in one click",
+      "claude-desktop": "Projects: switch the Claude Desktop provider in one click",
       "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click"
     },
     "none": "No project",
@@ -1876,7 +1877,8 @@
     "empty": "No projects yet",
     "createFromCurrent": "New project",
     "createDescription": {
-      "claude": "Save the current Claude Code provider, MCP, Skills and memory file (plus the Claude Desktop provider) as a project you can switch to later.",
+      "claude": "Save the current Claude Code provider, MCP, Skills and memory file as a project you can switch to later.",
+      "claude-desktop": "Save the current Claude Desktop provider as a project you can switch to later.",
       "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later."
     },
     "manage": "Manage projects…",

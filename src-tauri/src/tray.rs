@@ -738,6 +738,7 @@ pub fn create_tray_menu(
             // 分组标签用产品名，不进 i18n
             let scope_label = match scope {
                 ProfileScope::Claude => "Claude Code",
+                ProfileScope::ClaudeDesktop => "Claude Desktop",
                 ProfileScope::Codex => "Codex",
             };
             let mut scope_builder = SubmenuBuilder::with_id(

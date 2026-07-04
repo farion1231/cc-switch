@@ -23,27 +23,32 @@ use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
 use crate::store::AppState;
 
-/// Profile 操作的应用分组：项目实体全应用共享，但快照/应用/当前指针按组进行
+/// Profile 操作的应用分组：项目实体全应用共享，但快照/应用/当前指针按组进行。
 ///
-/// Claude Desktop 并入 Claude 组：它在 cc-switch 里只有聊天侧供应商一个
-/// 受管维度，且其内嵌 Code 标签页读的就是 Claude Code 的那套 live 文件
-/// （`~/.claude/*`，天然跟随），不足以构成独立的"项目"维度。
-/// 供应商 live 文件两组零交集（`~/.claude` / `~/.codex` /
-/// `Application Support/Claude-3p`），分组切换互不干扰。
+/// Claude Code 与 Claude Desktop 的供应商在 cc-switch 中是独立切换的，
+/// 因此各自拥有独立的项目分组。两者 live 文件零交集
+///（`~/.claude` / `Application Support/Claude-3p`），分组切换互不干扰。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProfileScope {
     Claude,
+    #[serde(rename = "claude-desktop")]
+    ClaudeDesktop,
     Codex,
 }
 
 impl ProfileScope {
     /// 全部分组（扩展新分组时同步扩展 apps/for_app 与前端 scope.ts 镜像）
-    pub const ALL: [ProfileScope; 2] = [ProfileScope::Claude, ProfileScope::Codex];
+    pub const ALL: [ProfileScope; 3] = [
+        ProfileScope::Claude,
+        ProfileScope::ClaudeDesktop,
+        ProfileScope::Codex,
+    ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             ProfileScope::Claude => "claude",
+            ProfileScope::ClaudeDesktop => "claude-desktop",
             ProfileScope::Codex => "codex",
         }
     }
@@ -51,6 +56,7 @@ impl ProfileScope {
     pub fn parse(value: &str) -> Result<Self, AppError> {
         match value {
             "claude" => Ok(ProfileScope::Claude),
+            "claude-desktop" => Ok(ProfileScope::ClaudeDesktop),
             "codex" => Ok(ProfileScope::Codex),
             other => Err(AppError::InvalidInput(format!(
                 "Unknown profile scope: {other}"
@@ -59,13 +65,10 @@ impl ProfileScope {
     }
 
     /// 组内受管应用（快照与 apply 只作用于这些 app 的槽位）
-    ///
-    /// Claude Desktop 只有供应商一个活跃维度：MCP/Skills 的 `is_enabled_for`
-    /// 对它恒为 false（快照天然为空集）、prompt 无 live 文件（快照为 None），
-    /// apply 时空集 diff 与 None 都是 no-op，无需按维度特判。
     pub fn apps(&self) -> &'static [AppType] {
         match self {
-            ProfileScope::Claude => &[AppType::Claude, AppType::ClaudeDesktop],
+            ProfileScope::Claude => &[AppType::Claude],
+            ProfileScope::ClaudeDesktop => &[AppType::ClaudeDesktop],
             ProfileScope::Codex => &[AppType::Codex],
         }
     }
@@ -73,7 +76,8 @@ impl ProfileScope {
     /// 应用页 → 所属分组（Profile 不支持的应用返回 None）
     pub fn for_app(app: &AppType) -> Option<Self> {
         match app {
-            AppType::Claude | AppType::ClaudeDesktop => Some(ProfileScope::Claude),
+            AppType::Claude => Some(ProfileScope::Claude),
+            AppType::ClaudeDesktop => Some(ProfileScope::ClaudeDesktop),
             AppType::Codex => Some(ProfileScope::Codex),
             _ => None,
         }
@@ -554,7 +558,11 @@ mod tests {
         payload.merge_scope_from(&fresh, ProfileScope::Claude);
 
         assert_eq!(payload.providers.claude, Some("p2".to_string()));
-        assert_eq!(payload.providers.claude_desktop, None);
+        assert_eq!(
+            payload.providers.claude_desktop,
+            Some("d1".to_string()),
+            "claude-desktop slot is in its own scope, untouched by claude merge"
+        );
         assert_eq!(payload.mcp.claude, Some(ids(&["m2"])));
         // codex 侧完好：既没被覆盖也没被 fresh 的值污染
         assert_eq!(payload.providers.codex, Some("c1".to_string()));
@@ -565,17 +573,20 @@ mod tests {
     fn test_scope_captured_detects_per_scope_snapshot() {
         let mut payload = ProfilePayload::default();
         assert!(!payload.scope_captured(ProfileScope::Claude));
+        assert!(!payload.scope_captured(ProfileScope::ClaudeDesktop));
         assert!(!payload.scope_captured(ProfileScope::Codex));
 
         // 只拍过 claude 组（哪怕拍到的是空集）
         payload.mcp.claude = Some(vec![]);
         assert!(payload.scope_captured(ProfileScope::Claude));
+        assert!(!payload.scope_captured(ProfileScope::ClaudeDesktop));
         assert!(!payload.scope_captured(ProfileScope::Codex));
 
-        // Desktop 槽位属于 claude 组
+        // Desktop 槽位属于独立的 claude-desktop 组
         let mut desktop_only = ProfilePayload::default();
         desktop_only.providers.claude_desktop = Some("d1".into());
-        assert!(desktop_only.scope_captured(ProfileScope::Claude));
+        assert!(desktop_only.scope_captured(ProfileScope::ClaudeDesktop));
+        assert!(!desktop_only.scope_captured(ProfileScope::Claude));
     }
 
     #[test]
@@ -603,10 +614,12 @@ mod tests {
 
     #[test]
     fn test_scope_app_grouping() {
-        // Desktop 并入 Claude 组；组内应用与 for_app 反向映射必须一致
+        // Claude Code 与 Claude Desktop 各自独立成组；
+        // 组内应用与 for_app 反向映射必须一致
+        assert_eq!(ProfileScope::Claude.apps(), &[AppType::Claude]);
         assert_eq!(
-            ProfileScope::Claude.apps(),
-            &[AppType::Claude, AppType::ClaudeDesktop]
+            ProfileScope::ClaudeDesktop.apps(),
+            &[AppType::ClaudeDesktop]
         );
         assert_eq!(ProfileScope::Codex.apps(), &[AppType::Codex]);
         for scope in ProfileScope::ALL {

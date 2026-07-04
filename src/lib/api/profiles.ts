@@ -3,10 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 /**
  * Profile 操作的应用分组（与后端 services/profile.rs 的 ProfileScope 严格对应）
  *
- * 项目实体全应用共享，但快照/应用/当前指针按组进行；Claude Desktop 并入
- * claude 组（它只有聊天侧供应商一个受管维度，Code 标签页天然跟随 Claude Code）。
+ * 项目实体全应用共享，但快照/应用/当前指针按组进行；Claude Code 与
+ * Claude Desktop 的供应商独立切换，因此各自有独立分组。
  */
-export type ProfileScope = "claude" | "codex";
+export type ProfileScope = "claude" | "claude-desktop" | "codex";
 
 /**
  * 按 app 分槽的载荷容器（与后端 services/profile.rs 的 PerApp<T> 严格对应）

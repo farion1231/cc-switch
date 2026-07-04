@@ -1868,7 +1868,8 @@
   },
   "profiles": {
     "switcherTooltip": {
-      "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイル、および Claude Desktop のプロバイダーをワンクリックで切り替え",
+      "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
+      "claude-desktop": "プロジェクト：Claude Desktop のプロバイダーをワンクリックで切り替え",
       "codex": "プロジェクト：Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え"
     },
     "none": "プロジェクトを使用しない",
@@ -1876,7 +1877,8 @@
     "empty": "プロジェクトはまだありません",
     "createFromCurrent": "新規プロジェクト",
     "createDescription": {
-      "claude": "Claude Code の現在のプロバイダー、MCP、Skills、メモリファイル（および Claude Desktop のプロバイダー）をプロジェクトとして保存し、後からワンクリックで切り替えられます。",
+      "claude": "Claude Code の現在のプロバイダー、MCP、Skills、メモリファイルをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
+      "claude-desktop": "Claude Desktop の現在のプロバイダーをプロジェクトとして保存し、後からワンクリックで切り替えられます。",
       "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。"
     },
     "manage": "プロジェクトを管理…",

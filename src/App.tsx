@@ -390,6 +390,9 @@ function App() {
     await queryClient.invalidateQueries({ queryKey: ["skills"] });
     await queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
     await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+    await queryClient.invalidateQueries({
+      queryKey: ["providers", "claude-desktop"],
+    });
   });
 
   useTauriEvent<SyncStatusUpdatedPayload | null | undefined>(
