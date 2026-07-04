@@ -176,6 +176,8 @@ function App() {
   const [skillsDiscoverySource, setSkillsDiscoverySource] =
     useState<SkillsPageSource>("repos");
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
+  // 导航令牌：设置页已打开且 defaultTab 值未变时，令牌变化强制重新应用 Tab
+  const [settingsNavToken, setSettingsNavToken] = useState(0);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
@@ -428,6 +430,7 @@ function App() {
 
   useTauriEvent("tray-open-usage", () => {
     setSettingsDefaultTab("usage");
+    setSettingsNavToken((n) => n + 1);
     setCurrentView("settings");
   });
 
@@ -438,6 +441,7 @@ function App() {
       .then((pending) => {
         if (pending) {
           setSettingsDefaultTab("usage");
+          setSettingsNavToken((n) => n + 1);
           setCurrentView("settings");
         }
       })
@@ -900,6 +904,7 @@ function App() {
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
               defaultTab={settingsDefaultTab}
+              navToken={settingsNavToken}
             />
           );
         case "prompts":

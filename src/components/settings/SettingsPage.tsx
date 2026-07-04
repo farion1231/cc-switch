@@ -63,6 +63,8 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void | Promise<void>;
   defaultTab?: string;
+  /** 导航令牌：值变化时强制重新应用 defaultTab（用于设置页已打开时的重复导航） */
+  navToken?: number;
 }
 
 export function SettingsPage({
@@ -70,6 +72,7 @@ export function SettingsPage({
   onOpenChange,
   onImportSuccess,
   defaultTab = "general",
+  navToken,
 }: SettingsDialogProps) {
   const { t } = useTranslation();
   const {
@@ -116,7 +119,7 @@ export function SettingsPage({
       setActiveTab(defaultTab);
       resetStatus();
     }
-  }, [open, resetStatus, defaultTab]);
+  }, [open, resetStatus, defaultTab, navToken]);
 
   useEffect(() => {
     if (requiresRestart) {
