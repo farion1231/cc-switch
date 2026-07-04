@@ -62,6 +62,7 @@ impl ModelMapping {
             || self.opus_model.is_some()
             || self.fable_model.is_some()
             || self.default_model.is_some()
+            || self.classifier_model.is_some()
     }
 
     /// 根据原始模型名称获取映射后的模型

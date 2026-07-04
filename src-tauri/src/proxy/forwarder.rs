@@ -1129,9 +1129,8 @@ impl RequestForwarder {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
-            let (mapped_body, _original_model, _mapped_model) =
+            let (mut mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
-            let mut mapped_body = mapped_body;
             // Classifier model hijacking (only for standard Anthropic handler path)
             super::model_mapper::apply_classifier_override_from_provider(
                 &mut mapped_body,
