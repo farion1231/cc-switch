@@ -1054,12 +1054,15 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       npm: "@ai-sdk/openai-compatible",
       name: "Longcat",
       options: {
-        baseURL: "https://api.longcat.chat/v1",
+        baseURL: "https://api.longcat.chat/openai/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "LongCat-Flash-Chat": { name: "LongCat Flash Chat" },
+        "LongCat-2.0": {
+          name: "LongCat 2.0",
+          options: { thinking: { type: "disabled" } },
+        },
       },
     },
     category: "cn_official",
@@ -1068,8 +1071,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     templateValues: {
       baseURL: {
         label: "Base URL",
-        placeholder: "https://api.longcat.chat/v1",
-        defaultValue: "https://api.longcat.chat/v1",
+        placeholder: "https://api.longcat.chat/openai/v1",
+        defaultValue: "https://api.longcat.chat/openai/v1",
         editorValue: "",
       },
       apiKey: {

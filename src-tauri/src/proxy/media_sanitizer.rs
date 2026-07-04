@@ -257,6 +257,7 @@ fn known_text_only_model(model: &str) -> bool {
         "kat-coder-pro-v1",
         "kat-coder-pro-v2",
         "ling-2.5-1t",
+        "longcat-2.0",
         "longcat-flash-chat",
         "mimo-v2.5-pro",
         "us.deepseek.r1-v1",
@@ -482,6 +483,15 @@ mod tests {
             body["input"][0]["content"][1]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    #[test]
+    fn longcat_models_are_classified_text_only() {
+        // LongCat-2.0 (like the retired Flash Chat) is a text-only model; the
+        // preset ships it in mixed case, so the classifier must normalize first.
+        assert!(known_text_only_model("LongCat-2.0"));
+        assert!(known_text_only_model("longcat/LongCat-2.0"));
+        assert!(known_text_only_model("LongCat-Flash-Chat"));
     }
 
     #[test]

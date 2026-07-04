@@ -577,11 +577,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.longcat.chat/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "LongCat-Flash-Chat",
-      "LongCat-Flash-Chat",
-      "LongCat-Flash-Chat",
-    ),
+    modelRoutes: brandedRoutes("LongCat-2.0", "LongCat-2.0", "LongCat-2.0"),
     icon: "longcat",
     iconColor: "#29E154",
   },
