@@ -41,6 +41,13 @@ import {
 } from "@/lib/query/profiles";
 import { ProfileManageDialog } from "./ProfileManageDialog";
 import { APP_PROFILE_SCOPE, hasScopeSnapshot } from "./scope";
+import type { CurrentProfileIds, ProfileScope } from "@/lib/api/profiles";
+
+const CURRENT_ID_KEY: Record<ProfileScope, keyof CurrentProfileIds> = {
+  claude: "claude",
+  "claude-desktop": "claudeDesktop",
+  codex: "codex",
+};
 
 interface ProfileSwitcherProps {
   activeApp: AppId;
@@ -74,7 +81,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   }
 
   const profiles = data?.profiles ?? [];
-  const currentId = data?.currentIds?.[scope] ?? null;
+  const currentId = data?.currentIds?.[CURRENT_ID_KEY[scope]] ?? null;
   const currentProfile = profiles.find((p) => p.id === currentId);
 
   const handleApply = (id: string) => {

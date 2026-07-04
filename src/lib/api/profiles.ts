@@ -38,8 +38,16 @@ export interface Profile {
   updatedAt?: number;
 }
 
-/** 每个分组当前激活的项目 id（未使用项目时为 null） */
-export type CurrentProfileIds = Record<ProfileScope, string | null>;
+/** 每个分组当前激活的项目 id（未使用项目时为 null）
+ *
+ * 注意：JSON key 是 camelCase（claudeDesktop），与 ProfileScope 的 kebab-case
+ * 字符串不同——后者用于命令参数，前者用于响应字段。
+ */
+export interface CurrentProfileIds {
+  claude: string | null;
+  claudeDesktop: string | null;
+  codex: string | null;
+}
 
 export interface ProfilesResponse {
   profiles: Profile[];
