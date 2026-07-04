@@ -370,6 +370,8 @@ fn extract_claude_config_env(
 
 /// Build Codex settings configuration
 fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let mut settings = extract_codex_inline_config(request).unwrap_or_else(|| json!({}));
+
     let provider_display_name = request
         .name
         .as_deref()
@@ -417,12 +419,49 @@ requires_openai_auth = true
 "#
     );
 
-    json!({
-        "auth": {
-            "OPENAI_API_KEY": request.api_key,
-        },
-        "config": config_toml
-    })
+    let settings_obj = settings
+        .as_object_mut()
+        .expect("inline Codex settings must be an object");
+    let auth = settings_obj
+        .entry("auth")
+        .or_insert_with(|| json!({}))
+        .as_object_mut();
+    if let Some(auth) = auth {
+        auth.insert(
+            "OPENAI_API_KEY".to_string(),
+            json!(request.api_key.clone().unwrap_or_default()),
+        );
+    } else {
+        settings_obj.insert(
+            "auth".to_string(),
+            json!({ "OPENAI_API_KEY": request.api_key.clone().unwrap_or_default() }),
+        );
+    }
+
+    if !settings_obj
+        .get("config")
+        .and_then(|value| value.as_str())
+        .is_some_and(|text| !text.trim().is_empty())
+    {
+        settings_obj.insert("config".to_string(), json!(config_toml));
+    }
+
+    settings
+}
+
+fn extract_codex_inline_config(request: &DeepLinkImportRequest) -> Option<serde_json::Value> {
+    let config_b64 = request.config.as_ref()?;
+    let format = request.config_format.as_deref().unwrap_or("json");
+    if format != "json" {
+        return None;
+    }
+
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let json_str = std::str::from_utf8(&decoded).ok()?;
+    let value: serde_json::Value = serde_json::from_str(json_str).ok()?;
+
+    value.as_object()?;
+    Some(value)
 }
 
 /// Build Gemini settings configuration
@@ -829,6 +868,7 @@ fn extract_codex_base_url(toml_value: &toml::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::prelude::*;
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {
@@ -932,6 +972,59 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
         );
+    }
+
+    #[test]
+    fn build_codex_settings_preserves_inline_model_catalog() {
+        let inline_config = json!({
+            "auth": { "OPENAI_API_KEY": "sk-old" },
+            "config": "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n\n[model_providers.custom]\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true",
+            "apiFormat": "openai_responses",
+            "modelCatalog": {
+                "models": [{
+                    "model": "deepseek-v4-flash",
+                    "default_reasoning_level": "medium",
+                    "supported_reasoning_levels": [
+                        { "effort": "low", "description": "Low" },
+                        { "effort": "medium", "description": "Medium" },
+                        { "effort": "high", "description": "High" },
+                        { "effort": "xhigh", "description": "Extra high" }
+                    ]
+                }]
+            }
+        });
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("My Relay".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-new".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            config: Some(BASE64_STANDARD.encode(inline_config.to_string().as_bytes())),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+
+        assert_eq!(settings["apiFormat"], "openai_responses");
+        assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-new");
+        assert!(settings["config"]
+            .as_str()
+            .expect("config text")
+            .contains("model_catalog_json"));
+        let models = settings["modelCatalog"]["models"]
+            .as_array()
+            .expect("modelCatalog models");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["model"], "deepseek-v4-flash");
+        let efforts: Vec<&str> = models[0]["supported_reasoning_levels"]
+            .as_array()
+            .expect("reasoning levels")
+            .iter()
+            .filter_map(|level| level.get("effort").and_then(|value| value.as_str()))
+            .collect();
+        assert_eq!(efforts, vec!["low", "medium", "high", "xhigh"]);
     }
 
     #[test]
