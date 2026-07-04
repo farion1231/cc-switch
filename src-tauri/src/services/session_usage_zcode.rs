@@ -149,10 +149,14 @@ fn query_model_usage_rows(conn: &rusqlite::Connection) -> Result<Vec<ZCodeUsageR
                     COALESCE(cache_read_input_tokens, 0) AS cache_read_input_tokens,
                     error_message
              FROM model_usage
-             WHERE COALESCE(input_tokens, 0) > 0
+             WHERE completed_at IS NOT NULL
+               AND status IN ('completed', 'cancelled', 'error')
+               AND (
+                   COALESCE(input_tokens, 0) > 0
                 OR COALESCE(output_tokens, 0) > 0
                 OR COALESCE(cache_creation_input_tokens, 0) > 0
                 OR COALESCE(cache_read_input_tokens, 0) > 0
+               )
              ORDER BY COALESCE(completed_at, started_at, 0), id",
         )
         .map_err(|e| AppError::Database(format!("准备 ZCode 使用记录查询失败: {e}")))?;

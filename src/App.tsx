@@ -661,6 +661,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -984,7 +988,8 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "zcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined

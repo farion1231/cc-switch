@@ -203,6 +203,14 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 从 ZCode live 配置导入供应商到数据库
+   * ZCode 特有功能：由于累加模式，用户可能已在 ~/.zcode/v2/config.json 中配置供应商
+   */
+  async importZcodeFromLive(): Promise<number> {
+    return await invoke("import_zcode_providers_from_live");
+  },
 };
 
 // ============================================================================
