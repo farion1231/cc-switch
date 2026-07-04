@@ -82,7 +82,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     for file_path in &jsonl_files {
         result.files_scanned += 1;
 
-        match sync_single_file(db, file_path, "session_log") {
+        match sync_single_file(db, file_path, "session_log", "claude") {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -185,10 +185,13 @@ fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
 ///
 /// `data_source` 写入 proxy_request_logs.data_source，用于区分来源
 /// （Claude Code 为 "session_log"，Cowork 为 "cowork_session_log"）。
+/// `app_type` 需与该流量走网关时 proxy 行的入口一致（Claude Code 为 "claude"，
+/// Cowork 为 "claude-desktop"），否则指纹去重因 app_type 不等而失效、产生双算。
 pub(crate) fn sync_single_file(
     db: &Database,
     file_path: &Path,
     data_source: &str,
+    app_type: &str,
 ) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
@@ -350,7 +353,7 @@ pub(crate) fn sync_single_file(
             msg.message_id
         );
 
-        match insert_session_log_entry(db, &request_id, msg, data_source) {
+        match insert_session_log_entry(db, &request_id, msg, data_source, app_type) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
             Err(e) => {
@@ -422,6 +425,7 @@ fn insert_session_log_entry(
     request_id: &str,
     msg: &ParsedAssistantUsage,
     data_source: &str,
+    app_type: &str,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
@@ -441,7 +445,7 @@ fn insert_session_log_entry(
         });
 
     let dedup_key = DedupKey {
-        app_type: "claude",
+        app_type,
         model: &msg.model,
         input_tokens: msg.input_tokens,
         output_tokens: msg.output_tokens,
@@ -498,7 +502,7 @@ fn insert_session_log_entry(
             rusqlite::params![
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
-                "claude",           // app_type
+                app_type,
                 msg.model,
                 msg.model,          // request_model = model
                 msg.input_tokens,
@@ -696,7 +700,8 @@ mod tests {
             session_id: Some("session-1".to_string()),
         };
 
-        let inserted = insert_session_log_entry(&db, "session:msg_1", &msg, "session_log")?;
+        let inserted =
+            insert_session_log_entry(&db, "session:msg_1", &msg, "session_log", "claude")?;
         assert!(!inserted);
 
         let conn = lock_conn!(db.conn);
@@ -782,7 +787,7 @@ mod tests {
         let empty = r#"{"type":"assistant","message":{"id":"msg_empty","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:24Z","sessionId":"session-wf"}"#;
         fs::write(&file, format!("{billable}\n{empty}\n")).unwrap();
 
-        let (imported, _skipped) = sync_single_file(&db, &file, "session_log")?;
+        let (imported, _skipped) = sync_single_file(&db, &file, "session_log", "claude")?;
         assert_eq!(
             imported, 1,
             "有 cache 成本但无 stop_reason 的 message 必须被导入"

@@ -38,6 +38,14 @@ use std::path::{Path, PathBuf};
 /// Cowork 会话写入 proxy_request_logs.data_source 的标记
 pub const COWORK_DATA_SOURCE: &str = "cowork_session_log";
 
+/// Cowork 会话行的 app_type。
+///
+/// 与 Desktop 网关 proxy 行的入口（`handle_claude_desktop_messages` →
+/// `"claude-desktop"`）保持一致，指纹去重才能按原始 app_type 精确匹配，
+/// 避免走网关的 Cowork 流量被 proxy 行和会话行双算。读侧展示/筛选由
+/// `folded_app_type_sql` 折叠进 `claude`，UI 分类不受影响。
+pub const COWORK_APP_TYPE: &str = "claude-desktop";
+
 // 注：macOS/Windows 布局均已真机实测；Linux 路径按 Electron appData 约定
 // （Claude Desktop Linux beta 2026-06-30 发布，含 Cowork），目录不存在时同步为 no-op。
 
@@ -100,7 +108,7 @@ pub fn sync_cowork_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     for file_path in collect_cowork_jsonl_files(&root) {
         result.files_scanned += 1;
 
-        match sync_single_file(db, &file_path, COWORK_DATA_SOURCE) {
+        match sync_single_file(db, &file_path, COWORK_DATA_SOURCE, COWORK_APP_TYPE) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -325,7 +333,7 @@ mod tests {
 
         let mut imported = 0;
         for file in collect_cowork_jsonl_files(&root) {
-            let (i, _) = sync_single_file(&db, &file, COWORK_DATA_SOURCE)?;
+            let (i, _) = sync_single_file(&db, &file, COWORK_DATA_SOURCE, COWORK_APP_TYPE)?;
             imported += i;
         }
         assert_eq!(imported, 1);
@@ -336,8 +344,11 @@ mod tests {
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        assert_eq!(data_source, COWORK_DATA_SOURCE);
-        assert_eq!(app_type, "claude");
+        assert_eq!(data_source, "cowork_session_log");
+        // 与 Desktop 网关 proxy 行一致，读侧由 folded_app_type_sql 折叠进 claude。
+        // 刻意用字面量而非 COWORK_APP_TYPE：常量被改动时测试必须变红，
+        // 否则去重口径会随常量一起漂移而无人察觉。
+        assert_eq!(app_type, "claude-desktop");
         drop(conn);
 
         fs::remove_dir_all(&root).ok();

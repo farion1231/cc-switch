@@ -3414,10 +3414,11 @@ mod tests {
 
         {
             let conn = lock_conn!(db.conn);
+            // Cowork 走 Desktop 网关时 proxy 行按入口记 app_type="claude-desktop"
             insert_usage_log(
                 &conn,
-                "claude-proxy",
-                "claude",
+                "desktop-proxy",
+                "claude-desktop",
                 "openai-compatible",
                 "claude-sonnet-4-5",
                 "proxy",
@@ -3429,11 +3430,12 @@ mod tests {
                 200,
                 "0.30",
             )?;
-            // 与 proxy 行各字段一致（60 秒窗口内）的 Cowork 会话行 → 应被去重
+            // 与 proxy 行各字段一致（60 秒窗口内）的 Cowork 会话行 → 应被去重；
+            // 会话行同样记 app_type="claude-desktop"，与网关入口对齐
             insert_usage_log(
                 &conn,
                 "cowork-session-dup",
-                "claude",
+                "claude-desktop",
                 "_session",
                 "claude-sonnet-4-5",
                 "cowork_session_log",
@@ -3451,7 +3453,7 @@ mod tests {
             insert_usage_log(
                 &conn,
                 "cowork-session-nocache",
-                "claude",
+                "claude-desktop",
                 "_session",
                 "claude-sonnet-4-5",
                 "cowork_session_log",
@@ -3472,14 +3474,31 @@ mod tests {
             .map(|log| log.request_id.as_str())
             .collect();
         assert_eq!(logs.total, 2);
-        assert!(request_ids.contains(&"claude-proxy"));
+        assert!(request_ids.contains(&"desktop-proxy"));
         assert!(
             !request_ids.contains(&"cowork-session-dup"),
-            "与 proxy 完全匹配的 Cowork 会话行应被去重"
+            "与 Desktop 网关 proxy 行完全匹配的 Cowork 会话行应被去重"
         );
         assert!(
             request_ids.contains(&"cowork-session-nocache"),
             "cache_creation 不匹配的 Cowork 行不应套用 0 值特例被去重"
+        );
+
+        // 读侧折叠：appType="claude" 筛选应包含 claude-desktop 的 Cowork 行
+        let claude_logs = db.get_request_logs(
+            &LogFilters {
+                app_type: Some("claude".to_string()),
+                ..LogFilters::default()
+            },
+            0,
+            10,
+        )?;
+        assert!(
+            claude_logs
+                .data
+                .iter()
+                .any(|log| log.request_id == "cowork-session-nocache"),
+            "claude-desktop 的 Cowork 行应折叠进 claude 筛选口径"
         );
 
         Ok(())
