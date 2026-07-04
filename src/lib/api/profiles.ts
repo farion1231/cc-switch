@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
  */
 export interface PerApp<T> {
   claude: T;
+  "claude-desktop": T;
   codex: T;
 }
 

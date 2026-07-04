@@ -664,8 +664,11 @@ pub fn create_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
-    // 项目 Profile 子菜单（Claude/Codex 至少一个可见且存在项目时才显示）
-    if visible_apps.is_visible(&AppType::Claude) || visible_apps.is_visible(&AppType::Codex) {
+    // 项目 Profile 子菜单（受支持应用至少一个可见且存在项目时才显示）
+    if crate::services::profile::PROFILE_APPS
+        .iter()
+        .any(|app_type| visible_apps.is_visible(app_type))
+    {
         let profiles = app_state.db.get_all_profiles()?;
         if !profiles.is_empty() {
             let current_profile_id = app_state.db.get_current_profile_id()?.unwrap_or_default();

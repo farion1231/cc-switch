@@ -1839,7 +1839,7 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "專案：一鍵切換 Claude Code 與 Codex 的供應商 / MCP / Skills / 記憶檔案",
+    "switcherTooltip": "專案：一鍵切換 Claude Code 與 Codex 的供應商 / MCP / Skills / 記憶檔案，及 Claude Desktop 的供應商",
     "none": "不使用專案",
     "searchPlaceholder": "搜尋專案",
     "empty": "尚無專案",

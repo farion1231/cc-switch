@@ -19,14 +19,20 @@ use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
 use crate::store::AppState;
 
-/// P1 支持的应用范围（扩展新 app 时同步扩展 PerApp 字段）
-pub const PROFILE_APPS: [AppType; 2] = [AppType::Claude, AppType::Codex];
+/// 支持的应用范围（扩展新 app 时同步扩展 PerApp 字段）
+///
+/// Claude Desktop 只有供应商一个活跃维度：MCP/Skills 的 `is_enabled_for`
+/// 对它恒为 false（快照天然为空集）、prompt 无 live 文件（快照为 None），
+/// apply 时空集 diff 与 None 都是 no-op，无需按维度特判。
+pub const PROFILE_APPS: [AppType; 3] = [AppType::Claude, AppType::ClaudeDesktop, AppType::Codex];
 
-/// 按 app 分槽的载荷容器；字段名与 AppType 的 serde 小写形式一致
+/// 按 app 分槽的载荷容器；字段名与 AppType 的 serde 形式一致
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PerApp<T> {
     pub claude: T,
+    #[serde(rename = "claude-desktop")]
+    pub claude_desktop: T,
     pub codex: T,
 }
 
@@ -34,6 +40,7 @@ impl<T> PerApp<T> {
     pub fn get(&self, app: &AppType) -> Option<&T> {
         match app {
             AppType::Claude => Some(&self.claude),
+            AppType::ClaudeDesktop => Some(&self.claude_desktop),
             AppType::Codex => Some(&self.codex),
             _ => None,
         }
@@ -42,6 +49,7 @@ impl<T> PerApp<T> {
     pub fn get_mut(&mut self, app: &AppType) -> Option<&mut T> {
         match app {
             AppType::Claude => Some(&mut self.claude),
+            AppType::ClaudeDesktop => Some(&mut self.claude_desktop),
             AppType::Codex => Some(&mut self.codex),
             _ => None,
         }
@@ -310,24 +318,29 @@ mod tests {
         let payload = ProfilePayload {
             providers: PerApp {
                 claude: Some("p1".into()),
+                claude_desktop: Some("d1".into()),
                 codex: None,
             },
             mcp: PerApp {
                 claude: ids(&["m1", "m2"]),
+                claude_desktop: vec![],
                 codex: vec![],
             },
             skills: PerApp {
                 claude: vec![],
+                claude_desktop: vec![],
                 codex: ids(&["s1"]),
             },
             prompts: PerApp {
                 claude: None,
+                claude_desktop: None,
                 codex: Some("pr1".into()),
             },
         };
         let json = serde_json::to_string(&payload).unwrap();
-        // per-app key 必须是 AppType serde 的小写形式
+        // per-app key 必须与 AppType 的 serde 形式一致（claude-desktop 是连字符）
         assert!(json.contains("\"claude\""));
+        assert!(json.contains("\"claude-desktop\""));
         assert!(json.contains("\"codex\""));
         let back: ProfilePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, payload);
@@ -336,11 +349,14 @@ mod tests {
     #[test]
     fn test_payload_tolerates_missing_fields() {
         // 前向兼容：旧版/部分字段缺失时应落到默认值而不是报错
+        // （P1 存量 payload 没有 claude-desktop key，应用时对 Desktop 不动）
         let back: ProfilePayload =
             serde_json::from_str(r#"{"providers":{"claude":"p1"}}"#).unwrap();
         assert_eq!(back.providers.claude, Some("p1".to_string()));
+        assert_eq!(back.providers.claude_desktop, None);
         assert_eq!(back.providers.codex, None);
         assert!(back.mcp.claude.is_empty());
+        assert!(back.mcp.claude_desktop.is_empty());
         assert_eq!(back.prompts.codex, None);
 
         let empty: ProfilePayload = serde_json::from_str("{}").unwrap();
@@ -351,9 +367,9 @@ mod tests {
     fn test_per_app_get_only_supports_profile_apps() {
         let per: PerApp<Option<String>> = PerApp::default();
         assert!(per.get(&AppType::Claude).is_some());
+        assert!(per.get(&AppType::ClaudeDesktop).is_some());
         assert!(per.get(&AppType::Codex).is_some());
         assert!(per.get(&AppType::Gemini).is_none());
-        assert!(per.get(&AppType::ClaudeDesktop).is_none());
     }
 
     #[test]

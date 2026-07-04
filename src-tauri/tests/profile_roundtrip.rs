@@ -29,6 +29,21 @@ fn claude_provider(id: &str, token: &str) -> Provider {
     )
 }
 
+/// Claude Desktop 供应商：无 meta 时默认 Direct 模式，只要求 env 里有 token + base_url
+fn desktop_provider(id: &str, token: &str) -> Provider {
+    Provider::with_id(
+        id.to_string(),
+        id.to_uppercase(),
+        json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": token,
+                "ANTHROPIC_BASE_URL": "https://desktop.test"
+            }
+        }),
+        None,
+    )
+}
+
 fn mcp_server(id: &str, claude_enabled: bool) -> McpServer {
     serde_json::from_value(json!({
         "id": id,
@@ -105,6 +120,26 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         .set_current_provider(AppType::Claude.as_str(), "p1")
         .expect("set current provider p1");
 
+    // Claude Desktop 只有供应商一个活跃维度（MCP/Skills/Prompt 对它不适用）
+    state
+        .db
+        .save_provider(
+            AppType::ClaudeDesktop.as_str(),
+            &desktop_provider("d1", "dk-1"),
+        )
+        .expect("save desktop provider d1");
+    state
+        .db
+        .save_provider(
+            AppType::ClaudeDesktop.as_str(),
+            &desktop_provider("d2", "dk-2"),
+        )
+        .expect("save desktop provider d2");
+    state
+        .db
+        .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")
+        .expect("set current desktop provider d1");
+
     // 让 live settings.json 与 p1 一致（switch_normal 回填需要）
     let claude_dir = home.join(".claude");
     fs::create_dir_all(&claude_dir).expect("create .claude dir");
@@ -152,9 +187,19 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         "codex has no current provider"
     );
     assert!(payload.mcp.codex.is_empty());
+    assert_eq!(payload.providers.claude_desktop.as_deref(), Some("d1"));
+    assert!(
+        payload.mcp.claude_desktop.is_empty() && payload.skills.claude_desktop.is_empty(),
+        "desktop has no MCP/Skills dimension"
+    );
+    assert_eq!(payload.prompts.claude_desktop, None);
 
     // ---- 改动全部四类配置（走真实切换路径）----
     ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
+    // Desktop live 写入仅 macOS/Windows 可用；其他平台不动 d1，
+    // apply 时命中幂等跳过（这正是 Linux 上带 Desktop 槽的 payload 应有行为）
+    #[cfg(any(target_os = "macos", windows))]
+    ProviderService::switch(&state, AppType::ClaudeDesktop, "d2").expect("switch desktop to d2");
     McpService::toggle_app(&state, "m1", AppType::Claude, false).expect("disable m1");
     McpService::toggle_app(&state, "m2", AppType::Claude, true).expect("enable m2");
     SkillService::toggle_app(&state.db, "local:test-skill", &AppType::Claude, false)
@@ -170,6 +215,16 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         .get_current_provider(AppType::Claude.as_str())
         .expect("get current provider");
     assert_eq!(current.as_deref(), Some("p1"), "provider restored to p1");
+
+    let current_desktop = state
+        .db
+        .get_current_provider(AppType::ClaudeDesktop.as_str())
+        .expect("get current desktop provider");
+    assert_eq!(
+        current_desktop.as_deref(),
+        Some("d1"),
+        "desktop provider restored to d1"
+    );
 
     let servers = state.db.get_all_mcp_servers().expect("get mcp servers");
     assert!(servers.get("m1").expect("m1").apps.claude, "m1 re-enabled");

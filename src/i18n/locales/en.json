@@ -1867,7 +1867,7 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "Projects: switch providers / MCP / Skills / memory files for Claude Code and Codex in one click",
+    "switcherTooltip": "Projects: switch providers / MCP / Skills / memory files for Claude Code and Codex, plus the Claude Desktop provider, in one click",
     "none": "No project",
     "searchPlaceholder": "Search projects",
     "empty": "No projects yet",

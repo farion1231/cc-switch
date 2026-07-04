@@ -1867,7 +1867,7 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "プロジェクト：Claude Code と Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え",
+    "switcherTooltip": "プロジェクト：Claude Code と Codex のプロバイダー / MCP / Skills / メモリファイル、および Claude Desktop のプロバイダーをワンクリックで切り替え",
     "none": "プロジェクトを使用しない",
     "searchPlaceholder": "プロジェクトを検索",
     "empty": "プロジェクトはまだありません",
