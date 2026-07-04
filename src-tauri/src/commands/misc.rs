@@ -2707,9 +2707,15 @@ fn launch_terminal_with_env(
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
+    // 使用 provider_id 的简单 hash 作为文件名的一部分，避免非 ASCII 字符
+    // (如中文供应商名) 导致批处理文件编码问题（cmd.exe 用系统代码页
+    // 读取 UTF-8 文件时会把中文字节错当成命令分隔符）。
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&provider_id, &mut hasher);
+    let provider_hash = std::hash::Hasher::finish(&hasher);
     let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
+        "claude_{:x}_{}.json",
+        provider_hash,
         std::process::id()
     ));
 
@@ -3209,15 +3215,18 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    // 写入 UTF-8 批处理文件，先用 `chcp 65001` 切换到 UTF-8 代码页，
+    // 避免 cmd.exe 用系统代码页（如 GBK）误读文件内容，导致中文路径等非
+    // ASCII 字符被错当成命令分隔符。
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
+        "@echo off\r\n\
+chcp 65001 >nul\r\n\
+{cwd_command}\r\n\
+echo Using provider-specific claude config:\r\n\
+echo {}\r\n\
+claude --settings \"{}\"\r\n\
+del \"{}\" >nul 2>&1\r\n\
+del \"%~f0\" >nul 2>&1\r\n",
         config_path_for_batch,
         config_path_for_batch,
         config_path_for_batch,
@@ -3227,7 +3236,9 @@ del \"%~f0\" >nul 2>&1
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
+    // 用双引号包裹批处理文件路径，防止路径含空格时被 wt/cmd 拆成多个参数。
+    let bat_path_quoted = format!("\"{}\"", bat_path);
+    let ps_cmd = format!("& {}", bat_path_quoted);
 
     // Try the preferred terminal first
     let result = match terminal {
@@ -3235,8 +3246,14 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-        _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
+        "wt" => run_windows_start_command(
+            &["wt", "cmd", "/K", &bat_path_quoted],
+            "Windows Terminal",
+        ),
+        _ => run_windows_start_command(
+            &["cmd", "/K", &bat_path_quoted],
+            "cmd",
+        ),
     };
 
     // If preferred terminal fails and it's not the default, try cmd as fallback
@@ -3246,7 +3263,7 @@ del \"%~f0\" >nul 2>&1
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        return run_windows_start_command(&["cmd", "/K", &bat_path_quoted], "cmd");
     }
 
     result

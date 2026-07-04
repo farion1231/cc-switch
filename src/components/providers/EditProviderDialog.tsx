@@ -9,6 +9,131 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+
+/** 深度合并两个对象，source 覆盖 target 的同名字段 */
+function deepMerge(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    const tv = result[key];
+    if (
+      sv &&
+      typeof sv === "object" &&
+      !Array.isArray(sv) &&
+      tv &&
+      typeof tv === "object" &&
+      !Array.isArray(tv)
+    ) {
+      result[key] = deepMerge(
+        tv as Record<string, unknown>,
+        sv as Record<string, unknown>,
+      );
+    } else {
+      result[key] = sv;
+    }
+  }
+  return result;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function preserveClaudeCredentialsFromDb(
+  merged: Record<string, unknown>,
+  dbSettings: Record<string, unknown>,
+): Record<string, unknown> {
+  const dbEnv = asRecord(dbSettings.env);
+  if (!dbEnv) return merged;
+
+  const protectedEnvKeys = [
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_BASE_URL",
+  ];
+  const preservedEntries = protectedEnvKeys
+    .filter((key) => nonEmptyString(dbEnv[key]))
+    .map((key) => [key, dbEnv[key]] as const);
+  if (preservedEntries.length === 0) return merged;
+
+  return {
+    ...merged,
+    env: {
+      ...(asRecord(merged.env) ?? {}),
+      ...Object.fromEntries(preservedEntries),
+    },
+  };
+}
+
+function preserveCodexCredentialsFromDb(
+  merged: Record<string, unknown>,
+  dbSettings: Record<string, unknown>,
+): Record<string, unknown> {
+  let result = merged;
+
+  const dbAuth = asRecord(dbSettings.auth);
+  const dbApiKey = dbAuth?.OPENAI_API_KEY;
+  if (nonEmptyString(dbApiKey)) {
+    result = {
+      ...result,
+      // Third-party provider auth belongs to the provider DB row. Do not merge
+      // live OAuth tokens into the stored provider object; the backend preserves
+      // official OAuth separately in live auth.json/backup.
+      auth: dbAuth,
+    };
+  }
+
+  const dbConfig = dbSettings.config;
+  const liveConfig = result.config;
+  const dbBaseUrl = nonEmptyString(dbConfig)
+    ? extractCodexBaseUrl(dbConfig)
+    : undefined;
+  const liveBaseUrl = nonEmptyString(liveConfig)
+    ? extractCodexBaseUrl(liveConfig)
+    : undefined;
+
+  // Codex 的 config.toml 是字符串，不能像 JSON 一样深度合并。若 DB 里已有
+  // provider-specific base_url，则它是该 provider 的 SSOT；避免 live 里缺失/
+  // 残留其它 provider 的 base_url 时覆盖表单里的请求地址与 token 投影。
+  if (nonEmptyString(dbConfig) && dbBaseUrl && dbBaseUrl !== liveBaseUrl) {
+    result = {
+      ...result,
+      config: dbConfig,
+    };
+  }
+
+  return result;
+}
+
+function mergeSettingsForEdit(
+  appId: AppId,
+  dbSettings: Record<string, unknown>,
+  liveSettingsObj: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const merged = liveSettingsObj
+    ? deepMerge(dbSettings, liveSettingsObj)
+    : dbSettings;
+
+  if (appId === "claude") {
+    return preserveClaudeCredentialsFromDb(merged, dbSettings);
+  }
+  if (appId === "codex") {
+    return preserveCodexCredentialsFromDb(merged, dbSettings);
+  }
+  return merged;
+}
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -132,10 +257,20 @@ export function EditProviderDialog({
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(() => {
-    const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
-      string,
-      unknown
-    >;
+    // 深度合并：以数据库 SSOT 为底，live 为覆盖层。
+    // 这样 live 中缺的字段（如 auth/apiKey/env）不会丢失，
+    // 而用户在应用内做的修改（如 hooks、MCP 配置等）也能正确反映。
+    const dbSettings =
+      provider?.settingsConfig &&
+      typeof provider.settingsConfig === "object"
+        ? (provider.settingsConfig as Record<string, unknown>)
+        : {};
+    const liveSettingsObj =
+      liveSettings && typeof liveSettings === "object"
+        ? (liveSettings as Record<string, unknown>)
+        : null;
+
+    const base = mergeSettingsForEdit(appId, dbSettings, liveSettingsObj);
 
     // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
     // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
@@ -144,7 +279,7 @@ export function EditProviderDialog({
     // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
     if (
       appId === "codex" &&
-      liveSettings &&
+      liveSettingsObj &&
       provider?.settingsConfig &&
       typeof provider.settingsConfig === "object"
     ) {
@@ -155,7 +290,9 @@ export function EditProviderDialog({
       }
     }
 
-    return base;
+    return Object.keys(base).length > 0
+      ? base
+      : (provider?.settingsConfig as Record<string, unknown> | undefined) ?? {};
   }, [liveSettings, provider?.settingsConfig, appId]); // 只依赖 settingsConfig，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单

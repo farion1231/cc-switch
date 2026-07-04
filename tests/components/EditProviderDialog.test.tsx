@@ -146,6 +146,9 @@ describe("EditProviderDialog", () => {
         JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
       ).toEqual({
         ...liveSettings,
+        auth: {
+          OPENAI_API_KEY: "db-key",
+        },
         modelCatalog: dbModelCatalog,
       });
     });
@@ -155,7 +158,111 @@ describe("EditProviderDialog", () => {
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
     expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
       ...liveSettings,
+      auth: {
+        OPENAI_API_KEY: "db-key",
+      },
       modelCatalog: dbModelCatalog,
+    });
+  });
+
+  it("编辑 Claude 当前供应商时保留数据库中的 API Key 和请求地址", async () => {
+    const provider: Provider = {
+      id: "claude-provider",
+      name: "Claude Provider",
+      category: "aggregator",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "db-token",
+          ANTHROPIC_BASE_URL: "https://api.db.example",
+        },
+      },
+    };
+    const liveSettings = {
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "other-provider-token",
+        ANTHROPIC_BASE_URL: "https://api.other.example",
+        ANTHROPIC_MODEL: "claude-sonnet-4-5",
+      },
+      hooks: {
+        Stop: [],
+      },
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="claude"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        ...liveSettings,
+        env: {
+          ...liveSettings.env,
+          ANTHROPIC_AUTH_TOKEN: "db-token",
+          ANTHROPIC_BASE_URL: "https://api.db.example",
+        },
+      });
+    });
+  });
+
+  it("编辑 Codex 当前供应商时保留数据库中的 API Key 和 base_url", async () => {
+    const dbConfig =
+      'model_provider = "deepseek"\n[model_providers.deepseek]\nbase_url = "https://api.db.example/v1"\nwire_api = "responses"\n';
+    const provider: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      category: "aggregator",
+      settingsConfig: {
+        auth: {
+          OPENAI_API_KEY: "db-key",
+        },
+        config: dbConfig,
+      },
+    };
+    const liveSettings = {
+      auth: {
+        OPENAI_API_KEY: "other-provider-key",
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: "oauth-access",
+        },
+      },
+      config:
+        'model_provider = "other"\n[model_providers.other]\nbase_url = "https://api.other.example/v1"\nwire_api = "responses"\n',
+    };
+
+    apiMocks.getCurrent.mockResolvedValue(provider.id);
+    apiMocks.getLiveProviderSettings.mockResolvedValue(liveSettings);
+
+    render(
+      <EditProviderDialog
+        open
+        provider={provider}
+        onOpenChange={vi.fn()}
+        onSubmit={vi.fn()}
+        appId="codex"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
+      ).toEqual({
+        auth: {
+          OPENAI_API_KEY: "db-key",
+        },
+        config: dbConfig,
+      });
     });
   });
 

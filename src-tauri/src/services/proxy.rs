@@ -2256,6 +2256,12 @@ impl ProxyService {
             return Ok(());
         };
 
+        // 保留官方 OAuth 登录态与使用第三方 API Key 并不冲突：
+        // - auth.json 继续保存 ChatGPT OAuth material；
+        // - 目标供应商自己的 OPENAI_API_KEY 先投影进 config.toml 的
+        //   experimental_bearer_token，Codex 请求第三方时使用该 token。
+        // 因此这里不能因为目标供应商是静态 API Key provider 就跳过继承
+        // OAuth auth，否则恢复备份会把 auth.json 改写为第三方 key。
         let provider_auth = target_obj.get("auth").cloned().unwrap_or_else(|| json!({}));
         if let Some(config_text) = target_obj.get("config").and_then(|value| value.as_str()) {
             let live_config = crate::codex_config::prepare_codex_provider_live_config(
