@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::{Emitter, State};
 
 use crate::database::Profile;
-use crate::services::profile::{ProfilePayload, ProfileService, PROFILE_APPS};
+use crate::services::profile::{ProfilePayload, ProfileScope, ProfileService};
 use crate::store::AppState;
 
 #[derive(Debug, Serialize)]
@@ -39,19 +39,33 @@ impl From<Profile> for ProfileDto {
     }
 }
 
+/// 每个分组当前激活的项目 id（未使用项目时为 null）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentProfileIds {
+    pub claude: Option<String>,
+    pub codex: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfilesResponse {
     pub profiles: Vec<ProfileDto>,
-    pub current_id: Option<String>,
+    pub current_ids: CurrentProfileIds,
 }
 
 /// Profile 应用完成后的统一收尾：发事件 + 重建托盘菜单
 ///
-/// UI 与托盘两个入口必须共用此函数，保证事件 payload 形状一致
-/// （前端 App.tsx 的 provider-switched 监听依赖该形状）。
-pub fn emit_profile_apply_events(app: &tauri::AppHandle, state: &AppState, profile_id: &str) {
-    for app_type in PROFILE_APPS.iter() {
+/// 只对项目所属分组内的应用发 provider-switched。UI 与托盘两个入口必须
+/// 共用此函数，保证事件 payload 形状一致（前端 App.tsx 的
+/// provider-switched 监听依赖该形状）。
+pub fn emit_profile_apply_events(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    profile_id: &str,
+    scope: ProfileScope,
+) {
+    for app_type in scope.apps().iter() {
         let app_str = app_type.as_str();
         let (proxy_enabled, auto_failover_enabled) = state.db.get_proxy_flags_sync(app_str);
         let provider_id = crate::settings::get_effective_current_provider(&state.db, app_type)
@@ -70,7 +84,7 @@ pub fn emit_profile_apply_events(app: &tauri::AppHandle, state: &AppState, profi
     }
     if let Err(e) = app.emit(
         "profile-applied",
-        serde_json::json!({ "profileId": profile_id }),
+        serde_json::json!({ "profileId": profile_id, "scope": scope.as_str() }),
     ) {
         log::error!("发射 profile-applied 事件失败: {e}");
     }
@@ -79,16 +93,31 @@ pub fn emit_profile_apply_events(app: &tauri::AppHandle, state: &AppState, profi
 
 #[tauri::command]
 pub fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesResponse, String> {
-    let (profiles, current_id) = ProfileService::list(&state).map_err(|e| e.to_string())?;
+    let profiles = ProfileService::list(&state).map_err(|e| e.to_string())?;
+    let current_ids = CurrentProfileIds {
+        claude: state
+            .db
+            .get_current_profile_id(ProfileScope::Claude.as_str())
+            .map_err(|e| e.to_string())?,
+        codex: state
+            .db
+            .get_current_profile_id(ProfileScope::Codex.as_str())
+            .map_err(|e| e.to_string())?,
+    };
     Ok(ProfilesResponse {
         profiles: profiles.into_iter().map(ProfileDto::from).collect(),
-        current_id,
+        current_ids,
     })
 }
 
 #[tauri::command]
-pub fn create_profile(state: State<'_, AppState>, name: String) -> Result<ProfileDto, String> {
-    ProfileService::create(&state, &name)
+pub fn create_profile(
+    state: State<'_, AppState>,
+    name: String,
+    scope: String,
+) -> Result<ProfileDto, String> {
+    let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
+    ProfileService::create(&state, &name, scope)
         .map(ProfileDto::from)
         .map_err(|e| e.to_string())
 }
@@ -99,8 +128,13 @@ pub fn update_profile(
     id: String,
     name: Option<String>,
     resnapshot: Option<bool>,
+    scope: Option<String>,
 ) -> Result<ProfileDto, String> {
-    ProfileService::update(&state, &id, name, resnapshot.unwrap_or(false))
+    let scope = scope
+        .map(|s| ProfileScope::parse(&s))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    ProfileService::update(&state, &id, name, resnapshot.unwrap_or(false), scope)
         .map(ProfileDto::from)
         .map_err(|e| e.to_string())
 }
@@ -111,14 +145,15 @@ pub fn delete_profile(state: State<'_, AppState>, id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub fn clear_current_profile(state: State<'_, AppState>) -> Result<(), String> {
+pub fn clear_current_profile(state: State<'_, AppState>, scope: String) -> Result<(), String> {
+    let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
     state
         .db
-        .set_current_profile_id(None)
+        .set_current_profile_id(scope.as_str(), None)
         .map_err(|e| e.to_string())
 }
 
-/// 应用项目快照。
+/// 应用项目快照（只作用于发起页所属分组内的应用）。
 ///
 /// 注意：必须保持同步命令（跑在 Tauri 线程池）——`ProviderService::switch`
 /// 内部使用 block_on 获取切换锁，放进 async 命令会在运行时线程上 panic。
@@ -127,8 +162,10 @@ pub fn apply_profile(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
+    scope: String,
 ) -> Result<Vec<String>, String> {
-    let warnings = ProfileService::apply(&state, &id).map_err(|e| e.to_string())?;
-    emit_profile_apply_events(&app, &state, &id);
+    let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
+    let warnings = ProfileService::apply(&state, &id, scope).map_err(|e| e.to_string())?;
+    emit_profile_apply_events(&app, &state, &id, scope);
     Ok(warnings)
 }

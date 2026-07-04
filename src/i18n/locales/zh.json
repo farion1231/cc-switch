@@ -1867,19 +1867,26 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "项目：一键切换 Claude Code 与 Codex 的供应商 / MCP / Skills / 记忆文件，及 Claude Desktop 的供应商",
+    "switcherTooltip": {
+      "claude": "项目：一键切换 Claude Code 的供应商 / MCP / Skills / 记忆文件，及 Claude Desktop 的供应商",
+      "codex": "项目：一键切换 Codex 的供应商 / MCP / Skills / 记忆文件"
+    },
     "none": "不使用项目",
     "searchPlaceholder": "搜索项目",
     "empty": "暂无项目",
     "createFromCurrent": "新建项目",
-    "createDescription": "把当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。",
+    "createDescription": {
+      "claude": "把 Claude Code 当前的供应商、MCP、Skills、记忆文件（及 Claude Desktop 的供应商）保存为一个项目，之后可一键切换。",
+      "codex": "把 Codex 当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。"
+    },
     "manage": "管理项目…",
     "manageTitle": "管理项目",
     "manageDescription": "项目是配置快照。要修改项目内容，先手动调好配置，再点\"以当前状态更新\"。",
     "namePlaceholder": "例如：开发、绘图",
     "rename": "重命名",
     "updateSnapshot": "以当前状态更新",
-    "updateSnapshotConfirm": "用当前的配置状态覆盖项目 \"{{name}}\" 的快照？",
+    "updateSnapshotConfirm": "用当前配置覆盖项目 \"{{name}}\" 的 {{group}} 侧快照？其他应用侧的快照不受影响。",
+    "noSnapshotForScope": "本侧未保存",
     "delete": "删除",
     "deleteConfirmTitle": "确认删除",
     "deleteConfirmMessage": "确定要删除项目 \"{{name}}\" 吗？不会改动任何现有配置。",

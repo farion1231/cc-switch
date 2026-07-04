@@ -1867,19 +1867,26 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "Projects: switch providers / MCP / Skills / memory files for Claude Code and Codex, plus the Claude Desktop provider, in one click",
+    "switcherTooltip": {
+      "claude": "Projects: switch the Claude Code provider / MCP / Skills / memory files, plus the Claude Desktop provider, in one click",
+      "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click"
+    },
     "none": "No project",
     "searchPlaceholder": "Search projects",
     "empty": "No projects yet",
     "createFromCurrent": "New project",
-    "createDescription": "Save the current provider, MCP, Skills and memory file configuration as a project you can switch to later.",
+    "createDescription": {
+      "claude": "Save the current Claude Code provider, MCP, Skills and memory file (plus the Claude Desktop provider) as a project you can switch to later.",
+      "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later."
+    },
     "manage": "Manage projects…",
     "manageTitle": "Manage Projects",
     "manageDescription": "Projects are configuration snapshots. To change a project, adjust your configuration first, then click \"Update from current\".",
     "namePlaceholder": "e.g. Development, Drawing",
     "rename": "Rename",
     "updateSnapshot": "Update from current",
-    "updateSnapshotConfirm": "Overwrite the snapshot of project \"{{name}}\" with the current configuration?",
+    "updateSnapshotConfirm": "Overwrite the {{group}} side of project \"{{name}}\" with the current configuration? Other apps' snapshots are unaffected.",
+    "noSnapshotForScope": "Not saved for this app yet",
     "delete": "Delete",
     "deleteConfirmTitle": "Confirm Delete",
     "deleteConfirmMessage": "Are you sure you want to delete project \"{{name}}\"? Your current configuration will not be changed.",

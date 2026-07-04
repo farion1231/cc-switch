@@ -1,16 +1,21 @@
 //! 项目 Profile 数据访问对象
 //!
-//! profiles 表存放按 app 快照的配置方案（供应商/MCP/Skills/Prompt），
-//! payload 为原始 JSON 文本，解析在 service 层进行。
-//! current_profile_id 存放于 settings 表（key-value）。
+//! profiles 表存放全应用共享的项目实体（供应商/MCP/Skills/Prompt 快照），
+//! payload 为原始 JSON 文本（按 app 分槽），解析在 service 层进行。
+//! 各应用分组（scope）独立的 current 标记存放于 settings 表（key-value）。
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use rusqlite::params;
 
-const CURRENT_PROFILE_ID_KEY: &str = "current_profile_id";
+/// 每个 scope 的 current 标记 key = 前缀 + scope（如 current_profile_id_claude）
+const CURRENT_PROFILE_ID_KEY_PREFIX: &str = "current_profile_id_";
 
-/// 项目 Profile 记录
+fn current_profile_key(scope: &str) -> String {
+    format!("{CURRENT_PROFILE_ID_KEY_PREFIX}{scope}")
+}
+
+/// 项目 Profile 记录（全应用共享，无所属分组）
 #[derive(Debug, Clone)]
 pub struct Profile {
     pub id: String,
@@ -109,22 +114,20 @@ impl Database {
         Ok(affected > 0)
     }
 
-    /// 读取当前激活的项目 id（未使用项目时为 None）
-    pub fn get_current_profile_id(&self) -> Result<Option<String>, AppError> {
-        self.get_setting(CURRENT_PROFILE_ID_KEY)
+    /// 读取某分组当前激活的项目 id（未使用项目时为 None）
+    pub fn get_current_profile_id(&self, scope: &str) -> Result<Option<String>, AppError> {
+        self.get_setting(&current_profile_key(scope))
     }
 
-    /// 设置当前激活的项目 id；None 表示"不使用项目"（删除 key）
-    pub fn set_current_profile_id(&self, id: Option<&str>) -> Result<(), AppError> {
+    /// 设置某分组当前激活的项目 id；None 表示"不使用项目"（删除 key）
+    pub fn set_current_profile_id(&self, scope: &str, id: Option<&str>) -> Result<(), AppError> {
+        let key = current_profile_key(scope);
         match id {
-            Some(id) => self.set_setting(CURRENT_PROFILE_ID_KEY, id),
+            Some(id) => self.set_setting(&key, id),
             None => {
                 let conn = lock_conn!(self.conn);
-                conn.execute(
-                    "DELETE FROM settings WHERE key = ?1",
-                    params![CURRENT_PROFILE_ID_KEY],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
+                    .map_err(|e| AppError::Database(e.to_string()))?;
                 Ok(())
             }
         }
@@ -180,17 +183,25 @@ mod tests {
     }
 
     #[test]
-    fn test_current_profile_id_set_and_clear() -> Result<(), AppError> {
+    fn test_current_profile_id_is_scoped() -> Result<(), AppError> {
         let db = Database::memory()?;
 
-        assert_eq!(db.get_current_profile_id()?, None);
-        db.set_current_profile_id(Some("a"))?;
-        assert_eq!(db.get_current_profile_id()?, Some("a".to_string()));
-        db.set_current_profile_id(None)?;
-        assert_eq!(db.get_current_profile_id()?, None);
+        assert_eq!(db.get_current_profile_id("claude")?, None);
+        assert_eq!(db.get_current_profile_id("codex")?, None);
+
+        // 两个分组的标记互不影响
+        db.set_current_profile_id("claude", Some("a"))?;
+        db.set_current_profile_id("codex", Some("b"))?;
+        assert_eq!(db.get_current_profile_id("claude")?, Some("a".to_string()));
+        assert_eq!(db.get_current_profile_id("codex")?, Some("b".to_string()));
+
+        db.set_current_profile_id("claude", None)?;
+        assert_eq!(db.get_current_profile_id("claude")?, None);
+        assert_eq!(db.get_current_profile_id("codex")?, Some("b".to_string()));
+
         // 重复清除应幂等
-        db.set_current_profile_id(None)?;
-        assert_eq!(db.get_current_profile_id()?, None);
+        db.set_current_profile_id("claude", None)?;
+        assert_eq!(db.get_current_profile_id("claude")?, None);
         Ok(())
     }
 }

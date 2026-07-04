@@ -40,9 +40,7 @@ import {
   useProfilesQuery,
 } from "@/lib/query/profiles";
 import { ProfileManageDialog } from "./ProfileManageDialog";
-
-/** 后端 services/profile.rs 的 PROFILE_APPS 前端镜像，扩展支持范围时两处同步 */
-const PROFILE_SUPPORTED_APPS: AppId[] = ["claude", "claude-desktop", "codex"];
+import { APP_PROFILE_SCOPE, hasScopeSnapshot } from "./scope";
 
 interface ProfileSwitcherProps {
   activeApp: AppId;
@@ -51,8 +49,10 @@ interface ProfileSwitcherProps {
 /**
  * 项目 Profile 切换器（header 左侧入口）
  *
- * Profile 是跨应用的配置快照（Claude Code + Codex 的供应商/MCP/Skills/记忆文件，
- * 以及 Claude Desktop 的供应商），与右侧 AppSwitcher（仅切换查看的应用）语义不同。
+ * 项目列表全应用共享（用户拥有的项目就那几个），但切换按分组进行：
+ * Claude 组（Claude Code 的供应商/MCP/Skills/记忆文件 + Claude Desktop
+ * 的供应商）与 Codex 组各自指向自己的当前项目、只应用组内快照。
+ * 与右侧 AppSwitcher（仅切换查看的应用）语义不同。
  */
 export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   const { t } = useTranslation();
@@ -67,19 +67,20 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   const createMutation = useCreateProfileMutation();
 
   // Profile 仅作用于受支持的应用——在其他应用的标签页展示会误导用户
-  // 以为当前应用也被切换了，因此只在受支持应用的页面渲染
-  if (!PROFILE_SUPPORTED_APPS.includes(activeApp)) {
+  // 以为当前应用也被切换了，因此只在有所属分组的应用页面渲染
+  const scope = APP_PROFILE_SCOPE[activeApp];
+  if (!scope) {
     return null;
   }
 
   const profiles = data?.profiles ?? [];
-  const currentId = data?.currentId ?? null;
+  const currentId = data?.currentIds?.[scope] ?? null;
   const currentProfile = profiles.find((p) => p.id === currentId);
 
   const handleApply = (id: string) => {
     setOpen(false);
     if (id !== currentId) {
-      applyMutation.mutate(id);
+      applyMutation.mutate({ id, scope });
     }
   };
 
@@ -91,7 +92,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
   const handleCreate = () => {
     const name = newName.trim();
     if (!name) return;
-    createMutation.mutate(name, { onSuccess: closeCreateDialog });
+    createMutation.mutate({ name, scope }, { onSuccess: closeCreateDialog });
   };
 
   return (
@@ -102,7 +103,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
             type="button"
             role="combobox"
             aria-expanded={open}
-            title={t("profiles.switcherTooltip")}
+            title={t(`profiles.switcherTooltip.${scope}`)}
             className={cn(
               "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
               "hover:bg-black/5 dark:hover:bg-white/5",
@@ -144,6 +145,11 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
                         )}
                       />
                       <span className="truncate">{profile.name}</span>
+                      {!hasScopeSnapshot(profile, scope) && (
+                        <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+                          {t("profiles.noSnapshotForScope")}
+                        </span>
+                      )}
                     </CommandItem>
                   ))}
                 </CommandGroup>
@@ -167,7 +173,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
                     keywords={[t("profiles.none")]}
                     onSelect={() => {
                       setOpen(false);
-                      clearMutation.mutate();
+                      clearMutation.mutate(scope);
                     }}
                   >
                     <X className="mr-2 h-4 w-4 shrink-0" />
@@ -203,7 +209,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
           <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
             <DialogTitle>{t("profiles.createFromCurrent")}</DialogTitle>
             <DialogDescription>
-              {t("profiles.createDescription")}
+              {t(`profiles.createDescription.${scope}`)}
             </DialogDescription>
           </DialogHeader>
           <div className="px-6 pt-3">
@@ -233,6 +239,7 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
 
       <ProfileManageDialog
         isOpen={isManageOpen}
+        scope={scope}
         onClose={() => setIsManageOpen(false)}
       />
     </>

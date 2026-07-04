@@ -1,6 +1,10 @@
 //! 项目 Profile 编排服务
 //!
-//! Profile 是一份按 app 的配置快照（供应商 / MCP / Skills / Prompt），
+//! Profile 是**全应用共享的项目实体**（用户拥有的项目就那几个），payload
+//! 按 app 分槽存配置快照（供应商 / MCP / Skills / Prompt）。快照与应用
+//! 均**按分组（scope）操作**：Claude Code 与 Codex 的工作目录往往不同
+//! （各在各的项目里），因此各组独立指向自己的当前项目、只拍/只应用组内
+//! 槽位，互不牵连；重命名/删除作用于共享实体本身。
 //! 应用（apply）时复用现有切换原语批量落地：
 //! - 供应商：`ProviderService::switch`（内建代理接管热切换与接管下禁切官方）
 //! - MCP：`McpService::toggle_app`（改标志 + 单 server 物化）
@@ -19,12 +23,62 @@ use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
 use crate::store::AppState;
 
-/// 支持的应用范围（扩展新 app 时同步扩展 PerApp 字段）
+/// Profile 操作的应用分组：项目实体全应用共享，但快照/应用/当前指针按组进行
 ///
-/// Claude Desktop 只有供应商一个活跃维度：MCP/Skills 的 `is_enabled_for`
-/// 对它恒为 false（快照天然为空集）、prompt 无 live 文件（快照为 None），
-/// apply 时空集 diff 与 None 都是 no-op，无需按维度特判。
-pub const PROFILE_APPS: [AppType; 3] = [AppType::Claude, AppType::ClaudeDesktop, AppType::Codex];
+/// Claude Desktop 并入 Claude 组：它在 cc-switch 里只有聊天侧供应商一个
+/// 受管维度，且其内嵌 Code 标签页读的就是 Claude Code 的那套 live 文件
+/// （`~/.claude/*`，天然跟随），不足以构成独立的"项目"维度。
+/// 供应商 live 文件两组零交集（`~/.claude` / `~/.codex` /
+/// `Application Support/Claude-3p`），分组切换互不干扰。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfileScope {
+    Claude,
+    Codex,
+}
+
+impl ProfileScope {
+    /// 全部分组（扩展新分组时同步扩展 apps/for_app 与前端 scope.ts 镜像）
+    pub const ALL: [ProfileScope; 2] = [ProfileScope::Claude, ProfileScope::Codex];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProfileScope::Claude => "claude",
+            ProfileScope::Codex => "codex",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, AppError> {
+        match value {
+            "claude" => Ok(ProfileScope::Claude),
+            "codex" => Ok(ProfileScope::Codex),
+            other => Err(AppError::InvalidInput(format!(
+                "Unknown profile scope: {other}"
+            ))),
+        }
+    }
+
+    /// 组内受管应用（快照与 apply 只作用于这些 app 的槽位）
+    ///
+    /// Claude Desktop 只有供应商一个活跃维度：MCP/Skills 的 `is_enabled_for`
+    /// 对它恒为 false（快照天然为空集）、prompt 无 live 文件（快照为 None），
+    /// apply 时空集 diff 与 None 都是 no-op，无需按维度特判。
+    pub fn apps(&self) -> &'static [AppType] {
+        match self {
+            ProfileScope::Claude => &[AppType::Claude, AppType::ClaudeDesktop],
+            ProfileScope::Codex => &[AppType::Codex],
+        }
+    }
+
+    /// 应用页 → 所属分组（Profile 不支持的应用返回 None）
+    pub fn for_app(app: &AppType) -> Option<Self> {
+        match app {
+            AppType::Claude | AppType::ClaudeDesktop => Some(ProfileScope::Claude),
+            AppType::Codex => Some(ProfileScope::Codex),
+            _ => None,
+        }
+    }
+}
 
 /// 按 app 分槽的载荷容器；字段名与 AppType 的 serde 形式一致
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -57,17 +111,54 @@ impl<T> PerApp<T> {
 }
 
 /// Profile 的 JSON 快照结构（与前端 TS 类型严格对应）
+///
+/// 所有槽位都是 Option：None = 该侧从未拍过快照（应用时不动），
+/// 与"拍到的就是空集/无激活项"（Some(空)，应用时清空启用）严格区分——
+/// 在 Codex 页选中一个只在 Claude 页建过的项目不能误清 Codex 的启用状态。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProfilePayload {
-    /// 每 app 的当前供应商 id（None = 快照时无当前供应商，应用时不动）
+    /// 每 app 的当前供应商 id
     pub providers: PerApp<Option<String>>,
     /// 每 app 启用的 MCP server id 集合
-    pub mcp: PerApp<Vec<String>>,
+    pub mcp: PerApp<Option<Vec<String>>>,
     /// 每 app 启用的 Skill id 集合
-    pub skills: PerApp<Vec<String>>,
-    /// 每 app 激活的 prompt id（None = 快照时无激活项，应用时不动）
+    pub skills: PerApp<Option<Vec<String>>>,
+    /// 每 app 激活的 prompt id
     pub prompts: PerApp<Option<String>>,
+}
+
+impl ProfilePayload {
+    /// 用另一份快照覆盖本载荷中某分组的槽位，其余分组原样保留
+    /// （"以当前状态更新"只更新发起页所属分组，避免把别的应用
+    /// 正处于其他项目的状态串进来）
+    pub fn merge_scope_from(&mut self, other: &ProfilePayload, scope: ProfileScope) {
+        for app in scope.apps() {
+            if let (Some(dst), Some(src)) = (self.providers.get_mut(app), other.providers.get(app))
+            {
+                *dst = src.clone();
+            }
+            if let (Some(dst), Some(src)) = (self.mcp.get_mut(app), other.mcp.get(app)) {
+                *dst = src.clone();
+            }
+            if let (Some(dst), Some(src)) = (self.skills.get_mut(app), other.skills.get(app)) {
+                *dst = src.clone();
+            }
+            if let (Some(dst), Some(src)) = (self.prompts.get_mut(app), other.prompts.get(app)) {
+                *dst = src.clone();
+            }
+        }
+    }
+
+    /// 某分组是否拍过快照（任一槽位非 None 即视为拍过）
+    pub fn scope_captured(&self, scope: ProfileScope) -> bool {
+        scope.apps().iter().any(|app| {
+            self.providers.get(app).is_some_and(|s| s.is_some())
+                || self.mcp.get(app).is_some_and(|s| s.is_some())
+                || self.skills.get(app).is_some_and(|s| s.is_some())
+                || self.prompts.get(app).is_some_and(|s| s.is_some())
+        })
+    }
 }
 
 /// 计算从当前启用状态到目标集合的最小 toggle 集
@@ -98,29 +189,36 @@ fn plan_toggles(
 pub struct ProfileService;
 
 impl ProfileService {
-    /// 抓取当前配置状态生成快照
-    pub fn snapshot_current(state: &AppState) -> Result<ProfilePayload, AppError> {
+    /// 抓取分组内应用的当前配置状态生成快照（组外槽位保持默认值）
+    pub fn snapshot_current(
+        state: &AppState,
+        scope: ProfileScope,
+    ) -> Result<ProfilePayload, AppError> {
         let mut payload = ProfilePayload::default();
         let mcp_servers = state.db.get_all_mcp_servers()?;
         let skills = state.db.get_all_installed_skills()?;
 
-        for app in PROFILE_APPS.iter() {
+        for app in scope.apps().iter() {
             if let Some(slot) = payload.providers.get_mut(app) {
                 *slot = crate::settings::get_effective_current_provider(&state.db, app)?;
             }
             if let Some(slot) = payload.mcp.get_mut(app) {
-                *slot = mcp_servers
-                    .values()
-                    .filter(|s| s.apps.is_enabled_for(app))
-                    .map(|s| s.id.clone())
-                    .collect();
+                *slot = Some(
+                    mcp_servers
+                        .values()
+                        .filter(|s| s.apps.is_enabled_for(app))
+                        .map(|s| s.id.clone())
+                        .collect(),
+                );
             }
             if let Some(slot) = payload.skills.get_mut(app) {
-                *slot = skills
-                    .values()
-                    .filter(|s| s.apps.is_enabled_for(app))
-                    .map(|s| s.id.clone())
-                    .collect();
+                *slot = Some(
+                    skills
+                        .values()
+                        .filter(|s| s.apps.is_enabled_for(app))
+                        .map(|s| s.id.clone())
+                        .collect(),
+                );
             }
             if let Some(slot) = payload.prompts.get_mut(app) {
                 *slot = state
@@ -134,20 +232,19 @@ impl ProfileService {
         Ok(payload)
     }
 
-    /// 列出所有项目及当前激活项目 id
-    pub fn list(state: &AppState) -> Result<(Vec<Profile>, Option<String>), AppError> {
-        let profiles = state.db.get_all_profiles()?;
-        let current = state.db.get_current_profile_id()?;
-        Ok((profiles, current))
+    /// 列出所有项目（项目实体全应用共享，current 标记按分组单独读取）
+    pub fn list(state: &AppState) -> Result<Vec<Profile>, AppError> {
+        state.db.get_all_profiles()
     }
 
-    /// 以当前配置状态创建新项目
-    pub fn create(state: &AppState, name: &str) -> Result<Profile, AppError> {
+    /// 创建新项目：只拍发起页所属分组的当前状态，其余分组槽位留 None
+    /// （其他应用可能正处于别的项目，不能替用户拍进来）
+    pub fn create(state: &AppState, name: &str, scope: ProfileScope) -> Result<Profile, AppError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::InvalidInput("Profile name is empty".to_string()));
         }
-        let payload = Self::snapshot_current(state)?;
+        let payload = Self::snapshot_current(state, scope)?;
         let now = chrono::Utc::now().timestamp();
         let profile = Profile {
             id: uuid::Uuid::new_v4().to_string(),
@@ -162,12 +259,14 @@ impl ProfileService {
         Ok(profile)
     }
 
-    /// 更新项目：重命名和/或以当前状态重拍快照
+    /// 更新项目：重命名（作用于共享实体）和/或以当前状态重拍快照
+    /// （resnapshot 只覆盖 scope 分组的槽位，其余分组原样保留）
     pub fn update(
         state: &AppState,
         id: &str,
         name: Option<String>,
         resnapshot: bool,
+        scope: Option<ProfileScope>,
     ) -> Result<Profile, AppError> {
         let mut profile = state
             .db
@@ -182,7 +281,12 @@ impl ProfileService {
             profile.name = name;
         }
         if resnapshot {
-            let payload = Self::snapshot_current(state)?;
+            let scope = scope.ok_or_else(|| {
+                AppError::InvalidInput("Resnapshot requires a profile scope".to_string())
+            })?;
+            let mut payload: ProfilePayload = serde_json::from_str(&profile.payload)
+                .map_err(|e| AppError::Config(format!("解析 profile payload 失败: {e}")))?;
+            payload.merge_scope_from(&Self::snapshot_current(state, scope)?, scope);
             profile.payload = serde_json::to_string(&payload)
                 .map_err(|e| AppError::Config(format!("序列化 profile payload 失败: {e}")))?;
         }
@@ -191,20 +295,29 @@ impl ProfileService {
         Ok(profile)
     }
 
-    /// 删除项目；若删除的是当前激活项目，一并清除激活标记
+    /// 删除项目；若删除的是某分组当前激活项目，一并清除该分组的激活标记
     pub fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
         state.db.delete_profile(id)?;
-        if state.db.get_current_profile_id()?.as_deref() == Some(id) {
-            state.db.set_current_profile_id(None)?;
+        for scope in ProfileScope::ALL {
+            if state.db.get_current_profile_id(scope.as_str())?.as_deref() == Some(id) {
+                state.db.set_current_profile_id(scope.as_str(), None)?;
+            }
         }
         Ok(())
     }
 
     /// 应用项目快照（best-effort，返回 warnings）
     ///
+    /// 只作用于发起页所属分组内的应用，不碰其他分组的配置与 current 标记。
+    /// 该分组从未拍过快照时不改动任何配置，仅标记 current 并返回提示
+    /// （用户可先绑定项目、再"以当前状态更新"补拍该侧快照）。
     /// 顺序不可换：供应商切换（switch_normal 内部会按 DB 当前标志跑 MCP
     /// sync_all_enabled）必须先于 MCP diff，否则 profile 的 MCP 目标态会被冲掉。
-    pub fn apply(state: &AppState, profile_id: &str) -> Result<Vec<String>, AppError> {
+    pub fn apply(
+        state: &AppState,
+        profile_id: &str,
+        scope: ProfileScope,
+    ) -> Result<Vec<String>, AppError> {
         let profile = state
             .db
             .get_profile(profile_id)?
@@ -213,8 +326,14 @@ impl ProfileService {
             .map_err(|e| AppError::Config(format!("解析 profile payload 失败: {e}")))?;
 
         let mut warnings = Vec::new();
+        if !payload.scope_captured(scope) {
+            warnings.push(format!(
+                "no {} configuration captured in this project yet; marked as current without changes",
+                scope.as_str()
+            ));
+        }
 
-        for app in PROFILE_APPS.iter() {
+        for app in scope.apps().iter() {
             let app_str = app.as_str();
 
             // 1. 供应商
@@ -237,8 +356,8 @@ impl ProfileService {
                 }
             }
 
-            // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目）
-            if let Some(target_ids) = payload.mcp.get(app) {
+            // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
+            if let Some(Some(target_ids)) = payload.mcp.get(app) {
                 let servers = state.db.get_all_mcp_servers()?;
                 let current: Vec<(String, bool)> = servers
                     .values()
@@ -258,7 +377,7 @@ impl ProfileService {
             }
 
             // 3. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
-            if let Some(target_ids) = payload.skills.get(app) {
+            if let Some(Some(target_ids)) = payload.skills.get(app) {
                 let skills = state.db.get_all_installed_skills()?;
                 let current: Vec<(String, bool)> = skills
                     .values()
@@ -300,7 +419,9 @@ impl ProfileService {
             }
         }
 
-        state.db.set_current_profile_id(Some(profile_id))?;
+        state
+            .db
+            .set_current_profile_id(scope.as_str(), Some(profile_id))?;
         Ok(warnings)
     }
 }
@@ -322,14 +443,14 @@ mod tests {
                 codex: None,
             },
             mcp: PerApp {
-                claude: ids(&["m1", "m2"]),
-                claude_desktop: vec![],
-                codex: vec![],
+                claude: Some(ids(&["m1", "m2"])),
+                claude_desktop: Some(vec![]),
+                codex: None,
             },
             skills: PerApp {
-                claude: vec![],
-                claude_desktop: vec![],
-                codex: ids(&["s1"]),
+                claude: Some(vec![]),
+                claude_desktop: Some(vec![]),
+                codex: Some(ids(&["s1"])),
             },
             prompts: PerApp {
                 claude: None,
@@ -348,19 +469,78 @@ mod tests {
 
     #[test]
     fn test_payload_tolerates_missing_fields() {
-        // 前向兼容：旧版/部分字段缺失时应落到默认值而不是报错
-        // （P1 存量 payload 没有 claude-desktop key，应用时对 Desktop 不动）
+        // 前向兼容：旧版/部分字段缺失时应落到 None（"该侧未拍过"）而不是报错，
+        // 应用时对缺失槽位不做任何改动
         let back: ProfilePayload =
-            serde_json::from_str(r#"{"providers":{"claude":"p1"}}"#).unwrap();
+            serde_json::from_str(r#"{"providers":{"claude":"p1"},"mcp":{"claude":["m1"]}}"#)
+                .unwrap();
         assert_eq!(back.providers.claude, Some("p1".to_string()));
         assert_eq!(back.providers.claude_desktop, None);
         assert_eq!(back.providers.codex, None);
-        assert!(back.mcp.claude.is_empty());
-        assert!(back.mcp.claude_desktop.is_empty());
+        assert_eq!(back.mcp.claude, Some(ids(&["m1"])));
+        assert_eq!(back.mcp.claude_desktop, None);
+        assert_eq!(back.mcp.codex, None, "missing slot means untouched");
         assert_eq!(back.prompts.codex, None);
 
         let empty: ProfilePayload = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, ProfilePayload::default());
+    }
+
+    #[test]
+    fn test_merge_scope_from_only_touches_scope_slots() {
+        // 项目 A：两侧都已拍过快照
+        let mut payload = ProfilePayload {
+            providers: PerApp {
+                claude: Some("p1".into()),
+                claude_desktop: Some("d1".into()),
+                codex: Some("c1".into()),
+            },
+            mcp: PerApp {
+                claude: Some(ids(&["m1"])),
+                claude_desktop: Some(vec![]),
+                codex: Some(ids(&["m9"])),
+            },
+            ..Default::default()
+        };
+        // 在 Claude 页"以当前状态更新"：只覆盖 claude 组槽位
+        let fresh = ProfilePayload {
+            providers: PerApp {
+                claude: Some("p2".into()),
+                claude_desktop: None,
+                codex: Some("SHOULD-NOT-LEAK".into()),
+            },
+            mcp: PerApp {
+                claude: Some(ids(&["m2"])),
+                claude_desktop: Some(vec![]),
+                codex: None,
+            },
+            ..Default::default()
+        };
+        payload.merge_scope_from(&fresh, ProfileScope::Claude);
+
+        assert_eq!(payload.providers.claude, Some("p2".to_string()));
+        assert_eq!(payload.providers.claude_desktop, None);
+        assert_eq!(payload.mcp.claude, Some(ids(&["m2"])));
+        // codex 侧完好：既没被覆盖也没被 fresh 的值污染
+        assert_eq!(payload.providers.codex, Some("c1".to_string()));
+        assert_eq!(payload.mcp.codex, Some(ids(&["m9"])));
+    }
+
+    #[test]
+    fn test_scope_captured_detects_per_scope_snapshot() {
+        let mut payload = ProfilePayload::default();
+        assert!(!payload.scope_captured(ProfileScope::Claude));
+        assert!(!payload.scope_captured(ProfileScope::Codex));
+
+        // 只拍过 claude 组（哪怕拍到的是空集）
+        payload.mcp.claude = Some(vec![]);
+        assert!(payload.scope_captured(ProfileScope::Claude));
+        assert!(!payload.scope_captured(ProfileScope::Codex));
+
+        // Desktop 槽位属于 claude 组
+        let mut desktop_only = ProfilePayload::default();
+        desktop_only.providers.claude_desktop = Some("d1".into());
+        assert!(desktop_only.scope_captured(ProfileScope::Claude));
     }
 
     #[test]
@@ -370,6 +550,36 @@ mod tests {
         assert!(per.get(&AppType::ClaudeDesktop).is_some());
         assert!(per.get(&AppType::Codex).is_some());
         assert!(per.get(&AppType::Gemini).is_none());
+    }
+
+    #[test]
+    fn test_scope_serde_and_parse_roundtrip() {
+        for scope in ProfileScope::ALL {
+            // DB 存储字符串（as_str/parse）与 JSON 序列化必须是同一形式
+            assert_eq!(
+                serde_json::to_string(&scope).unwrap(),
+                format!("\"{}\"", scope.as_str())
+            );
+            assert_eq!(ProfileScope::parse(scope.as_str()).unwrap(), scope);
+        }
+        assert!(ProfileScope::parse("gemini").is_err());
+        assert!(ProfileScope::parse("").is_err());
+    }
+
+    #[test]
+    fn test_scope_app_grouping() {
+        // Desktop 并入 Claude 组；组内应用与 for_app 反向映射必须一致
+        assert_eq!(
+            ProfileScope::Claude.apps(),
+            &[AppType::Claude, AppType::ClaudeDesktop]
+        );
+        assert_eq!(ProfileScope::Codex.apps(), &[AppType::Codex]);
+        for scope in ProfileScope::ALL {
+            for app in scope.apps() {
+                assert_eq!(ProfileScope::for_app(app), Some(scope));
+            }
+        }
+        assert_eq!(ProfileScope::for_app(&AppType::Gemini), None);
     }
 
     #[test]

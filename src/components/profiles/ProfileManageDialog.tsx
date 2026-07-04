@@ -16,9 +16,12 @@ import {
   useProfilesQuery,
   useUpdateProfileMutation,
 } from "@/lib/query/profiles";
+import type { ProfileScope } from "@/lib/api/profiles";
+import { PROFILE_SCOPE_LABELS } from "./scope";
 
 interface ProfileManageDialogProps {
   isOpen: boolean;
+  scope: ProfileScope;
   onClose: () => void;
 }
 
@@ -31,11 +34,12 @@ type PendingConfirm = {
 /**
  * 项目管理对话框（纯快照式）
  *
- * 只提供 重命名 / 以当前状态更新快照 / 删除 三个操作；
- * 修改项目内容 = 先手动调好配置，再"以当前状态更新快照"。
+ * 项目列表全应用共享，重命名/删除作用于共享实体；
+ * "以当前状态更新快照"只覆盖发起页所属分组（scope）的槽位。
  */
 export function ProfileManageDialog({
   isOpen,
+  scope,
   onClose,
 }: ProfileManageDialogProps) {
   const { t } = useTranslation();
@@ -70,7 +74,7 @@ export function ProfileManageDialog({
     if (confirm.type === "delete") {
       deleteMutation.mutate(confirm.id);
     } else {
-      updateMutation.mutate({ id: confirm.id, resnapshot: true });
+      updateMutation.mutate({ id: confirm.id, resnapshot: true, scope });
     }
     setConfirm(null);
   };
@@ -199,7 +203,10 @@ export function ProfileManageDialog({
           message={
             confirm.type === "delete"
               ? t("profiles.deleteConfirmMessage", { name: confirm.name })
-              : t("profiles.updateSnapshotConfirm", { name: confirm.name })
+              : t("profiles.updateSnapshotConfirm", {
+                  name: confirm.name,
+                  group: PROFILE_SCOPE_LABELS[scope],
+                })
           }
           variant={confirm.type === "delete" ? "destructive" : "info"}
           onConfirm={handleConfirm}

@@ -1839,19 +1839,26 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "專案：一鍵切換 Claude Code 與 Codex 的供應商 / MCP / Skills / 記憶檔案，及 Claude Desktop 的供應商",
+    "switcherTooltip": {
+      "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案，及 Claude Desktop 的供應商",
+      "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案"
+    },
     "none": "不使用專案",
     "searchPlaceholder": "搜尋專案",
     "empty": "尚無專案",
     "createFromCurrent": "新建專案",
-    "createDescription": "把目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。",
+    "createDescription": {
+      "claude": "把 Claude Code 目前的供應商、MCP、Skills、記憶檔案（及 Claude Desktop 的供應商）儲存為一個專案，之後可一鍵切換。",
+      "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
+    },
     "manage": "管理專案…",
     "manageTitle": "管理專案",
     "manageDescription": "專案是設定快照。要修改專案內容，先手動調好設定，再點「以目前狀態更新」。",
     "namePlaceholder": "例如：開發、繪圖",
     "rename": "重新命名",
     "updateSnapshot": "以目前狀態更新",
-    "updateSnapshotConfirm": "用目前的設定狀態覆蓋專案 \"{{name}}\" 的快照？",
+    "updateSnapshotConfirm": "用目前設定覆蓋專案 \"{{name}}\" 的 {{group}} 側快照？其他應用側的快照不受影響。",
+    "noSnapshotForScope": "本側未儲存",
     "delete": "刪除",
     "deleteConfirmTitle": "確認刪除",
     "deleteConfirmMessage": "確定要刪除專案 \"{{name}}\" 嗎？不會改動任何現有設定。",

@@ -1867,19 +1867,26 @@
     }
   },
   "profiles": {
-    "switcherTooltip": "プロジェクト：Claude Code と Codex のプロバイダー / MCP / Skills / メモリファイル、および Claude Desktop のプロバイダーをワンクリックで切り替え",
+    "switcherTooltip": {
+      "claude": "プロジェクト：Claude Code のプロバイダー / MCP / Skills / メモリファイル、および Claude Desktop のプロバイダーをワンクリックで切り替え",
+      "codex": "プロジェクト：Codex のプロバイダー / MCP / Skills / メモリファイルをワンクリックで切り替え"
+    },
     "none": "プロジェクトを使用しない",
     "searchPlaceholder": "プロジェクトを検索",
     "empty": "プロジェクトはまだありません",
     "createFromCurrent": "新規プロジェクト",
-    "createDescription": "現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。",
+    "createDescription": {
+      "claude": "Claude Code の現在のプロバイダー、MCP、Skills、メモリファイル（および Claude Desktop のプロバイダー）をプロジェクトとして保存し、後からワンクリックで切り替えられます。",
+      "codex": "Codex の現在のプロバイダー、MCP、Skills、メモリファイルの設定をプロジェクトとして保存し、後からワンクリックで切り替えられます。"
+    },
     "manage": "プロジェクトを管理…",
     "manageTitle": "プロジェクト管理",
     "manageDescription": "プロジェクトは設定のスナップショットです。内容を変更するには、先に設定を調整してから「現在の状態で更新」をクリックしてください。",
     "namePlaceholder": "例：開発、イラスト",
     "rename": "名前を変更",
     "updateSnapshot": "現在の状態で更新",
-    "updateSnapshotConfirm": "プロジェクト「{{name}}」のスナップショットを現在の設定で上書きしますか？",
+    "updateSnapshotConfirm": "プロジェクト「{{name}}」の {{group}} 側スナップショットを現在の設定で上書きしますか？他のアプリ側には影響しません。",
+    "noSnapshotForScope": "このアプリ側は未保存",
     "delete": "削除",
     "deleteConfirmTitle": "削除の確認",
     "deleteConfirmMessage": "プロジェクト「{{name}}」を削除してもよろしいですか？現在の設定は変更されません。",

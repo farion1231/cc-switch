@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { profilesApi, providersApi } from "@/lib/api";
+import type { ProfileScope } from "@/lib/api/profiles";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 const updateTrayMenuSafely = async () => {
@@ -24,7 +25,8 @@ export const useCreateProfileMutation = () => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: (name: string) => profilesApi.create(name),
+    mutationFn: ({ name, scope }: { name: string; scope: ProfileScope }) =>
+      profilesApi.create(name, scope),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
       await updateTrayMenuSafely();
@@ -48,11 +50,13 @@ export const useUpdateProfileMutation = () => {
       id,
       name,
       resnapshot,
+      scope,
     }: {
       id: string;
       name?: string;
       resnapshot?: boolean;
-    }) => profilesApi.update(id, { name, resnapshot }),
+      scope?: ProfileScope;
+    }) => profilesApi.update(id, { name, resnapshot, scope }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
       await updateTrayMenuSafely();
@@ -92,7 +96,7 @@ export const useClearProfileMutation = () => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: () => profilesApi.clearCurrent(),
+    mutationFn: (scope: ProfileScope) => profilesApi.clearCurrent(scope),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
       await updateTrayMenuSafely();
@@ -112,7 +116,8 @@ export const useApplyProfileMutation = () => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: (id: string) => profilesApi.apply(id),
+    mutationFn: ({ id, scope }: { id: string; scope: ProfileScope }) =>
+      profilesApi.apply(id, scope),
     onSuccess: async (warnings) => {
       await queryClient.invalidateQueries({ queryKey: ["profiles"] });
       await queryClient.invalidateQueries({
