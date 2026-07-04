@@ -311,6 +311,12 @@ impl ProfileService {
     /// 只作用于发起页所属分组内的应用，不碰其他分组的配置与 current 标记。
     /// 该分组从未拍过快照时不改动任何配置，仅标记 current 并返回提示
     /// （用户可先绑定项目、再"以当前状态更新"补拍该侧快照）。
+    ///
+    /// **切换前会自动保存旧项目**：若当前分组已绑定到另一个项目，先把当前
+    /// 状态写入那个旧项目（仅当前分组槽位），再加载目标项目。这样切走后
+    /// 旧项目仍保留离开时的配置，回来时状态一致。自动保存失败时作为 warning
+    /// 继续，不阻塞切换。
+    ///
     /// 顺序不可换：供应商切换（switch_normal 内部会按 DB 当前标志跑 MCP
     /// sync_all_enabled）必须先于 MCP diff，否则 profile 的 MCP 目标态会被冲掉。
     pub fn apply(
@@ -318,6 +324,19 @@ impl ProfileService {
         profile_id: &str,
         scope: ProfileScope,
     ) -> Result<Vec<String>, AppError> {
+        let mut warnings = Vec::new();
+
+        // 自动保存旧项目当前状态（仅当前分组），失败不阻塞切换
+        if let Some(current_id) = state.db.get_current_profile_id(scope.as_str())? {
+            if current_id != profile_id {
+                if let Err(e) = Self::update(state, &current_id, None, true, Some(scope)) {
+                    warnings.push(format!(
+                        "autosave profile '{current_id}' before switch failed: {e}"
+                    ));
+                }
+            }
+        }
+
         let profile = state
             .db
             .get_profile(profile_id)?

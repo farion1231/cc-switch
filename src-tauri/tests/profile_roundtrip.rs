@@ -483,3 +483,159 @@ fn clear_current_profile_only_clears_scoped_marker() {
         Some("codex-profile")
     );
 }
+
+#[test]
+fn switching_profile_autosaves_previous_profile_state() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    // ---- 种子：Claude 侧两套供应商 / MCP / Prompt ----
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
+        .expect("save provider p1");
+    state
+        .db
+        .save_provider(AppType::Claude.as_str(), &claude_provider("p2", "key-2"))
+        .expect("save provider p2");
+    state
+        .db
+        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .expect("set current provider p1");
+
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).expect("create .claude dir");
+    fs::write(
+        claude_dir.join("settings.json"),
+        serde_json::to_string_pretty(&claude_provider("p1", "key-1").settings_config)
+            .expect("serialize p1 settings"),
+    )
+    .expect("seed live settings.json");
+
+    state
+        .db
+        .save_mcp_server(&mcp_server("m1", true))
+        .expect("save mcp m1");
+    state
+        .db
+        .save_mcp_server(&mcp_server("m2", false))
+        .expect("save mcp m2");
+
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt("pr1", true))
+        .expect("save prompt pr1");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt("pr2", false))
+        .expect("save prompt pr2");
+
+    // ---- Project A：状态 X（p1 / m1 / pr1）----
+    let project_a = ProfileService::create(&state, "Project A", ProfileScope::Claude)
+        .expect("create project A");
+    let warnings = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
+        .expect("apply project A");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    // ---- 在 A 下改到状态 Y（p2 / m2 / pr2），然后据此创建 Project B ----
+    ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
+    McpService::toggle_app(&state, "m1", AppType::Claude, false).expect("disable m1");
+    McpService::toggle_app(&state, "m2", AppType::Claude, true).expect("enable m2");
+    PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("enable pr2");
+
+    let project_b = ProfileService::create(&state, "Project B", ProfileScope::Claude)
+        .expect("create project B");
+
+    // ---- 从 A 切换到 B：自动把当前状态 Y 保存到 A，再加载 B 的 Y ----
+    let warnings = ProfileService::apply(&state, &project_b.id, ProfileScope::Claude)
+        .expect("switch to project B");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("get current provider")
+            .as_deref(),
+        Some("p2"),
+        "provider switched to p2"
+    );
+    let servers = state.db.get_all_mcp_servers().expect("get mcp servers");
+    assert!(!servers.get("m1").expect("m1").apps.claude, "m1 disabled");
+    assert!(servers.get("m2").expect("m2").apps.claude, "m2 enabled");
+    let prompts = state
+        .db
+        .get_prompts(AppType::Claude.as_str())
+        .expect("get prompts");
+    assert!(!prompts.get("pr1").expect("pr1").enabled, "pr1 disabled");
+    assert!(prompts.get("pr2").expect("pr2").enabled, "pr2 enabled");
+
+    // Project A 被自动保存为离开时的状态 Y
+    let saved_a = state
+        .db
+        .get_profile(&project_a.id)
+        .expect("get project A")
+        .expect("project A exists");
+    let payload_a: ProfilePayload =
+        serde_json::from_str(&saved_a.payload).expect("parse project A payload");
+    assert_eq!(payload_a.providers.claude.as_deref(), Some("p2"));
+    assert_eq!(payload_a.mcp.claude, Some(vec!["m2".to_string()]));
+    assert_eq!(payload_a.prompts.claude.as_deref(), Some("pr2"));
+
+    // ---- 在 B 下改回状态 X，再切换回 A ----
+    ProviderService::switch(&state, AppType::Claude, "p1").expect("switch to p1");
+    McpService::toggle_app(&state, "m1", AppType::Claude, true).expect("enable m1");
+    McpService::toggle_app(&state, "m2", AppType::Claude, false).expect("disable m2");
+    PromptService::enable_prompt(&state, AppType::Claude, "pr1").expect("enable pr1");
+
+    let warnings = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
+        .expect("switch back to project A");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    // 切回 A 时：先自动保存 B 为状态 X，再加载 A 的上次离开状态 Y
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Claude.as_str())
+            .expect("get current provider")
+            .as_deref(),
+        Some("p2"),
+        "project A restored to the state when we left it (p2)"
+    );
+    let servers = state.db.get_all_mcp_servers().expect("get mcp servers");
+    assert!(
+        !servers.get("m1").expect("m1").apps.claude,
+        "m1 stays disabled"
+    );
+    assert!(
+        servers.get("m2").expect("m2").apps.claude,
+        "m2 stays enabled"
+    );
+    let prompts = state
+        .db
+        .get_prompts(AppType::Claude.as_str())
+        .expect("get prompts");
+    assert!(
+        !prompts.get("pr1").expect("pr1").enabled,
+        "pr1 stays disabled"
+    );
+    assert!(
+        prompts.get("pr2").expect("pr2").enabled,
+        "pr2 stays enabled"
+    );
+
+    // Project B 被自动保存为离开时的状态 X
+    let saved_b = state
+        .db
+        .get_profile(&project_b.id)
+        .expect("get project B")
+        .expect("project B exists");
+    let payload_b: ProfilePayload =
+        serde_json::from_str(&saved_b.payload).expect("parse project B payload");
+    assert_eq!(payload_b.providers.claude.as_deref(), Some("p1"));
+    assert_eq!(payload_b.mcp.claude, Some(vec!["m1".to_string()]));
+    assert_eq!(payload_b.prompts.claude.as_deref(), Some("pr1"));
+}
