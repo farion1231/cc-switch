@@ -198,8 +198,7 @@ export function useModelState({
         setDefaultFableModel(value);
       if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
         setDefaultFableModelName(value);
-      if (field === "ANTHROPIC_CLASSIFIER_MODEL")
-        setClassifierModel(value);
+      if (field === "ANTHROPIC_CLASSIFIER_MODEL") setClassifierModel(value);
 
       try {
         const currentConfig = latestConfigRef.current
