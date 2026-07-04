@@ -6,10 +6,11 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::hermes_config::get_hermes_dir;
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,
+    build_snippet, extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary,
+    TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "hermes";
@@ -482,6 +483,132 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+/// Search Hermes sessions (JSONL or SQLite) for `needle` (case-insensitive).
+/// Routes each session to the appropriate searcher based on its `source_path`.
+pub fn search_sessions(metas: &[&SessionMeta], needle: &str) -> Vec<SessionSearchHit> {
+    metas
+        .iter()
+        .filter_map(|m| {
+            let source = m.source_path.as_deref()?;
+            if source.starts_with("sqlite:") {
+                search_session_sqlite(m, needle)
+            } else {
+                search_session_jsonl(m, needle)
+            }
+        })
+        .collect()
+}
+
+fn search_session_jsonl(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let path = Path::new(source_path);
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    const MAX_SNIPPETS: usize = 5;
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let (role_val, content_val) =
+            if value.get("type").and_then(Value::as_str) == Some("message") {
+                let msg = match value.get("message") {
+                    Some(m) => m,
+                    None => continue,
+                };
+                (msg.get("role"), msg.get("content"))
+            } else {
+                (value.get("role"), value.get("content"))
+            };
+        let role = match role_val.and_then(Value::as_str) {
+            Some(r) => r.to_string(),
+            None => continue,
+        };
+        let content = content_val.map(extract_text).unwrap_or_default();
+        if content.trim().is_empty() || !content.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        if let Some(snippet) = build_snippet(&content, needle) {
+            snippets.push(SearchSnippet { role, snippet });
+            if snippets.len() >= MAX_SNIPPETS {
+                break;
+            }
+        }
+    }
+
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
+}
+
+fn search_session_sqlite(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let (db_path, session_id) = parse_sqlite_source(source_path)?;
+    let conn = Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    // LIKE is case-insensitive for ASCII in SQLite by default; for CJK it's exact.
+    // We also do a client-side lowercase check to be safe across locales.
+    let mut stmt = conn
+        .prepare(
+            "SELECT role, content FROM messages WHERE session_id = ?1 AND content LIKE ?2 ORDER BY created_at ASC",
+        )
+        .ok()?;
+    let like_pattern = format!("%{needle}%");
+    let rows = stmt
+        .query_map(
+            rusqlite::params![session_id.as_str(), like_pattern.as_str()],
+            |row| {
+                let role: String = row.get(0)?;
+                let content: String = row.get(1)?;
+                Ok((role, content))
+            },
+        )
+        .ok()?;
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    const MAX_SNIPPETS: usize = 5;
+    for row in rows.flatten() {
+        let (role, content) = row;
+        if content.trim().is_empty() || !content.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        if let Some(snippet) = build_snippet(&content, needle) {
+            snippets.push(SearchSnippet { role, snippet });
+            if snippets.len() >= MAX_SNIPPETS {
+                break;
+            }
+        }
+    }
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
 }
 
 /// Delete a Hermes JSONL session file.

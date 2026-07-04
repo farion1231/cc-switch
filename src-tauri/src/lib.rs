@@ -1400,6 +1400,7 @@ pub fn run() {
             // Session manager
             commands::list_sessions,
             commands::get_session_messages,
+            commands::search_sessions,
             commands::delete_session,
             commands::delete_sessions,
             commands::launch_session_terminal,

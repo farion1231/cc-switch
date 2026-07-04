@@ -8,12 +8,12 @@ use serde_json::Value;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::{
     config::write_json_file,
-    session_manager::{SessionMessage, SessionMeta},
+    session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet},
 };
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    build_snippet, extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "openclaw";
@@ -120,6 +120,63 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+/// Search a single OpenClaw session file for `needle` (case-insensitive).
+pub fn search_session(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let path = Path::new(source_path);
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    const MAX_SNIPPETS: usize = 5;
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if value.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        let message = match value.get("message") {
+            Some(m) => m,
+            None => continue,
+        };
+        let raw_role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let role = match raw_role {
+            "toolResult" => "tool".to_string(),
+            other => other.to_string(),
+        };
+        let content = message.get("content").map(extract_text).unwrap_or_default();
+        if content.trim().is_empty() || !content.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        if let Some(snippet) = build_snippet(&content, needle) {
+            snippets.push(SearchSnippet { role, snippet });
+            if snippets.len() >= MAX_SNIPPETS {
+                break;
+            }
+        }
+    }
+
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {

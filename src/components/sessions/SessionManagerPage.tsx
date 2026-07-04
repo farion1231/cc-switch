@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useDeepSearch } from "@/hooks/useDeepSearch";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
@@ -28,7 +30,7 @@ import {
   useSessionsQuery,
 } from "@/lib/query";
 import { sessionsApi } from "@/lib/api";
-import type { SessionMeta } from "@/types";
+import type { SessionMeta, SessionSearchHit } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -225,15 +227,57 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     Set<string>
   >(() => initialGroupExpansionState.expandedDirectoryKeys);
 
-  // 使用 FlexSearch 全文搜索
+  // 使用 FlexSearch 全文搜索（元数据：title/summary/路径，毫秒级）
   const { search: searchSessions } = useSessionSearch({
     sessions,
     providerFilter,
   });
 
+  // 深度搜索：扫描完整对话内容（后端 Rust 并行，200-500ms）
+  // 仅在有搜索词时启用，避免无谓请求
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const deepSearchEnabled = debouncedSearch.trim().length > 0;
+  const { hits: deepHits, isSearching: isDeepSearching } = useDeepSearch({
+    query: debouncedSearch,
+    sessions,
+    providerFilter,
+    enabled: deepSearchEnabled,
+  });
+
+  // 深度搜索命中 → 按 sourcePath 索引，便于查 snippet
+  const deepHitMap = useMemo(() => {
+    const m = new Map<string, SessionSearchHit>();
+    for (const hit of deepHits) m.set(hit.sourcePath, hit);
+    return m;
+  }, [deepHits]);
+
+  // 合并：FlexSearch 元数据命中 ∪ 深度搜索内容命中，去重
   const filteredSessions = useMemo(() => {
-    return searchSessions(search);
-  }, [searchSessions, search]);
+    const metaResults = searchSessions(search);
+    if (!deepSearchEnabled) return metaResults;
+
+    // 用 sourcePath 做去重 key（同一 session 不会重复）
+    const seen = new Set<string>();
+    const merged: SessionMeta[] = [];
+    for (const s of metaResults) {
+      const key = s.sourcePath ?? `${s.providerId}:${s.sessionId}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(s);
+      }
+    }
+    // 补上深度搜索命中但元数据未命中的 session
+    for (const hit of deepHits) {
+      const key = hit.sourcePath;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const matched = sessions.find(
+        (s) => s.sourcePath === key && s.providerId === hit.providerId,
+      );
+      if (matched) merged.push(matched);
+    }
+    return merged;
+  }, [searchSessions, search, deepSearchEnabled, deepHits, sessions]);
 
   const groupedSessions = useMemo(
     () =>
@@ -681,6 +725,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const renderSessionItem = (session: SessionMeta) => {
     const sessionKey = getSessionKey(session);
     const isSelected = selectedKey !== null && sessionKey === selectedKey;
+    const searchHit = session.sourcePath
+      ? deepHitMap.get(session.sourcePath)
+      : undefined;
 
     return (
       <SessionItem
@@ -689,6 +736,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         isSelected={isSelected}
         selectionMode={selectionMode}
         searchQuery={search}
+        searchHit={searchHit}
         isChecked={selectedSessionKeys.has(sessionKey)}
         isCheckDisabled={!session.sourcePath}
         onSelect={setSelectedKey}
@@ -830,7 +878,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           setSearch("");
                         }}
                       >
-                        <X className="size-3" />
+                        {isDeepSearching ? (
+                          <RefreshCw className="size-3 animate-spin" />
+                        ) : (
+                          <X className="size-3" />
+                        )}
                       </Button>
                     </div>
                     {selectionMode && (

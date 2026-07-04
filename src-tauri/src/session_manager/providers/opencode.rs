@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{build_snippet, parse_timestamp_to_ms, path_basename, truncate_summary};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -311,6 +311,179 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     }
 
     Ok(messages)
+}
+
+/// Search OpenCode sessions (file-based or SQLite) for `needle` (case-insensitive).
+pub fn search_sessions(metas: &[&SessionMeta], needle: &str) -> Vec<SessionSearchHit> {
+    metas
+        .iter()
+        .filter_map(|m| {
+            let source = m.source_path.as_deref()?;
+            if source.starts_with("sqlite:") {
+                search_session_sqlite(m, needle)
+            } else {
+                search_session_files(m, needle)
+            }
+        })
+        .collect()
+}
+
+const MAX_SEARCH_SNIPPETS: usize = 5;
+
+fn search_session_files(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let msg_dir = Path::new(source_path);
+    if !msg_dir.is_dir() {
+        return None;
+    }
+    let storage = msg_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| "Cannot determine storage root".to_string())
+        .ok()?;
+    let mut msg_files = Vec::new();
+    collect_json_files(msg_dir, &mut msg_files);
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    let mut entries: Vec<(i64, String, String)> = Vec::new(); // (ts, role, text)
+
+    for msg_path in &msg_files {
+        let data = match std::fs::read_to_string(msg_path) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let msg_id = match value.get("id").and_then(Value::as_str) {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+        let role = value
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let created_ts = value
+            .get("time")
+            .and_then(|t| t.get("created"))
+            .and_then(parse_timestamp_to_ms)
+            .unwrap_or(0);
+        let part_dir = storage.join("part").join(&msg_id);
+        let text = collect_parts_text(&part_dir);
+        if text.trim().is_empty() || !text.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        entries.push((created_ts, role, text));
+    }
+    entries.sort_by_key(|(ts, _, _)| *ts);
+    for (_, role, text) in entries {
+        if let Some(snippet) = build_snippet(&text, needle) {
+            snippets.push(SearchSnippet { role, snippet });
+            if snippets.len() >= MAX_SEARCH_SNIPPETS {
+                break;
+            }
+        }
+    }
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
+}
+
+fn search_session_sqlite(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let (db_path, session_id) = parse_sqlite_source(source_path)?;
+    let conn = Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let mut msg_stmt = conn
+        .prepare(
+            "SELECT id, time_created, data FROM message WHERE session_id = ?1 ORDER BY time_created ASC",
+        )
+        .ok()?;
+    let msg_rows = msg_stmt
+        .query_map([session_id.as_str()], |row| {
+            let id: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+            let data: String = row.get(2)?;
+            Ok((id, ts, data))
+        })
+        .ok()?;
+    let mut part_stmt = conn
+        .prepare(
+            "SELECT message_id, data FROM part WHERE session_id = ?1 ORDER BY time_created ASC",
+        )
+        .ok()?;
+    let part_rows = part_stmt
+        .query_map([session_id.as_str()], |row| {
+            let message_id: String = row.get(0)?;
+            let data: String = row.get(1)?;
+            Ok((message_id, data))
+        })
+        .ok()?;
+    let mut parts_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for part in part_rows.flatten() {
+        let (message_id, data) = part;
+        parts_map.entry(message_id).or_default().push(data);
+    }
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    for row in msg_rows.flatten() {
+        let (msg_id, _ts, data) = row;
+        let msg_value: Value = match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let role = msg_value
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let parts = parts_map.get(&msg_id);
+        let mut text = String::new();
+        if let Some(parts) = parts {
+            for part_data in parts {
+                let part_value: Value = match serde_json::from_str(part_data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Some(t) = extract_part_text(&part_value) {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&t);
+                }
+            }
+        }
+        if text.trim().is_empty() || !text.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        if let Some(snippet) = build_snippet(&text, needle) {
+            snippets.push(SearchSnippet { role, snippet });
+            if snippets.len() >= MAX_SEARCH_SNIPPETS {
+                break;
+            }
+        }
+    }
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
 }
 
 pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
