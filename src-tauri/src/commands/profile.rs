@@ -184,12 +184,7 @@ pub fn apply_profile(
                 log::warn!("切换项目后停止代理服务失败: {e}");
             }
             if let Some(app_state) = app_handle.try_state::<AppState>() {
-                emit_profile_apply_events(
-                    &app_handle,
-                    app_state.inner(),
-                    &profile_id,
-                    scope,
-                );
+                emit_profile_apply_events(&app_handle, app_state.inner(), &profile_id, scope);
             }
         });
     } else {

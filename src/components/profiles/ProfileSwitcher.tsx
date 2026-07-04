@@ -246,7 +246,6 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
 
       <ProfileManageDialog
         isOpen={isManageOpen}
-        scope={scope}
         onClose={() => setIsManageOpen(false)}
       />
     </>

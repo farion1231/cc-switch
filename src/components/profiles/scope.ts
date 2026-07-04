@@ -12,13 +12,6 @@ export const APP_PROFILE_SCOPE: Partial<Record<AppId, ProfileScope>> = {
   codex: "codex",
 };
 
-/** 分组显示名（产品名，不进 i18n；与后端托盘子菜单标签一致） */
-export const PROFILE_SCOPE_LABELS: Record<ProfileScope, string> = {
-  claude: "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  codex: "Codex",
-};
-
 /** 分组内的 payload 槽位 key（后端 ProfileScope::apps 的前端镜像） */
 const SCOPE_SLOT_KEYS: Record<ProfileScope, (keyof PerApp<unknown>)[]> = {
   claude: ["claude"],

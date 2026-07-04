@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -16,17 +17,13 @@ import {
   useProfilesQuery,
   useUpdateProfileMutation,
 } from "@/lib/query/profiles";
-import type { ProfileScope } from "@/lib/api/profiles";
-import { PROFILE_SCOPE_LABELS } from "./scope";
 
 interface ProfileManageDialogProps {
   isOpen: boolean;
-  scope: ProfileScope;
   onClose: () => void;
 }
 
 type PendingConfirm = {
-  type: "resnapshot" | "delete";
   id: string;
   name: string;
 };
@@ -34,12 +31,11 @@ type PendingConfirm = {
 /**
  * 项目管理对话框（纯快照式）
  *
- * 项目列表全应用共享，重命名/删除作用于共享实体；
- * "以当前状态更新快照"只覆盖发起页所属分组（scope）的槽位。
+ * 项目列表全应用共享，重命名/删除作用于共享实体。
+ * 快照内容由切换时的自动保存维护，不提供手动重拍入口。
  */
 export function ProfileManageDialog({
   isOpen,
-  scope,
   onClose,
 }: ProfileManageDialogProps) {
   const { t } = useTranslation();
@@ -71,11 +67,7 @@ export function ProfileManageDialog({
 
   const handleConfirm = () => {
     if (!confirm) return;
-    if (confirm.type === "delete") {
-      deleteMutation.mutate(confirm.id);
-    } else {
-      updateMutation.mutate({ id: confirm.id, resnapshot: true, scope });
-    }
+    deleteMutation.mutate(confirm.id);
     setConfirm(null);
   };
 
@@ -158,25 +150,9 @@ export function ProfileManageDialog({
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7"
-                      title={t("profiles.updateSnapshot")}
-                      onClick={() =>
-                        setConfirm({
-                          type: "resnapshot",
-                          id: profile.id,
-                          name: profile.name,
-                        })
-                      }
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
                       title={t("profiles.delete")}
                       onClick={() =>
                         setConfirm({
-                          type: "delete",
                           id: profile.id,
                           name: profile.name,
                         })
@@ -189,26 +165,27 @@ export function ProfileManageDialog({
               </div>
             ))}
           </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                cancelRename();
+                onClose();
+              }}
+            >
+              {t("common.close")}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {confirm && (
         <ConfirmDialog
           isOpen
-          title={
-            confirm.type === "delete"
-              ? t("profiles.deleteConfirmTitle")
-              : t("profiles.updateSnapshot")
-          }
-          message={
-            confirm.type === "delete"
-              ? t("profiles.deleteConfirmMessage", { name: confirm.name })
-              : t("profiles.updateSnapshotConfirm", {
-                  name: confirm.name,
-                  group: PROFILE_SCOPE_LABELS[scope],
-                })
-          }
-          variant={confirm.type === "delete" ? "destructive" : "info"}
+          title={t("profiles.deleteConfirmTitle")}
+          message={t("profiles.deleteConfirmMessage", { name: confirm.name })}
+          variant="destructive"
           onConfirm={handleConfirm}
           onCancel={() => setConfirm(null)}
         />

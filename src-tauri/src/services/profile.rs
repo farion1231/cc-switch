@@ -264,7 +264,8 @@ impl ProfileService {
     }
 
     /// 更新项目：重命名（作用于共享实体）和/或以当前状态重拍快照
-    /// （resnapshot 只覆盖 scope 分组的槽位，其余分组原样保留）
+    /// （resnapshot 只覆盖 scope 分组的槽位，其余分组原样保留；
+    /// 快照重拍仅由 [`Self::apply`] 切换前的自动保存触发，UI 不再暴露手动入口）
     pub fn update(
         state: &AppState,
         id: &str,
@@ -314,7 +315,7 @@ impl ProfileService {
     ///
     /// 只作用于发起页所属分组内的应用，不碰其他分组的配置与 current 标记。
     /// 该分组从未拍过快照时不改动任何配置，仅标记 current 并返回提示
-    /// （用户可先绑定项目、再"以当前状态更新"补拍该侧快照）。
+    /// （下次从该项目切走时，自动保存会补拍该侧快照）。
     ///
     /// **切换前会自动保存旧项目**：若当前分组已绑定到另一个项目，先把当前
     /// 状态写入那个旧项目（仅当前分组槽位），再加载目标项目。这样切走后
@@ -351,10 +352,9 @@ impl ProfileService {
         let payload: ProfilePayload = serde_json::from_str(&profile.payload)
             .map_err(|e| AppError::Config(format!("解析 profile payload 失败: {e}")))?;
 
-        let mut warnings = Vec::new();
         if !payload.scope_captured(scope) {
             warnings.push(format!(
-                "no {} configuration captured in this project yet; marked as current without changes",
+                "no {} configuration captured in this project yet; marked as current without changes (it will be saved automatically when you switch away)",
                 scope.as_str()
             ));
         }
