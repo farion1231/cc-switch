@@ -25,6 +25,18 @@ pub async fn get_session_messages(
 }
 
 #[tauri::command]
+pub async fn search_sessions(
+    query: String,
+    sessions: Vec<session_manager::SessionMeta>,
+) -> Result<Vec<session_manager::SessionSearchHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::search_sessions_in(&sessions, &query)
+    })
+    .await
+    .map_err(|e| format!("Failed to search sessions: {e}"))
+}
+
+#[tauri::command]
 pub async fn launch_session_terminal(
     command: String,
     cwd: Option<String>,

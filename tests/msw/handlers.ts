@@ -135,6 +135,8 @@ export const handlers = [
     return success(getSessionMessages(providerId, sourcePath));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/search_sessions`, async () => success<[]>([])),
+
   http.post(`${TAURI_ENDPOINT}/delete_session`, async ({ request }) => {
     const { providerId, sessionId, sourcePath } = await withJson<{
       providerId: string;

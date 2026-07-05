@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ProviderIcon";
-import type { SessionMeta } from "@/types";
+import type { SessionMeta, SessionSearchHit } from "@/types";
 import {
   formatRelativeTime,
   formatSessionTitle,
@@ -25,6 +25,8 @@ interface SessionItemProps {
   isChecked: boolean;
   isCheckDisabled?: boolean;
   searchQuery?: string;
+  /** 深度搜索命中信息（若有），用于展示匹配片段预览 */
+  searchHit?: SessionSearchHit;
   onSelect: (key: string) => void;
   onToggleChecked: (checked: boolean) => void;
 }
@@ -36,6 +38,7 @@ export function SessionItem({
   isChecked,
   isCheckDisabled = false,
   searchQuery,
+  searchHit,
   onSelect,
   onToggleChecked,
 }: SessionItemProps) {
@@ -104,6 +107,24 @@ export function SessionItem({
               : t("common.unknown")}
           </span>
         </div>
+
+        {searchHit && searchHit.snippets.length > 0 && (
+          <div className="mt-1.5 space-y-1">
+            {searchHit.snippets.slice(0, 2).map((s, i) => (
+              <div
+                key={i}
+                className="text-[11px] leading-snug text-muted-foreground/90 bg-muted/40 rounded px-1.5 py-1 line-clamp-2"
+              >
+                <span className="font-medium text-muted-foreground/70">
+                  [{s.role}]
+                </span>{" "}
+                {searchQuery
+                  ? highlightText(s.snippet, searchQuery)
+                  : s.snippet}
+              </div>
+            ))}
+          </div>
+        )}
       </button>
     </div>
   );

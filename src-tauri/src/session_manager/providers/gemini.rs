@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{build_snippet, parse_timestamp_to_ms, truncate_summary};
 
 const PROVIDER_ID: &str = "gemini";
 
@@ -110,6 +110,67 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(result)
+}
+
+/// Search a single Gemini session JSON file for `needle` (case-insensitive).
+pub fn search_session(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let path = Path::new(source_path);
+    let data = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&data).ok()?;
+    let messages = value.get("messages").and_then(Value::as_array)?;
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    const MAX_SNIPPETS: usize = 5;
+
+    for msg in messages {
+        let role = match msg.get("type").and_then(Value::as_str) {
+            Some("gemini") => "assistant",
+            Some("user") => "user",
+            _ => continue,
+        };
+        let mut content = match msg.get("content") {
+            Some(Value::String(s)) => s.to_string(),
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        if let Some(Value::Array(calls)) = msg.get("toolCalls") {
+            for call in calls {
+                if let Some(name) = call.get("name").and_then(Value::as_str) {
+                    if !content.is_empty() {
+                        content.push('\n');
+                    }
+                    content.push_str(&format!("[Tool: {name}]"));
+                }
+            }
+        }
+        if content.trim().is_empty() || !content.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        if let Some(snippet) = build_snippet(&content, needle) {
+            snippets.push(SearchSnippet {
+                role: role.to_string(),
+                snippet,
+            });
+            if snippets.len() >= MAX_SNIPPETS {
+                break;
+            }
+        }
+    }
+
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {

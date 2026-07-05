@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::get_claude_config_dir;
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    TITLE_MAX_CHARS,
+    build_snippet, extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    truncate_summary, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -83,6 +83,72 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+/// Search a single Claude session file for `needle` (case-insensitive).
+/// Scans every line in the JSONL file and returns up to 5 snippets.
+pub fn search_session(meta: &SessionMeta, needle: &str) -> Option<SessionSearchHit> {
+    let source_path = meta.source_path.as_deref()?;
+    let path = Path::new(source_path);
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let lower_needle = needle.to_lowercase();
+    let mut snippets: Vec<SearchSnippet> = Vec::new();
+    const MAX_SNIPPETS: usize = 5;
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let message = match value.get("message") {
+            Some(m) => m,
+            None => continue,
+        };
+        let mut role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        if role == "user" {
+            if let Some(Value::Array(items)) = message.get("content") {
+                let all_tool_results = !items.is_empty()
+                    && items.iter().all(|item| {
+                        item.get("type").and_then(Value::as_str) == Some("tool_result")
+                    });
+                if all_tool_results {
+                    role = "tool".to_string();
+                }
+            }
+        }
+        let content = message.get("content").map(extract_text).unwrap_or_default();
+        if content.trim().is_empty() || !content.to_lowercase().contains(&lower_needle) {
+            continue;
+        }
+        if let Some(snippet) = build_snippet(&content, needle) {
+            snippets.push(SearchSnippet { role, snippet });
+            if snippets.len() >= MAX_SNIPPETS {
+                break;
+            }
+        }
+    }
+
+    if snippets.is_empty() {
+        return None;
+    }
+    Some(SessionSearchHit {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: meta.session_id.clone(),
+        source_path: source_path.to_string(),
+        snippets,
+    })
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
