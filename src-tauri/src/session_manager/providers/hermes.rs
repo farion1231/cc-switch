@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::hermes_config::get_hermes_dir;
-use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
     build_snippet, extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary,
@@ -567,23 +567,19 @@ fn search_session_sqlite(meta: &SessionMeta, needle: &str) -> Option<SessionSear
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .ok()?;
-    // LIKE is case-insensitive for ASCII in SQLite by default; for CJK it's exact.
-    // We also do a client-side lowercase check to be safe across locales.
+    // Fetch all messages for the session without a LIKE prefilter, because
+    // SQLite's LIKE is case-insensitive only for ASCII and would miss Unicode
+    // matches (e.g. "Éclair" vs "éclair"). The Rust to_lowercase().contains()
+    // check below handles full Unicode case-insensitive matching.
     let mut stmt = conn
-        .prepare(
-            "SELECT role, content FROM messages WHERE session_id = ?1 AND content LIKE ?2 ORDER BY created_at ASC",
-        )
+        .prepare("SELECT role, content FROM messages WHERE session_id = ?1 ORDER BY created_at ASC")
         .ok()?;
-    let like_pattern = format!("%{needle}%");
     let rows = stmt
-        .query_map(
-            rusqlite::params![session_id.as_str(), like_pattern.as_str()],
-            |row| {
-                let role: String = row.get(0)?;
-                let content: String = row.get(1)?;
-                Ok((role, content))
-            },
-        )
+        .query_map(rusqlite::params![session_id.as_str()], |row| {
+            let role: String = row.get(0)?;
+            let content: String = row.get(1)?;
+            Ok((role, content))
+        })
         .ok()?;
     let lower_needle = needle.to_lowercase();
     let mut snippets: Vec<SearchSnippet> = Vec::new();

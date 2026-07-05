@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{build_snippet, parse_timestamp_to_ms, truncate_summary};
 

@@ -62,6 +62,9 @@ export function useDeepSearch({
       return;
     }
 
+    // Clear stale hits from the previous query/filter before starting a new
+    // search so sessions that only matched the old term don't remain visible.
+    setHits([]);
     const requestId = ++requestIdRef.current;
     setIsSearching(true);
     setError(null);
@@ -75,8 +78,7 @@ export function useDeepSearch({
       })
       .catch((err: unknown) => {
         if (cancelled || requestId !== requestIdRef.current) return;
-        const message =
-          err instanceof Error ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
         setError(message);
         setHits([]);
       })

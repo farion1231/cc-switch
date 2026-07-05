@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::get_claude_config_dir;
-use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
     build_snippet, extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
@@ -120,9 +120,9 @@ pub fn search_session(meta: &SessionMeta, needle: &str) -> Option<SessionSearchH
         if role == "user" {
             if let Some(Value::Array(items)) = message.get("content") {
                 let all_tool_results = !items.is_empty()
-                    && items
-                        .iter()
-                        .all(|item| item.get("type").and_then(Value::as_str) == Some("tool_result"));
+                    && items.iter().all(|item| {
+                        item.get("type").and_then(Value::as_str) == Some("tool_result")
+                    });
                 if all_tool_results {
                     role = "tool".to_string();
                 }

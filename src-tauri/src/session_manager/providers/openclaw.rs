@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::openclaw_config::get_openclaw_dir;
 use crate::{
     config::write_json_file,
-    session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet},
+    session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit},
 };
 
 use super::utils::{

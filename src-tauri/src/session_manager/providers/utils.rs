@@ -172,11 +172,10 @@ pub fn build_snippet(haystack: &str, needle: &str) -> Option<String> {
     }
     let lower_needle = needle.to_lowercase();
     // Find the first window (case-insensitive) where needle matches.
-    let start = (0..=chars.len().saturating_sub(needle_len))
-        .find(|&i| {
-            let window: String = chars[i..i + needle_len].iter().collect();
-            window.to_lowercase() == lower_needle
-        })?;
+    let start = (0..=chars.len().saturating_sub(needle_len)).find(|&i| {
+        let window: String = chars[i..i + needle_len].iter().collect();
+        window.to_lowercase() == lower_needle
+    })?;
     let match_end = (start + needle_len).min(chars.len());
     // Context: try to center the match in a window of SNIPPET_MAX_CHARS.
     let half = SNIPPET_MAX_CHARS.saturating_sub(needle_len) / 2;
@@ -185,7 +184,7 @@ pub fn build_snippet(haystack: &str, needle: &str) -> Option<String> {
     let mut snippet: String = chars[ctx_start..ctx_end].iter().collect();
     snippet = snippet.trim().to_string();
     if ctx_start > 0 {
-        snippet.insert_str(0, "…");
+        snippet.insert(0, '…');
     }
     if ctx_end < chars.len() {
         snippet.push('…');
@@ -231,7 +230,8 @@ mod tests {
 
     #[test]
     fn build_snippet_finds_cjk_substring() {
-        let haystack = "这是一段关于浙江移动的对话内容，后面还有很多其他文字用于测试截断逻辑是否正确工作。";
+        let haystack =
+            "这是一段关于浙江移动的对话内容，后面还有很多其他文字用于测试截断逻辑是否正确工作。";
         let s = build_snippet(haystack, "浙江移动").expect("should find '浙江移动'");
         assert!(
             s.contains("浙江移动"),
@@ -245,10 +245,7 @@ mod tests {
         let haystack = format!("{prefix}NEEDLE here and some suffix text");
         let s = build_snippet(&haystack, "needle").expect("should find 'needle'");
         // Snippet should be roughly SNIPPET_MAX_CHARS + ellipsis overhead
-        assert!(
-            s.chars().count() < 200,
-            "snippet should be truncated: {s}"
-        );
+        assert!(s.chars().count() < 200, "snippet should be truncated: {s}");
         assert!(s.contains("NEEDLE"), "snippet should contain match: {s}");
         assert!(s.starts_with('…'), "should be prefixed with ellipsis");
     }

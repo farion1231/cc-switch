@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
-use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{build_snippet, parse_timestamp_to_ms, path_basename, truncate_summary};
 

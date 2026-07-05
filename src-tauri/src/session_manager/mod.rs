@@ -113,6 +113,7 @@ pub struct SessionSearchHit {
 /// Search the full conversation content of every session (across all providers)
 /// for the given query. Returns one `SessionSearchHit` per session that contains
 /// at least one match. This is a live, full-scan search — no index, always fresh.
+#[allow(dead_code)]
 pub fn search_sessions(query: &str) -> Vec<SessionSearchHit> {
     // Snapshot all session metas first (cheap — only reads head/tail of each file).
     let sessions = scan_sessions();

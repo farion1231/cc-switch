@@ -7,7 +7,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::codex_config::get_codex_config_dir;
-use crate::session_manager::{SessionMessage, SessionMeta, SessionSearchHit, SearchSnippet};
+use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
     build_snippet, extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
