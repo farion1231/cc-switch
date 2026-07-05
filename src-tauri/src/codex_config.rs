@@ -122,6 +122,13 @@ impl CodexCatalogToolProfile {
     }
 }
 
+/// Default reasoning levels injected into every cc-switch-generated Codex model
+/// catalog entry. Custom/third-party providers consistently expose low/medium/high
+/// regardless of which template (cache/bundled/static) was used to build the entry.
+const DEFAULT_CODEX_REASONING_LEVELS: &[(&str, &str)] =
+    &[("low", "低"), ("medium", "中"), ("high", "高")];
+const DEFAULT_CODEX_REASONING_LEVEL: &str = "medium";
+
 /// Reserved built-in provider IDs from OpenAI Codex's config/model-provider
 /// catalog. Keep in sync with Codex `RESERVED_MODEL_PROVIDER_IDS` and legacy
 /// removed provider aliases.
@@ -476,6 +483,24 @@ fn codex_catalog_model_entry(
             entry_obj.insert("input_modalities".to_string(), json!(modalities));
         }
     }
+
+    // Normalize reasoning levels so every generated entry has the same
+    // low/medium/high choices and a deterministic default.
+    entry_obj.insert(
+        "supported_reasoning_levels".to_string(),
+        json!(DEFAULT_CODEX_REASONING_LEVELS
+            .iter()
+            .map(|(effort, description)| json!({
+                "effort": effort,
+                "description": description,
+            }))
+            .collect::<Vec<Value>>()),
+    );
+    entry_obj.insert(
+        "default_reasoning_level".to_string(),
+        json!(DEFAULT_CODEX_REASONING_LEVEL),
+    );
+    entry_obj.insert("reasoning_levels".to_string(), Value::Null);
 
     entry
 }
@@ -2981,5 +3006,69 @@ model_catalog_json = "cc-switch-model-catalog.json"
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
         );
+    }
+
+    #[test]
+    fn catalog_model_entry_injects_default_reasoning_levels() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "supported_reasoning_levels": null,
+            "default_reasoning_level": null,
+            "reasoning_levels": null,
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "test-model".to_string(),
+            display_name: "Test Model".to_string(),
+            context_window: 128_000,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        };
+        let entry =
+            codex_catalog_model_entry(&template, &spec, 0, CodexCatalogToolProfile::ProxyChat);
+
+        let levels = entry["supported_reasoning_levels"]
+            .as_array()
+            .expect("supported_reasoning_levels should be an array");
+        assert_eq!(levels.len(), 3);
+        let efforts: Vec<_> = levels
+            .iter()
+            .filter_map(|level| level["effort"].as_str())
+            .collect();
+        assert_eq!(efforts, vec!["low", "medium", "high"]);
+        assert_eq!(entry["default_reasoning_level"].as_str(), Some("medium"));
+        assert!(
+            entry["reasoning_levels"].is_null(),
+            "reasoning_levels should be nulled to avoid stale template data"
+        );
+    }
+
+    #[test]
+    fn catalog_model_entry_overrides_template_reasoning_levels() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "supported_reasoning_levels": [{ "effort": "xhigh", "description": "Extra" }],
+            "default_reasoning_level": "medium",
+            "reasoning_levels": [{ "level": 1, "effort": "low" }],
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "test-model".to_string(),
+            display_name: "Test Model".to_string(),
+            context_window: 128_000,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        };
+        let entry =
+            codex_catalog_model_entry(&template, &spec, 0, CodexCatalogToolProfile::ProxyChat);
+
+        assert_eq!(
+            entry["supported_reasoning_levels"]
+                .as_array()
+                .map(|a| a.len()),
+            Some(3)
+        );
+        assert_eq!(entry["default_reasoning_level"].as_str(), Some("medium"));
+        assert!(entry["reasoning_levels"].is_null());
     }
 }
