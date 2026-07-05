@@ -115,6 +115,30 @@ pub async fn handle_messages(
     handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
 }
 
+pub async fn handle_messages_count_tokens(
+    request: axum::extract::Request,
+) -> Result<Json<Value>, ProxyError> {
+    let body_bytes = request
+        .into_body()
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    Ok(Json(json!({
+        "input_tokens": estimate_anthropic_input_tokens(&body)
+    })))
+}
+
+fn estimate_anthropic_input_tokens(body: &Value) -> u64 {
+    let chars = serde_json::to_string(body)
+        .map(|text| text.chars().count() as u64)
+        .unwrap_or(0);
+    (chars / 4).max(1)
+}
+
 pub async fn handle_claude_desktop_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
@@ -129,6 +153,14 @@ pub async fn handle_claude_desktop_messages(
         Some("/claude-desktop"),
     )
     .await
+}
+
+pub async fn handle_claude_desktop_messages_count_tokens(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<Json<Value>, ProxyError> {
+    validate_claude_desktop_gateway_auth(&state, request.headers())?;
+    handle_messages_count_tokens(request).await
 }
 
 pub async fn handle_claude_desktop_models(
