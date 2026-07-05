@@ -4,6 +4,20 @@ import { SessionMeta } from "@/types";
 
 const CODEX_IDE_CONTEXT_PREFIX = "# Context from my IDE setup:";
 const CODEX_REQUEST_MARKER = "my request for codex";
+export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
+
+export interface SessionDirectoryGroup {
+  key: string;
+  projectDir: string | null;
+  label: string;
+  sessions: SessionMeta[];
+}
+
+export interface SessionProviderGroup {
+  providerId: string;
+  sessions: SessionMeta[];
+  directories: SessionDirectoryGroup[];
+}
 
 const getCodexRequestHeadingPayload = (lineText: string) => {
   if (!lineText.startsWith("#")) return null;
@@ -54,6 +68,14 @@ const extractCodexPromptFromIdeContext = (content: string) => {
 
 export const getSessionKey = (session: SessionMeta) =>
   `${session.providerId}:${session.sessionId}:${session.sourcePath ?? ""}`;
+
+export const getSessionDirectoryGroupKey = (
+  providerId: string,
+  projectDir?: string | null,
+) => {
+  const trimmed = projectDir?.trim();
+  return `${providerId}:${trimmed || UNKNOWN_PROJECT_DIR_KEY}`;
+};
 
 export const getBaseName = (value?: string | null) => {
   if (!value) return "";
@@ -129,6 +151,59 @@ export const formatSessionTitle = (session: SessionMeta) => {
     getBaseName(session.projectDir) ||
     session.sessionId.slice(0, 8)
   );
+};
+
+export const groupSessionsByProviderAndDirectory = (
+  sessions: SessionMeta[],
+  unknownDirectoryLabel: string,
+): SessionProviderGroup[] => {
+  const providerGroups: SessionProviderGroup[] = [];
+  const providerGroupMap = new Map<string, SessionProviderGroup>();
+  const directoryGroupMaps = new Map<
+    string,
+    Map<string, SessionDirectoryGroup>
+  >();
+
+  sessions.forEach((session) => {
+    let providerGroup = providerGroupMap.get(session.providerId);
+    if (!providerGroup) {
+      providerGroup = {
+        providerId: session.providerId,
+        sessions: [],
+        directories: [],
+      };
+      providerGroupMap.set(session.providerId, providerGroup);
+      providerGroups.push(providerGroup);
+      directoryGroupMaps.set(session.providerId, new Map());
+    }
+
+    providerGroup.sessions.push(session);
+
+    const trimmedProjectDir = session.projectDir?.trim() || null;
+    const directoryKey = getSessionDirectoryGroupKey(
+      session.providerId,
+      trimmedProjectDir,
+    );
+    const directoryGroups = directoryGroupMaps.get(session.providerId)!;
+
+    let directoryGroup = directoryGroups.get(directoryKey);
+    if (!directoryGroup) {
+      directoryGroup = {
+        key: directoryKey,
+        projectDir: trimmedProjectDir,
+        label: trimmedProjectDir
+          ? getBaseName(trimmedProjectDir) || trimmedProjectDir
+          : unknownDirectoryLabel,
+        sessions: [],
+      };
+      directoryGroups.set(directoryKey, directoryGroup);
+      providerGroup.directories.push(directoryGroup);
+    }
+
+    directoryGroup.sessions.push(session);
+  });
+
+  return providerGroups;
 };
 
 export const shouldHideCodexMessageFromToc = (content: string) => {

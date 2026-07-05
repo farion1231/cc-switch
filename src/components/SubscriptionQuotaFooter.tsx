@@ -27,12 +27,16 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   seven_day: "subscription.sevenDay",
   seven_day_opus: "subscription.sevenDayOpus",
   seven_day_sonnet: "subscription.sevenDaySonnet",
+  // Codex 免费方案的次要窗口是 30 天（付费方案为 7 天）
+  "30_day": "subscription.thirtyDay",
   // Gemini 模型分类
   gemini_pro: "subscription.geminiPro",
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
   // Token Plan（five_hour 已在上方官方映射中）
   weekly_limit: "subscription.sevenDay",
+  // 火山方舟 Agent Plan / Coding Plan 的月窗口
+  monthly: "subscription.monthly",
   // GitHub Copilot
   premium: "subscription.copilotPremium",
 };

@@ -19,6 +19,13 @@ const W_TIER_NAMES: &[&str] = &[
     crate::services::subscription::TIER_SEVEN_DAY_OPUS,
     crate::services::subscription::TIER_SEVEN_DAY_SONNET,
 ];
+// 月窗口分组：火山方舟 Agent/Coding Plan 的月窗口（5h/周/月 三档），
+// 以及 Codex 免费方案的 30 天窗口（#3651）——两者都归入 "m" 档，避免免费
+// Codex 账号在托盘里空白（前端 footer 能看到、托盘却不显示的不对称）。
+const M_TIER_NAMES: &[&str] = &[
+    crate::services::subscription::TIER_MONTHLY,
+    crate::services::subscription::TIER_THIRTY_DAY,
+];
 const GEMINI_PRO_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_PRO];
 const GEMINI_FLASH_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_FLASH];
 const GEMINI_FLASH_LITE_TIER_NAMES: &[&str] =
@@ -26,6 +33,7 @@ const GEMINI_FLASH_LITE_TIER_NAMES: &[&str] =
 const TIER_LABEL_GROUPS: &[(&str, &[&str])] = &[
     ("h", H_TIER_NAMES),
     ("w", W_TIER_NAMES),
+    ("m", M_TIER_NAMES),
     ("p", GEMINI_PRO_TIER_NAMES),
     ("f", GEMINI_FLASH_TIER_NAMES),
     ("l", GEMINI_FLASH_LITE_TIER_NAMES),
@@ -878,8 +886,8 @@ mod tests {
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
-        TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
-        TIER_SEVEN_DAY_SONNET, TIER_WEEKLY_LIMIT,
+        TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
+        TIER_SEVEN_DAY_SONNET, TIER_THIRTY_DAY, TIER_WEEKLY_LIMIT,
     };
 
     #[test]
@@ -959,6 +967,16 @@ mod tests {
         let quota = make_quota("gemini", true, vec![tier("gemini_flash_lite", 80.0)]);
         let s = format_subscription_summary(&quota).expect("should format");
         assert!(s.contains("l80%"), "expected l80% in {s}");
+    }
+
+    #[test]
+    fn codex_summary_thirty_day_only_still_renders() {
+        // Codex 免费方案的唯一 tier 是 30 天窗口。前端 footer 已能显示（TIER_I18N_KEYS
+        // 有 "30_day"），托盘也必须能显示——否则就是这条不变量要防的非对称：footer
+        // 能看到、托盘却空白。30_day 归入 "m" 月分组。见 #3651。
+        let quota = make_quota("codex", true, vec![tier(TIER_THIRTY_DAY, 85.0)]);
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("m85%"), "expected m85% in {s}");
     }
 
     #[test]
@@ -1092,6 +1110,36 @@ mod tests {
         let r = usage_result(true, vec![usage_data(Some(TIER_WEEKLY_LIMIT), 50.0)]);
         let s = format_script_summary(&r).expect("should format");
         assert!(s.contains("w50%"), "expected w50% in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_volcengine_three_tiers_with_monthly() {
+        // 火山方舟 Agent Plan 回 5h/周/月三档，托盘应包含 m（月）窗口，
+        // 不再静默丢弃。
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 25.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 30.0),
+                usage_data(Some(TIER_MONTHLY), 42.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h25%"), "expected h25% in {s}");
+        assert!(s.contains("w30%"), "expected w30% in {s}");
+        assert!(s.contains("m42%"), "expected m42% in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_monthly_only_renders_label_not_raw_name() {
+        // 仅月窗口激活时不应回落到原始 "monthly" 机器名，而是走 m 标签。
+        let r = usage_result(true, vec![usage_data(Some(TIER_MONTHLY), 60.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("m60%"), "expected m60% in {s}");
+        assert!(
+            !s.contains("monthly"),
+            "raw tier name should not leak into label: {s}"
+        );
     }
 
     #[test]

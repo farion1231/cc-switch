@@ -10,6 +10,7 @@
 [![Downloads](https://img.shields.io/github/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
 
 <a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://www.star-history.com/#farion1231/cc-switch&Date"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/badge?repo=farion1231/cc-switch&theme=dark" /><img alt="Star History Rank" src="https://api.star-history.com/badge?repo=farion1231/cc-switch" width="196" height="55" /></picture></a>
 
 ### 🌐 Die einzige offizielle Website: **[ccswitch.io](https://ccswitch.io)**
 
@@ -24,9 +25,11 @@
 <details open>
 <summary>Zum Einklappen klicken</summary>
 
-[![Kimi K2.6](https://kimi-file.moonshot.cn/prod-chat-kimi/kfs/4/2/2026-06-08/1d8j61pt3v89kkekm5mbg)](https://platform.moonshot.cn/console?aff=cc-switch)
+[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?aff=cc-switch)
 
-Kimi K2.6 ist ein quelloffenes, nativ multimodales Agenten-Modell von Moonshot AI, das für langfristige Programmierung, code-getriebenes Design und schwarmbasierte Aufgabenorchestrierung entwickelt wurde. Es ist darauf ausgelegt, komplexe End-to-End-Engineering-Arbeiten über Frontend, DevOps, Performance-Optimierung und Full-Stack-Workflows hinweg zu bewältigen und dabei große Gruppen spezialisierter Agenten zu koordinieren, um echte Programmieraufgaben zu planen, umzusetzen, zu testen und zu iterieren.
+Kimi K2.7 Code ist ein quelloffenes, auf Programmierung spezialisiertes Agenten-Modell von Moonshot AI. Es bietet eine stärkere Programmier- und Agentenleistung mit erheblichen Verbesserungen bei realen, langfristigen Programmieraufgaben. Diese Fortschritte führen zu höheren End-to-End-Erfolgsraten in komplexen Software-Engineering-Workflows. Zudem verbessert K2.7 Code die Reasoning-Effizienz und reduziert den Verbrauch an Thinking-Tokens um rund 30 % gegenüber K2.6. **[Hier klicken, um Kimi auszuprobieren](https://platform.kimi.ai?aff=cc-switch)**
+
+Hauptsächlich mit Programmierung beschäftigt? Probieren Sie den **[Kimi-For-Coding-Plan](https://www.kimi.com/code/?aff=cc-switch)** – ein Abo, das speziell fürs Programmieren entwickelt wurde!
 
 ---
 
@@ -60,13 +63,20 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
+<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td>Danke an TeamoRouter für die Unterstützung dieses Projekts! TeamoRouter ist ein Agentic-LLM-Gateway in Enterprise-Qualität, das für Entwickler, KI-Teams und Unternehmen entwickelt wurde. Ganz ohne Abonnement können Sie über eine einzige einheitliche API auf Claude Code, Codex, Gemini CLI, OpenAI Codex und weitere beliebte KI-Agenten zugreifen — bei API-Preisen mit Rabatten von bis zu 90 %.
+Anders als typische API-Relay-Dienste bündelt TeamoRouter Hunderte offizieller Modellanbieter und vertrauenswürdiger Infrastrukturpartner, darunter OpenAI, Anthropic, Vertex, Azure und AWS Bedrock. Jeder Anbieter wird auf 100%ige Kompatibilität mit dem Agent-Protokoll, Cache-Performance und Nachverfolgbarkeit von Anfragen geprüft und liefert so stabile Qualität statt reverse-engineerter oder verwässerter Endpunkte. Die Plattform bietet nahezu offizielle TTFT, 99,6 % SLA, Durchsatz in Unternehmensgröße von bis zu 5.000 QPM und branchenführende Cache-Trefferquoten, die die Token-Kosten für langlaufende Agent-Workflows drastisch senken.
+TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team-Verwaltung, BYOK, intelligentes Routing, Nutzungsanalysen, dynamische Anbieter-Optimierung und dedizierten Support. Für ein noch einfacheres Erlebnis können Sie mit Teamo Desktop Claude Code, Codex, Gemini CLI und weitere beliebte KI-Agenten per Ein-Klick-Einrichtung nutzen — ohne Verwaltung von API-Schlüsseln oder manuelle Gateway-Konfiguration. Registrieren Sie sich als neuer Nutzer über <a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">diesen Link</a> und erhalten Sie 10 % Rabatt auf Ihre erste Aufladung.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"><img src="assets/partners/logos/byteplus.png" alt="BytePlus" width="150"></a></td>
 <td>Danke an Dola seed für die Unterstützung dieses Projekts! Dola Seed 2.0 ist ein voll-modales Allzweck-Großmodell, das von ByteDance eigenständig für den globalen Markt entwickelt wurde. Aufbauend auf einer einheitlichen multimodalen Architektur unterstützt es das gemeinsame Verstehen und Generieren von Text, Bildern, Audio und Video. Es ermöglicht von Haus aus die Zusammenarbeit von Agenten und verfügt über starke Fähigkeiten in den Bereichen Schlussfolgern, Ausführung langer Aufgaben, Werkzeugintegration und Programmierung. Es ist breit einsetzbar — etwa für intelligente Cockpits, persönliche Assistenten, Bildung, Kundensupport, Marketing, Einzelhandel und weitere Szenarien. Es überzeugt bei multimodaler Wahrnehmung, der Ende-zu-Ende-Bewältigung komplexer Aufgaben, stabiler Interaktion und Datensicherheit und ist über die ModelArk-Plattform einfach zugänglich und bereitstellbar. Registrieren Sie sich über <a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch">diesen Link</a> und erhalten Sie pro Modell ein kostenloses Inferenzkontingent von 500.000 Token.<a href="https://www.volcengine.com/activity/ai618?utm_campaign=hw&utm_content=hw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"> >>中国大陆地区的开发者请点击这里</a></td>
 </tr>
 
 <tr>
-<td width="180"><a href="https://cloud.siliconflow.cn/i/drGuwc9k"><img src="assets/partners/logos/silicon_en.jpg" alt="SiliconFlow" width="150"></a></td>
-<td>Danke an SiliconFlow für die Unterstützung dieses Projekts! SiliconFlow ist eine leistungsstarke KI-Infrastruktur- und Modell-API-Plattform, die schnellen und zuverlässigen Zugriff auf Sprach-, Audio-, Bild- und Videomodelle an einem Ort bietet. Mit nutzungsbasierter Abrechnung, breiter Unterstützung multimodaler Modelle, Hochgeschwindigkeitsinferenz und unternehmensgerechter Stabilität hilft SiliconFlow Entwicklern und Teams, KI-Anwendungen effizienter zu erstellen und zu skalieren. Registrieren Sie sich über <a href="https://cloud.siliconflow.cn/i/drGuwc9k">diesen Link</a> und schließen Sie die Identitätsverifizierung ab, um ein Bonusguthaben von ¥16 zu erhalten, das für alle Modelle der Plattform nutzbar ist. SiliconFlow ist zudem nun mit OpenClaw kompatibel, sodass Nutzer einen SiliconFlow-API-Schlüssel verbinden und große KI-Modelle kostenlos aufrufen können.</td>
+<td width="180"><a href="https://cloud.siliconflow.cn/i/YflgU2Ve"><img src="assets/partners/logos/silicon_en.jpg" alt="SiliconFlow" width="150"></a></td>
+<td>Danke an SiliconFlow für die Unterstützung dieses Projekts! SiliconFlow ist eine leistungsstarke KI-Infrastruktur- und Modell-API-Plattform, die schnellen und zuverlässigen Zugriff auf Sprach-, Audio-, Bild- und Videomodelle an einem Ort bietet. Mit nutzungsbasierter Abrechnung, breiter Unterstützung multimodaler Modelle, Hochgeschwindigkeitsinferenz und unternehmensgerechter Stabilität hilft SiliconFlow Entwicklern und Teams, KI-Anwendungen effizienter zu erstellen und zu skalieren. Registrieren Sie sich über <a href="https://cloud.siliconflow.cn/i/YflgU2Ve">diesen Link</a> und schließen Sie die Identitätsverifizierung ab, um ein Bonusguthaben von ¥16 zu erhalten, das für alle Modelle der Plattform nutzbar ist. SiliconFlow ist zudem nun mit OpenClaw kompatibel, sodass Nutzer einen SiliconFlow-API-Schlüssel verbinden und große KI-Modelle kostenlos aufrufen können.</td>
 </tr>
 
 <tr>
@@ -105,13 +115,18 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 </tr>
 
 <tr>
-<td width="180"><a href="https://ctok.ai"><img src="assets/partners/logos/ctok.png" alt="CTok" width="150"></a></td>
-<td>Danke an CTok.ai für die Unterstützung dieses Projekts! CTok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://ctok.ai">hier</a>, um sich zu registrieren!</td>
+<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
+<td>Danke an ETok.ai für die Unterstützung dieses Projekts! ETok.ai widmet sich dem Aufbau einer Komplettlösung für KI-Programmierwerkzeuge. Wir bieten professionelle Claude-Code-Pakete und Dienste einer technischen Community, mit Unterstützung für Google Gemini und OpenAI Codex. Durch sorgfältig gestaltete Pläne und eine professionelle Tech-Community geben wir Entwicklern verlässliche Servicegarantien und kontinuierlichen technischen Support an die Hand und machen KI-gestützte Programmierung zu einem echten Produktivitätswerkzeug. Klicken Sie <a href="https://etok.ai">hier</a>, um sich zu registrieren!</td>
 </tr>
 
 <tr>
 <td width="180"><a href="https://console.claudeapi.com/register?aff=pCLD"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
 <td>Dieses Projekt wird von <a href="https://console.claudeapi.com/register?aff=pCLD">Claude API</a> gesponsert. Direkter Claude-API-Zugriff — verbinden Sie Claude Code und Agent-Apps in 3 Minuten. Neukunden können ein kostenloses Testguthaben einlösen. Betrieben mit offiziellen Anthropic-API-Schlüsseln + offiziellen AWS-Bedrock-Kanälen. Kein Reverse Engineering, keine Modellverschlechterung. Volle Unterstützung der Modellreihe Opus / Sonnet / Haiku, mit erhaltenen offiziellen Fähigkeiten einschließlich Tool Use, 1M-Kontextfenster und mehr. Entwickelt für Claude-Code-Power-User, Agent-Ingenieure und technische Unternehmensteams. Rechnungsstellung und dedizierter Team-Support verfügbar. Klicken Sie <a href="https://console.claudeapi.com/register?aff=pCLD">hier</a>, um sich zu registrieren!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>Vielen Dank an <a href="https://code0.ai?source=ccswitch">code0.ai</a> für die Unterstützung dieses Projekts! code0.ai ist eine für Entwickler entwickelte AI-Coding-Service-Plattform, die Claude Code, Codex, Gemini und weitere gängige AI-Coding-Funktionen unterstützt. Sie hilft einzelnen Entwicklern und Teams, AI-Agents stabiler und effizienter für Programmierung, Debugging, Refactoring und Automatisierungs-Workflows zu nutzen. ccswitch-Nutzer können über die <a href="https://code0.ai?source=ccswitch">code0.ai-Website</a> den Kundensupport kontaktieren, um Testguthaben zu erhalten und einen zuverlässigen AI-Coding-Service zu erleben.</td>
 </tr>
 
 <tr>
@@ -147,6 +162,21 @@ Registrieren Sie sich jetzt über <a href="https://pateway.ai/?ch=etzpm8&aff=WB6
 <tr>
 <td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
 <td>Danke an Unity2.ai für die Unterstützung dieses Projekts! Unity2.ai ist eine leistungsstarke AI-Modell-API-Relay-Plattform für Einzelentwickler, Teams und Unternehmen. Sie wird seit Langem von führenden Unternehmen in China genutzt, verarbeitet täglich über 30 Milliarden Tokens und unterstützt hohe Parallelität auf 5.000-RPM-Niveau. Geboten werden Guthaben-Abrechnung, Ersteinzahlungsbonus, Kombi-Abonnements, Firmenrechnungen und persönliche Betreuung. Registrieren Sie sich über <a href="https://unity2.ai/register?source=ccs">diesen Link</a> und erhalten Sie $2 Guthaben, plus weitere $10 für den Beitritt zur offiziellen Gruppe — bis zu $12 Gratis-Guthaben!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
+<td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den unschlagbaren ¥9,9-Coding-Plan im Wert von $150 Guthaben und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
+<td>Danke an ZetaAPI für die Unterstützung dieses Projekts! ZetaAPI legt den Fokus auf echte Modelltreue — keine verwässerten Antworten, keine Qualitätsminderung — und Preise von nur 35 % der offiziellen Tarife. Die Plattform mischt keinen Traffic, ersetzt Modelle nicht heimlich durch minderwertige Alternativen und nutzt kein gefälschtes Modell-Routing. Sie unterstützt Claude Code, Codex, Gemini, ChatGPT und weitere gängige KI-Modelle und hilft Nutzern, die API-Kosten deutlich zu senken und gleichzeitig eine zuverlässige Modellqualität zu gewährleisten. Gleichzeitig bietet ZetaAPI eine SLA-gestützte Stabilität auf Unternehmensniveau, Standard-API-Kompatibilität, einen API-Key für mehrere Modelle, schnelle Integration und nutzungsbasierte Abrechnung — geeignet für KI-Produkte, Coding-Agents, interne Unternehmenstools, Kundenservice-Systeme, Content-Erstellung und Automatisierungs-Workflows. Falls bei einem Modell nachgewiesen wird, dass es nicht der angegebenen Qualität entspricht, sichert ZetaAPI dies mit einer 10-fachen Entschädigungsgarantie ab und bietet Nutzern ein stabileres, transparenteres und vertrauenswürdigeres Erlebnis. Registrieren Sie sich über <a href="https://zetaapi.ai/go/ccs">diesen Link</a> und verwenden Sie bei Ihrer ersten Aufladung den Promo-Code CC-SWITCH, um als CC-Switch-Nutzer einen exklusiven Rabatt von 10 % auf Ihre erste Aufladung zu erhalten!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
+<td>Vielen Dank an <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> für die Unterstützung dieses Projekts! NekoCode bietet Entwicklern einen stabilen, effizienten und zuverlässigen API-Relay-Dienst für Claude, Codex und weitere KI-Modelle. Mit transparenter Preisgestaltung und flexibler nutzungsbasierter Abrechnung bietet es einen einfachen und kostengünstigen Zugang zu KI-Modellen. CC-Switch-Nutzer erhalten einen exklusiven Rabatt von 10 %: Registrieren Sie sich über <a href="https://nekocode.ai?aff=CCSWITCH">diesen Link</a> und geben Sie beim Aufladen den Gutscheincode <code>cc-switch</code> ein, um 10 % Rabatt auf Ihre Aufladung zu erhalten!</td>
 </tr>
 
 </table>
@@ -261,6 +291,19 @@ Fügen Sie einen offiziellen Anbieter aus der Preset-Liste hinzu. Führen Sie na
 - **Backups**: `~/.cc-switch/backups/` (automatisch rotiert, behält die 10 neuesten)
 - **Skills**: `~/.cc-switch/skills/` (standardmäßig per Symlink mit den entsprechenden Apps verbunden)
 - **Skill-Backups**: `~/.cc-switch/skill-backups/` (vor der Deinstallation automatisch erstellt, behält die 20 neuesten)
+
+</details>
+
+<details>
+<summary><strong>Linux (Wayland + NVIDIA): Klicks im Webinhalt reagieren nicht, schwarzer Bildschirm beim Größenändern</strong></summary>
+
+Das AppImage erzwingt `GDK_BACKEND=x11` (XWayland), um einen historischen nativen Wayland-Absturz zu vermeiden. Auf neueren Wayland-+-NVIDIA-Systemen kann das dazu führen, dass der Webinhalt nicht anklickbar ist (die Titelleisten-Schaltflächen funktionieren weiterhin) und das Fenster beim Größenändern schwarz wird. Starten Sie mit dem optionalen Notausgang, um zu nativem Wayland zu wechseln:
+
+```bash
+CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+```
+
+Wenn Sie über ein Desktop-Symbol starten, fügen Sie es der `Exec=`-Zeile der `.desktop`-Datei hinzu (z. B. `env CC_SWITCH_GDK_BACKEND=wayland /pfad/zum/AppImage`) oder setzen Sie es in Ihrer Sitzungsumgebung. Die Variable ist generisch: Auf Tiling-Wayland-Compositors (sway/Hyprland), bei denen Klicks nicht reagieren, versuchen Sie umgekehrt `CC_SWITCH_GDK_BACKEND=x11`. Bleibt sie ungesetzt, bleibt das Standardverhalten erhalten.
 
 </details>
 

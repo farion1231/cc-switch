@@ -159,11 +159,16 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
+        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+        );
+
         crate::codex_config::write_codex_provider_live_with_catalog(
             &provider.settings_config,
             provider.category.as_deref(),
             auth,
             cfg_text,
+            profile,
         )?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
