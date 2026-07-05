@@ -1065,7 +1065,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       <button
                         type="button"
                         onClick={() =>
-                          settingsApi.openExternal(ALIBABA_CLOUD_KEY_CONSOLE_URL)
+                          settingsApi.openExternal(
+                            ALIBABA_CLOUD_KEY_CONSOLE_URL,
+                          )
                         }
                         className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
                       >
@@ -1121,7 +1123,6 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     </Button>
                   ))}
                 </div>
-
               </div>
             )}
 
@@ -1344,81 +1345,81 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       </>
                     )}
 
-                    {selectedTemplate === TEMPLATE_TYPES.BALANCE &&
-                      isAliyunBalance && (
-                        <>
-                          <div className="space-y-2">
-                            <Label htmlFor="usage-aliyun-balance-ak">
-                              {t("usageScript.accessKeyId", {
-                                defaultValue: "AccessKey ID",
-                              })}
-                            </Label>
+                  {selectedTemplate === TEMPLATE_TYPES.BALANCE &&
+                    isAliyunBalance && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-aliyun-balance-ak">
+                            {t("usageScript.accessKeyId", {
+                              defaultValue: "AccessKey ID",
+                            })}
+                          </Label>
+                          <Input
+                            id="usage-aliyun-balance-ak"
+                            type="text"
+                            value={script.accessKeyId || script.apiKey || ""}
+                            onChange={(e) =>
+                              setScript({
+                                ...script,
+                                accessKeyId: e.target.value,
+                                apiKey: undefined,
+                              })
+                            }
+                            placeholder="LTAI..."
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-aliyun-balance-sk">
+                            {t("usageScript.accessKeySecret", {
+                              defaultValue: "AccessKey Secret",
+                            })}
+                          </Label>
+                          <div className="relative">
                             <Input
-                              id="usage-aliyun-balance-ak"
-                              type="text"
-                              value={script.accessKeyId || script.apiKey || ""}
+                              id="usage-aliyun-balance-sk"
+                              type={showApiKey ? "text" : "password"}
+                              value={script.secretAccessKey || ""}
                               onChange={(e) =>
                                 setScript({
                                   ...script,
-                                  accessKeyId: e.target.value,
-                                  apiKey: undefined,
+                                  secretAccessKey: e.target.value,
                                 })
                               }
-                              placeholder="LTAI..."
+                              placeholder={t(
+                                "usageScript.accessKeySecretPlaceholder",
+                                {
+                                  defaultValue:
+                                    "Leave empty to keep the existing secret",
+                                },
+                              )}
                               autoComplete="off"
                               className="border-white/10"
                             />
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="usage-aliyun-balance-sk">
-                              {t("usageScript.accessKeySecret", {
-                                defaultValue: "AccessKey Secret",
-                              })}
-                            </Label>
-                            <div className="relative">
-                              <Input
-                                id="usage-aliyun-balance-sk"
-                                type={showApiKey ? "text" : "password"}
-                                value={script.secretAccessKey || ""}
-                                onChange={(e) =>
-                                  setScript({
-                                    ...script,
-                                    secretAccessKey: e.target.value,
-                                  })
+                            {script.secretAccessKey && (
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                                aria-label={
+                                  showApiKey
+                                    ? t("apiKeyInput.hide")
+                                    : t("apiKeyInput.show")
                                 }
-                                placeholder={t(
-                                  "usageScript.accessKeySecretPlaceholder",
-                                  {
-                                    defaultValue: "Leave empty to keep the existing secret",
-                                  },
+                              >
+                                {showApiKey ? (
+                                  <EyeOff size={16} />
+                                ) : (
+                                  <Eye size={16} />
                                 )}
-                                autoComplete="off"
-                                className="border-white/10"
-                              />
-                              {script.secretAccessKey && (
-                                <button
-                                  type="button"
-                                  onClick={() => setShowApiKey(!showApiKey)}
-                                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
-                                  aria-label={
-                                    showApiKey
-                                      ? t("apiKeyInput.hide")
-                                      : t("apiKeyInput.show")
-                                  }
-                                >
-                                  {showApiKey ? (
-                                    <EyeOff size={16} />
-                                  ) : (
-                                    <Eye size={16} />
-                                  )}
-                                </button>
-                              )}
-                            </div>
+                              </button>
+                            )}
                           </div>
-                        </>
-                      )}
-
+                        </div>
+                      </>
+                    )}
                 </div>
               </div>
             )}

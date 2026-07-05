@@ -678,11 +678,12 @@ async fn query_provider_usage_inner(
         // 阿里云余额提供商（这里单独拎出来的原因是阿里云余额的endpoint和原本的base_url不太一致）
         // 后人如果遇到了类似不一致的其实是可以考虑单独对这里的逻辑处理一下的，考虑单独拆出来一个比较器
         if is_aliyun_mainland_provider(&app_type, provider) {
-
             let access_key_id = usage_script
                 .and_then(|s| s.access_key_id.clone())
                 .or_else(|| usage_script.and_then(|s| s.api_key.clone()))
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .trim()
+                .to_string();
 
             let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
 

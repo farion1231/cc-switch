@@ -1478,6 +1478,7 @@
     "total": "合計:",
     "used": "使用:",
     "remaining": "残り:",
+    "availableCashAmount": "利用可能な現金残高：",
     "justNow": "たった今",
     "minutesAgo": "{{count}} 分前",
     "hoursAgo": "{{count}} 時間前",

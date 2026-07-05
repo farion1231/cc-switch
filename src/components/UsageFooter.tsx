@@ -150,7 +150,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   const isAliyunBalance = usageDataList.some(isAliyunBalanceUsage);
 
   if (isAliyunBalance) {
-    const aliyunUsage = usageDataList.find(isAliyunBalanceUsage) ?? usageDataList[0];
+    const aliyunUsage =
+      usageDataList.find(isAliyunBalanceUsage) ?? usageDataList[0];
     const cashAmount = aliyunUsage.remaining ?? 0;
 
     return (
@@ -191,7 +192,11 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           </button>
         </div>
 
-        <div className={inline ? "flex items-center gap-2" : "flex items-center gap-2"}>
+        <div
+          className={
+            inline ? "flex items-center gap-2" : "flex items-center gap-2"
+          }
+        >
           <span className="text-gray-500 dark:text-gray-400">
             {t("usage.availableCashAmount")}
           </span>
@@ -199,7 +204,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             {formatCompactNumber(cashAmount)}
           </span>
           {aliyunUsage.unit && (
-            <span className="text-gray-500 dark:text-gray-400">{aliyunUsage.unit}</span>
+            <span className="text-gray-500 dark:text-gray-400">
+              {aliyunUsage.unit}
+            </span>
           )}
         </div>
       </div>
