@@ -3518,6 +3518,14 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
 }
 
+/// 取出并清除托盘"待打开用量页"标记。
+/// 轻量模式下点击今日用量行时窗口尚未重建，事件会早于前端监听注册而丢失，
+/// 因此改为落标记、由前端挂载后调用本命令消费。
+#[tauri::command]
+pub fn take_pending_tray_navigation() -> bool {
+    crate::tray::take_pending_open_usage()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

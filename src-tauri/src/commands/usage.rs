@@ -278,49 +278,7 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
 pub fn sync_session_usage(
     state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
-    // 同步 Claude 会话日志
-    let mut result = crate::services::session_usage::sync_claude_session_logs(&state.db)?;
-
-    // 同步 Codex 使用数据
-    match crate::services::session_usage_codex::sync_codex_usage(&state.db) {
-        Ok(codex_result) => {
-            result.imported += codex_result.imported;
-            result.skipped += codex_result.skipped;
-            result.files_scanned += codex_result.files_scanned;
-            result.errors.extend(codex_result.errors);
-        }
-        Err(e) => {
-            result.errors.push(format!("Codex 同步失败: {e}"));
-        }
-    }
-
-    // 同步 Gemini 使用数据
-    match crate::services::session_usage_gemini::sync_gemini_usage(&state.db) {
-        Ok(gemini_result) => {
-            result.imported += gemini_result.imported;
-            result.skipped += gemini_result.skipped;
-            result.files_scanned += gemini_result.files_scanned;
-            result.errors.extend(gemini_result.errors);
-        }
-        Err(e) => {
-            result.errors.push(format!("Gemini 同步失败: {e}"));
-        }
-    }
-
-    // 同步 OpenCode 使用数据
-    match crate::services::session_usage_opencode::sync_opencode_usage(&state.db) {
-        Ok(opencode_result) => {
-            result.imported += opencode_result.imported;
-            result.skipped += opencode_result.skipped;
-            result.files_scanned += opencode_result.files_scanned;
-            result.errors.extend(opencode_result.errors);
-        }
-        Err(e) => {
-            result.errors.push(format!("OpenCode 同步失败: {e}"));
-        }
-    }
-
-    Ok(result)
+    crate::services::session_usage::sync_all_session_usage(&state.db)
 }
 
 /// 获取数据来源分布

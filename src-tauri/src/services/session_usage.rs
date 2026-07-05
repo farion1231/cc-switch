@@ -561,6 +561,44 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
     Ok(summaries)
 }
 
+/// 一次性同步所有来源（Claude/Codex/Gemini/OpenCode）的会话用量。
+/// Claude 源失败直接返回错误（与历史行为一致）；其余源失败仅记入 errors。
+pub fn sync_all_session_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    let mut result = sync_claude_session_logs(db)?;
+
+    match crate::services::session_usage_codex::sync_codex_usage(db) {
+        Ok(r) => {
+            result.imported += r.imported;
+            result.skipped += r.skipped;
+            result.files_scanned += r.files_scanned;
+            result.errors.extend(r.errors);
+        }
+        Err(e) => result.errors.push(format!("Codex 同步失败: {e}")),
+    }
+
+    match crate::services::session_usage_gemini::sync_gemini_usage(db) {
+        Ok(r) => {
+            result.imported += r.imported;
+            result.skipped += r.skipped;
+            result.files_scanned += r.files_scanned;
+            result.errors.extend(r.errors);
+        }
+        Err(e) => result.errors.push(format!("Gemini 同步失败: {e}")),
+    }
+
+    match crate::services::session_usage_opencode::sync_opencode_usage(db) {
+        Ok(r) => {
+            result.imported += r.imported;
+            result.skipped += r.skipped;
+            result.files_scanned += r.files_scanned;
+            result.errors.extend(r.errors);
+        }
+        Err(e) => result.errors.push(format!("OpenCode 同步失败: {e}")),
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
