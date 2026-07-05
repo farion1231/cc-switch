@@ -657,7 +657,7 @@ data: {}
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (at stream end)");
                 yield Ok(Bytes::from(sse_data));
                 true
-            } else if has_sent_message_start {
+            } else if has_sent_message_start && !has_emitted_message_delta {
                 // No finish_reason but message_start was sent (e.g. deepseek-v4-flash).
                 // Send a default message_delta so the client knows the stream is done.
                 let event = build_message_delta_event(Some("end_turn".to_string()), None);
@@ -683,7 +683,6 @@ data: {}
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop (at stream end)");
                 yield Ok(Bytes::from(sse_data));
             }
-        }
         }
     }
 }
@@ -1204,17 +1203,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stream_end_without_finish_reason_does_not_emit_success_terminal_events() {
+    async fn test_stream_end_without_finish_reason_emits_success_terminal_events() {
         let input = "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n";
 
         let events = collect_anthropic_events(input).await;
 
-        assert!(!events
-            .iter()
-            .any(|event| event_type(event) == Some("message_delta")));
-        assert!(!events
-            .iter()
-            .any(|event| event_type(event) == Some("message_stop")));
+        assert!(events.iter().any(|event| {
+            event_type(event) == Some("message_delta")
+                && event.pointer("/delta/stop_reason").and_then(|v| v.as_str()) == Some("end_turn")
+        }));
+        assert_eq!(
+            events.last().and_then(|event| event_type(event)),
+            Some("message_stop")
+        );
     }
 
     #[tokio::test]

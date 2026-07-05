@@ -5,7 +5,7 @@
 //! responses for Claude-compatible clients.
 
 use super::gemini_schema::build_gemini_function_declaration;
-use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
+use super::gemini_shadow::{propagate_parallel_thought_signatures, GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -1014,7 +1014,7 @@ fn merge_tool_names_from_parts(parts: &[Value], tool_name_by_id: &mut HashMap<St
 }
 
 fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
-    parts
+    let mut calls: Vec<GeminiToolCallMeta> = parts
         .iter()
         .filter_map(|part| {
             let function_call = part.get("functionCall")?;
@@ -1043,7 +1043,9 @@ fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
                     .and_then(|value| value.as_str()),
             ))
         })
-        .collect()
+        .collect();
+    propagate_parallel_thought_signatures(&mut calls);
+    calls
 }
 
 fn map_tool_choice(tool_choice: Option<&Value>) -> Result<Option<Value>, ProxyError> {
