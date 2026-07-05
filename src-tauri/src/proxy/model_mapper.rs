@@ -170,10 +170,10 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
 /// Normal coding requests use max_tokens ≥ 1024 (typically 8192–64000).
 /// Returns `false` when `max_tokens` is absent or not an integer.
 pub fn is_classifier_request(body: &Value) -> bool {
-    match body.get("max_tokens").and_then(|v| v.as_i64()) {
-        Some(n) if n <= 256 => true,
-        _ => false,
-    }
+    matches!(
+        body.get("max_tokens").and_then(|v| v.as_i64()),
+        Some(n) if n <= 256
+    )
 }
 
 /// Apply classifier model override when a classifier request is detected.
