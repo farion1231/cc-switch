@@ -17,7 +17,6 @@ interface ImportExportSectionProps {
   errorMessage: string | null;
   backupId: string | null;
   isImporting: boolean;
-  onSelectFile: () => Promise<void>;
   onImport: () => Promise<void>;
   onExport: () => Promise<void>;
   onClear: () => void;
@@ -29,7 +28,6 @@ export function ImportExportSection({
   errorMessage,
   backupId,
   isImporting,
-  onSelectFile,
   onImport,
   onExport,
   onClear,
@@ -61,7 +59,7 @@ export function ImportExportSection({
             <Button
               type="button"
               className={`w-full h-auto py-3 px-4 bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700 text-white ${selectedFile && !isImporting ? "flex-col items-start" : "items-center"}`}
-              onClick={!selectedFile ? onSelectFile : onImport}
+              onClick={onImport}
               disabled={isImporting}
             >
               <div className="flex items-center gap-2 w-full justify-center">
@@ -73,11 +71,7 @@ export function ImportExportSection({
                   <FolderOpen className="h-4 w-4 flex-shrink-0" />
                 )}
                 <span className="font-medium">
-                  {isImporting
-                    ? t("settings.importing")
-                    : selectedFile
-                      ? t("settings.import")
-                      : t("settings.selectConfigFile")}
+                  {isImporting ? t("settings.importing") : t("settings.import")}
                 </span>
               </div>
               {selectedFile && !isImporting && (

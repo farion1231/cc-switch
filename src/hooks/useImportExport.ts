@@ -66,23 +66,38 @@ export function useImportExport(
   }, [t]);
 
   const importConfig = useCallback(async () => {
-    if (!selectedFile) {
-      toast.error(
-        t("settings.selectFileFailed", {
-          defaultValue: "请选择有效的 SQL 备份文件",
-        }),
-      );
-      return;
+    if (isImporting) return;
+
+    let fileToImport = selectedFile;
+    if (!fileToImport) {
+      try {
+        const filePath = await settingsApi.openFileDialog();
+        if (!filePath) {
+          return;
+        }
+        fileToImport = filePath;
+        setSelectedFile(filePath);
+      } catch (error) {
+        console.error("[useImportExport] Failed to open file dialog", error);
+        toast.error(
+          t("settings.selectFileFailed", {
+            defaultValue: "选择文件失败",
+          }),
+        );
+        return;
+      }
     }
 
-    if (isImporting) return;
+    if (!fileToImport) {
+      return;
+    }
 
     setIsImporting(true);
     setStatus("importing");
     setErrorMessage(null);
 
     try {
-      const result = await settingsApi.importConfigFromFile(selectedFile);
+      const result = await settingsApi.importConfigFromFile(fileToImport);
       if (!result.success) {
         setStatus("error");
         const message =
