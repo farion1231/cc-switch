@@ -322,8 +322,8 @@ command = "say"
             .get("OPENAI_API_KEY")
             .and_then(|v| v.as_str())
             .unwrap_or(""),
-        "legacy-key",
-        "Codex provider switching should preserve the existing live auth.json"
+        "fresh-key",
+        "Codex provider switching should write the selected provider auth.json"
     );
 
     let config_text = std::fs::read_to_string(get_codex_config_path()).expect("read config.toml");

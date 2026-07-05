@@ -1473,11 +1473,12 @@ pub fn strip_codex_unified_session_bucket_from_settings(
     Ok(())
 }
 
-/// Route a Codex live write between full auth+config or config-only.
+/// Route a Codex live write between official login preservation and third-party provider sync.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
-/// providers only touch `config.toml` when the compatibility setting is enabled
-/// so the user's ChatGPT login cache survives provider switches.
+/// providers must also write their provider auth into `auth.json`; otherwise a
+/// newly launched Codex window can keep using the previously selected provider's
+/// stale key even after `config.toml` has switched.
 ///
 /// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
 /// （见 `inject_codex_unified_session_bucket`）。
@@ -1496,15 +1497,16 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
-
-    if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+    if category == Some("official") {
+        if codex_auth_has_login_material(auth) {
+            write_codex_live_atomic(auth, config_text)
+        } else {
+            let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+            write_codex_live_config_atomic(Some(&live_config))
+        }
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+        write_codex_live_atomic(auth, Some(&live_config))
     }
 }
 
