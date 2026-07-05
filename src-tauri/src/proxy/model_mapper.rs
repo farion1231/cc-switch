@@ -214,9 +214,18 @@ pub fn apply_classifier_override(body: &mut Value, classifier_model: Option<&str
 
 /// Public wrapper that extracts classifier_model from a Provider and applies
 /// the override. For use by the forwarder pipeline.
+///
+/// Only reads `ANTHROPIC_CLASSIFIER_MODEL` from the provider env — avoids
+/// building a full `ModelMapping` since tier model extraction is already done
+/// by `apply_model_mapping` earlier in the pipeline.
 pub fn apply_classifier_override_from_provider(body: &mut Value, provider: &Provider) {
-    let mapping = ModelMapping::from_provider(provider);
-    apply_classifier_override(body, mapping.classifier_model.as_deref());
+    let classifier_model = provider
+        .settings_config
+        .get("env")
+        .and_then(|e| e.get("ANTHROPIC_CLASSIFIER_MODEL"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    apply_classifier_override(body, classifier_model);
 }
 
 #[cfg(test)]
@@ -631,5 +640,16 @@ mod tests {
         let mut body = json!({"model": "claude-sonnet-4-6", "max_tokens": 64});
         apply_classifier_override_from_provider(&mut body, &provider);
         assert_eq!(body["model"], "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn classifier_request_with_override_and_no_model_field_adds_model() {
+        // E7: body without a "model" field — override still applies since
+        // the Anthropic Messages API always includes "model", but we
+        // document the behavior for completeness.
+        let mut body = json!({"max_tokens": 64});
+        let result = apply_classifier_override(&mut body, Some("claude-haiku-4-5"));
+        assert!(result);
+        assert_eq!(body["model"], "claude-haiku-4-5");
     }
 }
