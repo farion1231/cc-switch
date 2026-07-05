@@ -665,17 +665,13 @@ fn convert_message_content_to_parts(
                     function_call["id"] = json!(id);
                 }
 
-                // Re-attach the thought_signature that Gemini originally
-                // associated with this functionCall.  The Anthropic format
-                // strips it from the tool_use block, but Gemini requires it
-                // on every functionCall in a multi-turn tool-use exchange.
-                // Without replaying the stored signature the upstream may
-                // reject with "missing a `thought_signature`".
+                let mut part = json!({ "functionCall": function_call });
                 if let Some(sig) = thought_signature_by_id.get(id) {
-                    function_call["thoughtSignature"] = json!(sig);
+                    part["thought_signature"] = json!(sig);
+                    part["thoughtSignature"] = json!(sig);
                 }
 
-                parts.push(json!({ "functionCall": function_call }));
+                parts.push(part);
             }
             "tool_result" => {
                 let tool_use_id = block
@@ -757,6 +753,12 @@ fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
     // synthetic value as `functionCall.id` upstream would leak an internal
     // identifier.
     for part in &mut parts {
+        if let Some(sig) = part.get("thoughtSignature").or_else(|| part.get("thought_signature")).cloned() {
+            if let Some(part_obj) = part.as_object_mut() {
+                part_obj.insert("thought_signature".to_string(), sig.clone());
+                part_obj.insert("thoughtSignature".to_string(), sig);
+            }
+        }
         let Some(function_call) = part.get_mut("functionCall").and_then(|v| v.as_object_mut())
         else {
             continue;

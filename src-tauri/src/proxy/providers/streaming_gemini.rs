@@ -204,6 +204,7 @@ fn build_shadow_assistant_parts(
         });
         if let Some(signature) = text_thought_signature {
             part["thoughtSignature"] = json!(signature);
+            part["thought_signature"] = json!(signature);
         }
         parts.push(part);
     }
@@ -219,6 +220,7 @@ fn build_shadow_assistant_parts(
 
         if let Some(signature) = &tool_call.thought_signature {
             part["thoughtSignature"] = json!(signature);
+            part["thought_signature"] = json!(signature);
         }
 
         parts.push(part);
