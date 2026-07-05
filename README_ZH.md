@@ -382,7 +382,19 @@ paru -S cc-switch-bin
 - `CC-Switch-v{版本号}-Linux.rpm`（Fedora/RHEL/openSUSE）
 - `CC-Switch-v{版本号}-Linux.AppImage`（通用）
 
-> **Flatpak**：官方 Release 不包含 Flatpak 包。如需使用，可从 `.deb` 自行构建 — 参见 [`flatpak/README.md`](flatpak/README.md)。
+**通过 Flatpak 安装**
+
+已上架 [FlatPark](https://flatpark.org/apps/com.ccswitch.desktop/)：
+
+```bash
+# 添加 FlatPark 源（仅需一次）
+flatpak remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
+
+# 安装 CC Switch
+flatpak install flatpark com.ccswitch.desktop
+```
+
+> 你也可以从 `.deb` 自行构建 Flatpak 包 — 参见 [`flatpak/README.md`](flatpak/README.md)。
 
 <details>
 <summary><strong>架构总览</strong></summary>

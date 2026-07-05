@@ -379,7 +379,19 @@ paru -S cc-switch-bin
 - `CC-Switch-v{version}-Linux.rpm`（Fedora/RHEL/openSUSE）
 - `CC-Switch-v{version}-Linux.AppImage`（汎用）
 
-> **Flatpak**：公式リリースには含まれていません。`.deb` から自分でビルドできます — 手順は [`flatpak/README.md`](flatpak/README.md) を参照してください。
+**Flatpak でインストール**
+
+[FlatPark](https://flatpark.org/apps/com.ccswitch.desktop/) で公開されています：
+
+```bash
+# FlatPark リモートを追加（初回のみ）
+flatpak remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
+
+# CC Switch をインストール
+flatpak install flatpark com.ccswitch.desktop
+```
+
+> `.deb` から自分でビルドすることもできます — 手順は [`flatpak/README.md`](flatpak/README.md) を参照してください。
 
 <details>
 <summary><strong>アーキテクチャ概要</strong></summary>

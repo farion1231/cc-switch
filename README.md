@@ -379,7 +379,19 @@ Download the latest Linux build from the [Releases](../../releases) page:
 - `CC-Switch-v{version}-Linux.rpm` (Fedora/RHEL/openSUSE)
 - `CC-Switch-v{version}-Linux.AppImage` (Universal)
 
-> **Flatpak**: Not included in official releases. You can build it yourself from the `.deb` — see [`flatpak/README.md`](flatpak/README.md) for instructions.
+**Install via Flatpak**
+
+Available on [FlatPark](https://flatpark.org/apps/com.ccswitch.desktop/):
+
+```bash
+# Add the FlatPark remote (one-time setup)
+flatpak remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo
+
+# Install CC Switch
+flatpak install flatpark com.ccswitch.desktop
+```
+
+> You can also build the Flatpak yourself from the `.deb` — see [`flatpak/README.md`](flatpak/README.md) for instructions.
 
 <details>
 <summary><strong>Architecture Overview</strong></summary>
