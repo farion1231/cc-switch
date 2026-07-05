@@ -16,6 +16,7 @@ import {
   ScrollText,
   HardDriveDownload,
   FlaskConical,
+  Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,6 +43,7 @@ import { SkillStorageLocationSettings } from "@/components/settings/SkillStorage
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
+import { WslIntegrationSection } from "@/components/settings/WslIntegrationSection";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
@@ -53,9 +55,11 @@ import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { useInstalledSkills } from "@/hooks/useSkills";
+import { isWindows } from "@/lib/platform";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
+import { useQueryClient } from "@tanstack/react-query";
 import type { SettingsFormState } from "@/hooks/useSettings";
 
 interface SettingsDialogProps {
@@ -72,6 +76,7 @@ export function SettingsPage({
   defaultTab = "general",
 }: SettingsDialogProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const {
     settings,
     isLoading,
@@ -361,6 +366,46 @@ export function SettingsPage({
                           />
                         </AccordionContent>
                       </AccordionItem>
+
+                      {/* WSL 集成 - 仅 Windows 显示 */}
+                      {isWindows() && (
+                        <AccordionItem
+                          value="wsl"
+                          className="rounded-xl glass-card overflow-hidden"
+                        >
+                          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                            <div className="flex items-center gap-3">
+                              <Terminal className="h-5 w-5 text-orange-500" />
+                              <div className="text-left">
+                                <h3 className="text-base font-semibold">
+                                  {t("settings.advanced.wsl.title")}
+                                </h3>
+                                <p className="text-sm text-muted-foreground font-normal">
+                                  {t("settings.advanced.wsl.description")}
+                                </p>
+                              </div>
+                            </div>
+                          </AccordionTrigger>
+                          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                            <WslIntegrationSection
+                              directoryOverrides={{
+                                claude: settings.claudeConfigDir,
+                                codex: settings.codexConfigDir,
+                                gemini: settings.geminiConfigDir,
+                                opencode: settings.opencodeConfigDir,
+                                openclaw: settings.openclawConfigDir,
+                                hermes: settings.hermesConfigDir,
+                              }}
+                              onOverridesChanged={() => {
+                                // 刷新设置数据
+                                queryClient.invalidateQueries({
+                                  queryKey: ["settings"],
+                                });
+                              }}
+                            />
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
 
                       <AccordionItem
                         value="data"

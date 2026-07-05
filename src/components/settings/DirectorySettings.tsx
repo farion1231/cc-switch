@@ -1,9 +1,10 @@
 import { useMemo } from "react";
-import { FolderSearch, Undo2 } from "lucide-react";
+import { FolderSearch, Info, Undo2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 import type { AppId } from "@/lib/api";
+import { isWindows } from "@/lib/platform";
 import type { ResolvedDirectories } from "@/hooks/useSettings";
 
 type DirectoryAppId = Exclude<AppId, "claude-desktop">;
@@ -92,6 +93,16 @@ export function DirectorySettings({
             {t("settings.configDirectoryDescription")}
           </p>
         </header>
+
+        {/* WSL 提示条 - 仅 Windows 显示 */}
+        {isWindows() && (
+          <div className="flex items-start gap-2 rounded-lg bg-orange-500/5 border border-orange-500/10 px-3 py-2">
+            <Info className="h-4 w-4 text-orange-500 mt-0.5 shrink-0" />
+            <p className="text-xs text-orange-600 dark:text-orange-400">
+              {t("settings.wslDirectoryHint")}
+            </p>
+          </div>
+        )}
 
         <DirectoryInput
           label={t("settings.claudeConfigDir")}

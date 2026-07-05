@@ -1496,6 +1496,11 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // WSL integration
+            commands::detect_wsl_distros,
+            commands::detect_wsl_tools,
+            commands::apply_wsl_directory_overrides,
+            commands::reset_wsl_directory_overrides,
         ]);
 
     let app = builder

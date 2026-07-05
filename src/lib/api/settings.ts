@@ -368,3 +368,43 @@ export const backupsApi = {
     await invoke("delete_db_backup", { filename });
   },
 };
+
+// ===== WSL 集成 API =====
+
+export interface WslToolStatus {
+  /** 工具名称: claude, codex, gemini, opencode, openclaw, hermes */
+  name: string;
+  /** 工具是否在 WSL 中安装 */
+  installed: boolean;
+  /** 工具的配置目录是否存在于 WSL 中 */
+  config_exists: boolean;
+  /** WSL 中的配置目录路径（UNC 格式） */
+  config_path: string | null;
+  /** 当前是否已配置目录覆盖指向 WSL */
+  is_currently_overridden: boolean;
+}
+
+export const wslApi = {
+  /** 检测已安装的 WSL 发行版列表 */
+  async detectDistros(): Promise<string[]> {
+    return await invoke("detect_wsl_distros");
+  },
+
+  /** 检测指定 WSL 发行版中已安装的工具 */
+  async detectTools(distro: string): Promise<WslToolStatus[]> {
+    return await invoke("detect_wsl_tools", { distro });
+  },
+
+  /** 为指定的 WSL 工具一键配置目录覆盖 */
+  async applyDirectoryOverrides(
+    distro: string,
+    tools: string[],
+  ): Promise<string[]> {
+    return await invoke("apply_wsl_directory_overrides", { distro, tools });
+  },
+
+  /** 重置指定工具的目录覆盖为默认值 */
+  async resetDirectoryOverrides(tools: string[]): Promise<string[]> {
+    return await invoke("reset_wsl_directory_overrides", { tools });
+  },
+};
