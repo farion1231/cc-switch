@@ -41,7 +41,9 @@ const DEFAULT_CONFIG: ZCodeProviderConfig = {
   models: {},
 };
 
-function parseZcodeConfig(config?: Record<string, unknown>): ZCodeProviderConfig {
+function parseZcodeConfig(
+  config?: Record<string, unknown>,
+): ZCodeProviderConfig {
   if (!config || typeof config !== "object") return DEFAULT_CONFIG;
   const maybe = config as Partial<ZCodeProviderConfig>;
   return {
@@ -50,9 +52,12 @@ function parseZcodeConfig(config?: Record<string, unknown>): ZCodeProviderConfig
     kind: typeof maybe.kind === "string" ? maybe.kind : DEFAULT_CONFIG.kind,
     options: {
       ...DEFAULT_CONFIG.options,
-      ...(maybe.options && typeof maybe.options === "object" ? maybe.options : {}),
+      ...(maybe.options && typeof maybe.options === "object"
+        ? maybe.options
+        : {}),
     },
-    models: maybe.models && typeof maybe.models === "object" ? maybe.models : {},
+    models:
+      maybe.models && typeof maybe.models === "object" ? maybe.models : {},
   };
 }
 
@@ -60,7 +65,9 @@ function stringifyConfig(config: ZCodeProviderConfig): string {
   return JSON.stringify(config, null, 2);
 }
 
-function extraOptionsFromConfig(config: ZCodeProviderConfig): Record<string, string> {
+function extraOptionsFromConfig(
+  config: ZCodeProviderConfig,
+): Record<string, string> {
   const known = new Set(["apiKey", "baseURL", "apiKeyRequired"]);
   const options: Record<string, string> = {};
   for (const [key, value] of Object.entries(config.options || {})) {
@@ -107,14 +114,27 @@ export function useZcodeFormState({
   providerId,
   onSettingsConfigChange,
 }: UseZcodeFormStateParams): ZcodeFormState {
-  const initialConfig = appId === "zcode" ? parseZcodeConfig(initialData?.settingsConfig) : DEFAULT_CONFIG;
+  const initialConfig =
+    appId === "zcode"
+      ? parseZcodeConfig(initialData?.settingsConfig)
+      : DEFAULT_CONFIG;
 
-  const [zcodeProviderKey, setZcodeProviderKey] = useState<string>(() => providerId || "");
+  const [zcodeProviderKey, setZcodeProviderKey] = useState<string>(
+    () => providerId || "",
+  );
   const [zcodeKind, setZcodeKind] = useState<string>(() => initialConfig.kind);
-  const [zcodeApiKey, setZcodeApiKey] = useState<string>(() => String(initialConfig.options?.apiKey || ""));
-  const [zcodeBaseUrl, setZcodeBaseUrl] = useState<string>(() => String(initialConfig.options?.baseURL || ""));
-  const [zcodeModels, setZcodeModels] = useState<Record<string, ZCodeModel>>(() => initialConfig.models || {});
-  const [zcodeExtraOptions, setZcodeExtraOptions] = useState<Record<string, string>>(() => extraOptionsFromConfig(initialConfig));
+  const [zcodeApiKey, setZcodeApiKey] = useState<string>(() =>
+    String(initialConfig.options?.apiKey || ""),
+  );
+  const [zcodeBaseUrl, setZcodeBaseUrl] = useState<string>(() =>
+    String(initialConfig.options?.baseURL || ""),
+  );
+  const [zcodeModels, setZcodeModels] = useState<Record<string, ZCodeModel>>(
+    () => initialConfig.models || {},
+  );
+  const [zcodeExtraOptions, setZcodeExtraOptions] = useState<
+    Record<string, string>
+  >(() => extraOptionsFromConfig(initialConfig));
 
   const emit = useCallback(
     (
@@ -125,46 +145,81 @@ export function useZcodeFormState({
       extraOptions = zcodeExtraOptions,
     ) => {
       onSettingsConfigChange(
-        stringifyConfig(buildConfig(initialData?.name, kind, apiKey, baseUrl, models, extraOptions)),
+        stringifyConfig(
+          buildConfig(
+            initialData?.name,
+            kind,
+            apiKey,
+            baseUrl,
+            models,
+            extraOptions,
+          ),
+        ),
       );
     },
-    [initialData?.name, onSettingsConfigChange, zcodeApiKey, zcodeBaseUrl, zcodeExtraOptions, zcodeKind, zcodeModels],
+    [
+      initialData?.name,
+      onSettingsConfigChange,
+      zcodeApiKey,
+      zcodeBaseUrl,
+      zcodeExtraOptions,
+      zcodeKind,
+      zcodeModels,
+    ],
   );
 
-  const handleZcodeKindChange = useCallback((kind: string) => {
-    setZcodeKind(kind);
-    emit(kind);
-  }, [emit]);
+  const handleZcodeKindChange = useCallback(
+    (kind: string) => {
+      setZcodeKind(kind);
+      emit(kind);
+    },
+    [emit],
+  );
 
-  const handleZcodeApiKeyChange = useCallback((apiKey: string) => {
-    setZcodeApiKey(apiKey);
-    emit(undefined, apiKey);
-  }, [emit]);
+  const handleZcodeApiKeyChange = useCallback(
+    (apiKey: string) => {
+      setZcodeApiKey(apiKey);
+      emit(undefined, apiKey);
+    },
+    [emit],
+  );
 
-  const handleZcodeBaseUrlChange = useCallback((baseUrl: string) => {
-    setZcodeBaseUrl(baseUrl);
-    emit(undefined, undefined, baseUrl);
-  }, [emit]);
+  const handleZcodeBaseUrlChange = useCallback(
+    (baseUrl: string) => {
+      setZcodeBaseUrl(baseUrl);
+      emit(undefined, undefined, baseUrl);
+    },
+    [emit],
+  );
 
-  const handleZcodeModelsChange = useCallback((models: Record<string, ZCodeModel>) => {
-    setZcodeModels(models);
-    emit(undefined, undefined, undefined, models);
-  }, [emit]);
+  const handleZcodeModelsChange = useCallback(
+    (models: Record<string, ZCodeModel>) => {
+      setZcodeModels(models);
+      emit(undefined, undefined, undefined, models);
+    },
+    [emit],
+  );
 
-  const handleZcodeExtraOptionsChange = useCallback((options: Record<string, string>) => {
-    setZcodeExtraOptions(options);
-    emit(undefined, undefined, undefined, undefined, options);
-  }, [emit]);
+  const handleZcodeExtraOptionsChange = useCallback(
+    (options: Record<string, string>) => {
+      setZcodeExtraOptions(options);
+      emit(undefined, undefined, undefined, undefined, options);
+    },
+    [emit],
+  );
 
-  const resetZcodeState = useCallback((config?: ZCodeProviderConfig) => {
-    const next = config || DEFAULT_CONFIG;
-    setZcodeKind(next.kind);
-    setZcodeApiKey(String(next.options?.apiKey || ""));
-    setZcodeBaseUrl(String(next.options?.baseURL || ""));
-    setZcodeModels(next.models || {});
-    setZcodeExtraOptions(extraOptionsFromConfig(next));
-    onSettingsConfigChange(stringifyConfig(next));
-  }, [onSettingsConfigChange]);
+  const resetZcodeState = useCallback(
+    (config?: ZCodeProviderConfig) => {
+      const next = config || DEFAULT_CONFIG;
+      setZcodeKind(next.kind);
+      setZcodeApiKey(String(next.options?.apiKey || ""));
+      setZcodeBaseUrl(String(next.options?.baseURL || ""));
+      setZcodeModels(next.models || {});
+      setZcodeExtraOptions(extraOptionsFromConfig(next));
+      onSettingsConfigChange(stringifyConfig(next));
+    },
+    [onSettingsConfigChange],
+  );
 
   return {
     zcodeProviderKey,

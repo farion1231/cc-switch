@@ -69,7 +69,8 @@ export function ZCodeFormFields({
       if (!trimmed || trimmed === oldId || models[trimmed]) return;
       const next: Record<string, ZCodeModel> = {};
       for (const [id, model] of Object.entries(models)) {
-        next[id === oldId ? trimmed : id] = id === oldId ? { ...model, name: trimmed } : model;
+        next[id === oldId ? trimmed : id] =
+          id === oldId ? { ...model, name: trimmed } : model;
       }
       onModelsChange(next);
     },
@@ -79,7 +80,9 @@ export function ZCodeFormFields({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <FormLabel>{t("zcode.kind", { defaultValue: "Provider Kind" })}</FormLabel>
+        <FormLabel>
+          {t("zcode.kind", { defaultValue: "Provider Kind" })}
+        </FormLabel>
         <Select value={kind} onValueChange={onKindChange}>
           <SelectTrigger>
             <SelectValue />
@@ -115,8 +118,15 @@ export function ZCodeFormFields({
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <FormLabel>{t("opencode.models", { defaultValue: "Models" })}</FormLabel>
-          <Button type="button" variant="outline" size="sm" onClick={() => onModelsChange(addModel(models))}>
+          <FormLabel>
+            {t("opencode.models", { defaultValue: "Models" })}
+          </FormLabel>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onModelsChange(addModel(models))}
+          >
             <Plus className="mr-2 h-4 w-4" />
             {t("common.add", { defaultValue: "Add" })}
           </Button>
@@ -137,7 +147,9 @@ export function ZCodeFormFields({
                     [modelId]: { ...model, name: event.target.value },
                   })
                 }
-                placeholder={t("providerForm.modelDisplayName", { defaultValue: "Display name" })}
+                placeholder={t("providerForm.modelDisplayName", {
+                  defaultValue: "Display name",
+                })}
               />
               <Button
                 type="button"
@@ -158,7 +170,9 @@ export function ZCodeFormFields({
 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <FormLabel>{t("opencode.extraOptions", { defaultValue: "Extra Options" })}</FormLabel>
+          <FormLabel>
+            {t("opencode.extraOptions", { defaultValue: "Extra Options" })}
+          </FormLabel>
           <div className="flex gap-2">
             <Input
               value={newOptionKey}
@@ -187,7 +201,12 @@ export function ZCodeFormFields({
             <Input value={key} readOnly className="w-40" />
             <Input
               value={value}
-              onChange={(event) => onExtraOptionsChange({ ...extraOptions, [key]: event.target.value })}
+              onChange={(event) =>
+                onExtraOptionsChange({
+                  ...extraOptions,
+                  [key]: event.target.value,
+                })
+              }
             />
             <Button
               type="button"

@@ -417,7 +417,11 @@ function ProviderFormFull({
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
                   : appId === "zcode"
-                    ? JSON.stringify(zcodeProviderPresets[0].settingsConfig, null, 2)
+                    ? JSON.stringify(
+                        zcodeProviderPresets[0].settingsConfig,
+                        null,
+                        2,
+                      )
                     : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
@@ -1167,11 +1171,19 @@ function ProviderFormFull({
 
     if (appId === "zcode") {
       if (!zcodeForm.zcodeProviderKey.trim()) {
-        toast.error(t("zcode.providerKeyRequired", { defaultValue: "Provider key is required" }));
+        toast.error(
+          t("zcode.providerKeyRequired", {
+            defaultValue: "Provider key is required",
+          }),
+        );
         return;
       }
       if (!keyPattern.test(zcodeForm.zcodeProviderKey)) {
-        toast.error(t("zcode.providerKeyInvalid", { defaultValue: "Provider key is invalid" }));
+        toast.error(
+          t("zcode.providerKeyInvalid", {
+            defaultValue: "Provider key is invalid",
+          }),
+        );
         return;
       }
       if (isProviderKeyLockStateLoading) {
@@ -1186,7 +1198,11 @@ function ProviderFormFull({
         !isProviderKeyLocked &&
         additiveExistingProviderKeys.includes(zcodeForm.zcodeProviderKey)
       ) {
-        toast.error(t("zcode.providerKeyDuplicate", { defaultValue: "Provider key already exists" }));
+        toast.error(
+          t("zcode.providerKeyDuplicate", {
+            defaultValue: "Provider key already exists",
+          }),
+        );
         return;
       }
       if (Object.keys(zcodeForm.zcodeModels).length === 0) {
@@ -2138,20 +2154,30 @@ function ProviderFormFull({
                       )
                     }
                     placeholder="my-provider"
-                    disabled={isProviderKeyLocked || isProviderKeyLockStateLoading}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
                     className={
-                      (additiveExistingProviderKeys.includes(zcodeForm.zcodeProviderKey) &&
+                      (additiveExistingProviderKeys.includes(
+                        zcodeForm.zcodeProviderKey,
+                      ) &&
                         !isProviderKeyLocked) ||
                       (zcodeForm.zcodeProviderKey.trim() !== "" &&
-                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(zcodeForm.zcodeProviderKey))
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          zcodeForm.zcodeProviderKey,
+                        ))
                         ? "border-destructive"
                         : ""
                     }
                   />
-                  {additiveExistingProviderKeys.includes(zcodeForm.zcodeProviderKey) &&
+                  {additiveExistingProviderKeys.includes(
+                    zcodeForm.zcodeProviderKey,
+                  ) &&
                     !isProviderKeyLocked && (
                       <p className="text-xs text-destructive">
-                        {t("zcode.providerKeyDuplicate", { defaultValue: "Provider key already exists" })}
+                        {t("zcode.providerKeyDuplicate", {
+                          defaultValue: "Provider key already exists",
+                        })}
                       </p>
                     )}
                   <p className="text-xs text-muted-foreground">

@@ -349,7 +349,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ZCode | AppType::ClaudeDesktop => false,
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ZCode
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -419,9 +423,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ZCode | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ZCode
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -476,9 +482,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ZCode | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ZCode
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 

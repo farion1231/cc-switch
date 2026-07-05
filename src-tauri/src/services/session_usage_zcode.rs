@@ -77,11 +77,9 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         });
     }
 
-    let zcode_conn = rusqlite::Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .map_err(|e| AppError::Database(format!("无法打开 ZCode 使用数据库: {e}")))?;
+    let zcode_conn =
+        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| AppError::Database(format!("无法打开 ZCode 使用数据库: {e}")))?;
 
     let rows = query_model_usage_rows(&zcode_conn)?;
     let mut result = SessionSyncResult {
@@ -237,8 +235,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
         match find_model_pricing(&conn, &row.model_id) {
             Some(pricing) => {
-                let cost =
-                    CostCalculator::calculate_for_app("zcode", &usage, &pricing, multiplier);
+                let cost = CostCalculator::calculate_for_app("zcode", &usage, &pricing, multiplier);
                 (
                     cost.input_cost.to_string(),
                     cost.output_cost.to_string(),

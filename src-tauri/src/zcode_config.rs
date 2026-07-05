@@ -96,10 +96,7 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
     let mut config = read_zcode_config()?;
 
-    if let Some(providers) = config
-        .get_mut("provider")
-        .and_then(|v| v.as_object_mut())
-    {
+    if let Some(providers) = config.get_mut("provider").and_then(|v| v.as_object_mut()) {
         providers.remove(id);
     }
 

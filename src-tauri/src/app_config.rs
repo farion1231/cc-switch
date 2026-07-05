@@ -100,7 +100,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
-            AppType::ZCode => false, // ZCode uses a separate plugin-marketplace system (v1)
+            AppType::ZCode => false,    // ZCode uses a separate plugin-marketplace system (v1)
             AppType::ClaudeDesktop => false,
         }
     }
@@ -114,7 +114,7 @@ impl SkillApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
-            AppType::ZCode => {} // ZCode doesn't support Skills sync (v1), ignore
+            AppType::ZCode => {}    // ZCode doesn't support Skills sync (v1), ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
     }
@@ -870,8 +870,8 @@ impl MultiAppConfig {
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
-                AppType::Hermes => continue, // Hermes didn't exist in v3.6.x, skip
-                AppType::ZCode => continue,  // ZCode didn't exist in v3.6.x, skip
+                AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::ZCode => continue,    // ZCode didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

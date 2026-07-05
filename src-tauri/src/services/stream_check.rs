@@ -203,7 +203,9 @@ impl StreamCheckService {
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::ZCode => Self::extract_opencode_base_url(provider).ok_or_else(|| {
-                AppError::Message("Failed to extract base_url from ZCode provider options".to_string())
+                AppError::Message(
+                    "Failed to extract base_url from ZCode provider options".to_string(),
+                )
             }),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
