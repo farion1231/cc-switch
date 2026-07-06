@@ -2187,6 +2187,16 @@ impl ProxyService {
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let existing_config = existing_config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let target_config =
+            crate::codex_config::preserve_codex_desktop_owned_config_sections(
+                target_config,
+                existing_config,
+            )
+            .map_err(|e| format!("保留 Codex Desktop 配置失败: {e}"))?;
         let mut target_doc = if target_config.trim().is_empty() {
             toml_edit::DocumentMut::new()
         } else {
@@ -2195,10 +2205,6 @@ impl ProxyService {
                 .map_err(|e| format!("解析新的 Codex config.toml 失败: {e}"))?
         };
 
-        let existing_config = existing_config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
         if existing_config.trim().is_empty() {
             target_obj.insert("config".to_string(), json!(target_doc.to_string()));
             return Ok(());

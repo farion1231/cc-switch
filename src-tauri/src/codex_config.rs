@@ -133,6 +133,15 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "oss",
     "ollama-chat",
 ];
+const CODEX_DESKTOP_OWNED_CONFIG_TABLES: &[&str] = &[
+    "desktop",
+    "marketplaces",
+    "notice",
+    "plugins",
+    "projects",
+    "tui",
+    "windows",
+];
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
@@ -297,6 +306,85 @@ pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(
     }
 
     write_text_file(&config_path, &cfg_text)
+}
+
+pub fn preserve_codex_desktop_owned_config_sections(
+    target_config: &str,
+    existing_config: &str,
+) -> Result<String, AppError> {
+    let mut target_doc = if target_config.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        target_config
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?
+    };
+
+    for key in CODEX_DESKTOP_OWNED_CONFIG_TABLES.iter().copied() {
+        target_doc.as_table_mut().remove(key);
+    }
+
+    if existing_config.trim().is_empty() {
+        return Ok(target_doc.to_string());
+    }
+
+    let existing_doc = match existing_config.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(e) => {
+            log::warn!(
+                "Skipping Codex Desktop-owned config preservation because existing config.toml is invalid: {e}"
+            );
+            return Ok(target_doc.to_string());
+        }
+    };
+
+    for key in CODEX_DESKTOP_OWNED_CONFIG_TABLES.iter().copied() {
+        if let Some(item) = existing_doc.get(key) {
+            target_doc[key] = item.clone();
+        }
+    }
+
+    Ok(target_doc.to_string())
+}
+
+fn preserve_codex_desktop_owned_config_sections_from_live(
+    target_config: &str,
+) -> Result<String, AppError> {
+    let existing_config = read_codex_config_text()?;
+    preserve_codex_desktop_owned_config_sections(target_config, &existing_config)
+}
+
+pub fn strip_codex_desktop_owned_config_sections_from_settings(
+    settings: &mut Value,
+) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+
+    if config_text.trim().is_empty() {
+        return Ok(());
+    }
+
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let mut changed = false;
+
+    for key in CODEX_DESKTOP_OWNED_CONFIG_TABLES.iter().copied() {
+        changed = doc.as_table_mut().remove(key).is_some() || changed;
+    }
+
+    if changed {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(doc.to_string()));
+        }
+    }
+
+    Ok(())
 }
 
 pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
@@ -1494,16 +1582,24 @@ pub fn write_codex_live_for_provider(
         } else {
             None
         };
-    let config_text = unified_official_config.as_deref().or(config_text);
+    let provider_config_text = unified_official_config.as_deref().or(config_text).unwrap_or("");
 
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")
             && !crate::settings::preserve_codex_official_auth_on_switch());
+    if !should_write_auth
+        && provider_config_text.trim().is_empty()
+        && extract_codex_auth_api_key(auth).is_some()
+    {
+        prepare_codex_provider_live_config(auth, provider_config_text)?;
+    }
+    let config_text =
+        preserve_codex_desktop_owned_config_sections_from_live(provider_config_text)?;
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic(auth, Some(&config_text))
     } else {
-        let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
+        let live_config = prepare_codex_provider_live_config(auth, &config_text)?;
         write_codex_live_config_atomic(Some(&live_config))
     }
 }
@@ -1577,6 +1673,7 @@ pub fn restore_codex_settings_for_backfill(
     if restore_provider_token {
         restore_codex_provider_token_for_backfill(settings, template_settings)?;
     }
+    strip_codex_desktop_owned_config_sections_from_settings(settings)?;
     Ok(())
 }
 
@@ -1801,6 +1898,180 @@ requires_openai_auth = true
             Some("")
         );
         assert!(settings.pointer("/auth/tokens/access_token").is_some());
+    }
+
+    #[test]
+    fn preserves_codex_desktop_owned_sections_without_old_provider_routing() {
+        let existing = r#"model_provider = "rightcode"
+model = "gpt-5.4"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://rightcode.example/v1"
+wire_api = "responses"
+
+[plugins."superpowers@openai-api-curated"]
+enabled = true
+
+[marketplaces.openai-bundled]
+source_type = "local"
+source = "/tmp/openai-bundled"
+
+[desktop]
+localeOverride = "zh-CN"
+
+[projects."/tmp/workspace"]
+trust_level = "trusted"
+
+[windows]
+sandbox = "elevated"
+
+[notice]
+hide_full_access_warning = true
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+"#;
+        let target = r#"model_provider = "aihubmix"
+model = "gpt-5.4"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+wire_api = "responses"
+
+[plugins."stale@marketplace"]
+enabled = false
+
+[desktop]
+localeOverride = "en-US"
+"#;
+
+        let merged =
+            preserve_codex_desktop_owned_config_sections(target, existing).expect("merge config");
+        let parsed: toml::Value = toml::from_str(&merged).expect("parse merged config");
+
+        assert_eq!(
+            parsed.get("model_provider").and_then(|v| v.as_str()),
+            Some("aihubmix"),
+            "selected provider routing must come from the target config"
+        );
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("rightcode"))
+                .is_none(),
+            "old provider routing must not be preserved"
+        );
+        assert_eq!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("superpowers@openai-api-curated"))
+                .and_then(|v| v.get("enabled"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(
+            parsed
+                .get("plugins")
+                .and_then(|v| v.get("stale@marketplace"))
+                .is_none(),
+            "target plugin table should be replaced by the live Codex Desktop state"
+        );
+        assert_eq!(
+            parsed
+                .get("marketplaces")
+                .and_then(|v| v.get("openai-bundled"))
+                .and_then(|v| v.get("source_type"))
+                .and_then(|v| v.as_str()),
+            Some("local")
+        );
+        assert_eq!(
+            parsed
+                .get("desktop")
+                .and_then(|v| v.get("localeOverride"))
+                .and_then(|v| v.as_str()),
+            Some("zh-CN")
+        );
+        assert_eq!(
+            parsed
+                .get("projects")
+                .and_then(|v| v.get("/tmp/workspace"))
+                .and_then(|v| v.get("trust_level"))
+                .and_then(|v| v.as_str()),
+            Some("trusted")
+        );
+        assert_eq!(
+            parsed
+                .get("windows")
+                .and_then(|v| v.get("sandbox"))
+                .and_then(|v| v.as_str()),
+            Some("elevated")
+        );
+        assert_eq!(
+            parsed
+                .get("notice")
+                .and_then(|v| v.get("hide_full_access_warning"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            parsed
+                .get("tui")
+                .and_then(|v| v.get("model_availability_nux"))
+                .and_then(|v| v.get("gpt-5.5"))
+                .and_then(|v| v.as_integer()),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn backfill_strips_codex_desktop_owned_sections_from_provider_storage() {
+        let mut live_settings = json!({
+            "auth": {},
+            "config": r#"model_provider = "aihubmix"
+
+[model_providers.aihubmix]
+name = "AiHubMix"
+base_url = "https://aihubmix.example/v1"
+
+[plugins."superpowers@openai-api-curated"]
+enabled = true
+
+[marketplaces.openai-bundled]
+source_type = "local"
+
+[desktop]
+localeOverride = "zh-CN"
+
+[projects."/tmp/workspace"]
+trust_level = "trusted"
+"#,
+        });
+        let template_settings = json!({
+            "auth": {},
+            "config": "model_provider = \"aihubmix\"\n",
+        });
+
+        restore_codex_settings_for_backfill(&mut live_settings, &template_settings, false)
+            .expect("restore for backfill");
+        let config = live_settings.get("config").and_then(Value::as_str).unwrap();
+        let parsed: toml::Value = toml::from_str(config).expect("parse backfilled config");
+
+        assert!(
+            parsed.get("plugins").is_none(),
+            "provider storage should not capture live Codex plugin state"
+        );
+        assert!(parsed.get("marketplaces").is_none());
+        assert!(parsed.get("desktop").is_none());
+        assert!(parsed.get("projects").is_none());
+        assert!(
+            parsed
+                .get("model_providers")
+                .and_then(|v| v.get("aihubmix"))
+                .is_some(),
+            "provider-owned routing should remain in provider storage"
+        );
     }
 
     #[test]
