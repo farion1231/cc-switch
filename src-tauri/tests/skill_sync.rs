@@ -430,7 +430,10 @@ fn switch_skill_mode_updates_apps_and_syncs_live_directories() {
         "applying the mode should remove disabled app sync"
     );
     assert!(
-        home.join(".codex").join("skills").join("mode-skill").exists(),
+        home.join(".codex")
+            .join("skills")
+            .join("mode-skill")
+            .exists(),
         "applying the mode should sync enabled Codex app"
     );
 }

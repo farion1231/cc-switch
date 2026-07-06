@@ -671,10 +671,7 @@ impl SkillService {
             .unwrap_or_else(|| DEFAULT_SKILL_MODE_ID.to_string()))
     }
 
-    fn update_active_mode_matrix(
-        db: &Arc<Database>,
-        updates: &[SkillAppUpdate],
-    ) -> Result<()> {
+    fn update_active_mode_matrix(db: &Arc<Database>, updates: &[SkillAppUpdate]) -> Result<()> {
         let active_id = Self::get_active_mode_or_default(db)?;
         let mut mode = if active_id == DEFAULT_SKILL_MODE_ID {
             Self::ensure_default_mode(db)?
@@ -696,11 +693,7 @@ impl SkillService {
         Ok(())
     }
 
-    fn upsert_skill_in_active_mode(
-        db: &Arc<Database>,
-        id: &str,
-        apps: &SkillApps,
-    ) -> Result<()> {
+    fn upsert_skill_in_active_mode(db: &Arc<Database>, id: &str, apps: &SkillApps) -> Result<()> {
         Self::update_active_mode_matrix(
             db,
             &[SkillAppUpdate {
@@ -800,13 +793,15 @@ impl SkillService {
     pub fn get_modes(db: &Arc<Database>) -> Result<Vec<SkillMode>> {
         Self::ensure_default_mode(db)?;
         let mut modes = db.get_skill_modes()?;
-        modes.sort_by(|a, b| match (
-            a.id.as_str() == DEFAULT_SKILL_MODE_ID,
-            b.id.as_str() == DEFAULT_SKILL_MODE_ID,
-        ) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
+        modes.sort_by(|a, b| {
+            match (
+                a.id.as_str() == DEFAULT_SKILL_MODE_ID,
+                b.id.as_str() == DEFAULT_SKILL_MODE_ID,
+            ) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
         });
         Ok(modes)
     }

@@ -168,10 +168,7 @@ impl Database {
     }
 
     /// 批量更新 Skill 的应用启用状态。
-    pub fn bulk_update_skill_apps(
-        &self,
-        updates: &[SkillAppUpdate],
-    ) -> Result<usize, AppError> {
+    pub fn bulk_update_skill_apps(&self, updates: &[SkillAppUpdate]) -> Result<usize, AppError> {
         let conn = lock_conn!(self.conn);
         let mut affected = 0usize;
         for update in updates {
