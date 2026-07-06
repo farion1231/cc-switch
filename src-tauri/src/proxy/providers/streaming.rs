@@ -154,6 +154,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut current_model = None;
         let mut next_content_index: u32 = 0;
         let mut has_sent_message_start = false;
+        // 修复 GLM 5.2 thinking 碎块：一旦输出过 text content，就不再切回 thinking 块
+        let mut has_emitted_text_content = false;
         // 某些上游 provider（如 OpenRouter 的 kimi-k2.6）会在 tool_use 后发送多个
         // 带 finish_reason 的 SSE chunk。Anthropic 协议要求每个消息流只能有一个
         // message_delta，重复会导致 Claude Code abort 连接。因此需要：
@@ -164,6 +166,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut has_sent_message_stop = false;
         let mut stream_ended_with_error = false;
         let mut latest_usage: Option<Value> = None;
+        // 修复：检测上游是否已经是 Anthropic 格式（如 bzboy 中转把 OpenAI 转成了 Anthropic）。
+        // 若是，则直接透传原始 SSE 行，不做 OpenAIStreamChunk 反序列化——否则反序列化失败
+        // 会丢弃所有 content_block_start/stop，导致 Claude Code 收到悬空的 thinking 块永不关闭。
+        let mut passthrough_anthropic = false;
+        let mut passthrough_emitted_message_start = false;
         let mut current_non_tool_block_type: Option<&'static str> = None;
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
@@ -201,6 +208,35 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                     log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop");
                                     yield Ok(Bytes::from(sse_data));
                                     has_sent_message_stop = true;
+                                    continue;
+                                }
+
+                                // 修复：检测上游是否已经是 Anthropic 格式。
+                                // Anthropic 格式特征：data 里有 "type":"message_start" 或
+                                // "type":"content_block_start" 等 Anthropic 专有事件，
+                                // 且没有 OpenAI 的 "choices" 字段。
+                                // 一旦判定为 Anthropic 格式，整条流直接透传原始 SSE 行，
+                                // 跳过 OpenAIStreamChunk 反序列化。
+                                if !passthrough_anthropic {
+                                    if data.contains("\"type\":\"message_start\"")
+                                        || data.contains("\"type\":\"content_block_start\"")
+                                        || data.contains("\"type\":\"content_block_delta\"")
+                                        || data.contains("\"type\":\"content_block_stop\"")
+                                        || data.contains("\"type\":\"message_delta\"")
+                                    {
+                                        passthrough_anthropic = true;
+                                        log::debug!("[Claude/OpenRouter] 检测到上游为Anthropic格式，切换为透传模式");
+                                    }
+                                }
+
+                                if passthrough_anthropic {
+                                    // 透传：原样下发原始 SSE 行，保证 content_block_start/stop 配对完整
+                                    let sse_data = format!("data: {}\n\n", data);
+                                    if !passthrough_emitted_message_start {
+                                        log::debug!("[Claude/OpenRouter] >>> Anthropic SSE(passthrough): {}", data.split(',').next().unwrap_or(""));
+                                        passthrough_emitted_message_start = true;
+                                    }
+                                    yield Ok(Bytes::from(sse_data));
                                     continue;
                                 }
 
@@ -265,52 +301,59 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         }
 
                                         // 处理 reasoning（thinking）
+                                        // 修复：一旦输出过 content（text），就不再切回 thinking 块。
+                                        // Anthropic 原生协议中 thinking 在前、text 在后，不会交错。
+                                        // GLM 5.2 上游会把 reasoning 和 content 频繁交替输出，
+                                        // 若每次交替都切换块类型，会导致大量碎 thought 块 + 文字断字。
                                         if let Some(reasoning) = &choice.delta.reasoning {
-                                            if current_non_tool_block_type != Some("thinking") {
-                                                if let Some(index) = current_non_tool_block_index.take() {
+                                            if !reasoning.is_empty() && !has_emitted_text_content {
+                                                if current_non_tool_block_type != Some("thinking") {
+                                                    if let Some(index) = current_non_tool_block_index.take() {
+                                                        let event = json!({
+                                                            "type": "content_block_stop",
+                                                            "index": index
+                                                        });
+                                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                            serde_json::to_string(&event).unwrap_or_default());
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                    let index = next_content_index;
+                                                    next_content_index += 1;
                                                     let event = json!({
-                                                        "type": "content_block_stop",
-                                                        "index": index
+                                                        "type": "content_block_start",
+                                                        "index": index,
+                                                        "content_block": {
+                                                            "type": "thinking",
+                                                            "thinking": ""
+                                                        }
                                                     });
-                                                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                    let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse_data));
+                                                    current_non_tool_block_type = Some("thinking");
+                                                    current_non_tool_block_index = Some(index);
+                                                }
+
+                                                if let Some(index) = current_non_tool_block_index {
+                                                    let event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": index,
+                                                        "delta": {
+                                                            "type": "thinking_delta",
+                                                            "thinking": reasoning
+                                                        }
+                                                    });
+                                                    let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
                                                         serde_json::to_string(&event).unwrap_or_default());
                                                     yield Ok(Bytes::from(sse_data));
                                                 }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                let event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {
-                                                        "type": "thinking",
-                                                        "thinking": ""
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
-                                                current_non_tool_block_type = Some("thinking");
-                                                current_non_tool_block_index = Some(index);
-                                            }
-
-                                            if let Some(index) = current_non_tool_block_index {
-                                                let event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {
-                                                        "type": "thinking_delta",
-                                                        "thinking": reasoning
-                                                    }
-                                                });
-                                                let sse_data = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&event).unwrap_or_default());
-                                                yield Ok(Bytes::from(sse_data));
                                             }
                                         }
 
                                         // 处理文本内容
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
+                                                has_emitted_text_content = true;
                                                 if current_non_tool_block_type != Some("text") {
                                                     if let Some(index) = current_non_tool_block_index.take() {
                                                         let event = json!({
