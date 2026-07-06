@@ -296,7 +296,7 @@
     },
     "codexHistoryVisibilityRepair": {
       "title": "Restore Codex Desktop sidebar history",
-      "message": "Codex history metadata will be synchronized to the current provider: {{provider}}.\n\nDiagnosis:\n• rollout files to sync: {{rollout}}\n• SQLite rows to repair: {{sqlite}}\n• project paths to normalize: {{roots}}\n• session_index entries to rebuild: {{index}}\n• warnings: {{warnings}}\n\nA backup is created first. Message content is not modified. Old sessions with encrypted_content may become visible but can still fail when resumed across providers.",
+      "message": "Codex history metadata will be synchronized to the current provider: {{provider}}.\n\nDiagnosis:\n• rollout files to sync: {{rollout}}\n• SQLite rows to repair: {{sqlite}}\n• project paths to normalize: {{roots}}\n• session_index entries to rebuild: {{index}}\n• warnings: {{warnings}}\n\nA backup is created first. Message content is not modified. Old sessions with encrypted_content may become visible but can still fail when resumed across providers. After repair, restart Codex Desktop yourself and refresh app-server yourself.",
       "confirm": "Back up and repair"
     },
     "usage": {
@@ -697,12 +697,12 @@
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
     "unifyCodexHistoryRestoreSkippedToggleOn": "Unified session history was re-enabled; restore skipped",
     "codexHistoryVisibilityRepair": "Restore Codex Desktop sidebar history",
-    "codexHistoryVisibilityRepairDescription": "Diagnose and repair history-list visibility issues caused by mismatched rollout, SQLite, project path cache, or session_index metadata.",
+    "codexHistoryVisibilityRepairDescription": "Diagnose and repair history-list visibility issues caused by mismatched rollout, SQLite, project path cache, or session_index metadata. After repair, restart Codex Desktop yourself and refresh app-server yourself.",
     "codexHistoryVisibilityRepairAction": "Diagnose",
     "codexHistoryVisibilityRepairing": "Repairing",
     "codexHistoryVisibilityDiagnoseFailed": "Failed to diagnose Codex history visibility",
     "codexHistoryVisibilityRepairFailed": "Failed to repair Codex history visibility",
-    "codexHistoryVisibilityRepairCompleted": "Codex history visibility repaired ({{rollout}} rollout file(s), {{sqlite}} SQLite row(s), {{index}} index row(s)). Backup: {{backup}}",
+    "codexHistoryVisibilityRepairCompleted": "Codex history visibility repaired ({{rollout}} rollout file(s), {{sqlite}} SQLite row(s), {{index}} index row(s)). Restart Codex Desktop yourself and refresh app-server yourself. Backup: {{backup}}",
     "appVisibility": {
       "title": "Homepage Display",
       "description": "Choose which apps to show on the homepage",
