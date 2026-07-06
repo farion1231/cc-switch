@@ -2,9 +2,13 @@
 //!
 //! 负责系统托盘图标和菜单的创建、更新和事件处理。
 
+use chrono::TimeZone;
 use once_cell::sync::Lazy;
 use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, Submenu, SubmenuBuilder};
-use tauri::{Emitter, Manager};
+use tauri::tray::{MouseButton, MouseButtonState};
+use tauri::{
+    Emitter, Manager, PhysicalPosition, Rect, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
@@ -45,11 +49,33 @@ static TRAY_SECTION_SUBMENUS: Lazy<
     std::sync::Mutex<std::collections::HashMap<AppType, Submenu<tauri::Wry>>>,
 > = Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
+#[derive(Clone)]
+struct TrayUsageOverviewHandles {
+    submenu: Submenu<tauri::Wry>,
+    requests: MenuItem<tauri::Wry>,
+    tokens: MenuItem<tauri::Wry>,
+    cost: MenuItem<tauri::Wry>,
+    success: MenuItem<tauri::Wry>,
+}
+
+/// 顶部「用量速览」子菜单句柄，用于日志写入后就地刷新速览。
+static TRAY_USAGE_OVERVIEW_HANDLES: Lazy<std::sync::Mutex<Option<TrayUsageOverviewHandles>>> =
+    Lazy::new(|| std::sync::Mutex::new(None));
+
 /// 托盘菜单文本（国际化）
 #[derive(Clone, Copy)]
 pub struct TrayTexts {
     pub show_main: &'static str,
     pub open_website: &'static str,
+    pub usage_overview_label: &'static str,
+    pub usage_today_label: &'static str,
+    pub usage_no_requests_label: &'static str,
+    pub usage_requests_label: &'static str,
+    pub usage_tokens_label: &'static str,
+    pub usage_cost_label: &'static str,
+    pub usage_success_label: &'static str,
+    pub usage_request_unit: &'static str,
+    pub usage_token_unit: &'static str,
     pub no_providers_label: &'static str,
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
@@ -62,6 +88,15 @@ impl TrayTexts {
             "en" => Self {
                 show_main: "Open main window",
                 open_website: "Open Official Website",
+                usage_overview_label: "Usage",
+                usage_today_label: "Today",
+                usage_no_requests_label: "no requests",
+                usage_requests_label: "Requests",
+                usage_tokens_label: "Tokens",
+                usage_cost_label: "Cost",
+                usage_success_label: "Success",
+                usage_request_unit: "req",
+                usage_token_unit: "tok",
                 no_providers_label: "(no providers)",
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
@@ -70,6 +105,15 @@ impl TrayTexts {
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
                 open_website: "公式サイトを開く",
+                usage_overview_label: "使用量",
+                usage_today_label: "今日",
+                usage_no_requests_label: "リクエストなし",
+                usage_requests_label: "リクエスト",
+                usage_tokens_label: "トークン",
+                usage_cost_label: "コスト",
+                usage_success_label: "成功率",
+                usage_request_unit: "req",
+                usage_token_unit: "tok",
                 no_providers_label: "(プロバイダーなし)",
                 lightweight_mode: "軽量モード",
                 quit: "終了",
@@ -78,6 +122,15 @@ impl TrayTexts {
             "zh-TW" => Self {
                 show_main: "開啟主介面",
                 open_website: "開啟官方網站",
+                usage_overview_label: "用量速覽",
+                usage_today_label: "今日",
+                usage_no_requests_label: "暫無請求",
+                usage_requests_label: "請求",
+                usage_tokens_label: "Token",
+                usage_cost_label: "費用",
+                usage_success_label: "成功率",
+                usage_request_unit: "次",
+                usage_token_unit: "tok",
                 no_providers_label: "(無供應商)",
                 lightweight_mode: "輕量模式",
                 quit: "退出",
@@ -86,6 +139,15 @@ impl TrayTexts {
             _ => Self {
                 show_main: "打开主界面",
                 open_website: "打开官方网站",
+                usage_overview_label: "用量速览",
+                usage_today_label: "今日",
+                usage_no_requests_label: "暂无请求",
+                usage_requests_label: "请求",
+                usage_tokens_label: "Token",
+                usage_cost_label: "费用",
+                usage_success_label: "成功率",
+                usage_request_unit: "次",
+                usage_token_unit: "tok",
                 no_providers_label: "(无供应商)",
                 lightweight_mode: "轻量模式",
                 quit: "退出",
@@ -135,6 +197,353 @@ pub const TRAY_SECTIONS: [TrayAppSection; 3] = [
 /// 配色阈值（与前端 `utilizationColor` 语义一致）。
 const UTIL_WARN_PCT: f64 = 70.0;
 const UTIL_DANGER_PCT: f64 = 90.0;
+const TRAY_USAGE_WINDOW_LABEL: &str = "tray-usage";
+const TRAY_USAGE_WINDOW_WIDTH: f64 = 380.0;
+const TRAY_USAGE_WINDOW_HEIGHT: f64 = 560.0;
+const TRAY_USAGE_WINDOW_MARGIN: i32 = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrayUsageOverviewLabels {
+    menu_label: String,
+    requests: String,
+    tokens: String,
+    cost: String,
+    success: String,
+    tooltip: String,
+    title: Option<String>,
+}
+
+fn trim_trailing_decimal_zeros(mut value: String) -> String {
+    if value.contains('.') {
+        while value.ends_with('0') {
+            value.pop();
+        }
+        if value.ends_with('.') {
+            value.pop();
+        }
+    }
+    value
+}
+
+fn format_compact_count(value: u64) -> String {
+    fn scaled(value: f64, suffix: &str) -> String {
+        let raw = if value >= 100.0 {
+            format!("{value:.0}")
+        } else {
+            format!("{value:.1}")
+        };
+        format!("{}{}", trim_trailing_decimal_zeros(raw), suffix)
+    }
+
+    if value < 1_000 {
+        value.to_string()
+    } else if value < 1_000_000 {
+        scaled(value as f64 / 1_000.0, "K")
+    } else if value < 1_000_000_000 {
+        scaled(value as f64 / 1_000_000.0, "M")
+    } else {
+        scaled(value as f64 / 1_000_000_000.0, "B")
+    }
+}
+
+fn format_usd_short(cost: &str) -> String {
+    let value = cost.parse::<f64>().unwrap_or(0.0);
+    if !value.is_finite() || value.abs() < 0.000_000_5 {
+        return "$0".to_string();
+    }
+
+    let raw = if value.abs() < 0.01 {
+        format!("{value:.4}")
+    } else if value.abs() < 1.0 {
+        format!("{value:.3}")
+    } else {
+        format!("{value:.2}")
+    };
+    format!("${}", trim_trailing_decimal_zeros(raw))
+}
+
+fn format_usd_badge(cost: &str) -> String {
+    let value = cost.parse::<f64>().unwrap_or(0.0);
+    if !value.is_finite() || value.abs() < 0.000_000_5 {
+        return "$0".to_string();
+    }
+
+    let raw = if value.abs() >= 100.0 {
+        format!("{value:.0}")
+    } else if value.abs() >= 10.0 {
+        format!("{value:.1}")
+    } else if value.abs() >= 1.0 {
+        format!("{value:.2}")
+    } else if value.abs() >= 0.01 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
+    };
+    format!("${}", trim_trailing_decimal_zeros(raw))
+}
+
+fn local_today_epoch_range() -> (i64, i64) {
+    let now = chrono::Local::now();
+    let start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| match chrono::Local.from_local_datetime(&naive) {
+            chrono::LocalResult::Single(dt) => Some(dt.timestamp()),
+            chrono::LocalResult::Ambiguous(earliest, _) => Some(earliest.timestamp()),
+            chrono::LocalResult::None => None,
+        })
+        .unwrap_or_else(|| now.timestamp());
+    (start, now.timestamp().max(start))
+}
+
+fn format_today_usage_summary(
+    summary: &crate::services::UsageSummary,
+    texts: &TrayTexts,
+) -> String {
+    if summary.total_requests == 0 {
+        return format!(
+            "{} · {}",
+            texts.usage_today_label, texts.usage_no_requests_label
+        );
+    }
+
+    format!(
+        "{} · {} {} · {} {} · {} · {:.0}%",
+        texts.usage_today_label,
+        format_compact_count(summary.total_requests),
+        texts.usage_request_unit,
+        format_compact_count(summary.real_total_tokens),
+        texts.usage_token_unit,
+        format_usd_short(&summary.total_cost),
+        summary.success_rate
+    )
+}
+
+fn format_today_usage_overview_labels(
+    summary: &crate::services::UsageSummary,
+    texts: &TrayTexts,
+) -> TrayUsageOverviewLabels {
+    if summary.total_requests == 0 {
+        return TrayUsageOverviewLabels {
+            menu_label: format!(
+                "{} · {}",
+                texts.usage_overview_label, texts.usage_no_requests_label
+            ),
+            requests: format!(
+                "{} · 0 {}",
+                texts.usage_requests_label, texts.usage_request_unit
+            ),
+            tokens: format!(
+                "{} · 0 {}",
+                texts.usage_tokens_label, texts.usage_token_unit
+            ),
+            cost: format!("{} · $0", texts.usage_cost_label),
+            success: format!("{} · -", texts.usage_success_label),
+            tooltip: format!(
+                "CC Switch · {} · {}",
+                texts.usage_today_label, texts.usage_no_requests_label
+            ),
+            title: None,
+        };
+    }
+
+    let requests = format_compact_count(summary.total_requests);
+    let tokens = format_compact_count(summary.real_total_tokens);
+    let cost = format_usd_short(&summary.total_cost);
+    let cost_badge = format_usd_badge(&summary.total_cost);
+    let success = format!("{:.0}%", summary.success_rate);
+    let title = if cost_badge == "$0" {
+        tokens.clone()
+    } else {
+        cost_badge.clone()
+    };
+
+    TrayUsageOverviewLabels {
+        menu_label: texts.usage_overview_label.to_string(),
+        requests: format!(
+            "{} · {} {}",
+            texts.usage_requests_label, requests, texts.usage_request_unit
+        ),
+        tokens: format!(
+            "{} · {} {}",
+            texts.usage_tokens_label, tokens, texts.usage_token_unit
+        ),
+        cost: format!("{} · {}", texts.usage_cost_label, cost),
+        success: format!("{} · {}", texts.usage_success_label, success),
+        tooltip: format!("CC Switch · {}", format_today_usage_summary(summary, texts)),
+        title: Some(title),
+    }
+}
+
+fn build_today_usage_overview(app_state: &AppState, texts: &TrayTexts) -> TrayUsageOverviewLabels {
+    let (start, end) = local_today_epoch_range();
+    match app_state
+        .db
+        .get_usage_summary(Some(start), Some(end), None, None, None)
+    {
+        Ok(summary) => format_today_usage_overview_labels(&summary, texts),
+        Err(e) => {
+            log::debug!("[Tray] 读取今日用量速览失败: {e}");
+            TrayUsageOverviewLabels {
+                menu_label: format!("{} · -", texts.usage_overview_label),
+                requests: format!("{} · -", texts.usage_requests_label),
+                tokens: format!("{} · -", texts.usage_tokens_label),
+                cost: format!("{} · -", texts.usage_cost_label),
+                success: format!("{} · -", texts.usage_success_label),
+                tooltip: "CC Switch".to_string(),
+                title: None,
+            }
+        }
+    }
+}
+
+pub fn today_usage_tray_title(app_state: &AppState) -> Option<String> {
+    let app_settings = crate::settings::get_settings();
+    let tray_texts = TrayTexts::from_language(app_settings.language.as_deref().unwrap_or("zh"));
+    build_today_usage_overview(app_state, &tray_texts).title
+}
+
+fn clamp_i32(value: i32, min: i32, max: i32) -> i32 {
+    if max < min {
+        min
+    } else {
+        value.clamp(min, max)
+    }
+}
+
+fn tray_usage_window_position(app: &tauri::AppHandle, rect: &Rect) -> PhysicalPosition<i32> {
+    // `tray-icon` reports tray rects in physical pixels; this mirrors the
+    // lightweight part of tauri-plugin-positioner without taking a dependency.
+    let tray_position = rect.position.to_physical::<i32>(1.0);
+    let tray_size = rect.size.to_physical::<u32>(1.0);
+    let monitor = app
+        .monitor_from_point(tray_position.x as f64, tray_position.y as f64)
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+
+    let scale_factor = monitor
+        .as_ref()
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0)
+        .max(1.0);
+    let panel_width = (TRAY_USAGE_WINDOW_WIDTH * scale_factor).round() as i32;
+    let panel_height = (TRAY_USAGE_WINDOW_HEIGHT * scale_factor).round() as i32;
+
+    let (work_x, work_y, work_right, work_bottom) = monitor
+        .as_ref()
+        .map(|m| {
+            let work = m.work_area();
+            (
+                work.position.x,
+                work.position.y,
+                work.position.x + work.size.width as i32,
+                work.position.y + work.size.height as i32,
+            )
+        })
+        .unwrap_or((
+            tray_position.x - panel_width,
+            0,
+            tray_position.x + panel_width,
+            panel_height * 2,
+        ));
+
+    let tray_center_x = tray_position.x + tray_size.width as i32 / 2;
+    let x = clamp_i32(
+        tray_center_x - panel_width / 2,
+        work_x + TRAY_USAGE_WINDOW_MARGIN,
+        work_right - panel_width - TRAY_USAGE_WINDOW_MARGIN,
+    );
+
+    let below_y = tray_position.y + tray_size.height as i32 + TRAY_USAGE_WINDOW_MARGIN;
+    let above_y = tray_position.y - panel_height - TRAY_USAGE_WINDOW_MARGIN;
+    let y = if below_y + panel_height <= work_bottom {
+        below_y
+    } else if above_y >= work_y {
+        above_y
+    } else {
+        clamp_i32(
+            below_y,
+            work_y + TRAY_USAGE_WINDOW_MARGIN,
+            work_bottom - panel_height - TRAY_USAGE_WINDOW_MARGIN,
+        )
+    };
+
+    PhysicalPosition { x, y }
+}
+
+fn toggle_tray_usage_window(app: &tauri::AppHandle, rect: Rect) -> Result<(), String> {
+    let position = tray_usage_window_position(app, &rect);
+
+    if let Some(window) = app.get_webview_window(TRAY_USAGE_WINDOW_LABEL) {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+            return Ok(());
+        }
+
+        let _ = window.set_position(position);
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let mut builder = WebviewWindowBuilder::new(
+        app,
+        TRAY_USAGE_WINDOW_LABEL,
+        WebviewUrl::App("index.html#/tray-usage".into()),
+    )
+    .title("CC Switch Usage")
+    .inner_size(TRAY_USAGE_WINDOW_WIDTH, TRAY_USAGE_WINDOW_HEIGHT)
+    .min_inner_size(TRAY_USAGE_WINDOW_WIDTH, TRAY_USAGE_WINDOW_HEIGHT)
+    .max_inner_size(TRAY_USAGE_WINDOW_WIDTH, TRAY_USAGE_WINDOW_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(true)
+    .visible(false)
+    .focused(true)
+    .accept_first_mouse(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.hidden_title(true);
+    }
+
+    let window = builder
+        .build()
+        .map_err(|e| format!("创建用量速览窗口失败: {e}"))?;
+    let hide_on_blur = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Focused(false)) {
+            let _ = hide_on_blur.hide();
+        }
+    });
+
+    let _ = window.set_position(position);
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+pub fn maybe_toggle_tray_usage_window(
+    app: &tauri::AppHandle,
+    button: MouseButton,
+    button_state: MouseButtonState,
+    rect: Rect,
+) {
+    if button != MouseButton::Left || button_state != MouseButtonState::Up {
+        return;
+    }
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = toggle_tray_usage_window(&app, rect) {
+            log::error!("[Tray] 打开用量速览窗口失败: {e}");
+        }
+    });
+}
 
 fn emoji_for_utilization(pct: f64) -> &'static str {
     if pct >= UTIL_DANGER_PCT {
@@ -519,9 +928,54 @@ pub fn create_tray_menu(
         None::<&str>,
     )
     .map_err(|e| AppError::Message(format!("创建打开官方网站菜单失败: {e}")))?;
+
+    let usage_overview = build_today_usage_overview(app_state, &tray_texts);
+    let usage_requests_item = MenuItem::with_id(
+        app,
+        "usage_overview_requests",
+        &usage_overview.requests,
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建用量速览请求菜单失败: {e}")))?;
+    let usage_tokens_item = MenuItem::with_id(
+        app,
+        "usage_overview_tokens",
+        &usage_overview.tokens,
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建用量速览 Token 菜单失败: {e}")))?;
+    let usage_cost_item = MenuItem::with_id(
+        app,
+        "usage_overview_cost",
+        &usage_overview.cost,
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建用量速览费用菜单失败: {e}")))?;
+    let usage_success_item = MenuItem::with_id(
+        app,
+        "usage_overview_success",
+        &usage_overview.success,
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| AppError::Message(format!("创建用量速览成功率菜单失败: {e}")))?;
+    let usage_overview_submenu =
+        SubmenuBuilder::with_id(app, "usage_overview", &usage_overview.menu_label)
+            .item(&usage_requests_item)
+            .item(&usage_tokens_item)
+            .item(&usage_cost_item)
+            .item(&usage_success_item)
+            .build()
+            .map_err(|e| AppError::Message(format!("构建用量速览子菜单失败: {e}")))?;
+
     menu_builder = menu_builder
         .item(&show_main_item)
         .item(&open_website_item)
+        .separator()
+        .item(&usage_overview_submenu)
         .separator();
 
     // Pre-compute proxy running state (used to disable official providers in tray menu)
@@ -615,7 +1069,9 @@ pub fn create_tray_menu(
     )
     .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
 
-    menu_builder = menu_builder.item(&lightweight_item).separator();
+    menu_builder = menu_builder.item(&lightweight_item);
+
+    menu_builder = menu_builder.separator();
 
     // 退出菜单（分隔符已在上面的 section 循环中添加）
     let quit_item = MenuItem::with_id(app, "quit", tray_texts.quit, true, None::<&str>)
@@ -630,6 +1086,15 @@ pub fn create_tray_menu(
     *TRAY_SECTION_SUBMENUS
         .lock()
         .unwrap_or_else(|p| p.into_inner()) = section_handles;
+    *TRAY_USAGE_OVERVIEW_HANDLES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(TrayUsageOverviewHandles {
+        submenu: usage_overview_submenu,
+        requests: usage_requests_item,
+        tokens: usage_tokens_item,
+        cost: usage_cost_item,
+        success: usage_success_item,
+    });
 
     Ok(menu)
 }
@@ -641,6 +1106,35 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
+    let tray_texts = TrayTexts::from_language(
+        crate::settings::get_settings()
+            .language
+            .as_deref()
+            .unwrap_or("zh"),
+    );
+    let overview = build_today_usage_overview(&app_state, &tray_texts);
+    if let Some(handles) = TRAY_USAGE_OVERVIEW_HANDLES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        if let Err(e) = handles.submenu.set_text(&overview.menu_label) {
+            log::debug!("[Tray] 更新今日用量速览失败: {e}");
+        }
+        let _ = handles.requests.set_text(&overview.requests);
+        let _ = handles.tokens.set_text(&overview.tokens);
+        let _ = handles.cost.set_text(&overview.cost);
+        let _ = handles.success.set_text(&overview.success);
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        if let Err(e) = tray.set_tooltip(Some(overview.tooltip.as_str())) {
+            log::debug!("[Tray] 更新托盘 tooltip 失败: {e}");
+        }
+        if let Err(e) = tray.set_title(overview.title.as_deref()) {
+            log::debug!("[Tray] 更新托盘标题失败: {e}");
+        }
+    }
+
     let handles = match TRAY_SECTION_SUBMENUS.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -882,18 +1376,102 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_script_summary, format_subscription_summary, TRAY_ID};
+    use super::{
+        format_compact_count, format_script_summary, format_subscription_summary,
+        format_today_usage_overview_labels, format_today_usage_summary, format_usd_badge,
+        format_usd_short, TrayTexts, TRAY_ID,
+    };
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
         TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
         TIER_SEVEN_DAY_SONNET, TIER_THIRTY_DAY, TIER_WEEKLY_LIMIT,
     };
+    use crate::services::UsageSummary;
 
     #[test]
     fn tray_id_is_unique_to_app() {
         assert_eq!(TRAY_ID, "cc-switch");
         assert_ne!(TRAY_ID, "main");
+    }
+
+    fn usage_summary(
+        total_requests: u64,
+        real_total_tokens: u64,
+        total_cost: &str,
+    ) -> UsageSummary {
+        UsageSummary {
+            total_requests,
+            total_cost: total_cost.to_string(),
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            success_rate: 87.4,
+            real_total_tokens,
+            cache_hit_rate: 0.0,
+        }
+    }
+
+    #[test]
+    fn compact_count_keeps_tray_overview_short() {
+        assert_eq!(format_compact_count(999), "999");
+        assert_eq!(format_compact_count(12_345), "12.3K");
+        assert_eq!(format_compact_count(1_200_000), "1.2M");
+    }
+
+    #[test]
+    fn usd_short_trims_noise_but_keeps_tiny_costs() {
+        assert_eq!(format_usd_short("0.000000"), "$0");
+        assert_eq!(format_usd_short("0.000420"), "$0.0004");
+        assert_eq!(format_usd_short("0.120000"), "$0.12");
+        assert_eq!(format_usd_short("12.300000"), "$12.3");
+    }
+
+    #[test]
+    fn usd_badge_keeps_menu_bar_short() {
+        assert_eq!(format_usd_badge("0.000000"), "$0");
+        assert_eq!(format_usd_badge("0.120000"), "$0.12");
+        assert_eq!(format_usd_badge("12.300000"), "$12.3");
+        assert_eq!(format_usd_badge("264.990000"), "$265");
+    }
+
+    #[test]
+    fn today_usage_summary_renders_empty_state() {
+        let texts = TrayTexts::from_language("en");
+        let summary = usage_summary(0, 0, "0.000000");
+        assert_eq!(
+            format_today_usage_summary(&summary, &texts),
+            "Today · no requests"
+        );
+    }
+
+    #[test]
+    fn today_usage_summary_renders_compact_metrics() {
+        let texts = TrayTexts::from_language("en");
+        let summary = usage_summary(12, 34_567, "0.120000");
+        assert_eq!(
+            format_today_usage_summary(&summary, &texts),
+            "Today · 12 req · 34.6K tok · $0.12 · 87%"
+        );
+    }
+
+    #[test]
+    fn today_usage_overview_hides_title_for_empty_state() {
+        let texts = TrayTexts::from_language("en");
+        let labels = format_today_usage_overview_labels(&usage_summary(0, 0, "0.000000"), &texts);
+        assert_eq!(labels.menu_label, "Usage · no requests");
+        assert_eq!(labels.title, None);
+    }
+
+    #[test]
+    fn today_usage_overview_uses_short_title_for_menu_bar() {
+        let texts = TrayTexts::from_language("en");
+        let labels =
+            format_today_usage_overview_labels(&usage_summary(12, 34_567, "0.120000"), &texts);
+        assert_eq!(labels.menu_label, "Usage");
+        assert_eq!(labels.requests, "Requests · 12 req");
+        assert_eq!(labels.title.as_deref(), Some("$0.12"));
     }
 
     fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {

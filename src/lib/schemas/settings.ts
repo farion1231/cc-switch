@@ -36,6 +36,14 @@ export const settingsSchema = z.object({
   skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
   skillStorageLocation: z.enum(["cc_switch", "unified"]).optional(),
 
+  // Codex 用量刷新间隔（秒，默认 300）
+  codexQuotaRefreshInterval: z.number().min(30).optional(),
+
+  // 用量查询设置
+  usageRefreshIntervalSecs: z.number().min(30).optional(),
+  usageAutoRefresh: z.boolean().optional(),
+  usageShowAllAccounts: z.boolean().optional(),
+
   // WebDAV v2 同步设置（通过专用命令保存，schema 仅用于读取）
   webdavSync: z
     .object({

@@ -488,6 +488,29 @@ fn read_codex_credentials() -> CodexCredentials {
     read_codex_credentials_from_file()
 }
 
+/// 从指定路径读取 Codex OAuth 凭据（用于多账号用量查询）
+///
+/// 直接读取 snapshot 文件，不走 Keychain（snapshot 已包含完整凭据）。
+fn read_codex_credentials_from_path(path: &std::path::Path) -> CodexCredentials {
+    if !path.exists() {
+        return (None, None, CredentialStatus::NotFound, None);
+    }
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some(format!("Failed to read Codex snapshot: {e}")),
+            );
+        }
+    };
+
+    parse_codex_credentials_json(&content)
+}
+
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
 fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
@@ -756,6 +779,88 @@ pub(crate) async fn query_codex_quota(
         error: None,
         queried_at: Some(now_millis()),
     }
+}
+
+// ── Codex 多账号查询 ──────────────────────────────────────
+
+/// 查询单个 Codex 账号的用量（通过 snapshot 路径读取凭据）
+async fn query_codex_for_account(account_key: &str, snapshot_path: &str) -> SubscriptionQuota {
+    let (token, account_id, status, message) =
+        read_codex_credentials_from_path(std::path::Path::new(snapshot_path));
+
+    match status {
+        CredentialStatus::NotFound => SubscriptionQuota::not_found(account_key),
+        CredentialStatus::ParseError => SubscriptionQuota::error(
+            account_key,
+            CredentialStatus::ParseError,
+            message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
+        ),
+        CredentialStatus::Expired => {
+            if let Some(token) = token {
+                let result = query_codex_quota(
+                    &token,
+                    account_id.as_deref(),
+                    account_key,
+                    "Authentication failed. Please re-login with Codex CLI.",
+                )
+                .await;
+                if result.success {
+                    return result;
+                }
+            }
+            SubscriptionQuota::error(
+                account_key,
+                CredentialStatus::Expired,
+                message.unwrap_or_else(|| "Codex OAuth token may be stale".to_string()),
+            )
+        }
+        CredentialStatus::Valid => {
+            let token = token.expect("token must be Some when status is Valid");
+            query_codex_quota(
+                &token,
+                account_id.as_deref(),
+                account_key,
+                "Authentication failed. Please re-login with Codex CLI.",
+            )
+            .await
+        }
+    }
+}
+
+/// 并发查询所有 Codex 账号的用量
+///
+/// 返回 Vec<(account_key, quota)>，每个账号独立查询，失败不影响其他账号。
+pub async fn get_all_codex_quotas() -> Vec<(String, SubscriptionQuota)> {
+    let snapshots = match crate::codex_accounts::list_account_snapshot_paths() {
+        Ok(paths) => paths,
+        Err(e) => {
+            log::warn!("读取 Codex 账号列表失败: {e}");
+            return Vec::new();
+        }
+    };
+
+    if snapshots.is_empty() {
+        return Vec::new();
+    }
+
+    let mut handles = Vec::with_capacity(snapshots.len());
+    for (account_key, snapshot_path) in snapshots {
+        let handle = tokio::spawn(async move {
+            let quota = query_codex_for_account(&account_key, &snapshot_path).await;
+            (account_key, quota)
+        });
+        handles.push(handle);
+    }
+
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => log::warn!("Codex 多账号查询任务失败: {e}"),
+        }
+    }
+
+    results
 }
 
 // ── Gemini 凭据读取 ──────────────────────────────────────
@@ -1344,7 +1449,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
 
 // ── 辅助函数 ──────────────────────────────────────────────
 
-fn now_millis() -> i64 {
+pub(crate) fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

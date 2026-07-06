@@ -95,6 +95,14 @@ export interface DailyStats {
   totalCacheReadTokens: number;
 }
 
+export interface UsageActivityDay {
+  date: string;
+  realTotalTokens: number;
+  sessionCount: number;
+  requestCount: number;
+  totalCost: string;
+}
+
 export interface ProviderStats {
   providerId: string;
   providerName: string;

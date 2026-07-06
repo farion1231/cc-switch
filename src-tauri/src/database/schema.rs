@@ -283,7 +283,37 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 18. Session Log Sync 表 (会话日志同步状态)
+        // 18. Usage Daily Activity Rollups 表 (年度热力图统计)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (date, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 19. Usage Daily Activity Session Rollups 表 (年度热力图 session 去重)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_session_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                PRIMARY KEY (date, app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 20. Session Log Sync 表 (会话日志同步状态)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
                 file_path TEXT PRIMARY KEY,
@@ -440,9 +470,23 @@ impl Database {
                         Self::set_user_version(conn, 10)?;
                     }
                     10 => {
-                        log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
+                        log::info!(
+                            "迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model/pricing_model 维度）"
+                        );
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加年度活跃热力图聚合表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!(
+                            "迁移数据库从 v12 到 v13（添加年度活跃 session 去重表并兼容旧 fork schema）"
+                        );
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1213,13 +1257,103 @@ impl Database {
         Ok(())
     }
 
-    /// v10 -> v11：usage_daily_rollups 增加 request_model 维度（进入主键），
+    /// v10 -> v11：usage_daily_rollups 增加 request_model/pricing_model 维度。
+    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+        Self::ensure_usage_rollup_request_pricing_dimensions(conn, "v10 -> v11")
+    }
+
+    /// v11 -> v12 迁移：添加年度活跃热力图聚合表
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd TEXT NOT NULL DEFAULT '0',
+                PRIMARY KEY (date, app_type)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!("创建 usage_daily_activity_rollups 表失败: {e}"))
+        })?;
+
+        log::info!("v11 -> v12 迁移完成：已添加年度活跃热力图聚合表");
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：添加年度活跃 session 去重表，并兼容已经跑过旧 fork v12 的数据库。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        Self::ensure_usage_rollup_request_pricing_dimensions(conn, "v12 -> v13")?;
+        Self::migrate_v11_to_v12(conn)?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS usage_daily_activity_session_rollups (
+                date TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                session_key TEXT NOT NULL,
+                PRIMARY KEY (date, app_type, session_key)
+            )",
+            [],
+        )
+        .map_err(|e| {
+            AppError::Database(format!(
+                "创建 usage_daily_activity_session_rollups 表失败: {e}"
+            ))
+        })?;
+
+        log::info!("v12 -> v13 迁移完成：已添加年度活跃 session 去重表");
+        Ok(())
+    }
+
+    fn usage_daily_rollups_has_request_pricing_pk(conn: &Connection) -> Result<bool, AppError> {
+        if !Self::table_exists(conn, "usage_daily_rollups")? {
+            return Ok(true);
+        }
+
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(\"usage_daily_rollups\");")
+            .map_err(|e| AppError::Database(format!("读取 usage_daily_rollups 表结构失败: {e}")))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| AppError::Database(format!("查询 usage_daily_rollups 表结构失败: {e}")))?;
+        let mut has_request_model_pk = false;
+        let mut has_pricing_model_pk = false;
+
+        while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
+            let name: String = row.get(1).map_err(|e| {
+                AppError::Database(format!("读取 usage_daily_rollups 列名失败: {e}"))
+            })?;
+            let pk: i32 = row.get(5).map_err(|e| {
+                AppError::Database(format!("读取 usage_daily_rollups 主键信息失败: {e}"))
+            })?;
+            if name.eq_ignore_ascii_case("request_model") && pk > 0 {
+                has_request_model_pk = true;
+            }
+            if name.eq_ignore_ascii_case("pricing_model") && pk > 0 {
+                has_pricing_model_pk = true;
+            }
+        }
+
+        Ok(has_request_model_pk && has_pricing_model_pk)
+    }
+
+    /// usage_daily_rollups 增加 request_model/pricing_model 维度（进入主键），
     /// proxy_request_logs 增加 pricing_model 列（写入时的计价基准，回填依据）。
     ///
     /// 路由接管下 model（真实上游模型）≠ request_model（客户端别名），
     /// 旧 rollup 只按 model 聚合，明细 prune 后映射关系永久丢失、计费不可审计。
-    /// SQLite 改主键必须重建表；历史行的 request_model 已不可知，填 ''。
-    fn migrate_v10_to_v11(conn: &Connection) -> Result<(), AppError> {
+    /// 这个 helper 故意幂等：旧 fork 已经把 user_version 推到 12，但还没有
+    /// 上游 v11 的主键变更，v12 -> v13 需要补跑同一结构修复。
+    fn ensure_usage_rollup_request_pricing_dimensions(
+        conn: &Connection,
+        migration_label: &str,
+    ) -> Result<(), AppError> {
         // proxy_request_logs.pricing_model：NULL = v11 前的历史行（回填走
         // model → 占位符回退 request_model 的旧逻辑），'' = 未计价的错误行
         if Self::table_exists(conn, "proxy_request_logs")? {
@@ -1227,12 +1361,31 @@ impl Database {
         }
 
         if !Self::table_exists(conn, "usage_daily_rollups")? {
-            log::info!("v10 -> v11：usage_daily_rollups 不存在，跳过重建");
+            log::info!("{migration_label}：usage_daily_rollups 不存在，跳过重建");
             return Ok(());
         }
 
-        conn.execute_batch(
-            "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
+        if Self::usage_daily_rollups_has_request_pricing_pk(conn)? {
+            log::info!("{migration_label}：usage_daily_rollups 已具备 request_model/pricing_model 主键维度");
+            return Ok(());
+        }
+
+        let request_model_expr = if Self::has_column(conn, "usage_daily_rollups", "request_model")?
+        {
+            "COALESCE(request_model, '')"
+        } else {
+            "''"
+        };
+        let pricing_model_expr = if Self::has_column(conn, "usage_daily_rollups", "pricing_model")?
+        {
+            "COALESCE(pricing_model, '')"
+        } else {
+            "''"
+        };
+
+        let sql = format!(
+            "DROP TABLE IF EXISTS usage_daily_rollups_v10;
+             ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v10;
              CREATE TABLE usage_daily_rollups (
                  date TEXT NOT NULL,
                  app_type TEXT NOT NULL,
@@ -1254,18 +1407,21 @@ impl Database {
                  (date, app_type, provider_id, model, request_model, pricing_model,
                   request_count, success_count, input_tokens, output_tokens,
                   cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms)
-             SELECT date, app_type, provider_id, model, '', '',
+             SELECT date, app_type, provider_id, model, {request_model_expr}, {pricing_model_expr},
                   request_count, success_count, input_tokens, output_tokens,
                   cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
              FROM usage_daily_rollups_v10;
-             DROP TABLE usage_daily_rollups_v10;",
-        )
-        .map_err(|e| {
-            AppError::Database(format!("v10 -> v11 重建 usage_daily_rollups 失败: {e}"))
+             DROP TABLE usage_daily_rollups_v10;"
+        );
+
+        conn.execute_batch(&sql).map_err(|e| {
+            AppError::Database(format!(
+                "{migration_label} 重建 usage_daily_rollups 失败: {e}"
+            ))
         })?;
 
         log::info!(
-            "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
+            "{migration_label} 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
         Ok(())
     }

@@ -96,8 +96,6 @@ windows-sys = { version = "0.61", features = ["Win32_Globalization", "Win32_UI_S
 rquickjs = { version = "0.8", features = ["bindgen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.5"
-objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]

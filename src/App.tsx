@@ -59,6 +59,7 @@ import {
 } from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { CodexQuotaPanel } from "@/components/CodexQuotaPanel";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -94,6 +95,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { CodexAccountsPanel } from "@/components/codex/CodexAccountsPanel";
 
 type View =
   | "providers"
@@ -106,6 +108,7 @@ type View =
   | "universal"
   | "sessions"
   | "workspace"
+  | "codexAccounts"
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
@@ -151,6 +154,7 @@ const VALID_VIEWS: View[] = [
   "universal",
   "sessions",
   "workspace",
+  "codexAccounts",
   "openclawEnv",
   "openclawTools",
   "openclawAgents",
@@ -229,6 +233,12 @@ function App() {
       setCurrentView("providers");
     }
   }, [sharedFeatureApp, currentView]);
+
+  useEffect(() => {
+    if (currentView === "codexAccounts" && activeApp !== "codex") {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView]);
 
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
@@ -942,6 +952,8 @@ function App() {
           );
         case "workspace":
           return <WorkspaceFilesPanel />;
+        case "codexAccounts":
+          return <CodexAccountsPanel />;
         case "openclawEnv":
           return <EnvPanel />;
         case "openclawTools":
@@ -961,6 +973,10 @@ function App() {
                     transition={{ duration: 0.15 }}
                     className="space-y-4"
                   >
+                    {activeApp === "codex" &&
+                      settingsData?.usageShowAllAccounts !== false && (
+                        <CodexQuotaPanel />
+                      )}
                     <ProviderList
                       providers={providers}
                       currentProviderId={currentProviderId}
@@ -1382,7 +1398,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "codex"
+                                  ? "codex"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1466,6 +1484,56 @@ function App() {
                                 title={t("openclaw.agents.title")}
                               >
                                 <Cpu className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("sessions")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("sessionManager.title")}
+                              >
+                                <History className="w-4 h-4" />
+                              </Button>
+                            </>
+                          ) : activeApp === "codex" ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("codexAccounts")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("codexAccounts.title", {
+                                  defaultValue: "Codex 官方账号快照",
+                                })}
+                              >
+                                <KeyRound className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("skills")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("skills.manage")}
+                              >
+                                <Wrench className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("mcp")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("mcp.title")}
+                              >
+                                <McpIcon size={16} />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("prompts")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("prompts.manage")}
+                              >
+                                <Book className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
