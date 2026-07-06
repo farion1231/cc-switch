@@ -294,6 +294,11 @@
       "restoreBackup": "把開啟時遷入的官方會話還原回官方歷史（按備份精確還原）",
       "confirm": "關閉"
     },
+    "codexHistoryVisibilityRepair": {
+      "title": "恢復 Codex Desktop 側邊欄歷史記錄",
+      "message": "將把 Codex 歷史 metadata 同步到目前 provider：{{provider}}。\n\n診斷結果：\n• 需同步 rollout 檔案：{{rollout}}\n• 需修復 SQLite 記錄：{{sqlite}}\n• 需正規化專案路徑：{{roots}}\n• session_index 重建條目：{{index}}\n• 風險提示：{{warnings}}\n\n修復前會自動備份，不會修改會話正文。含 encrypted_content 的舊會話即使恢復可見，跨 provider 繼續仍可能失敗。",
+      "confirm": "備份並修復"
+    },
     "usage": {
       "title": "設定用量查詢",
       "message": "用量查詢需要設定專用的查詢腳本或 API 參數，請確保您已從供應商處取得相關資訊。\n\n如不確定如何設定，請先查閱供應商文件。",
@@ -691,6 +696,13 @@
     "unifyCodexHistoryRestoreFailed": "還原官方會話歷史失敗，請重試",
     "unifyCodexHistoryRestoreNothing": "目前 Codex 目錄沒有可恢復的遷移備份",
     "unifyCodexHistoryRestoreSkippedToggleOn": "統一會話歷史開關已重新開啟，已跳過還原",
+    "codexHistoryVisibilityRepair": "恢復 Codex Desktop 側邊欄歷史記錄",
+    "codexHistoryVisibilityRepairDescription": "診斷並修復 rollout、SQLite、專案路徑快取和 session_index 不一致導致的歷史清單不可見問題。",
+    "codexHistoryVisibilityRepairAction": "診斷",
+    "codexHistoryVisibilityRepairing": "修復中",
+    "codexHistoryVisibilityDiagnoseFailed": "診斷 Codex 歷史可見性失敗",
+    "codexHistoryVisibilityRepairFailed": "修復 Codex 歷史可見性失敗",
+    "codexHistoryVisibilityRepairCompleted": "Codex 歷史可見性修復完成（rollout {{rollout}} 個、SQLite {{sqlite}} 條、索引 {{index}} 條）。備份位置：{{backup}}",
     "appVisibility": {
       "title": "主頁面顯示",
       "description": "選擇在主頁面顯示的應用程式",

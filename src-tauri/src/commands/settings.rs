@@ -170,6 +170,28 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
     })
 }
 
+#[tauri::command]
+pub async fn diagnose_codex_history_visibility(
+) -> Result<crate::codex_history_visibility::CodexHistoryVisibilityDiagnosis, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_visibility::diagnose_codex_history_visibility()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn repair_codex_history_visibility(
+) -> Result<crate::codex_history_visibility::CodexHistoryVisibilityRepairResult, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_visibility::repair_codex_history_visibility()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
 /// 重启应用程序（当 app_config_dir 变更后使用）
 #[tauri::command]
 pub async fn restart_app(app: AppHandle) -> Result<bool, String> {

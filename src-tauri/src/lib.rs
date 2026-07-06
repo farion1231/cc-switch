@@ -6,6 +6,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
+mod codex_history_visibility;
 mod codex_state_db;
 mod commands;
 mod config;
@@ -1217,6 +1218,8 @@ pub fn run() {
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
+            commands::diagnose_codex_history_visibility,
+            commands::repair_codex_history_visibility,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,

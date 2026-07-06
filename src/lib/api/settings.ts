@@ -26,6 +26,38 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface CodexHistoryVisibilityDiagnosis {
+  codexDir: string;
+  currentProvider: string;
+  currentProviderImplicit: boolean;
+  rolloutFiles: number;
+  rolloutFilesNeedingProviderSync: number;
+  sqliteRows: number;
+  sqliteRowsNeedingProviderSync: number;
+  sqliteUserEventRowsNeedingRepair: number;
+  sqliteCwdRowsNeedingRepair: number;
+  sessionIndexEntries: number;
+  sessionIndexValid: boolean;
+  sessionIndexNeedsRebuild: boolean;
+  workspaceRootsNeedingRepair: number;
+  lockedOrUnreadableRolloutFiles: number;
+  warnings: string[];
+}
+
+export interface CodexHistoryVisibilityRepairResult {
+  diagnosisBefore: CodexHistoryVisibilityDiagnosis;
+  backupDir: string;
+  changedRolloutFiles: number;
+  skippedRolloutFiles: number;
+  sqliteProviderRowsUpdated: number;
+  sqliteUserEventRowsUpdated: number;
+  sqliteCwdRowsUpdated: number;
+  workspaceRootsUpdated: number;
+  sessionIndexRebuilt: boolean;
+  sessionIndexEntriesWritten: number;
+  warnings: string[];
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -47,6 +79,14 @@ export const settingsApi = {
   /** 按迁移备份账本把当时迁入共享桶的官方会话还原回 openai 桶（幂等） */
   async restoreCodexUnifiedHistory(): Promise<CodexUnifyHistoryRestoreResult> {
     return await invoke("restore_codex_unified_history");
+  },
+
+  async diagnoseCodexHistoryVisibility(): Promise<CodexHistoryVisibilityDiagnosis> {
+    return await invoke("diagnose_codex_history_visibility");
+  },
+
+  async repairCodexHistoryVisibility(): Promise<CodexHistoryVisibilityRepairResult> {
+    return await invoke("repair_codex_history_visibility");
   },
 
   async restart(): Promise<boolean> {

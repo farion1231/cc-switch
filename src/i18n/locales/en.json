@@ -294,6 +294,11 @@
       "restoreBackup": "Restore the official sessions migrated at enable time back to the official history (exact restore from backup)",
       "confirm": "Turn off"
     },
+    "codexHistoryVisibilityRepair": {
+      "title": "Restore Codex Desktop sidebar history",
+      "message": "Codex history metadata will be synchronized to the current provider: {{provider}}.\n\nDiagnosis:\n• rollout files to sync: {{rollout}}\n• SQLite rows to repair: {{sqlite}}\n• project paths to normalize: {{roots}}\n• session_index entries to rebuild: {{index}}\n• warnings: {{warnings}}\n\nA backup is created first. Message content is not modified. Old sessions with encrypted_content may become visible but can still fail when resumed across providers.",
+      "confirm": "Back up and repair"
+    },
     "usage": {
       "title": "Configure Usage Query",
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
@@ -691,6 +696,13 @@
     "unifyCodexHistoryRestoreFailed": "Failed to restore official session history, please try again",
     "unifyCodexHistoryRestoreNothing": "No restorable migration backup for the current Codex directory",
     "unifyCodexHistoryRestoreSkippedToggleOn": "Unified session history was re-enabled; restore skipped",
+    "codexHistoryVisibilityRepair": "Restore Codex Desktop sidebar history",
+    "codexHistoryVisibilityRepairDescription": "Diagnose and repair history-list visibility issues caused by mismatched rollout, SQLite, project path cache, or session_index metadata.",
+    "codexHistoryVisibilityRepairAction": "Diagnose",
+    "codexHistoryVisibilityRepairing": "Repairing",
+    "codexHistoryVisibilityDiagnoseFailed": "Failed to diagnose Codex history visibility",
+    "codexHistoryVisibilityRepairFailed": "Failed to repair Codex history visibility",
+    "codexHistoryVisibilityRepairCompleted": "Codex history visibility repaired ({{rollout}} rollout file(s), {{sqlite}} SQLite row(s), {{index}} index row(s)). Backup: {{backup}}",
     "appVisibility": {
       "title": "Homepage Display",
       "description": "Choose which apps to show on the homepage",
