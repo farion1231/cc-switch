@@ -20,6 +20,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod office_gateway;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -951,6 +952,14 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
+            {
+                let app_config_dir = crate::config::get_app_config_dir();
+                let office_gateway_service =
+                    crate::office_gateway::OfficeGatewayService::new(app_config_dir);
+                app.manage(commands::OfficeGatewayState(Arc::new(office_gateway_service)));
+                log::info!("✓ Office Gateway service initialized");
+            }
+
             // 从数据库加载日志配置并应用
             {
                 let db = &app.state::<AppState>().db;
@@ -1227,6 +1236,16 @@ pub fn run() {
             commands::set_copilot_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
+            commands::get_office_gateway_config,
+            commands::save_office_gateway_config,
+            commands::start_office_gateway,
+            commands::stop_office_gateway,
+            commands::restart_office_gateway,
+            commands::get_office_gateway_status,
+            commands::get_office_gateway_logs,
+            commands::test_office_gateway_upstream,
+            commands::clear_office_gateway_logs,
+            commands::open_office_gateway_log_file,
             commands::restart_app,
             commands::install_update_and_restart,
             commands::check_app_update_available,

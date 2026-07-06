@@ -25,6 +25,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Network,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -95,6 +96,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import OfficeGatewayPage from "@/components/office-gateway/OfficeGatewayPage";
 
 type View =
   | "providers"
@@ -110,7 +112,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "officeGateway";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -156,6 +159,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "officeGateway",
 ];
 
 const getInitialView = (): View => {
@@ -909,6 +913,8 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "officeGateway":
+          return <OfficeGatewayPage />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1184,6 +1190,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "officeGateway" && "Office Gateway"}
                 </h1>
               </div>
             ) : (
@@ -1214,6 +1221,15 @@ function App() {
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
                   <Settings className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentView("officeGateway")}
+                  title="Office Gateway"
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Network className="w-4 h-4" />
                 </Button>
                 <UpdateBadge
                   onClick={() => {
