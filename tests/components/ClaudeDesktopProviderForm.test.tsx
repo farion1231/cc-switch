@@ -317,7 +317,7 @@ describe("ClaudeDesktopProviderForm", () => {
     expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_API_KEY");
   });
 
-  it("切换到 Anthropic Messages 后保存 MiniMax-M3 配置到 x-api-key 字段", async () => {
+  it("切换到 Anthropic Messages 后保持保守的 Bearer key 字段默认值", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     renderForm(
@@ -351,12 +351,12 @@ describe("ClaudeDesktopProviderForm", () => {
     const settingsConfig = JSON.parse(submitted.settingsConfig);
 
     expect(submitted.meta.apiFormat).toBe("anthropic");
-    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_API_KEY");
+    expect(submitted.meta.apiKeyField).toBe("ANTHROPIC_AUTH_TOKEN");
     expect(settingsConfig.env).toMatchObject({
       ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
-      ANTHROPIC_API_KEY: "sk-opencode-go",
+      ANTHROPIC_AUTH_TOKEN: "sk-opencode-go",
     });
-    expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(settingsConfig.env).not.toHaveProperty("ANTHROPIC_API_KEY");
     expect(
       submitted.meta.claudeDesktopModelRoutes["claude-sonnet-5"],
     ).toMatchObject({ model: "MiniMax-M3" });
