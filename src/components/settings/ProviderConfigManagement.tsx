@@ -71,7 +71,9 @@ export function ProviderConfigManagement({}: ProviderConfigManagementProps) {
   const apps = MANAGED_APPS;
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [selectedApp, setSelectedApp] = useState<AppId>(apps[0]?.id ?? "claude");
+  const [selectedApp, setSelectedApp] = useState<AppId>(
+    apps[0]?.id ?? "claude",
+  );
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
 
@@ -100,11 +102,14 @@ export function ProviderConfigManagement({}: ProviderConfigManagementProps) {
     setExporting(true);
     try {
       const allIds = Object.keys(providers);
-      const jsonContent = await providersApi.exportProviders(selectedApp, allIds);
+      const jsonContent = await providersApi.exportProviders(
+        selectedApp,
+        allIds,
+      );
 
-      const defaultName = `providers-${selectedApp}-${new Date()
-        .toISOString()
-        .split("T")[0]}.json`;
+      const defaultName = `providers-${selectedApp}-${
+        new Date().toISOString().split("T")[0]
+      }.json`;
       const savePath = await save({
         defaultPath: defaultName,
         filters: [{ name: "JSON", extensions: ["json"] }],

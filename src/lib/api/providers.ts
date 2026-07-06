@@ -222,10 +222,7 @@ export const providersApi = {
    * @param providerIds 要导出的供应商 ID 列表
    * @returns JSON 字符串
    */
-  async exportProviders(
-    appId: AppId,
-    providerIds: string[],
-  ): Promise<string> {
+  async exportProviders(appId: AppId, providerIds: string[]): Promise<string> {
     return await invoke("export_providers", {
       app: appId,
       providerIds,
@@ -238,10 +235,7 @@ export const providersApi = {
    * @param jsonContent JSON 字符串
    * @returns 成功导入的数量
    */
-  async importProviders(
-    appId: AppId,
-    jsonContent: string,
-  ): Promise<number> {
+  async importProviders(appId: AppId, jsonContent: string): Promise<number> {
     return await invoke("import_providers", {
       app: appId,
       jsonContent,

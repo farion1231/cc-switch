@@ -880,9 +880,10 @@ pub fn copy_provider_to_apps(
     // OAuth/托管认证（GitHub Copilot、Codex OAuth 等）的凭证是 OAuth token 而非 API Key，
     // 无法跨应用复制；同时也要拒绝无法提取 API Key 的源（如仅有 base_url 的托管供应商）。
     if source_provider.uses_managed_account_auth() || api_key.is_empty() {
-        return Err(format!(
+        return Err(
             "无法从源供应商提取 API Key 和 Base URL，可能是官方/OAuth 供应商，不支持跨应用复制"
-        ));
+                .to_string(),
+        );
     }
 
     let mut copied_count = 0;
