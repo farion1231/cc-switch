@@ -133,11 +133,21 @@ jobs:
       - name: Prepare Tauri signing key
         shell: bash
         run: |
-          # 调试：检查 Secret 是否存在
+          # 检查 Secret 是否存在；fork 仓库可能未配置签名密钥
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
-            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
-            exit 1
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在，跳过签名（产物将不带签名和更新器）" >&2
+            echo "NO_SIGNING=1" >> "$GITHUB_ENV"
+            # 无签名密钥时禁用 updater artifacts（否则 Tauri 构建会因缺少密钥而失败）
+            cd src-tauri
+            node -e "
+              const fs = require('fs');
+              const p = 'tauri.conf.json';
+              const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+              c.bundle.createUpdaterArtifacts = false;
+              fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+              console.log('✅ 已禁用 createUpdaterArtifacts（无签名密钥）');
+            "
+            exit 0
           fi
           
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
@@ -187,7 +197,7 @@ jobs:
           echo "✅ Tauri signing key prepared"
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -229,7 +239,7 @@ jobs:
           rm -f "$CERT_PATH"
 
       - name: Build Tauri App (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         timeout-minutes: 60
         env:
@@ -275,7 +285,7 @@ jobs:
         run: pnpm tauri build --bundles appimage,deb,rpm
 
       - name: Prepare macOS Assets
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         run: |
           set -euxo pipefail
@@ -350,7 +360,7 @@ jobs:
           echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         timeout-minutes: 30
         env:
@@ -392,7 +402,7 @@ jobs:
           done
 
       - name: Verify macOS code signing and notarization
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -574,7 +584,7 @@ jobs:
           find src-tauri/target -maxdepth 4 -type f -name "*.*" 2>/dev/null || true
 
       - name: Clean up Apple signing keychain
-        if: runner.os == 'macOS' && always()
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1' && always()
         shell: bash
         run: |
           if [ -n "${ORIGINAL_DEFAULT_KEYCHAIN:-}" ]; then
@@ -660,6 +670,12 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # 无签名密钥时没有 .sig 文件，latest.json 无意义，跳过
+          sig_count=$(ls dl/*.sig 2>/dev/null | wc -l || true)
+          if [ "$sig_count" -eq 0 ]; then
+            echo "⚠️ No .sig files found (fork without signing key). Skipping latest.json generation."
+            exit 0
+          fi
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
@@ -736,4 +752,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
+          if [ ! -f latest.json ]; then
+            echo "⚠️ latest.json not generated (no signing key). Skipping upload."
+            exit 0
+          fi
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
