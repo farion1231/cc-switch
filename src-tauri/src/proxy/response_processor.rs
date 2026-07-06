@@ -1294,10 +1294,7 @@ mod tests {
     #[test]
     fn test_non_empty_thinking_not_filtered() {
         let data = r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"实际推理内容"}}"#;
-        assert!(
-            !is_empty_thinking_event(data),
-            "非空thinking不应被过滤"
-        );
+        assert!(!is_empty_thinking_event(data), "非空thinking不应被过滤");
     }
 
     #[test]
@@ -1311,20 +1308,15 @@ mod tests {
 
     #[test]
     fn test_text_content_not_filtered() {
-        let data = r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#;
-        assert!(
-            !is_empty_thinking_event(data),
-            "text block不应被过滤"
-        );
+        let data =
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#;
+        assert!(!is_empty_thinking_event(data), "text block不应被过滤");
     }
 
     #[test]
     fn test_text_delta_not_filtered() {
         let data = r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"你好"}}"#;
-        assert!(
-            !is_empty_thinking_event(data),
-            "text_delta不应被过滤"
-        );
+        assert!(!is_empty_thinking_event(data), "text_delta不应被过滤");
     }
 
     #[test]
@@ -1339,10 +1331,7 @@ mod tests {
     #[test]
     fn test_message_start_not_filtered() {
         let data = r#"{"type":"message_start","message":{"id":"chatcmpl-xxx","type":"message","role":"assistant","model":"glm-5.2"}}"#;
-        assert!(
-            !is_empty_thinking_event(data),
-            "message_start不应被过滤"
-        );
+        assert!(!is_empty_thinking_event(data), "message_start不应被过滤");
     }
 
     #[test]
