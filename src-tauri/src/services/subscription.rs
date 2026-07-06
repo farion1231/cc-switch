@@ -13,7 +13,7 @@ use crate::config;
 // ── 数据类型 ──────────────────────────────────────────────
 
 /// 凭据状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialStatus {
     Valid,
@@ -481,7 +481,13 @@ fn read_codex_credentials() -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
         if let Some(result) = read_codex_credentials_from_keychain() {
-            return result;
+            // Only use Keychain result when credentials are fully valid.
+            // Stale entries (missing auth_mode → NotFound, last_refresh >8d → Expired,
+            // malformed JSON → ParseError) must fall through to ~/.codex/auth.json
+            // so a valid file is not shadowed (#3479).
+            if result.2 == CredentialStatus::Valid {
+                return result;
+            }
         }
     }
 
@@ -1264,7 +1270,10 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
             let (token, account_id, status, message) = read_codex_credentials();
 
             match status {
-                CredentialStatus::NotFound => Ok(SubscriptionQuota::not_found("codex")),
+                CredentialStatus::NotFound => Ok(SubscriptionQuota {
+                    error: message,
+                    ..SubscriptionQuota::not_found("codex")
+                }),
                 CredentialStatus::ParseError => Ok(SubscriptionQuota::error(
                     "codex",
                     CredentialStatus::ParseError,
