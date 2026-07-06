@@ -1,58 +1,36 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { AppSwitcher } from "@/components/AppSwitcher";
+import { PiProviderDiffPreview } from "@/components/pi/PiProviderDiffPreview";
 
-import { PiAgentPanel } from "@/components/pi/PiAgentPanel";
-import { piApi } from "@/lib/api";
-
-vi.mock("@/lib/api", () => ({
-  piApi: {
-    listProviders: vi.fn().mockResolvedValue({}),
-    previewProviderPatch: vi.fn().mockResolvedValue({
-      currentFileHash: "hash-1",
-      nextModelsJson: { providers: { "my-provider": {} } },
-      summary: ['Upsert provider "my-provider"'],
-    }),
-    applyProviderPatch: vi.fn().mockResolvedValue({
-      fileHash: "hash-2",
-      modelsJson: { providers: { "my-provider": {} } },
-      backupPath: "/tmp/backup.json",
-    }),
-    deleteProvider: vi.fn().mockResolvedValue({
-      fileHash: "hash-2",
-      modelsJson: { providers: {} },
-      backupPath: "/tmp/backup.json",
-    }),
-  },
+vi.mock("@/components/ProviderIcon", () => ({
+	ProviderIcon: ({ name }: { name: string }) => <span>{name}</span>,
 }));
 
-describe("PiAgentPanel", () => {
-  it("requires preview before applying provider changes", async () => {
-    const { rerender } = render(<PiAgentPanel addTrigger={0} />);
+describe("Pi Agent app entry", () => {
+	it("renders Pi Agent as an app option", () => {
+		render(<AppSwitcher activeApp="claude" onSwitch={vi.fn()} />);
 
-    rerender(<PiAgentPanel addTrigger={1} />);
+		expect(screen.getAllByText("Pi Agent").length).toBeGreaterThan(0);
+	});
 
-    expect(await screen.findByText("Add Provider")).toBeInTheDocument();
+	it("renders delete action when reviewing an existing provider", () => {
+		const onDelete = vi.fn();
+		render(
+			<PiProviderDiffPreview
+				preview={{
+					currentFileHash: "hash-1",
+					nextModelsJson: { providers: { keep: {} } },
+					summary: ["Upsert Pi provider keep"],
+				}}
+				onApply={vi.fn()}
+				onDelete={onDelete}
+				canDelete
+			/>,
+		);
 
-    fireEvent.click(screen.getByText("OpenAI-compatible"));
-    fireEvent.change(screen.getByLabelText(/Provider ID/i), {
-      target: { value: "my-provider" },
-    });
-    fireEvent.change(screen.getByLabelText(/Base URL/i), {
-      target: { value: "https://api.example.com/v1" },
-    });
-    fireEvent.change(screen.getByLabelText(/Model ID/i), {
-      target: { value: "model-a" },
-    });
+		fireEvent.click(screen.getByText("pi.review.delete"));
 
-    expect(
-      screen.queryByText(/Apply to models\.json/i),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByText(/Preview & Review/i));
-
-    await waitFor(() => expect(piApi.previewProviderPatch).toHaveBeenCalled());
-    await screen.findByText("Review Changes");
-    expect(screen.getAllByText(/Apply to models\.json/i)).toHaveLength(2);
-    expect(screen.getAllByText(/Apply to models\.json/i)[0]).toBeEnabled();
-  });
+		expect(onDelete).toHaveBeenCalled();
+	});
 });

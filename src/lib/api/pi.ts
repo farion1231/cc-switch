@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  PiConnectivityResult,
   PiProviderApplyResult,
   PiProviderDraft,
   PiProviderPatchPreview,
@@ -35,5 +36,9 @@ export const piApi = {
       providerId,
       expectedFileHash,
     });
+  },
+
+  async testConnectivity(providerId: string): Promise<PiConnectivityResult> {
+    return await invoke("test_pi_connectivity", { providerId });
   },
 };

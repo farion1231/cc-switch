@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   piProviderPresets,
   piVendorPresets,
@@ -10,7 +11,6 @@ import type {
   PiModelDraft,
   PiApiType,
 } from "@/types/pi";
-import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 
 interface PiProviderFormProps {
   value?: PiProviderDraft;
@@ -44,64 +44,33 @@ export const emptyPiProviderDraft: PiProviderDraft = {
   advancedJson: null,
 };
 
-const API_TYPE_OPTIONS: { value: PiApiType; label: string }[] = [
-  { value: "openai-completions", label: "OpenAI Chat Completions" },
-  { value: "openai-responses", label: "OpenAI Responses" },
-  { value: "anthropic-messages", label: "Anthropic Messages" },
-  { value: "google-generative-ai", label: "Google Generative AI" },
+const API_TYPE_OPTIONS: { value: PiApiType; labelKey: string }[] = [
+  { value: "openai-completions", labelKey: "pi.form.apiTypeOpenaiCompletions" },
+  { value: "openai-responses", labelKey: "pi.form.apiTypeOpenaiResponses" },
+  { value: "anthropic-messages", labelKey: "pi.form.apiTypeAnthropicMessages" },
+  {
+    value: "google-generative-ai",
+    labelKey: "pi.form.apiTypeGoogleGenerativeAi",
+  },
 ];
 
 const API_KEY_MODE_OPTIONS: {
   value: PiApiKeyMode;
-  label: string;
+  labelKey: string;
   hint: string;
 }[] = [
-  { value: "env", label: "Environment Variable", hint: "$ENV_VAR_NAME" },
-  { value: "literal", label: "Literal Key", hint: "sk-..." },
+  { value: "env", labelKey: "pi.form.apiKeyModeEnv", hint: "$ENV_VAR_NAME" },
+  { value: "literal", labelKey: "pi.form.apiKeyModeLiteral", hint: "sk-..." },
   {
     value: "command",
-    label: "Shell Command",
+    labelKey: "pi.form.apiKeyModeCommand",
     hint: "!security find-generic-password ...",
   },
-  { value: "none", label: "None (use auth.json / /login)", hint: "" },
+  { value: "none", labelKey: "pi.form.apiKeyModeNone", hint: "" },
 ];
 
-/** Masked API Key input with Eye/EyeOff toggle — consistent with cc-switch's ApiKeyInput */
-function PiApiKeyInput({
-  value,
-  placeholder,
-  onChange,
-}: {
-  value: string;
-  placeholder: string;
-  onChange: (val: string) => void;
-}) {
-  const [showKey, setShowKey] = useState(false);
-  return (
-    <div className="relative flex-1">
-      <input
-        type={showKey ? "text" : "password"}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        autoComplete="off"
-        className="w-full px-3 py-2 pr-10 border rounded-lg text-sm transition-colors border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:focus:ring-blue-400/20"
-      />
-      {value && (
-        <button
-          type="button"
-          onClick={() => setShowKey((v) => !v)}
-          className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
-          aria-label={showKey ? "Hide" : "Show"}
-        >
-          {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-        </button>
-      )}
-    </div>
-  );
-}
-
 export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
+  const { t } = useTranslation();
   const draft = value ?? emptyPiProviderDraft;
 
   // ─── Template selection ───────────────────────────────────────────────────
@@ -189,7 +158,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
     <div className="space-y-6">
       {/* Vendor Quick Select */}
       <section aria-label="Vendor presets" className="space-y-3">
-        <h3 className="text-sm font-semibold">Quick Start — Select Provider</h3>
+        <h3 className="text-sm font-semibold">{t("pi.form.quickStart")}</h3>
         <div className="grid gap-2 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
           {piVendorPresets.map((vendor) => (
             <button
@@ -213,7 +182,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
 
       {/* API Template */}
       <section aria-label="API template" className="space-y-3">
-        <h3 className="text-sm font-semibold">API Template</h3>
+        <h3 className="text-sm font-semibold">{t("pi.form.apiTemplate")}</h3>
         <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           {piProviderPresets.map((preset) => (
             <button
@@ -234,10 +203,12 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
 
       {/* Provider Configuration */}
       <section aria-label="Provider config" className="space-y-4">
-        <h3 className="text-sm font-semibold">Provider Configuration</h3>
+        <h3 className="text-sm font-semibold">{t("pi.form.providerConfig")}</h3>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="space-y-1">
-            <span className="text-sm font-medium">Provider ID</span>
+            <span className="text-sm font-medium">
+              {t("pi.form.providerId")}
+            </span>
             <Input
               aria-label="Provider ID"
               value={draft.providerId}
@@ -247,11 +218,11 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
               }
             />
             <span className="text-[10px] text-muted-foreground">
-              Key name in models.json "providers" object
+              {t("pi.form.providerIdHint")}
             </span>
           </label>
           <label className="space-y-1">
-            <span className="text-sm font-medium">Base URL</span>
+            <span className="text-sm font-medium">{t("pi.form.baseUrl")}</span>
             <Input
               aria-label="Base URL"
               value={draft.baseUrl ?? ""}
@@ -260,7 +231,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
             />
           </label>
           <label className="space-y-1">
-            <span className="text-sm font-medium">API Type</span>
+            <span className="text-sm font-medium">{t("pi.form.apiType")}</span>
             <Select
               value={draft.api}
               onValueChange={(v) => onChange({ ...draft, api: v })}
@@ -271,14 +242,14 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
               <SelectContent>
                 {API_TYPE_OPTIONS.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
+                    {t(opt.labelKey)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </label>
           <div className="space-y-1">
-            <span className="text-sm font-medium">API Key</span>
+            <span className="text-sm font-medium">{t("pi.form.apiKey")}</span>
             <div className="flex gap-2">
               <Select
                 value={draft.apiKey.mode}
@@ -298,30 +269,32 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                 <SelectContent>
                   {API_KEY_MODE_OPTIONS.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
+                      {t(opt.labelKey)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               {draft.apiKey.mode !== "none" && (
-                <PiApiKeyInput
+                <Input
+                  aria-label="API Key value"
                   value={draft.apiKey.value}
                   placeholder={
                     API_KEY_MODE_OPTIONS.find(
                       (o) => o.value === draft.apiKey.mode,
                     )?.hint ?? ""
                   }
-                  onChange={(val) =>
+                  onChange={(e) =>
                     onChange({
                       ...draft,
-                      apiKey: { ...draft.apiKey, value: val },
+                      apiKey: { ...draft.apiKey, value: e.target.value },
                     })
                   }
+                  className="flex-1"
                 />
               )}
             </div>
             <span className="text-[10px] text-muted-foreground">
-              Pi resolves $VAR from env, !cmd from shell, or literal value
+              {t("pi.form.apiKeyHint")}
             </span>
           </div>
         </div>
@@ -330,10 +303,10 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
       {/* Models */}
       <section aria-label="Models" className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Models</h3>
+          <h3 className="text-sm font-semibold">{t("pi.form.models")}</h3>
           <Button type="button" variant="outline" size="sm" onClick={addModel}>
             <Plus className="mr-1 h-3 w-3" />
-            Add Model
+            {t("pi.form.addModel")}
           </Button>
         </div>
         <div className="space-y-3">
@@ -350,7 +323,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
               />
               <Input
                 aria-label="Model Name"
-                placeholder="Display name"
+                placeholder={t("pi.form.modelNamePlaceholder")}
                 value={model.name ?? ""}
                 onChange={(e) =>
                   updateModel(idx, { name: e.target.value, nameTouched: true })
@@ -361,7 +334,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                   checked={model.reasoning ?? false}
                   onCheckedChange={(v) => updateModel(idx, { reasoning: v })}
                 />
-                <Label className="text-xs">Reasoning</Label>
+                <Label className="text-xs">{t("pi.form.reasoning")}</Label>
               </div>
               <Input
                 aria-label="Context window"
@@ -395,7 +368,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
       {(draft.api === "openai-completions" ||
         draft.api === "anthropic-messages") && (
         <section aria-label="Compatibility" className="space-y-3">
-          <h3 className="text-sm font-semibold">Compatibility Flags</h3>
+          <h3 className="text-sm font-semibold">{t("pi.form.compatFlags")}</h3>
           <div className="flex flex-wrap gap-4">
             {draft.api === "openai-completions" && (
               <>
@@ -409,7 +382,9 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                       })
                     }
                   />
-                  <Label className="text-xs">developer role</Label>
+                  <Label className="text-xs">
+                    {t("pi.form.developerRole")}
+                  </Label>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch
@@ -421,7 +396,9 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                       })
                     }
                   />
-                  <Label className="text-xs">reasoning_effort</Label>
+                  <Label className="text-xs">
+                    {t("pi.form.reasoningEffort")}
+                  </Label>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch
@@ -436,7 +413,9 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                       })
                     }
                   />
-                  <Label className="text-xs">usage in streaming</Label>
+                  <Label className="text-xs">
+                    {t("pi.form.usageInStreaming")}
+                  </Label>
                 </div>
               </>
             )}
@@ -457,7 +436,9 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                       })
                     }
                   />
-                  <Label className="text-xs">eager tool streaming</Label>
+                  <Label className="text-xs">
+                    {t("pi.form.eagerToolStreaming")}
+                  </Label>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch
@@ -469,7 +450,9 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
                       })
                     }
                   />
-                  <Label className="text-xs">adaptive thinking</Label>
+                  <Label className="text-xs">
+                    {t("pi.form.adaptiveThinking")}
+                  </Label>
                 </div>
               </>
             )}
@@ -479,10 +462,10 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
 
       {/* Advanced (headers + raw JSON) */}
       <section aria-label="Advanced config" className="space-y-3">
-        <h3 className="text-sm font-semibold">Advanced</h3>
+        <h3 className="text-sm font-semibold">{t("pi.form.advanced")}</h3>
         <label className="space-y-1">
           <span className="text-xs text-muted-foreground">
-            Custom Headers (JSON object, supports $ENV_VAR and !command)
+            {t("pi.form.headersLabel")}
           </span>
           <Textarea
             aria-label="Headers JSON"
@@ -509,7 +492,7 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
             size="sm"
             onClick={() => onChange({ ...emptyPiProviderDraft })}
           >
-            Reset All
+            {t("pi.form.resetAll")}
           </Button>
         </div>
       </section>

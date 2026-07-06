@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { PiProviderPatchPreview } from "@/types/pi";
 import { Button } from "@/components/ui/button";
 
@@ -16,10 +17,12 @@ export function PiProviderDiffPreview({
   onDelete,
   canDelete,
 }: PiProviderDiffPreviewProps) {
+  const { t } = useTranslation();
+
   if (!preview) {
     return (
       <div className="rounded-lg border border-dashed border-border-default p-4 text-sm text-muted-foreground">
-        Preview a patch before writing to Pi models.json.
+        {t("pi.review.empty")}
       </div>
     );
   }
@@ -28,9 +31,11 @@ export function PiProviderDiffPreview({
     <div className="space-y-3 rounded-lg border border-border-default p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold">Review & Apply</h3>
+          <h3 className="text-sm font-semibold">{t("pi.review.title")}</h3>
           <p className="text-xs text-muted-foreground">
-            Current file hash: {preview.currentFileHash || "(new file)"}
+            {t("pi.review.fileHash", {
+              hash: preview.currentFileHash || t("pi.review.newFile"),
+            })}
           </p>
         </div>
         <div className="flex gap-2">
@@ -41,11 +46,11 @@ export function PiProviderDiffPreview({
               onClick={onDelete}
               disabled={isApplying || !canDelete}
             >
-              Delete Provider
+              {t("pi.review.delete")}
             </Button>
           )}
           <Button type="button" onClick={onApply} disabled={isApplying}>
-            {isApplying ? "Applying..." : "Apply to models.json"}
+            {isApplying ? t("pi.review.applying") : t("pi.review.apply")}
           </Button>
         </div>
       </div>

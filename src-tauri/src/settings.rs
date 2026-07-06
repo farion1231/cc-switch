@@ -77,11 +77,6 @@ impl VisibleApps {
             AppType::Hermes => self.hermes,
         }
     }
-
-    /// Check if Pi Agent tab is visible
-    pub fn is_pi_visible(&self) -> bool {
-        self.pi
-    }
 }
 
 /// WebDAV 同步状态（持久化同步进度信息）

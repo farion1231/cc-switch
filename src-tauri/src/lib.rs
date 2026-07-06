@@ -1418,6 +1418,12 @@ pub fn run() {
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
+            // Pi Agent specific
+            commands::list_pi_providers,
+            commands::preview_pi_provider_patch,
+            commands::apply_pi_provider_patch,
+            commands::delete_pi_provider,
+            commands::test_pi_connectivity,
             // OpenClaw specific
             commands::import_openclaw_providers_from_live,
             commands::get_openclaw_live_provider_ids,
@@ -1493,11 +1499,6 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
-            // Pi Agent provider management
-            commands::list_pi_providers,
-            commands::preview_pi_provider_patch,
-            commands::apply_pi_provider_patch,
-            commands::delete_pi_provider,
             // lightweight mode (for testing or low-resource environments)
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,

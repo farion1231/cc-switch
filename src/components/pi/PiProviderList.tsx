@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ export function PiProviderList({
   onDelete,
   onTestConnectivity,
 }: PiProviderListProps) {
+  const { t } = useTranslation();
   const entries = Object.entries(providers);
   const builtin = entries.filter(([id]) => BUILTIN_PROVIDER_IDS.has(id));
   const custom = entries.filter(([id]) => !BUILTIN_PROVIDER_IDS.has(id));
@@ -47,12 +49,9 @@ export function PiProviderList({
   if (entries.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-border p-8 text-center">
-        <p className="text-sm text-muted-foreground">
-          No providers configured in ~/.pi/agent/models.json
-        </p>
+        <p className="text-sm text-muted-foreground">{t("pi.list.empty")}</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Click "Add Provider" to configure a custom provider, or use Pi's
-          built-in providers via /login.
+          {t("pi.list.emptyHint")}
         </p>
       </div>
     );
@@ -62,7 +61,7 @@ export function PiProviderList({
     <div className="space-y-6">
       {custom.length > 0 && (
         <ProviderGroup
-          title="Custom Providers"
+          title={t("pi.list.custom")}
           entries={custom}
           onEdit={onEdit}
           onDuplicate={onDuplicate}
@@ -72,7 +71,7 @@ export function PiProviderList({
       )}
       {builtin.length > 0 && (
         <ProviderGroup
-          title="Built-in Overrides"
+          title={t("pi.list.builtin")}
           entries={builtin}
           onEdit={onEdit}
           onDuplicate={onDuplicate}
@@ -134,6 +133,7 @@ function PiProviderCard({
   onDelete?: (providerId: string) => void;
   onTestConnectivity?: (providerId: string) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [isTesting, setIsTesting] = useState(false);
   const cfg = config as Record<string, unknown> | undefined;
   const vendor = findVendorPreset(id);
@@ -178,7 +178,7 @@ function PiProviderCard({
           </Badge>
           {modelCount > 0 && (
             <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-              {modelCount} model{modelCount > 1 ? "s" : ""}
+              {t("pi.list.models", { count: modelCount })}
             </Badge>
           )}
         </div>
@@ -189,7 +189,7 @@ function PiProviderCard({
             size="icon"
             variant="ghost"
             onClick={() => onEdit(id)}
-            title="Edit"
+            title={t("pi.list.edit")}
             className={iconButtonClass}
           >
             <Edit className="h-4 w-4" />
@@ -199,7 +199,7 @@ function PiProviderCard({
             size="icon"
             variant="ghost"
             onClick={() => onDuplicate?.(id)}
-            title="Duplicate"
+            title={t("pi.list.duplicate")}
             className={cn(
               iconButtonClass,
               !onDuplicate &&
@@ -215,7 +215,7 @@ function PiProviderCard({
             variant="ghost"
             onClick={handleTest}
             disabled={isTesting || !onTestConnectivity || !baseUrl}
-            title="Test connectivity"
+            title={t("pi.list.testConnectivity")}
             className={cn(
               iconButtonClass,
               (!onTestConnectivity || !baseUrl) &&
@@ -233,7 +233,7 @@ function PiProviderCard({
             size="icon"
             variant="ghost"
             onClick={() => onDelete?.(id)}
-            title="Delete"
+            title={t("pi.list.delete")}
             className={cn(
               iconButtonClass,
               onDelete
@@ -269,7 +269,7 @@ function PiProviderCard({
           ))}
           {modelCount > 4 && (
             <span className="text-[11px] text-muted-foreground self-center">
-              +{modelCount - 4} more
+              {t("pi.list.moreModels", { count: modelCount - 4 })}
             </span>
           )}
         </div>

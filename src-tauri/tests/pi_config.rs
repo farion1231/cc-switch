@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fs;
 
 #[path = "../src/pi_config.rs"]

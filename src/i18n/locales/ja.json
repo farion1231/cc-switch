@@ -1692,8 +1692,7 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes",
-        "piAgent": "Pi Agent"
+        "hermes": "Hermes"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -2266,8 +2265,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw",
-      "piAgent": "Pi Agent"
+      "openclaw": "OpenClaw"
     },
     "installFromZip": {
       "button": "ZIP からインストール",
@@ -2919,5 +2917,88 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "pi": {
+    "title": "Pi Agent プロバイダー",
+    "descriptionPrefix": "次のファイルでカスタムプロバイダーを設定します：",
+    "descriptionSuffix": "。組み込みプロバイダー（OpenAI、Anthropic、Google など）は /login または環境変数でそのまま利用できます。",
+    "refresh": "更新",
+    "addProvider": "プロバイダーを追加",
+    "tabs": {
+      "providers": "プロバイダー",
+      "edit": "追加 / 編集",
+      "review": "確認"
+    },
+    "previewReview": "プレビューして確認",
+    "previewHint": "ディスクに書き込む前に JSON パッチをプレビュー",
+    "toast": {
+      "readFailed": "Pi models.json の読み取りに失敗しました",
+      "previewFailed": "Pi プロバイダーパッチのプレビューに失敗しました",
+      "saved": "Pi プロバイダーを保存しました",
+      "savedDesc": "バックアップ: {{path}}",
+      "applyFailed": "Pi プロバイダーパッチの適用に失敗しました",
+      "deleted": "Pi プロバイダーを削除しました",
+      "deleteFailed": "Pi プロバイダーの削除に失敗しました",
+      "noBaseUrl": "このプロバイダーにベース URL が設定されていません",
+      "reachable": "プロバイダー \"{{id}}\" は到達可能です",
+      "reachableDesc": "{{url}} → HTTP {{status}}",
+      "timeout": "プロバイダー \"{{id}}\" がタイムアウトしました（10秒）",
+      "unreachable": "プロバイダー \"{{id}}\" に到達できません"
+    },
+    "list": {
+      "custom": "カスタムプロバイダー",
+      "builtin": "組み込みプロバイダーの上書き",
+      "empty": "~/.pi/agent/models.json にプロバイダーが設定されていません",
+      "emptyHint": "「プロバイダーを追加」をクリックしてカスタムプロバイダーを設定するか、/login で Pi の組み込みプロバイダーを使用してください。",
+      "models": "{{count}} モデル",
+      "models_plural": "{{count}} モデル",
+      "edit": "編集",
+      "duplicate": "複製",
+      "testConnectivity": "接続テスト",
+      "delete": "削除",
+      "moreModels": "+{{count}} 件"
+    },
+    "review": {
+      "empty": "Pi models.json に書き込む前にパッチをプレビューしてください。",
+      "title": "確認して適用",
+      "fileHash": "現在のファイルハッシュ: {{hash}}",
+      "newFile": "（新規ファイル）",
+      "delete": "プロバイダーを削除",
+      "applying": "適用中...",
+      "apply": "models.json に適用"
+    },
+    "form": {
+      "quickStart": "クイックスタート — プロバイダーを選択",
+      "apiTemplate": "API テンプレート",
+      "providerConfig": "プロバイダー設定",
+      "providerId": "プロバイダー ID",
+      "providerIdHint": "models.json の「providers」オブジェクトのキー名",
+      "baseUrl": "ベース URL",
+      "apiType": "API タイプ",
+      "apiKey": "API キー",
+      "apiKeyHint": "Pi は $VAR を環境変数、!cmd をシェル、またはリテラル値から解決します",
+      "models": "モデル",
+      "addModel": "モデルを追加",
+      "modelNamePlaceholder": "表示名",
+      "reasoning": "推論",
+      "contextWindow": "コンテキストウィンドウ",
+      "compatFlags": "互換性フラグ",
+      "developerRole": "developer ロール",
+      "reasoningEffort": "reasoning_effort",
+      "usageInStreaming": "ストリーミングの usage",
+      "eagerToolStreaming": "eager tool ストリーミング",
+      "adaptiveThinking": "アダプティブ思考",
+      "advanced": "高度な設定",
+      "headersLabel": "カスタムヘッダー（JSON オブジェクト、$ENV_VAR と !command をサポート）",
+      "resetAll": "すべてリセット",
+      "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
+      "apiTypeOpenaiResponses": "OpenAI Responses",
+      "apiTypeAnthropicMessages": "Anthropic Messages",
+      "apiTypeGoogleGenerativeAi": "Google Generative AI",
+      "apiKeyModeEnv": "環境変数",
+      "apiKeyModeLiteral": "リテラルキー",
+      "apiKeyModeCommand": "シェルコマンド",
+      "apiKeyModeNone": "なし（auth.json / /login を使用）"
+    }
   }
 }

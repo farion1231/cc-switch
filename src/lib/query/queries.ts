@@ -65,6 +65,13 @@ export const useProvidersQuery = (
     // 这样可以自动反映后端熔断器自动禁用代理目标的变更
     refetchInterval: isProxyRunning ? 10000 : false,
     queryFn: async () => {
+      if (appId === "pi") {
+        return {
+          providers: {},
+          currentProviderId: "",
+        };
+      }
+
       let providers: Record<string, Provider> = {};
       let currentProviderId = "";
 

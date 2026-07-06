@@ -88,4 +88,11 @@ export interface PiProviderApplyResult {
   backupPath: string;
 }
 
+export interface PiConnectivityResult {
+  reachable: boolean;
+  statusCode?: number;
+  errorKind?: string;
+  detail?: string;
+}
+
 export type PiProvidersMap = Record<string, Record<string, unknown>>;
