@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { PiAgentPanel } from "@/components/pi/PiAgentPanel";
@@ -68,7 +74,9 @@ describe("PiAgentPanel", () => {
       expect(screen.getByText("myprovider")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTitle("pi.list.edit"));
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("pi.list.edit"));
+    });
 
     await waitFor(() => {
       expect(screen.getByText("pi.editor.title")).toBeInTheDocument();
@@ -96,25 +104,33 @@ describe("PiAgentPanel", () => {
       expect(screen.getByText("pi.list.emptyHint")).toBeInTheDocument();
     });
 
-    ref.current?.openAdd();
+    await act(async () => {
+      ref.current?.openAdd();
+    });
 
     await waitFor(() => {
       expect(screen.getByText("pi.editor.title")).toBeInTheDocument();
     });
 
     // Fill providerId
-    fireEvent.change(screen.getByPlaceholderText("my-openai"), {
-      target: { value: "myprovider" },
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText("my-openai"), {
+        target: { value: "myprovider" },
+      });
     });
     // Fill baseUrl so the config JSON preview is non-empty
-    fireEvent.change(
-      screen.getByPlaceholderText("https://api.example.com/v1"),
-      {
-        target: { value: "https://api.example.com/v1" },
-      },
-    );
+    await act(async () => {
+      fireEvent.change(
+        screen.getByPlaceholderText("https://api.example.com/v1"),
+        {
+          target: { value: "https://api.example.com/v1" },
+        },
+      );
+    });
 
-    fireEvent.click(screen.getByText("common.save"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("common.save"));
+    });
 
     await waitFor(() => {
       expect(mockedPreview).toHaveBeenCalled();
@@ -157,13 +173,17 @@ describe("PiAgentPanel", () => {
       expect(screen.getByText("todelete")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTitle("pi.list.delete"));
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("pi.list.delete"));
+    });
 
     await waitFor(() => {
       expect(screen.getByText("pi.deleteConfirm.title")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("common.delete"));
+    await act(async () => {
+      fireEvent.click(screen.getByText("common.delete"));
+    });
 
     await waitFor(() => {
       expect(mockedPreview).toHaveBeenCalled();
