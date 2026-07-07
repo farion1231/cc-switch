@@ -633,7 +633,13 @@ struct CodexRateLimit {
 #[derive(Deserialize)]
 struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
+    additional_rate_limits: Option<Vec<CodexAdditionalRateLimit>>,
     spend_control: Option<CodexSpendControl>,
+}
+
+#[derive(Deserialize)]
+struct CodexAdditionalRateLimit {
+    rate_limit: Option<CodexRateLimit>,
 }
 
 #[derive(Deserialize)]
@@ -696,27 +702,39 @@ fn codex_individual_limit_utilization(limit: &CodexIndividualLimit) -> Option<f6
     Some((used / total) * 100.0)
 }
 
+fn push_codex_rate_limit_tiers(tiers: &mut Vec<QuotaTier>, rate_limit: CodexRateLimit) {
+    for window in [rate_limit.primary_window, rate_limit.secondary_window]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(used) = window.used_percent {
+            tiers.push(QuotaTier {
+                name: window
+                    .limit_window_seconds
+                    .map(window_seconds_to_tier_name)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                utilization: used,
+                resets_at: window.reset_at.and_then(unix_ts_to_iso),
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+}
+
 fn codex_usage_response_to_quota_parts(
     body: CodexUsageResponse,
 ) -> (Vec<QuotaTier>, Option<ExtraUsage>) {
     let mut tiers = Vec::new();
 
     if let Some(rate_limit) = body.rate_limit {
-        for window in [rate_limit.primary_window, rate_limit.secondary_window]
-            .into_iter()
-            .flatten()
-        {
-            if let Some(used) = window.used_percent {
-                tiers.push(QuotaTier {
-                    name: window
-                        .limit_window_seconds
-                        .map(window_seconds_to_tier_name)
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    utilization: used,
-                    resets_at: window.reset_at.and_then(unix_ts_to_iso),
-                    used_value_usd: None,
-                    max_value_usd: None,
-                });
+        push_codex_rate_limit_tiers(&mut tiers, rate_limit);
+    }
+
+    if let Some(additional_rate_limits) = body.additional_rate_limits {
+        for additional_rate_limit in additional_rate_limits {
+            if let Some(rate_limit) = additional_rate_limit.rate_limit {
+                push_codex_rate_limit_tiers(&mut tiers, rate_limit);
             }
         }
     }
@@ -753,8 +771,8 @@ fn codex_usage_response_to_quota_parts(
                     name: TIER_MONTHLY.to_string(),
                     utilization,
                     resets_at: limit.reset_at.and_then(unix_ts_to_iso),
-                    used_value_usd: json_value_to_f64(limit.used.as_ref()),
-                    max_value_usd: json_value_to_f64(limit.limit.as_ref()),
+                    used_value_usd: None,
+                    max_value_usd: None,
                 });
             }
         }
@@ -1476,8 +1494,8 @@ mod tests {
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].name, TIER_MONTHLY);
         assert_eq!(tiers[0].utilization, 24.0);
-        assert_eq!(tiers[0].used_value_usd, Some(2431.4545907974243));
-        assert_eq!(tiers[0].max_value_usd, Some(10000.0));
+        assert_eq!(tiers[0].used_value_usd, None);
+        assert_eq!(tiers[0].max_value_usd, None);
         assert_eq!(
             tiers[0].resets_at.as_deref(),
             Some("2026-08-01T00:00:00+00:00")
@@ -1517,6 +1535,44 @@ mod tests {
         assert_eq!(tiers[0].utilization, 12.0);
         assert_eq!(tiers[1].name, TIER_SEVEN_DAY);
         assert_eq!(tiers[1].utilization, 80.0);
+        assert!(extra_usage.is_none());
+    }
+
+    #[test]
+    fn codex_additional_rate_limits_map_weekly_fallback_tier() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rate_limit": null,
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark-Preview",
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": {
+                        "allowed": true,
+                        "limit_reached": false,
+                        "primary_window": {
+                            "used_percent": 7,
+                            "limit_window_seconds": 18000,
+                            "reset_at": 1783441644
+                        },
+                        "secondary_window": {
+                            "used_percent": 42,
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1784028444
+                        }
+                    }
+                }
+            ],
+            "spend_control": null
+        }))
+        .expect("additional rate limits response should deserialize");
+
+        let (tiers, extra_usage) = codex_usage_response_to_quota_parts(body);
+
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 7.0);
+        assert_eq!(tiers[1].name, TIER_SEVEN_DAY);
+        assert_eq!(tiers[1].utilization, 42.0);
         assert!(extra_usage.is_none());
     }
 }
