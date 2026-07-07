@@ -3,7 +3,7 @@ use crate::codex_state_db::codex_state_db_paths;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::error::AppError;
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{backup::Backup, params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -17,6 +17,8 @@ const BACKUP_NAME: &str = "codex-history-visibility-repair-v1";
 const SESSION_INDEX_FILENAME: &str = "session_index.jsonl";
 const GLOBAL_STATE_FILENAME: &str = ".codex-global-state.json";
 const GLOBAL_STATE_BACKUP_FILENAME: &str = ".codex-global-state.json.bak";
+const SESSION_INDEX_STALE_WARNING: &str =
+    "session_index.jsonl is missing, invalid, or behind the SQLite thread index";
 
 static CODEX_HISTORY_VISIBILITY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -135,7 +137,7 @@ pub fn repair_codex_history_visibility() -> Result<CodexHistoryVisibilityRepairR
     let (session_index_rebuilt, session_index_entries_written) =
         rebuild_session_index_if_needed(&codex_dir, &config_text, &diagnosis_before)?;
 
-    let mut warnings = diagnosis_before.warnings.clone();
+    let mut warnings = repair_warnings(&diagnosis_before, session_index_rebuilt);
     if skipped_rollout_files > 0 {
         warnings.push(format!(
             "{skipped_rollout_files} rollout file(s) were skipped because they changed or could not be rewritten"
@@ -189,10 +191,7 @@ fn diagnose_inner() -> Result<CodexHistoryVisibilityDiagnosis, AppError> {
         ));
     }
     if session_index.needs_rebuild {
-        warnings.push(
-            "session_index.jsonl is missing, invalid, or behind the SQLite thread index"
-                .to_string(),
-        );
+        warnings.push(SESSION_INDEX_STALE_WARNING.to_string());
     }
 
     Ok(CodexHistoryVisibilityDiagnosis {
@@ -219,17 +218,28 @@ fn diagnose_inner() -> Result<CodexHistoryVisibilityDiagnosis, AppError> {
 
 fn current_provider_from_config(config_text: &str) -> (String, bool) {
     let parsed = config_text.parse::<toml_edit::DocumentMut>().ok();
-    let provider = parsed
-        .as_ref()
-        .and_then(|doc| doc.get("model_provider"))
-        .and_then(|item| item.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+    let provider = parsed.as_ref().and_then(|doc| {
+        let profile_provider = toml_non_empty_str(doc.get("profile")).and_then(|profile| {
+            doc.get("profiles")
+                .and_then(|item| item.as_table_like())
+                .and_then(|profiles| profiles.get(profile))
+                .and_then(|profile_item| profile_item.as_table_like())
+                .and_then(|profile_table| toml_non_empty_str(profile_table.get("model_provider")))
+        });
+        profile_provider
+            .or_else(|| toml_non_empty_str(doc.get("model_provider")))
+            .map(ToString::to_string)
+    });
     match provider {
         Some(provider) => (provider, false),
         None => (DEFAULT_CODEX_PROVIDER.to_string(), true),
     }
+}
+
+fn toml_non_empty_str(item: Option<&toml_edit::Item>) -> Option<&str> {
+    item.and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn scan_sessions(codex_dir: &Path, target_provider: &str) -> SessionScan {
@@ -664,6 +674,20 @@ fn rebuild_session_index_if_needed(
     Ok((true, entries.len()))
 }
 
+fn repair_warnings(
+    diagnosis_before: &CodexHistoryVisibilityDiagnosis,
+    session_index_rebuilt: bool,
+) -> Vec<String> {
+    diagnosis_before
+        .warnings
+        .iter()
+        .filter(|warning| {
+            !(session_index_rebuilt && warning.as_str() == SESSION_INDEX_STALE_WARNING)
+        })
+        .cloned()
+        .collect()
+}
+
 fn load_session_index_entries_from_sqlite(
     codex_dir: &Path,
     config_text: &str,
@@ -876,7 +900,33 @@ fn to_desktop_workspace_path(value: &str) -> String {
     if let Some(rest) = trimmed.strip_prefix("\\\\?\\") {
         return rest.replace('/', "\\");
     }
-    value.replace('/', "\\")
+    #[cfg(windows)]
+    {
+        return value.replace('/', "\\");
+    }
+    #[cfg(not(windows))]
+    {
+        value.to_string()
+    }
+}
+
+fn backup_sqlite_database(source: &Path, target: &Path) -> Result<(), AppError> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
+    }
+    let source_conn = Connection::open(source)
+        .map_err(|e| AppError::Database(format!("打开 Codex state DB 备份源失败: {e}")))?;
+    source_conn
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|e| AppError::Database(format!("设置 Codex state DB 备份等待时间失败: {e}")))?;
+    let mut backup_conn = Connection::open(target)
+        .map_err(|e| AppError::Database(format!("创建 Codex state DB 备份失败: {e}")))?;
+    let backup = Backup::new(&source_conn, &mut backup_conn)
+        .map_err(|e| AppError::Database(format!("初始化 Codex state DB 备份失败: {e}")))?;
+    backup
+        .run_to_completion(5, Duration::from_millis(25), None)
+        .map_err(|e| AppError::Database(format!("写入 Codex state DB 备份失败: {e}")))?;
+    Ok(())
 }
 
 fn comparable_path_key(value: &str) -> String {
@@ -958,21 +1008,7 @@ fn backup_static_files(
                 .and_then(|name| name.to_str())
                 .map(|parent| format!("{parent}-state_5.sqlite"))
                 .unwrap_or_else(|| "state_5.sqlite".to_string());
-            copy_file(&db_path, &db_dir.join(name))?;
-            for suffix in ["-wal", "-shm"] {
-                let sidecar = PathBuf::from(format!("{}{}", db_path.display(), suffix));
-                if sidecar.exists() {
-                    let sidecar_name = db_dir.join(format!(
-                        "{}{}",
-                        db_path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("state_5.sqlite"),
-                        suffix
-                    ));
-                    copy_file(&sidecar, &sidecar_name)?;
-                }
-            }
+            backup_sqlite_database(&db_path, &db_dir.join(name))?;
         }
     }
     let meta = json!({
@@ -1005,4 +1041,103 @@ fn write_session_manifest(backup_dir: &Path, changes: &[SessionChange]) -> Resul
     }))
     .map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write(&backup_dir.join("rollout-first-line-manifest.json"), &bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_provider_uses_active_profile_model_provider() {
+        let config = r#"profile = "work"
+
+[profiles.work]
+model_provider = "vendor_alpha"
+"#;
+
+        assert_eq!(
+            current_provider_from_config(config),
+            ("vendor_alpha".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn current_provider_prefers_active_profile_over_top_level_provider() {
+        let config = r#"model_provider = "openai"
+profile = "work"
+
+[profiles.work]
+model_provider = "vendor_alpha"
+"#;
+
+        assert_eq!(
+            current_provider_from_config(config),
+            ("vendor_alpha".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn current_provider_defaults_to_openai_when_no_provider_is_configured() {
+        assert_eq!(
+            current_provider_from_config(r#"profile = "work""#),
+            (DEFAULT_CODEX_PROVIDER.to_string(), true)
+        );
+    }
+
+    #[test]
+    fn desktop_workspace_path_removes_windows_extended_prefix() {
+        assert_eq!(
+            to_desktop_workspace_path(r#"\\?\C:\Users\me\project"#),
+            r#"C:\Users\me\project"#
+        );
+        assert_eq!(
+            to_desktop_workspace_path(r#"\\?\UNC\server\share\project"#),
+            r#"\\server\share\project"#
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn desktop_workspace_path_preserves_posix_paths_on_non_windows() {
+        assert_eq!(
+            to_desktop_workspace_path("/Users/me/project"),
+            "/Users/me/project"
+        );
+        assert_eq!(
+            to_desktop_workspace_path("/home/me/project"),
+            "/home/me/project"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_workspace_path_uses_backslashes_on_windows() {
+        assert_eq!(
+            to_desktop_workspace_path("C:/Users/me/project"),
+            r#"C:\Users\me\project"#
+        );
+    }
+
+    #[test]
+    fn repair_warnings_drop_stale_session_index_warning_after_rebuild() {
+        let diagnosis = CodexHistoryVisibilityDiagnosis {
+            warnings: vec![
+                SESSION_INDEX_STALE_WARNING.to_string(),
+                "other warning".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            repair_warnings(&diagnosis, true),
+            vec!["other warning".to_string()]
+        );
+        assert_eq!(
+            repair_warnings(&diagnosis, false),
+            vec![
+                SESSION_INDEX_STALE_WARNING.to_string(),
+                "other warning".to_string()
+            ]
+        );
+    }
 }

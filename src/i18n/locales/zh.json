@@ -296,7 +296,7 @@
     },
     "codexHistoryVisibilityRepair": {
       "title": "恢复 Codex Desktop 侧边栏历史记录",
-      "message": "将把 Codex 历史 metadata 同步到当前 provider：{{provider}}。\n\n诊断结果：\n• 需同步 rollout 文件：{{rollout}}\n• 需修复 SQLite 记录：{{sqlite}}\n• 需规范化项目路径：{{roots}}\n• session_index 重建条目：{{index}}\n• 风险提示：{{warnings}}\n\n修复前会自动备份，不会修改会话正文。含 encrypted_content 的旧会话即使恢复可见，跨 provider 继续仍可能失败。修复后需自行重启 Codex Desktop，并自行刷新 app-server。",
+      "message": "将把 Codex 历史 metadata 同步到当前 provider：{{provider}}。\n\n诊断结果：\n• 需同步 rollout 文件：{{rollout}}\n• 需修复 SQLite 记录：{{sqlite}}\n• 需规范化项目路径：{{roots}}\n• session_index 重建条目：{{index}}\n• 风险提示：{{warnings}}\n\n修复前会自动备份，不会修改会话正文。\n\n注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续对话失败。\n\n修复后需自行重启 Codex Desktop，并自行刷新 app-server。",
       "confirm": "备份并修复"
     },
     "usage": {
@@ -697,12 +697,12 @@
     "unifyCodexHistoryRestoreNothing": "当前 Codex 目录没有可恢复的迁移备份",
     "unifyCodexHistoryRestoreSkippedToggleOn": "统一会话历史开关已重新开启，已跳过还原",
     "codexHistoryVisibilityRepair": "恢复 Codex Desktop 侧边栏历史记录",
-    "codexHistoryVisibilityRepairDescription": "诊断并修复 rollout、SQLite、项目路径缓存和 session_index 不一致导致的历史列表不可见问题。修复后需自行重启 Codex Desktop，并自行刷新 app-server。",
+    "codexHistoryVisibilityRepairDescription": "诊断并修复 rollout、SQLite、项目路径缓存和 session_index 不一致导致的历史记录丢失问题。\n修复后需自行重启 Codex Desktop，并自行刷新 app-server。",
     "codexHistoryVisibilityRepairAction": "诊断",
     "codexHistoryVisibilityRepairing": "修复中",
     "codexHistoryVisibilityDiagnoseFailed": "诊断 Codex 历史可见性失败",
     "codexHistoryVisibilityRepairFailed": "修复 Codex 历史可见性失败",
-    "codexHistoryVisibilityRepairCompleted": "Codex 历史可见性修复完成（rollout {{rollout}} 个、SQLite {{sqlite}} 条、索引 {{index}} 条）。需自行重启 Codex Desktop，并自行刷新 app-server。备份位置：{{backup}}",
+    "codexHistoryVisibilityRepairCompleted": "Codex 历史可见性修复完成（rollout {{rollout}} 个、SQLite {{sqlite}} 条、索引 {{index}} 条）。\n需自行重启 Codex Desktop，并自行刷新 app-server。\n备份位置：{{backup}}",
     "appVisibility": {
       "title": "主页面显示",
       "description": "选择在主页面显示的应用",
