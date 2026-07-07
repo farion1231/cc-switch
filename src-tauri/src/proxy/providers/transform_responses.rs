@@ -458,7 +458,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                                 "type": "function_call",
                                 "call_id": id,
                                 "name": name,
-                                "arguments": canonical_json_string(&arguments)
+                                "arguments": arguments
                             }));
                         }
 
@@ -555,11 +555,12 @@ pub fn responses_to_anthropic(body: Value) -> Result<Value, ProxyError> {
             "function_call" => {
                 let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
                 let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let args_str = item
-                    .get("arguments")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("{}");
-                let input: Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                // arguments 可能是 JSON 对象或 JSON 字符串，两种格式都需兼容
+                let input: Value = match item.get("arguments") {
+                    Some(Value::String(s)) => serde_json::from_str(s).unwrap_or(json!({})),
+                    Some(v @ Value::Object(_)) => v.clone(),
+                    _ => json!({}),
+                };
                 let input = sanitize_anthropic_tool_use_input(name, input);
 
                 content.push(json!({
@@ -830,6 +831,13 @@ mod tests {
         assert_eq!(input_arr[1]["type"], "function_call");
         assert_eq!(input_arr[1]["call_id"], "call_123");
         assert_eq!(input_arr[1]["name"], "get_weather");
+        // arguments must be a JSON object (not a string) for upstream compatibility (#5062)
+        assert!(
+            input_arr[1]["arguments"].is_object(),
+            "arguments should be an object, got: {:?}",
+            input_arr[1]["arguments"]
+        );
+        assert_eq!(input_arr[1]["arguments"]["location"], "Tokyo");
     }
 
     #[test]
@@ -950,6 +958,29 @@ mod tests {
         assert_eq!(result["content"][0]["name"], "get_weather");
         assert_eq!(result["content"][0]["input"]["location"], "Tokyo");
         assert_eq!(result["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_function_call_with_object_arguments() {
+        // arguments 作为 JSON 对象（而非字符串）时也应正确转换为 Anthropic tool_use (#5062)
+        let input = json!({
+            "id": "resp_obj",
+            "status": "completed",
+            "model": "gpt-4o",
+            "output": [{
+                "type": "function_call",
+                "call_id": "call_obj",
+                "name": "search",
+                "arguments": {"query": "hello", "limit": 10}
+            }],
+            "usage": {"input_tokens": 5, "output_tokens": 10}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "tool_use");
+        assert_eq!(result["content"][0]["name"], "search");
+        assert_eq!(result["content"][0]["input"]["query"], "hello");
+        assert_eq!(result["content"][0]["input"]["limit"], 10);
     }
 
     #[test]
@@ -1709,5 +1740,80 @@ mod tests {
         assert_eq!(result["output_tokens"], json!(0));
         assert_eq!(result["cache_read_input_tokens"], json!(60));
         assert_eq!(result["cache_creation_input_tokens"], json!(20));
+    }
+
+    #[test]
+    fn repro_anthropic_to_responses_arguments_must_be_object() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Let me check"},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather",
+                     "input": {"location": "Tokyo"}}
+                ]
+            }]
+        });
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let fc = &result["input"].as_array().unwrap()[1];
+        assert!(
+            fc["arguments"].is_object(),
+            "BUG REPRODUCED: convert_messages_to_input emits arguments as {:?} (type: {})",
+            fc["arguments"],
+            if fc["arguments"].is_string() {
+                "string"
+            } else {
+                "unknown"
+            }
+        );
+    }
+
+    #[test]
+    fn repro_upstream_400_when_arguments_is_string() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "查一下东京天气"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "我来查一下"},
+                    {"type": "tool_use", "id": "call_123", "name": "get_weather",
+                     "input": {"location": "Tokyo"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "call_123",
+                     "content": "晴天，25°C"}
+                ]},
+                {"role": "user", "content": "那北京呢？"}
+            ],
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get weather",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"location": {"type": "string"}},
+                    "required": ["location"]
+                }
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let input_arr = result["input"].as_array().unwrap();
+
+        // 模拟上游 Responses API 严格校验
+        for (i, item) in input_arr.iter().enumerate() {
+            if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
+                let arguments = &item["arguments"];
+                assert!(
+                    arguments.is_object(),
+                    "upstream HTTP 400: Invalid type for 'input[{}].arguments': \
+                     expected an object, but got a string instead. Got: {:?}",
+                    i,
+                    arguments
+                );
+            }
+        }
     }
 }

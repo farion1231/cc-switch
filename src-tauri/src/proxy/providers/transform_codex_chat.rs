@@ -2817,7 +2817,7 @@ mod tests {
         assert_eq!(result["output"][0]["name"], "_search_emails");
         assert_eq!(
             result["output"][0]["arguments"],
-            r#"{"label_ids":["UNREAD"],"max_results":5,"query":"-in:spam -in:trash"}"#
+            json!({"label_ids":["UNREAD"],"max_results":5,"query":"-in:spam -in:trash"})
         );
     }
 
@@ -2929,7 +2929,7 @@ mod tests {
         let result = chat_completion_to_response(input).unwrap();
 
         assert_eq!(result["output"][0]["type"], "function_call");
-        assert_eq!(result["output"][0]["arguments"], r#"{"a":1,"b":2}"#);
+        assert_eq!(result["output"][0]["arguments"], json!({"a":1,"b":2}));
     }
 
     #[test]
