@@ -230,9 +230,12 @@ async fn enable_codex_takeover(
         codex_config::update_codex_toml_field(&new_config, "wire_api", "responses")
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    // 备份原文（仅 config.toml，不碰 auth.json）
-    let backup = serde_json::json!({ "config": original }).to_string();
-    state.db.save_live_backup("codex", &backup).await.map_err(map_err)?;
+    // 备份原文（仅 config.toml，不碰 auth.json）。
+    // 已存在备份时跳过 —— 重复 enable 必须幂等，避免覆盖真原文导致 disable 无法还原。
+    if state.db.get_live_backup("codex").await.map_err(map_err)?.is_none() {
+        let backup = serde_json::json!({ "config": original }).to_string();
+        state.db.save_live_backup("codex", &backup).await.map_err(map_err)?;
+    }
 
     codex_config::write_codex_live_config_atomic(Some(&new_config)).map_err(map_err)?;
 
@@ -255,7 +258,10 @@ async fn disable_codex_takeover(
     };
     let parsed: Value = serde_json::from_str(&backup.original_config)
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "备份解析失败".to_string()))?;
-    let original_config = parsed.get("config").and_then(|c| c.as_str()).unwrap_or("");
+    let original_config = parsed
+        .get("config")
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "备份缺少 config 字段".to_string()))?;
 
     codex_config::write_codex_live_config_atomic(Some(original_config)).map_err(map_err)?;
     state.db.delete_live_backup("codex").await.map_err(map_err)?;
