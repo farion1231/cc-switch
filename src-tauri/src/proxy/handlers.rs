@@ -2693,6 +2693,31 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
     }
 
     #[test]
+    fn codex_proxy_upstream_error_explains_minimax_invalid_tool_arguments() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"base_resp":{"status_code":2013,"status_msg":"invalid params, invalid function arguments json string, tool_call_id: call_abc"}}"#
+                    .to_string(),
+            ),
+        };
+        let body = codex_proxy_error_json("MiniMax", "MiniMax-M3", "/responses", &error);
+
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(message.contains("CC Switch local proxy failed"));
+        assert!(message.contains("upstream_status: HTTP 400"));
+        assert!(message.contains("invalid function arguments json string"));
+        assert!(
+            message.contains("Diagnosis: upstream rejected tool call arguments as invalid JSON")
+        );
+        assert!(message.contains("failed to parse function arguments"));
+        assert_eq!(body["error"]["code"], 2013);
+        assert_eq!(body["error"]["param"], "function_call.arguments");
+        assert_eq!(body["error"]["type"], "upstream_tool_arguments_error");
+        assert_eq!(body["error"]["upstream_status"], 400);
+    }
+
+    #[test]
     fn codex_proxy_413_points_to_upstream_not_local_proxy() {
         // 模拟上游渠道商 nginx 因 client_max_body_size 返回的 413 HTML 页面
         // （见 issue #666：长上下文 / 大图 / 大日志撞上游体积上限）

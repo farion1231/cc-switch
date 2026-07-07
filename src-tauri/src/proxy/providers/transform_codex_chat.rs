@@ -42,6 +42,7 @@ const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
+const INVALID_TOOL_ARGUMENTS_DIAGNOSTIC: &str = "Diagnosis: upstream rejected tool call arguments as invalid JSON. For MiniMax-style 2013 errors, this usually means the upstream model emitted an incomplete tool-call arguments stream, such as a missing closing brace, before CC Switch received a complete JSON object. Check the Codex session log for `failed to parse function arguments` to confirm; retrying or switching provider is the practical fix.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -1672,6 +1673,64 @@ pub(crate) fn response_status_from_finish_reason(finish_reason: Option<&str>) ->
     }
 }
 
+pub(crate) struct ChatErrorFields {
+    pub(crate) message: String,
+    pub(crate) error_type: String,
+    pub(crate) code: Value,
+    pub(crate) param: Value,
+}
+
+pub(crate) fn normalize_chat_error_fields(value: &Value) -> ChatErrorFields {
+    let source = value.get("error").unwrap_or(value);
+
+    let mut message = source
+        .get("message")
+        .or_else(|| source.get("detail"))
+        .or_else(|| source.get("status_msg"))
+        .or_else(|| source.pointer("/base_resp/status_msg"))
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .or_else(|| source.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| {
+            // 没法从字段提取出文本，就把整个 JSON 序列化回去，方便用户排查。
+            serde_json::to_string(source).unwrap_or_else(|_| "Upstream error".to_string())
+        });
+
+    let mut error_type = source
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "upstream_error".to_string());
+
+    let code = source
+        .get("code")
+        .cloned()
+        .or_else(|| source.pointer("/base_resp/status_code").cloned())
+        .unwrap_or(serde_json::Value::Null);
+
+    let mut param = source
+        .get("param")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    if is_invalid_tool_arguments_2013(&message, &code) {
+        message = format!("{message}. {INVALID_TOOL_ARGUMENTS_DIAGNOSTIC}");
+        if error_type.trim().is_empty() || error_type == "upstream_error" {
+            error_type = "upstream_tool_arguments_error".to_string();
+        }
+        if param.is_null() {
+            param = json!("function_call.arguments");
+        }
+    }
+
+    ChatErrorFields {
+        message,
+        error_type,
+        code,
+        param,
+    }
+}
+
 /// 把 Chat Completions 上游的错误体规整成 OpenAI Responses API 风格的错误对象。
 ///
 /// 兼容三类输入：
@@ -1704,46 +1763,31 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
         });
     }
 
-    let source = value.get("error").unwrap_or(value);
-
-    let message = source
-        .get("message")
-        .or_else(|| source.get("detail"))
-        .or_else(|| source.get("status_msg"))
-        .or_else(|| source.pointer("/base_resp/status_msg"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
-        .or_else(|| source.as_str().map(ToString::to_string))
-        .unwrap_or_else(|| {
-            // 没法从字段提取出文本，就把整个 JSON 序列化回去，方便用户排查。
-            serde_json::to_string(source).unwrap_or_else(|_| "Upstream error".to_string())
-        });
-
-    let error_type = source
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "upstream_error".to_string());
-
-    let code = source
-        .get("code")
-        .cloned()
-        .or_else(|| source.pointer("/base_resp/status_code").cloned())
-        .unwrap_or(serde_json::Value::Null);
-
-    let param = source
-        .get("param")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
+    let fields = normalize_chat_error_fields(value);
 
     json!({
         "error": {
-            "message": message,
-            "type": error_type,
-            "code": code,
-            "param": param,
+            "message": fields.message,
+            "type": fields.error_type,
+            "code": fields.code,
+            "param": fields.param,
         }
     })
+}
+
+fn is_invalid_tool_arguments_2013(message: &str, code: &Value) -> bool {
+    is_error_code_2013(code)
+        && message
+            .to_ascii_lowercase()
+            .contains("invalid function arguments json string")
+}
+
+fn is_error_code_2013(code: &Value) -> bool {
+    match code {
+        Value::Number(number) => number.as_i64() == Some(2013) || number.as_u64() == Some(2013),
+        Value::String(value) => value.trim() == "2013",
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -3024,6 +3068,28 @@ mod tests {
         assert_eq!(result["error"]["code"], 2013);
         // type 没有显式给出，应该回落到 upstream_error
         assert_eq!(result["error"]["type"], "upstream_error");
+    }
+
+    #[test]
+    fn chat_error_to_response_error_enriches_minimax_invalid_tool_arguments() {
+        let input = json!({
+            "base_resp": {
+                "status_code": 2013,
+                "status_msg": "invalid params, invalid function arguments json string, tool_call_id: call_abc"
+            }
+        });
+
+        let result = chat_error_to_response_error(Some(&input));
+
+        let message = result["error"]["message"].as_str().unwrap();
+        assert!(message.contains("invalid function arguments json string"));
+        assert!(
+            message.contains("Diagnosis: upstream rejected tool call arguments as invalid JSON")
+        );
+        assert!(message.contains("failed to parse function arguments"));
+        assert_eq!(result["error"]["code"], 2013);
+        assert_eq!(result["error"]["param"], "function_call.arguments");
+        assert_eq!(result["error"]["type"], "upstream_tool_arguments_error");
     }
 
     #[test]
