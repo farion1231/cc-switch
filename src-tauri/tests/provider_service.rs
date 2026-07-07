@@ -136,9 +136,8 @@ command = "echo"
                 "Latest".to_string(),
                 json!({
                     "auth": {"OPENAI_API_KEY": "fresh-key"},
-                    "config": r#"[mcp_servers.latest]
-type = "stdio"
-command = "say"
+                    "config": r#"model_provider = "openai-compatible"
+base_url = "https://api.example.com/v1"
 "#
                 }),
                 None,
@@ -219,10 +218,10 @@ command = "say"
         .get("config")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    // provider 存储的是原始配置，不包含 MCP 同步后的内容
+    // provider 存储的是原始供应商配置，不包含 MCP 同步后的内容
     assert!(
-        new_config_text.contains("mcp_servers.latest"),
-        "provider config should contain original MCP servers"
+        new_config_text.contains("https://api.example.com/v1"),
+        "provider config should contain original provider settings"
     );
     // live 文件额外包含同步的 MCP 服务器
     assert!(

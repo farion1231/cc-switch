@@ -291,6 +291,12 @@ pub struct LocalMigrations {
     /// 这样重新开启能把"关闭期间"落入 openai 桶的官方会话补迁进来。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
+    /// 同步偏好默认值迁移：老用户设为 true 以保持旧行为
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_preferences_defaults_v1: Option<SyncPreferencesDefaultsMigration>,
+    /// Codex provider config 中 MCP section 清理迁移
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip_codex_mcp_sections_v1: Option<StripCodexMcpSectionsMigration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,6 +335,20 @@ pub struct CodexOfficialHistoryUnifyMigration {
     /// 切换 codex_config_dir 后旧标记不会挡住新目录的迁移。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_config_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPreferencesDefaultsMigration {
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StripCodexMcpSectionsMigration {
+    pub completed_at: String,
+    #[serde(default)]
+    pub providers_cleaned: usize,
 }
 
 /// 应用设置结构
@@ -475,6 +495,41 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
 
+    // ===== 同步与自动化偏好 =====
+    /// MCP 变更后是否写回各工具配置文件（新增字段，非已有）
+    #[serde(default = "default_true")]
+    pub mcp_live_sync_enabled: bool,
+    /// 启动时自动导入 MCP（表空时）。新用户默认 false，老用户迁移设为 true。
+    #[serde(default)]
+    pub auto_import_mcp_on_startup: bool,
+    /// 启动时自动导入 Prompt（表空时）。新用户默认 false，老用户迁移设为 true。
+    #[serde(default)]
+    pub auto_import_prompts_on_startup: bool,
+    /// Prompt 启用/编辑后是否写回工具 prompt 文件
+    #[serde(default = "default_true")]
+    pub prompt_live_sync_enabled: bool,
+    /// Session Usage 后台同步主开关。新用户默认 false，老用户迁移设为 true。
+    #[serde(default)]
+    pub session_usage_sync_enabled: bool,
+    /// Session Usage 同步间隔（秒），最小 10
+    #[serde(default = "default_session_sync_interval")]
+    pub session_usage_sync_interval_secs: u64,
+    /// 是否同步 Claude 会话日志
+    #[serde(default = "default_true")]
+    pub session_usage_sync_claude: bool,
+    /// 是否同步 Codex 用量数据
+    #[serde(default = "default_true")]
+    pub session_usage_sync_codex: bool,
+    /// 是否同步 Gemini 用量数据
+    #[serde(default = "default_true")]
+    pub session_usage_sync_gemini: bool,
+    /// 是否同步 OpenCode 用量数据
+    #[serde(default = "default_true")]
+    pub session_usage_sync_opencode: bool,
+    /// Provider 切换时是否自动同步 Skill 到各 App 目录
+    #[serde(default = "default_true")]
+    pub skill_live_sync_enabled: bool,
+
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
@@ -486,6 +541,10 @@ fn default_show_in_tray() -> bool {
 
 fn default_minimize_to_tray_on_close() -> bool {
     true
+}
+
+fn default_session_sync_interval() -> u64 {
+    60
 }
 
 impl Default for AppSettings {
@@ -532,6 +591,17 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            mcp_live_sync_enabled: true,
+            auto_import_mcp_on_startup: false,
+            auto_import_prompts_on_startup: false,
+            prompt_live_sync_enabled: true,
+            session_usage_sync_enabled: false,
+            session_usage_sync_interval_secs: 60,
+            session_usage_sync_claude: true,
+            session_usage_sync_codex: true,
+            session_usage_sync_gemini: true,
+            session_usage_sync_opencode: true,
+            skill_live_sync_enabled: true,
             local_migrations: None,
         }
     }
@@ -787,6 +857,62 @@ pub fn mark_codex_provider_template_migrated(
             .local_migrations
             .get_or_insert_with(Default::default);
         migrations.codex_provider_template_v1 = Some(migration);
+    })
+}
+
+pub fn is_sync_preferences_defaults_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|m| m.sync_preferences_defaults_v1.as_ref())
+        .is_some()
+}
+
+pub fn run_sync_preferences_defaults_migration() -> Result<(), AppError> {
+    if is_sync_preferences_defaults_migrated() {
+        return Ok(());
+    }
+
+    // Check if settings file exists — if yes, this is an upgrading user
+    let is_existing_user = AppSettings::settings_path()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+
+    mutate_settings(|settings| {
+        if is_existing_user {
+            // Old user: enable auto behaviors to preserve existing workflow
+            settings.auto_import_mcp_on_startup = true;
+            settings.auto_import_prompts_on_startup = true;
+            settings.session_usage_sync_enabled = true;
+        }
+        // New user: keep defaults (all false) — just mark migration done
+
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.sync_preferences_defaults_v1 = Some(SyncPreferencesDefaultsMigration {
+            completed_at: chrono::Utc::now().to_rfc3339(),
+        });
+    })
+}
+
+pub fn is_strip_codex_mcp_sections_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|m| m.strip_codex_mcp_sections_v1.as_ref())
+        .is_some()
+}
+
+pub fn mark_strip_codex_mcp_sections_migrated(providers_cleaned: usize) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.strip_codex_mcp_sections_v1 = Some(StripCodexMcpSectionsMigration {
+            completed_at: chrono::Utc::now().to_rfc3339(),
+            providers_cleaned,
+        });
     })
 }
 
