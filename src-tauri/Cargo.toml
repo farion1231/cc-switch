@@ -44,7 +44,7 @@ arboard = "3.6"
 flate2 = "1"
 brotli = "7"
 zstd = "0.13"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "signal"] }
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"
