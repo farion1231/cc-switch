@@ -436,6 +436,24 @@ fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
     parsed
 }
 
+/// 批量操作请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchSkillRequest {
+    pub id: String,
+}
+
+/// 批量操作结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchSkillResult {
+    pub id: String,
+    pub success: bool,
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
+}
+
 // ========== SkillService ==========
 
 pub struct SkillService;
@@ -2853,6 +2871,59 @@ impl SkillService {
             skills,
             total_count: resp.count,
             query: resp.query,
+        })
+    }
+
+    /// 批量操作结果收集器（与 sessions 的 collect_delete_session_outcomes 模式一致）
+    fn collect_batch_results<F>(
+        requests: &[BatchSkillRequest],
+        mut operation: F,
+    ) -> Vec<BatchSkillResult>
+    where
+        F: FnMut(&str) -> Result<Option<String>, String>,
+    {
+        requests
+            .iter()
+            .map(|request| match operation(&request.id) {
+                Ok(backup_path) => BatchSkillResult {
+                    id: request.id.clone(),
+                    success: true,
+                    error: None,
+                    backup_path,
+                },
+                Err(error) => BatchSkillResult {
+                    id: request.id.clone(),
+                    success: false,
+                    error: Some(error),
+                    backup_path: None,
+                },
+            })
+            .collect()
+    }
+
+    /// 批量卸载 Skills
+    pub fn batch_uninstall(
+        db: &Arc<Database>,
+        requests: &[BatchSkillRequest],
+    ) -> Vec<BatchSkillResult> {
+        Self::collect_batch_results(requests, |id| match Self::uninstall(db, id) {
+            Ok(result) => Ok(result.backup_path),
+            Err(e) => Err(e.to_string()),
+        })
+    }
+
+    /// 批量切换 Skills 的应用启用状态
+    pub fn batch_toggle_app(
+        db: &Arc<Database>,
+        requests: &[BatchSkillRequest],
+        app: &AppType,
+        enabled: bool,
+    ) -> Vec<BatchSkillResult> {
+        Self::collect_batch_results(requests, |id| {
+            match Self::toggle_app(db, id, app, enabled) {
+                Ok(()) => Ok(None),
+                Err(e) => Err(e.to_string()),
+            }
         })
     }
 }

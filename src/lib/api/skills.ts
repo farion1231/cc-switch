@@ -104,6 +104,14 @@ export interface MigrationResult {
   errors: string[];
 }
 
+/** 批量操作结果 */
+export interface BatchSkillResult {
+  id: string;
+  success: boolean;
+  error?: string;
+  backupPath?: string;
+}
+
 /** skills.sh 可发现的技能 */
 export interface SkillsShDiscoverableSkill {
   key: string;
@@ -202,6 +210,22 @@ export const skillsApi = {
   /** 更新单个 Skill */
   async updateSkill(id: string): Promise<InstalledSkill> {
     return await invoke("update_skill", { id });
+  },
+
+  /** 批量卸载 Skills */
+  async batchUninstall(ids: string[]): Promise<BatchSkillResult[]> {
+    const requests = ids.map((id) => ({ id }));
+    return await invoke("batch_uninstall_skills", { requests });
+  },
+
+  /** 批量切换 Skill 的应用启用状态 */
+  async batchToggleApp(
+    ids: string[],
+    app: AppId,
+    enabled: boolean,
+  ): Promise<BatchSkillResult[]> {
+    const requests = ids.map((id) => ({ id }));
+    return await invoke("batch_toggle_skill_app", { requests, app, enabled });
   },
 
   /** 迁移 Skill 存储位置 */
