@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::app_config::AppType;
+use crate::codex_config;
 use crate::error::AppError;
 use crate::provider::{
     CodexModelConfig, Provider, ProviderMeta, UniversalProvider, UniversalProviderApps,
@@ -106,6 +107,9 @@ pub fn build_admin_router() -> Router<ProxyState> {
         .route("/admin/providers", get(list_providers).post(create_provider))
         .route("/admin/providers/:id", delete(delete_provider))
         .route("/admin/providers/:id/enable", post(enable_provider))
+        .route("/admin/routing/codex/enable", post(enable_codex_takeover))
+        .route("/admin/routing/codex/disable", post(disable_codex_takeover))
+        .route("/admin/routing/codex/status", get(codex_takeover_status))
         .route("/admin/status", get(status))
 }
 
@@ -194,6 +198,81 @@ async fn status(State(state): State<ProxyState>) -> impl IntoResponse {
         s.last_error = Some("[error] 上游返回错误，详见代理日志".to_string());
     }
     Json(serde_json::to_value(s).unwrap_or(json!({})))
+}
+
+// ── codex 路由接管（自动改写 ~/.codex/config.toml 指向本代理）──────────────
+//
+// 只改 base_url + wire_api，**不动 auth.json**：代理转发时用 DB 里 provider 的
+// 真实 key 注入（`forwarder::extract_auth`），codex 的 auth 不影响最终转发。
+// 原始 config.toml 备份到 DB 的 proxy_live_backup 表，disable 时还原。
+
+async fn enable_codex_takeover(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let (addr, port) = {
+        let cfg = state.config.read().await;
+        (cfg.listen_address.clone(), cfg.listen_port)
+    };
+    let proxy_url = format!("http://{addr}:{port}/v1");
+
+    let original = codex_config::read_codex_config_text().map_err(map_err)?;
+    if original.trim().is_empty() {
+        return Err((
+            StatusCode::CONFLICT,
+            "~/.codex/config.toml 为空或不存在，请先运行一次 codex 初始化".to_string(),
+        ));
+    }
+
+    let mut new_config =
+        codex_config::update_codex_toml_field(&original, "base_url", &proxy_url)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    new_config =
+        codex_config::update_codex_toml_field(&new_config, "wire_api", "responses")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // 备份原文（仅 config.toml，不碰 auth.json）
+    let backup = serde_json::json!({ "config": original }).to_string();
+    state.db.save_live_backup("codex", &backup).await.map_err(map_err)?;
+
+    codex_config::write_codex_live_config_atomic(Some(&new_config)).map_err(map_err)?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "proxy_url": proxy_url,
+        "note": "codex 已指向本地代理；转发用 provider 的真实 key，codex 的 auth 不影响。"
+    })))
+}
+
+async fn disable_codex_takeover(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let backup = state.db.get_live_backup("codex").await.map_err(map_err)?;
+    let Some(backup) = backup else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "未找到 codex 接管备份（可能未接管）".to_string(),
+        ));
+    };
+    let parsed: Value = serde_json::from_str(&backup.original_config)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "备份解析失败".to_string()))?;
+    let original_config = parsed.get("config").and_then(|c| c.as_str()).unwrap_or("");
+
+    codex_config::write_codex_live_config_atomic(Some(original_config)).map_err(map_err)?;
+    state.db.delete_live_backup("codex").await.map_err(map_err)?;
+
+    Ok(Json(json!({ "ok": true, "restored": true })))
+}
+
+async fn codex_takeover_status(
+    State(state): State<ProxyState>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let active = state
+        .db
+        .get_live_backup("codex")
+        .await
+        .map_err(map_err)?
+        .is_some();
+    Ok(Json(json!({ "codex_takeover_active": active })))
 }
 
 /// 从 codex `config.toml` 粗提取 `model = "..."` 的值（仅用于列表展示）。

@@ -134,7 +134,31 @@ curl -X POST http://127.0.0.1:15721/admin/providers \
 
 ## 五、连接 Codex CLI
 
-让 Codex 走本地代理。编辑 `~/.codex/config.toml`：
+让 Codex 走本地代理。两种方式（效果一样）：
+
+### 方式 A：自动接管（推荐，一键）
+
+通过 admin API 自动改写 codex 配置指向代理（原配置备份到 DB，可一键还原）：
+
+```bash
+# 启用接管：改写 ~/.codex/config.toml 的 base_url 指向代理 + wire_api=responses
+curl -X POST http://127.0.0.1:15721/admin/routing/codex/enable
+# 返回 {"ok":true,"proxy_url":"http://127.0.0.1:15721/v1",...}
+
+# 查看接管状态
+curl http://127.0.0.1:15721/admin/routing/codex/status
+# 返回 {"codex_takeover_active":true}
+
+# 停止接管：从备份还原原始 config.toml
+curl -X POST http://127.0.0.1:15721/admin/routing/codex/disable
+```
+
+- 只改 `base_url` + `wire_api`，**不动 `auth.json`**——转发时代理用 DB 里 provider 的真实 key 注入，codex 的 auth 不影响。
+- 前提：`~/.codex/config.toml` 已存在（先运行一次 `codex` 初始化）。
+
+### 方式 B：手动改 config
+
+编辑 `~/.codex/config.toml`：
 
 ```toml
 [model_providers.custom]
@@ -143,7 +167,7 @@ base_url = "http://127.0.0.1:15721/v1"
 wire_api = "responses"
 ```
 
-然后正常用 `codex`。它发 Responses 请求到代理，代理按当前 provider 转换转发。
+配好后正常用 `codex`。它发 Responses 请求到代理，代理按当前 provider 转换转发。
 
 > provider 的真实 api_key 由代理在转发时注入（存在 DB），不需要写进 codex config。
 
