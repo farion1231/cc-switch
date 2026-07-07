@@ -2926,7 +2926,6 @@
     "addProvider": "プロバイダーを追加",
     "toast": {
       "readFailed": "Pi models.json の読み取りに失敗しました",
-      "previewFailed": "Pi プロバイダーパッチのプレビューに失敗しました",
       "saved": "Pi プロバイダーを保存しました",
       "savedDesc": "バックアップ: {{path}}",
       "applyFailed": "Pi プロバイダーパッチの適用に失敗しました",
@@ -2950,15 +2949,6 @@
       "delete": "削除",
       "moreModels": "+{{count}} 件"
     },
-    "review": {
-      "empty": "Pi models.json に書き込む前にパッチをプレビューしてください。",
-      "title": "確認して適用",
-      "fileHash": "現在のファイルハッシュ: {{hash}}",
-      "newFile": "（新規ファイル）",
-      "delete": "プロバイダーを削除",
-      "applying": "適用中...",
-      "apply": "models.json に適用"
-    },
     "form": {
       "quickStart": "クイックスタート — プロバイダーを選択",
       "apiTemplate": "API テンプレート",
@@ -2980,7 +2970,6 @@
       "usageInStreaming": "ストリーミングの usage",
       "eagerToolStreaming": "eager tool ストリーミング",
       "adaptiveThinking": "アダプティブ思考",
-      "advanced": "高度な設定",
       "extraOptions": "追加オプション",
       "configJson": "設定 JSON",
       "configJsonReadOnly": "読み取り専用プレビュー",

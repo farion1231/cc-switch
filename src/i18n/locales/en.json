@@ -2926,7 +2926,6 @@
     "addProvider": "Add Provider",
     "toast": {
       "readFailed": "Failed to read Pi models.json",
-      "previewFailed": "Failed to preview Pi provider patch",
       "saved": "Pi provider saved",
       "savedDesc": "Backup: {{path}}",
       "applyFailed": "Failed to apply Pi provider patch",
@@ -2950,15 +2949,6 @@
       "delete": "Delete",
       "moreModels": "+{{count}} more"
     },
-    "review": {
-      "empty": "Preview a patch before writing to Pi models.json.",
-      "title": "Review & Apply",
-      "fileHash": "Current file hash: {{hash}}",
-      "newFile": "(new file)",
-      "delete": "Delete Provider",
-      "applying": "Applying...",
-      "apply": "Apply to models.json"
-    },
     "form": {
       "quickStart": "Quick Start — Select Provider",
       "apiTemplate": "API Template",
@@ -2980,7 +2970,6 @@
       "usageInStreaming": "usage in streaming",
       "eagerToolStreaming": "eager tool streaming",
       "adaptiveThinking": "adaptive thinking",
-      "advanced": "Advanced",
       "extraOptions": "Extra Options",
       "configJson": "Config JSON",
       "configJsonReadOnly": "Read-only preview",

@@ -2926,7 +2926,6 @@
     "addProvider": "添加提供商",
     "toast": {
       "readFailed": "读取 Pi models.json 失败",
-      "previewFailed": "预览 Pi 提供商补丁失败",
       "saved": "Pi 提供商已保存",
       "savedDesc": "备份：{{path}}",
       "applyFailed": "应用 Pi 提供商补丁失败",
@@ -2950,15 +2949,6 @@
       "delete": "删除",
       "moreModels": "+{{count}} 个"
     },
-    "review": {
-      "empty": "写入 Pi models.json 前请先预览补丁。",
-      "title": "审查并应用",
-      "fileHash": "当前文件哈希：{{hash}}",
-      "newFile": "（新文件）",
-      "delete": "删除提供商",
-      "applying": "应用中...",
-      "apply": "写入 models.json"
-    },
     "form": {
       "quickStart": "快速开始 — 选择提供商",
       "apiTemplate": "API 模板",
@@ -2980,7 +2970,6 @@
       "usageInStreaming": "流式中的 usage",
       "eagerToolStreaming": "eager tool 流式",
       "adaptiveThinking": "自适应思考",
-      "advanced": "高级",
       "extraOptions": "额外选项",
       "configJson": "配置 JSON",
       "configJsonReadOnly": "只读预览",
