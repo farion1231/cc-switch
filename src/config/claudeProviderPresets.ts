@@ -157,6 +157,29 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#0052D9",
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.umodelverse.ai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-4-5-20251001",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-4-6",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-4-6",
+      },
+    },
+    category: "aggregator",
+    apiFormat: "openai_chat",
+    endpointCandidates: [
+      "https://api.umodelverse.ai/v1",
+      "https://api.modelverse.cn/v1",
+    ],
+    icon: "ucloud",
+    iconColor: "#0052D9",
+  },
+  {
     name: "PatewayAI",
     websiteUrl: "https://pateway.ai",
     apiKeyUrl: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/",
