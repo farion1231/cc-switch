@@ -2924,13 +2924,6 @@
     "descriptionSuffix": "。組み込みプロバイダー（OpenAI、Anthropic、Google など）は /login または環境変数でそのまま利用できます。",
     "refresh": "更新",
     "addProvider": "プロバイダーを追加",
-    "tabs": {
-      "providers": "プロバイダー",
-      "edit": "追加 / 編集",
-      "review": "確認"
-    },
-    "previewReview": "プレビューして確認",
-    "previewHint": "ディスクに書き込む前に JSON パッチをプレビュー",
     "toast": {
       "readFailed": "Pi models.json の読み取りに失敗しました",
       "previewFailed": "Pi プロバイダーパッチのプレビューに失敗しました",
@@ -2946,7 +2939,6 @@
       "unreachable": "プロバイダー \"{{id}}\" に到達できません"
     },
     "list": {
-      "custom": "カスタムプロバイダー",
       "builtin": "組み込みプロバイダーの上書き",
       "empty": "~/.pi/agent/models.json にプロバイダーが設定されていません",
       "emptyHint": "「プロバイダーを追加」をクリックしてカスタムプロバイダーを設定するか、/login で Pi の組み込みプロバイダーを使用してください。",

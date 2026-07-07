@@ -2896,13 +2896,6 @@
     "descriptionSuffix": "。內建提供商（OpenAI、Anthropic、Google 等）透過 /login 或環境變數即可開箱即用。",
     "refresh": "重新整理",
     "addProvider": "新增提供商",
-    "tabs": {
-      "providers": "提供商",
-      "edit": "新增 / 編輯",
-      "review": "審查"
-    },
-    "previewReview": "預覽並審查",
-    "previewHint": "寫入磁碟前預覽 JSON 補丁",
     "toast": {
       "readFailed": "讀取 Pi models.json 失敗",
       "previewFailed": "預覽 Pi 提供商補丁失敗",
@@ -2918,7 +2911,6 @@
       "unreachable": "提供商 \"{{id}}\" 不可達"
     },
     "list": {
-      "custom": "自訂提供商",
       "builtin": "內建覆寫",
       "empty": "~/.pi/agent/models.json 中尚未設定提供商",
       "emptyHint": "點擊「新增提供商」設定自訂提供商，或透過 /login 使用 Pi 的內建提供商。",

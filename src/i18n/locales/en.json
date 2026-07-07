@@ -2924,13 +2924,6 @@
     "descriptionSuffix": ". Built-in providers (OpenAI, Anthropic, Google, etc.) work out of the box with /login or environment variables.",
     "refresh": "Refresh",
     "addProvider": "Add Provider",
-    "tabs": {
-      "providers": "Providers",
-      "edit": "Add / Edit",
-      "review": "Review"
-    },
-    "previewReview": "Preview & Review",
-    "previewHint": "Preview the JSON patch before writing to disk",
     "toast": {
       "readFailed": "Failed to read Pi models.json",
       "previewFailed": "Failed to preview Pi provider patch",
@@ -2946,7 +2939,6 @@
       "unreachable": "Provider \"{{id}}\" is unreachable"
     },
     "list": {
-      "custom": "Custom Providers",
       "builtin": "Built-in Overrides",
       "empty": "No providers configured in ~/.pi/agent/models.json",
       "emptyHint": "Click \"Add Provider\" to configure a custom provider, or use Pi's built-in providers via /login.",
