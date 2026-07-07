@@ -250,6 +250,7 @@ fn known_text_only_model(model: &str) -> bool {
         "deepseek-v4-flash",
         "deepseek-v4-pro",
         "glm-5.1",
+        "glm-5.2",
         "kat-coder",
         "kat-coder-pro",
         "kat-coder-pro v1",
@@ -492,6 +493,15 @@ mod tests {
         assert!(known_text_only_model("LongCat-2.0"));
         assert!(known_text_only_model("longcat/LongCat-2.0"));
         assert!(known_text_only_model("LongCat-Flash-Chat"));
+    }
+
+    #[test]
+    fn glm_models_are_classified_text_only() {
+        // GLM-5.1 and 5.2 are text-only; an aggregator vendor path segment
+        // and mixed case must not break classification.
+        assert!(known_text_only_model("glm-5.1"));
+        assert!(known_text_only_model("GLM-5.2"));
+        assert!(known_text_only_model("zai/GLM-5.2"));
     }
 
     #[test]
