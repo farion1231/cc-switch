@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   piProviderPresets,
@@ -12,8 +12,8 @@ import type {
   PiModelDraft,
   PiApiType,
   PiHeaderDraft,
-  PiProviderCompat,
 } from "@/types/pi";
+import { piApi } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -74,181 +74,86 @@ const API_KEY_MODE_OPTIONS: {
   { value: "none", labelKey: "pi.form.apiKeyModeNone", hint: "" },
 ];
 
-function buildProviderFromDraft(
-  draft: PiProviderDraft,
-): Record<string, unknown> {
-  const apiKeyValue =
-    draft.apiKey.mode === "env"
-      ? `$${draft.apiKey.value}`
-      : draft.apiKey.mode === "command"
-        ? draft.apiKey.value
-        : draft.apiKey.value;
-
-  const headers = draft.headers.reduce<Record<string, string>>((acc, h) => {
-    if (h.key.trim()) acc[h.key] = h.value;
-    return acc;
-  }, {});
-
-  const models = draft.models
-    .filter((m) => m.id.trim())
-    .map((m) => {
-      const model: Record<string, unknown> = { id: m.id };
-      if (m.name) model.name = m.name;
-      if (m.reasoning) model.reasoning = true;
-      if (m.input && m.input.length > 0) model.input = m.input;
-      if (m.contextWindow) model.contextWindow = m.contextWindow;
-      if (m.maxTokens) model.maxTokens = m.maxTokens;
-      return model;
-    });
-
-  const provider: Record<string, unknown> = {};
-  if (draft.baseUrl?.trim()) provider.baseUrl = draft.baseUrl;
-  if (draft.api) provider.api = draft.api;
-  if (apiKeyValue) provider.apiKey = apiKeyValue;
-  if (Object.keys(headers).length > 0) provider.headers = headers;
-  if (models.length > 0) provider.models = models;
-  if (draft.compat && Object.keys(draft.compat).length > 0) {
-    provider.compat = draft.compat;
-  }
-
-  return provider;
-}
-
-function buildConfigJsonPreview(draft: PiProviderDraft): string {
-  return JSON.stringify(buildProviderFromDraft(draft), null, 2);
-}
-
-function parseApiKeyDraft(raw: unknown): PiProviderDraft["apiKey"] {
-  if (typeof raw !== "string") return { mode: "none", value: "" };
-  if (raw.startsWith("$")) return { mode: "env", value: raw.slice(1) };
-  if (raw.startsWith("!")) return { mode: "command", value: raw };
-  if (raw) return { mode: "literal", value: raw };
-  return { mode: "none", value: "" };
-}
-
-function parseProviderToDraft(
-  provider: Record<string, unknown>,
-  originalDraft: PiProviderDraft,
-): PiProviderDraft {
-  const headers: PiHeaderDraft[] = [];
-  if (
-    typeof provider.headers === "object" &&
-    provider.headers !== null &&
-    !Array.isArray(provider.headers)
-  ) {
-    for (const [key, val] of Object.entries(provider.headers)) {
-      headers.push({ key, value: String(val ?? "") });
-    }
-  }
-
-  const models: PiModelDraft[] = [];
-  if (Array.isArray(provider.models)) {
-    for (const m of provider.models) {
-      if (typeof m === "object" && m !== null) {
-        const model = m as Record<string, unknown>;
-        models.push({
-          id: String(model.id ?? ""),
-          name: typeof model.name === "string" ? model.name : null,
-          nameTouched: typeof model.name === "string",
-          reasoning: Boolean(model.reasoning),
-          input: Array.isArray(model.input)
-            ? model.input.filter((x): x is string => typeof x === "string")
-            : undefined,
-          contextWindow:
-            typeof model.contextWindow === "number"
-              ? model.contextWindow
-              : undefined,
-          maxTokens:
-            typeof model.maxTokens === "number" ? model.maxTokens : undefined,
-        });
-      }
-    }
-  }
-  if (models.length === 0) {
-    models.push({ id: "", name: "", nameTouched: false });
-  }
-
-  let compat: PiProviderCompat | null = originalDraft.compat ?? null;
-  if (
-    typeof provider.compat === "object" &&
-    provider.compat !== null &&
-    !Array.isArray(provider.compat)
-  ) {
-    const c = provider.compat as Record<string, unknown>;
-    compat = {
-      supportsDeveloperRole: Boolean(c.supportsDeveloperRole),
-      supportsReasoningEffort: Boolean(c.supportsReasoningEffort),
-      supportsUsageInStreaming: Boolean(c.supportsUsageInStreaming),
-      supportsEagerToolInputStreaming: Boolean(
-        c.supportsEagerToolInputStreaming,
-      ),
-      forceAdaptiveThinking: Boolean(c.forceAdaptiveThinking),
-    };
-  } else if (provider.compat === undefined || provider.compat === null) {
-    compat = null;
-  }
-
-  return {
-    ...originalDraft,
-    baseUrl:
-      typeof provider.baseUrl === "string"
-        ? provider.baseUrl
-        : originalDraft.baseUrl,
-    api:
-      typeof provider.api === "string"
-        ? (provider.api as PiApiType)
-        : originalDraft.api,
-    apiKey: parseApiKeyDraft(provider.apiKey),
-    headers,
-    models,
-    compat,
-  };
-}
-
-function isJsonInSync(jsonText: string, draft: PiProviderDraft): boolean {
-  try {
-    const parsed = JSON.parse(jsonText);
-    return (
-      JSON.stringify(parsed) === JSON.stringify(buildProviderFromDraft(draft))
-    );
-  } catch {
-    return false;
-  }
+function headersToJson(headers: PiHeaderDraft[]): string {
+  return headers.length > 0
+    ? JSON.stringify(
+        Object.fromEntries(headers.map((h) => [h.key, h.value])),
+        null,
+        2,
+      )
+    : "";
 }
 
 export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
   const draft = value ?? emptyPiProviderDraft;
-  const [jsonText, setJsonText] = useState(() => buildConfigJsonPreview(draft));
-  const [jsonError, setJsonError] = useState<string | null>(null);
+  // Config JSON preview is READ-ONLY and backend-driven, so it always shows
+  // exactly what `apply_pi_provider_patch` will write to models.json (no
+  // divergent client-side serializer).
+  const [previewJson, setPreviewJson] = useState("");
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
-    if (!isJsonInSync(jsonText, draft)) {
-      setJsonText(buildConfigJsonPreview(draft));
-      setJsonError(null);
+    const providerId = draft.providerId.trim();
+    if (!providerId) {
+      setPreviewJson("");
+      setPreviewError(null);
+      setPreviewLoading(false);
+      return;
     }
+    let cancelled = false;
+    setPreviewLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const result = await piApi.previewProviderPatch(draft);
+        if (cancelled) return;
+        const providers = (
+          result.nextModelsJson as Record<string, unknown> | undefined
+        )?.providers as Record<string, unknown> | undefined;
+        const obj = providers?.[providerId] ?? {};
+        setPreviewJson(JSON.stringify(obj, null, 2));
+        setPreviewError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setPreviewJson("");
+        setPreviewError(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [draft]);
 
-  const handleJsonChange = (newJson: string) => {
-    setJsonText(newJson);
+  // Headers is a free-form JSON textarea. It is controlled, but we only
+  // re-derive its text from draft.headers when the field is NOT focused, so
+  // typing isn't interrupted (and Reset/preset changes still propagate).
+  const [headersText, setHeadersText] = useState(() =>
+    headersToJson(draft.headers),
+  );
+  const headersFocused = useRef(false);
+  useEffect(() => {
+    if (headersFocused.current) return;
+    setHeadersText((prev) => {
+      const derived = headersToJson(draft.headers);
+      return prev === derived ? prev : derived;
+    });
+  }, [draft.headers]);
+
+  const commitHeaders = (raw: string) => {
     try {
-      const parsed = JSON.parse(newJson);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const newDraft = parseProviderToDraft(
-          parsed as Record<string, unknown>,
-          draft,
-        );
-        onChange(newDraft);
-        setJsonError(null);
-      } else {
-        setJsonError(
-          t("jsonEditor.mustBeObject", { defaultValue: "必须是 JSON 对象" }),
-        );
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setJsonError(message);
+      const parsed = raw.trim() ? JSON.parse(raw) : {};
+      const headers = Object.entries(parsed).map(([key, headerValue]) => ({
+        key,
+        value: String(headerValue ?? ""),
+      }));
+      onChange({ ...draft, headers });
+    } catch {
+      // Keep invalid JSON until the user fixes it.
     }
   };
 
@@ -316,20 +221,6 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
   const removeModel = (index: number) => {
     if (draft.models.length <= 1) return;
     onChange({ ...draft, models: draft.models.filter((_, i) => i !== index) });
-  };
-
-  // ─── Headers ──────────────────────────────────────────────────────────────
-  const updateHeadersJson = (raw: string) => {
-    try {
-      const parsed = raw.trim() ? JSON.parse(raw) : {};
-      const headers = Object.entries(parsed).map(([key, headerValue]) => ({
-        key,
-        value: String(headerValue ?? ""),
-      }));
-      onChange({ ...draft, headers });
-    } catch {
-      // Keep invalid JSON until user fixes it
-    }
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -489,18 +380,15 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
           <Textarea
             aria-label="Headers JSON"
             placeholder='{"x-extra":"$EXTRA_TOKEN"}'
-            defaultValue={
-              draft.headers.length > 0
-                ? JSON.stringify(
-                    Object.fromEntries(
-                      draft.headers.map((h) => [h.key, h.value]),
-                    ),
-                    null,
-                    2,
-                  )
-                : ""
-            }
-            onBlur={(e) => updateHeadersJson(e.target.value)}
+            value={headersText}
+            onFocus={() => {
+              headersFocused.current = true;
+            }}
+            onChange={(e) => setHeadersText(e.target.value)}
+            onBlur={(e) => {
+              headersFocused.current = false;
+              commitHeaders(e.target.value);
+            }}
             rows={3}
           />
         </label>
@@ -666,23 +554,28 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
         </section>
       )}
 
-      {/* Config JSON Editor */}
+      {/* Config JSON preview (read-only, backend-driven) */}
       <section aria-label="Config JSON" className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">{t("pi.form.configJson")}</h3>
           <span className="text-xs text-muted-foreground">
-            {t("pi.form.configJsonEditable", { defaultValue: "可直接编辑" })}
+            {previewLoading
+              ? t("pi.form.configJsonLoading")
+              : t("pi.form.configJsonReadonly")}
           </span>
         </div>
         <JsonEditor
-          value={jsonText}
-          onChange={handleJsonChange}
+          value={previewJson}
+          onChange={() => {}}
+          readOnly
           rows={14}
           showValidation={false}
           language="json"
           darkMode={isDarkMode}
         />
-        {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
+        {previewError && (
+          <p className="text-xs text-destructive">{previewError}</p>
+        )}
       </section>
 
       {/* Actions */}

@@ -3,16 +3,12 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { piApi } from "@/lib/api";
-import type {
-  PiProviderDraft,
-  PiProvidersMap,
-  PiModelDraft,
-  PiHeaderDraft,
-} from "@/types/pi";
+import type { PiProviderDraft, PiProvidersMap } from "@/types/pi";
 import {
   emptyPiProviderDraft,
   PiProviderForm,
 } from "@/components/pi/PiProviderForm";
+import { providerToDraft } from "@/components/pi/piProviderMapping";
 import { PiProviderList } from "@/components/pi/PiProviderList";
 import { Button } from "@/components/ui/button";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
@@ -61,86 +57,9 @@ export const PiAgentPanel = forwardRef<PiAgentPanelHandle>((_props, ref) => {
       startNew();
       return;
     }
-
-    // Parse models array from existing config
-    const rawModels = Array.isArray(provider.models) ? provider.models : [];
-    const models: PiModelDraft[] =
-      rawModels.length > 0
-        ? rawModels.map((m: Record<string, unknown>) => ({
-            id: String(m.id ?? ""),
-            name: typeof m.name === "string" ? m.name : null,
-            nameTouched: typeof m.name === "string",
-            reasoning: Boolean(m.reasoning),
-            input: Array.isArray(m.input) ? (m.input as string[]) : undefined,
-            contextWindow:
-              typeof m.contextWindow === "number" ? m.contextWindow : undefined,
-            maxTokens:
-              typeof m.maxTokens === "number" ? m.maxTokens : undefined,
-          }))
-        : [{ id: "", name: "", nameTouched: false }];
-
-    // Parse headers
-    const rawHeaders =
-      typeof provider.headers === "object" && provider.headers !== null
-        ? (provider.headers as Record<string, unknown>)
-        : {};
-    const headers: PiHeaderDraft[] = Object.entries(rawHeaders).map(
-      ([key, val]) => ({
-        key,
-        value: String(val ?? ""),
-      }),
-    );
-
-    // Parse apiKey
-    const rawApiKey =
-      typeof provider.apiKey === "string" ? provider.apiKey : "";
-    let apiKey = emptyPiProviderDraft.apiKey;
-    if (rawApiKey.startsWith("$")) {
-      apiKey = { mode: "env", value: rawApiKey.slice(1) };
-    } else if (rawApiKey.startsWith("!")) {
-      apiKey = { mode: "command", value: rawApiKey };
-    } else if (rawApiKey) {
-      apiKey = { mode: "literal", value: rawApiKey };
-    } else {
-      apiKey = { mode: "none", value: "" };
-    }
-
-    // Parse compat
-    const rawCompat =
-      typeof provider.compat === "object" && provider.compat !== null
-        ? (provider.compat as Record<string, unknown>)
-        : null;
-
-    setDraft({
-      mode: "custom",
-      providerId,
-      template: "custom",
-      baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : "",
-      api:
-        typeof provider.api === "string" ? provider.api : "openai-completions",
-      apiKey,
-      headers,
-      models,
-      compat: rawCompat
-        ? {
-            supportsDeveloperRole: rawCompat.supportsDeveloperRole as
-              | boolean
-              | undefined,
-            supportsReasoningEffort: rawCompat.supportsReasoningEffort as
-              | boolean
-              | undefined,
-            supportsUsageInStreaming: rawCompat.supportsUsageInStreaming as
-              | boolean
-              | undefined,
-            supportsEagerToolInputStreaming:
-              rawCompat.supportsEagerToolInputStreaming as boolean | undefined,
-            forceAdaptiveThinking: rawCompat.forceAdaptiveThinking as
-              | boolean
-              | undefined,
-          }
-        : null,
-      advancedJson: null,
-    });
+    // Single source of truth: fully round-trips cost, all compat flags, and
+    // advancedJson so editing an existing provider never drops data.
+    setDraft(providerToDraft(provider, { providerId }));
     setView("edit");
   };
 

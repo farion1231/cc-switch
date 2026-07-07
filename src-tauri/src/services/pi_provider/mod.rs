@@ -372,6 +372,33 @@ pub struct PiProviderPatchPreview {
     pub summary: Vec<String>,
 }
 
+/// Provider keys fully owned by the draft form. On upsert these are recomputed
+/// from the draft (present when the draft has content, absent when cleared);
+/// any *other* keys on an existing provider object are preserved so that
+/// fields the form does not model (e.g. future pi schema additions) survive
+/// an edit. See `merge_provider_value`.
+const MANAGED_PROVIDER_KEYS: &[&str] = &["baseUrl", "api", "apiKey", "headers", "models", "compat"];
+
+/// Overlay the draft-produced `managed` provider value onto `existing`.
+/// Managed keys are fully replaced by the draft (so clearing a field in the
+/// form removes it); unknown keys from `existing` are preserved.
+fn merge_provider_value(existing: &Value, managed: &Value) -> Value {
+    let mut result = Map::new();
+    if let Some(obj) = existing.as_object() {
+        for (k, v) in obj {
+            if !MANAGED_PROVIDER_KEYS.contains(&k.as_str()) {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    if let Some(obj) = managed.as_object() {
+        for (k, v) in obj {
+            result.insert(k.clone(), v.clone());
+        }
+    }
+    Value::Object(result)
+}
+
 pub fn upsert_provider_value(
     mut current: Value,
     draft: &PiProviderDraft,
@@ -385,7 +412,12 @@ pub fn upsert_provider_value(
             "models.json providers must be an object",
         ));
     };
-    providers.insert(draft.provider_id.trim().to_string(), provider_value);
+    let id = draft.provider_id.trim().to_string();
+    let existing = providers
+        .get(&id)
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    providers.insert(id, merge_provider_value(&existing, &provider_value));
     Ok(current)
 }
 

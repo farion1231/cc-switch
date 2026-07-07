@@ -255,6 +255,99 @@ fn apply_draft_preserves_unknown_root_fields() {
 }
 
 #[test]
+fn upsert_preserves_unknown_provider_fields() {
+    // An existing provider carries fields the form does not model
+    // (e.g. future pi schema additions like `routing` / `rateLimits`).
+    let current = serde_json::json!({
+        "providers": {
+            "myprov": {
+                "baseUrl": "https://old",
+                "api": "openai-completions",
+                "routing": { "strategy": "least-latency" },
+                "rateLimits": { "rpm": 60 }
+            }
+        }
+    });
+    let draft = pi_provider::PiProviderDraft {
+        mode: pi_provider::PiProviderMode::Custom,
+        provider_id: "myprov".to_string(),
+        template: pi_provider::PiProviderTemplate::OpenAiCompatible,
+        base_url: Some("https://new".to_string()),
+        api: "openai-completions".to_string(),
+        api_key: pi_provider::PiApiKeyDraft {
+            mode: pi_provider::PiApiKeyMode::None,
+            value: String::new(),
+        },
+        headers: vec![],
+        models: vec![pi_provider::PiModelDraft {
+            id: "m".to_string(),
+            name: None,
+            name_touched: false,
+            reasoning: None,
+            input: None,
+            context_window: None,
+            max_tokens: None,
+            cost: None,
+        }],
+        compat: None,
+        advanced_json: None,
+    };
+
+    let next = pi_provider::upsert_provider_value(current, &draft).expect("upsert");
+
+    // Managed field is updated from the draft.
+    assert_eq!(next["providers"]["myprov"]["baseUrl"], "https://new");
+    // Unknown provider-level fields are preserved (no data loss on edit).
+    assert_eq!(
+        next["providers"]["myprov"]["routing"]["strategy"],
+        "least-latency"
+    );
+    assert_eq!(next["providers"]["myprov"]["rateLimits"]["rpm"], 60);
+}
+
+#[test]
+fn upsert_clearing_a_managed_field_removes_it() {
+    // Existing provider has headers; the draft submits no headers. The managed
+    // `headers` key must be removed (not left stale from the existing object).
+    let current = serde_json::json!({
+        "providers": {
+            "myprov": {
+                "baseUrl": "https://x",
+                "headers": { "x-old": "y" }
+            }
+        }
+    });
+    let draft = pi_provider::PiProviderDraft {
+        mode: pi_provider::PiProviderMode::Custom,
+        provider_id: "myprov".to_string(),
+        template: pi_provider::PiProviderTemplate::OpenAiCompatible,
+        base_url: Some("https://x".to_string()),
+        api: "openai-completions".to_string(),
+        api_key: pi_provider::PiApiKeyDraft {
+            mode: pi_provider::PiApiKeyMode::None,
+            value: String::new(),
+        },
+        headers: vec![],
+        models: vec![pi_provider::PiModelDraft {
+            id: "m".to_string(),
+            name: None,
+            name_touched: false,
+            reasoning: None,
+            input: None,
+            context_window: None,
+            max_tokens: None,
+            cost: None,
+        }],
+        compat: None,
+        advanced_json: None,
+    };
+
+    let next = pi_provider::upsert_provider_value(current, &draft).expect("upsert");
+
+    assert!(next["providers"]["myprov"].get("headers").is_none());
+}
+
+#[test]
 fn delete_provider_removes_only_target_provider() {
     let current = serde_json::json!({
         "providers": {

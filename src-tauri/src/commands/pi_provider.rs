@@ -44,8 +44,11 @@ pub fn apply_pi_provider_patch(
     let backup = pi_config::create_backup(&models_path).map_err(|e| e.to_string())?;
     let next =
         pi_provider::upsert_provider_value(loaded.value, &draft).map_err(|e| e.to_string())?;
+    // Atomic write: re-reads and re-checks the hash before replacing, closing
+    // the TOCTOU window between the pre-check above and the actual write.
     let file_hash =
-        pi_config::write_models_json_at(&models_path, &next).map_err(|e| e.to_string())?;
+        pi_config::write_models_json_with_expected_hash_at(&models_path, &next, &expectedFileHash)
+            .map_err(|e| e.to_string())?;
 
     Ok(PiProviderApplyResult {
         file_hash,
@@ -71,8 +74,11 @@ pub fn delete_pi_provider(
     let backup = pi_config::create_backup(&models_path).map_err(|e| e.to_string())?;
     let next =
         pi_provider::delete_provider_value(loaded.value, &providerId).map_err(|e| e.to_string())?;
+    // Atomic write: re-reads and re-checks the hash before replacing, closing
+    // the TOCTOU window between the pre-check above and the actual write.
     let file_hash =
-        pi_config::write_models_json_at(&models_path, &next).map_err(|e| e.to_string())?;
+        pi_config::write_models_json_with_expected_hash_at(&models_path, &next, &expectedFileHash)
+            .map_err(|e| e.to_string())?;
 
     Ok(PiProviderApplyResult {
         file_hash,
