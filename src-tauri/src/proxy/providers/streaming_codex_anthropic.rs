@@ -492,6 +492,18 @@ impl AnthropicToResponsesState {
         Vec::new()
     }
 
+    /// Whether any partial output was produced (completed items, buffered text, or a
+    /// started tool call). Used to distinguish a truncated-with-output stream (report
+    /// incomplete) from one that produced nothing (report failed).
+    fn has_substantive_output(&self) -> bool {
+        !self.output_items.is_empty()
+            || self.blocks.values().any(|b| {
+                !b.accum.trim().is_empty()
+                    || !b.call_id.trim().is_empty()
+                    || !b.name.trim().is_empty()
+            })
+    }
+
     fn finalize(&mut self) -> Vec<Bytes> {
         if self.completed {
             return Vec::new();
@@ -686,8 +698,26 @@ pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 
         }
 
         if !stream_failed && !state.completed {
-            for event in state.finalize() {
-                yield Ok(event);
+            if state.stop_reason.is_some() {
+                // message_delta (stop_reason + final usage) arrived but the stream ended
+                // before message_stop; the turn is semantically complete, finalize normally.
+                for event in state.finalize() {
+                    yield Ok(event);
+                }
+            } else if state.has_substantive_output() {
+                // Upstream truncated mid-stream (e.g. a proxy closed the connection without
+                // an I/O error) after emitting partial output. Report it as incomplete so
+                // Codex does not accept the truncated output as a normal completion.
+                state.stop_reason = Some("max_tokens".to_string());
+                for event in state.finalize() {
+                    yield Ok(event);
+                }
+            } else {
+                // Stream ended before any terminal signal or output: surface a failure.
+                yield Ok(state.failed_event(
+                    "Upstream Anthropic stream ended before message_stop".to_string(),
+                    Some("stream_truncated".to_string()),
+                ));
             }
         }
     }
@@ -736,6 +766,62 @@ mod tests {
         assert!(merged.contains("\"status\":\"completed\""));
         assert!(merged.contains("\"input_tokens\":12"));
         assert!(merged.contains("\"output_tokens\":3"));
+    }
+
+    #[tokio::test]
+    async fn test_truncated_stream_with_output_reports_incomplete() {
+        // Upstream closes after partial text but before message_delta/message_stop.
+        // The partial output must be reported as incomplete, not a normal completion.
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_t1\",\"model\":\"claude\",\"usage\":{\"input_tokens\":4}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("\"delta\":\"partial\""));
+        assert!(merged.contains("event: response.completed"));
+        // The top-level response is incomplete (message output items keep their own
+        // "completed" status, but the response status must not be "completed").
+        assert!(merged.contains("\"status\":\"incomplete\""));
+        assert!(merged.contains("\"reason\":\"max_output_tokens\""));
+    }
+
+    #[tokio::test]
+    async fn test_truncated_stream_without_output_reports_failed() {
+        // Upstream closes before producing any output or terminal signal: report failed.
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_t2\",\"model\":\"claude\"}}\n\n"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("stream_truncated"));
+        assert!(!merged.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_reason_without_message_stop_completes() {
+        // message_delta carried the stop_reason and final usage, but the stream ended
+        // before message_stop; the turn is complete and should finalize normally.
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_t3\",\"model\":\"claude\",\"usage\":{\"input_tokens\":4}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"done\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("event: response.completed"));
+        assert!(merged.contains("\"status\":\"completed\""));
+        assert!(!merged.contains("event: response.failed"));
     }
 
     #[tokio::test]

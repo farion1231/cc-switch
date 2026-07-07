@@ -143,7 +143,7 @@ pub fn responses_request_to_anthropic(
             });
             (convert_input_to_messages(items)?, has_tool_history)
         }
-        Some(Value::String(text)) => (
+        Some(Value::String(text)) if is_meaningful_text(text) => (
             vec![json!({
                 "role": "user",
                 "content": [{ "type": "text", "text": text }]
@@ -157,6 +157,7 @@ pub fn responses_request_to_anthropic(
     // assistant/function_call, or input may be entirely reasoning and thus empty after being dropped).
     // Drop unpaired tool_result blocks first (they would otherwise 400), then guarantee a leading user.
     drop_orphan_tool_results(&mut messages);
+    drop_empty_messages(&mut messages);
     ensure_leading_user_message(&mut messages);
     if messages.is_empty() {
         return Err(ProxyError::InvalidRequest(
@@ -362,7 +363,7 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
                     "user"
                 };
                 match item.get("content") {
-                    Some(Value::String(text)) => {
+                    Some(Value::String(text)) if is_meaningful_text(text) => {
                         push_block(
                             &mut messages,
                             anth_role,
@@ -374,7 +375,11 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
                             let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
                             match part_type {
                                 "input_text" | "output_text" => {
-                                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                    if let Some(text) = part
+                                        .get("text")
+                                        .and_then(|t| t.as_str())
+                                        .filter(|t| is_meaningful_text(t))
+                                    {
                                         push_block(
                                             &mut messages,
                                             anth_role,
@@ -383,7 +388,10 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
                                     }
                                 }
                                 "refusal" => {
-                                    if let Some(text) = part.get("refusal").and_then(|t| t.as_str())
+                                    if let Some(text) = part
+                                        .get("refusal")
+                                        .and_then(|t| t.as_str())
+                                        .filter(|t| is_meaningful_text(t))
                                     {
                                         push_block(
                                             &mut messages,
@@ -480,6 +488,25 @@ fn drop_orphan_tool_results(messages: &mut Vec<Value>) {
                 .unwrap_or(true)
         });
     }
+}
+
+/// Anthropic 400s on a text content block whose text is empty or whitespace-only.
+/// Such blocks arise when a prior Responses turn recorded an empty
+/// input_text/output_text (e.g. an empty assistant text emitted alongside a
+/// tool_use); replaying it verbatim would fail the next follow-up request.
+fn is_meaningful_text(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
+/// Removes messages whose content array ended up empty (e.g. a turn that carried
+/// only empty text that was filtered out). Anthropic 400s on empty content.
+fn drop_empty_messages(messages: &mut Vec<Value>) {
+    messages.retain(|msg| {
+        msg.get("content")
+            .and_then(|c| c.as_array())
+            .map(|arr| !arr.is_empty())
+            .unwrap_or(true)
+    });
 }
 
 /// Appends a content block to messages: merge if the last message has the same role, otherwise create a new message.
@@ -984,6 +1011,39 @@ mod tests {
         assert_eq!(content.len(), 1);
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], "hello");
+    }
+
+    #[test]
+    fn test_request_empty_text_blocks_dropped() {
+        // An empty/whitespace-only assistant text emitted alongside a tool_use must be
+        // filtered out (Anthropic 400s on empty text blocks), keeping the tool_use, and
+        // a user turn made up solely of empty text must not leave an empty message.
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "role": "assistant", "content": [{ "type": "output_text", "text": "" }] },
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c1", "output": "ok" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "   " }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        // Empty assistant text is gone; no message carries an empty text block.
+        for msg in messages {
+            for block in msg["content"].as_array().unwrap() {
+                if block["type"] == "text" {
+                    assert!(!block["text"].as_str().unwrap().trim().is_empty());
+                }
+            }
+            assert!(!msg["content"].as_array().unwrap().is_empty());
+        }
+        // The whitespace-only trailing user turn collapsed into the tool_result user message.
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"][0]["type"], "tool_result");
     }
 
     #[test]
