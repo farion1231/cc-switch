@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   piProviderPresets,
@@ -10,6 +11,8 @@ import type {
   PiApiKeyMode,
   PiModelDraft,
   PiApiType,
+  PiHeaderDraft,
+  PiProviderCompat,
 } from "@/types/pi";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -71,7 +74,9 @@ const API_KEY_MODE_OPTIONS: {
   { value: "none", labelKey: "pi.form.apiKeyModeNone", hint: "" },
 ];
 
-function buildConfigJsonPreview(draft: PiProviderDraft): string {
+function buildProviderFromDraft(
+  draft: PiProviderDraft,
+): Record<string, unknown> {
   const apiKeyValue =
     draft.apiKey.mode === "env"
       ? `$${draft.apiKey.value}`
@@ -106,14 +111,146 @@ function buildConfigJsonPreview(draft: PiProviderDraft): string {
     provider.compat = draft.compat;
   }
 
-  return JSON.stringify(provider, null, 2);
+  return provider;
+}
+
+function buildConfigJsonPreview(draft: PiProviderDraft): string {
+  return JSON.stringify(buildProviderFromDraft(draft), null, 2);
+}
+
+function parseApiKeyDraft(raw: unknown): PiProviderDraft["apiKey"] {
+  if (typeof raw !== "string") return { mode: "none", value: "" };
+  if (raw.startsWith("$")) return { mode: "env", value: raw.slice(1) };
+  if (raw.startsWith("!")) return { mode: "command", value: raw };
+  if (raw) return { mode: "literal", value: raw };
+  return { mode: "none", value: "" };
+}
+
+function parseProviderToDraft(
+  provider: Record<string, unknown>,
+  originalDraft: PiProviderDraft,
+): PiProviderDraft {
+  const headers: PiHeaderDraft[] = [];
+  if (
+    typeof provider.headers === "object" &&
+    provider.headers !== null &&
+    !Array.isArray(provider.headers)
+  ) {
+    for (const [key, val] of Object.entries(provider.headers)) {
+      headers.push({ key, value: String(val ?? "") });
+    }
+  }
+
+  const models: PiModelDraft[] = [];
+  if (Array.isArray(provider.models)) {
+    for (const m of provider.models) {
+      if (typeof m === "object" && m !== null) {
+        const model = m as Record<string, unknown>;
+        models.push({
+          id: String(model.id ?? ""),
+          name: typeof model.name === "string" ? model.name : null,
+          nameTouched: typeof model.name === "string",
+          reasoning: Boolean(model.reasoning),
+          input: Array.isArray(model.input)
+            ? model.input.filter((x): x is string => typeof x === "string")
+            : undefined,
+          contextWindow:
+            typeof model.contextWindow === "number"
+              ? model.contextWindow
+              : undefined,
+          maxTokens:
+            typeof model.maxTokens === "number" ? model.maxTokens : undefined,
+        });
+      }
+    }
+  }
+  if (models.length === 0) {
+    models.push({ id: "", name: "", nameTouched: false });
+  }
+
+  let compat: PiProviderCompat | null = originalDraft.compat ?? null;
+  if (
+    typeof provider.compat === "object" &&
+    provider.compat !== null &&
+    !Array.isArray(provider.compat)
+  ) {
+    const c = provider.compat as Record<string, unknown>;
+    compat = {
+      supportsDeveloperRole: Boolean(c.supportsDeveloperRole),
+      supportsReasoningEffort: Boolean(c.supportsReasoningEffort),
+      supportsUsageInStreaming: Boolean(c.supportsUsageInStreaming),
+      supportsEagerToolInputStreaming: Boolean(
+        c.supportsEagerToolInputStreaming,
+      ),
+      forceAdaptiveThinking: Boolean(c.forceAdaptiveThinking),
+    };
+  } else if (provider.compat === undefined || provider.compat === null) {
+    compat = null;
+  }
+
+  return {
+    ...originalDraft,
+    baseUrl:
+      typeof provider.baseUrl === "string"
+        ? provider.baseUrl
+        : originalDraft.baseUrl,
+    api:
+      typeof provider.api === "string"
+        ? (provider.api as PiApiType)
+        : originalDraft.api,
+    apiKey: parseApiKeyDraft(provider.apiKey),
+    headers,
+    models,
+    compat,
+  };
+}
+
+function isJsonInSync(jsonText: string, draft: PiProviderDraft): boolean {
+  try {
+    const parsed = JSON.parse(jsonText);
+    return (
+      JSON.stringify(parsed) === JSON.stringify(buildProviderFromDraft(draft))
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
   const draft = value ?? emptyPiProviderDraft;
-  const configJson = buildConfigJsonPreview(draft);
+  const [jsonText, setJsonText] = useState(() => buildConfigJsonPreview(draft));
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isJsonInSync(jsonText, draft)) {
+      setJsonText(buildConfigJsonPreview(draft));
+      setJsonError(null);
+    }
+  }, [draft]);
+
+  const handleJsonChange = (newJson: string) => {
+    setJsonText(newJson);
+    try {
+      const parsed = JSON.parse(newJson);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const newDraft = parseProviderToDraft(
+          parsed as Record<string, unknown>,
+          draft,
+        );
+        onChange(newDraft);
+        setJsonError(null);
+      } else {
+        setJsonError(
+          t("jsonEditor.mustBeObject", { defaultValue: "必须是 JSON 对象" }),
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setJsonError(message);
+    }
+  };
 
   // ─── Template selection ───────────────────────────────────────────────────
   const selectTemplate = (template: PiProviderTemplate) => {
@@ -529,23 +666,23 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
         </section>
       )}
 
-      {/* Config JSON Preview */}
+      {/* Config JSON Editor */}
       <section aria-label="Config JSON" className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">{t("pi.form.configJson")}</h3>
           <span className="text-xs text-muted-foreground">
-            {t("pi.form.configJsonReadOnly")}
+            {t("pi.form.configJsonEditable", { defaultValue: "可直接编辑" })}
           </span>
         </div>
         <JsonEditor
-          value={configJson}
-          onChange={() => {}}
+          value={jsonText}
+          onChange={handleJsonChange}
           rows={14}
           showValidation={false}
           language="json"
           darkMode={isDarkMode}
-          readOnly
         />
+        {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
       </section>
 
       {/* Actions */}

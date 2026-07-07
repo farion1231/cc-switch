@@ -2972,7 +2972,7 @@
       "adaptiveThinking": "adaptive thinking",
       "extraOptions": "Extra Options",
       "configJson": "Config JSON",
-      "configJsonReadOnly": "Read-only preview",
+      "configJsonEditable": "Editable",
       "headersLabel": "Custom Headers (JSON object, supports $ENV_VAR and !command)",
       "resetAll": "Reset All",
       "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
