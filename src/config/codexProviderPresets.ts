@@ -224,6 +224,36 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#0052D9",
   },
   {
+    name: "Astraflow",
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    apiKeyUrl: "https://astraflow.ucloud-global.com",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "astraflow",
+      "https://api.umodelverse.ai/v1",
+      "o4-mini",
+    ),
+    endpointCandidates: [
+      "https://api.umodelverse.ai/v1",
+      "https://api.modelverse.cn/v1",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      { model: "gpt-5.5", displayName: "GPT-5.5", contextWindow: 128000 },
+      { model: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro", contextWindow: 128000 },
+      { model: "qwen3.7-max", displayName: "Qwen3.7 Max", contextWindow: 128000 },
+      { model: "o4-mini", displayName: "o4-mini", contextWindow: 128000 },
+      {
+        model: "grok-4-fast-reasoning",
+        displayName: "Grok 4 Fast Reasoning",
+        contextWindow: 128000,
+      },
+    ]),
+    category: "aggregator",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+  },
+  {
     name: "PatewayAI",
     websiteUrl: "https://pateway.ai",
     apiKeyUrl: "https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/",
