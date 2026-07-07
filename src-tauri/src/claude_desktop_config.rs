@@ -74,9 +74,9 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
 ];
 
 const MODEL_TIER_ROUTING_APP: &str = "claude-desktop";
-// tier → route_id。route_id 必须与 `DEFAULT_PROXY_ROUTES` 里的 route_id 完全一致：
-// 否则「开/关 tier 路由」会让 Desktop profile 里同一 tier 的模型名突变（如 sonnet
-// 在 4-6 / 5 之间跳），客户端按名字寻址会错乱。Sonnet 已随上游升级到 claude-sonnet-5。
+// tier → route_id。route_id 必须取自 DEFAULT_PROXY_ROUTES：二者不一致时 tier 路由 spec
+// 无法按 name 覆盖 fallback（见 overlay_tier_routing_model_specs），同档会在 profile 里
+// 留下两个模型条目。对齐由 desktop_tier_routes_stay_aligned_with_default_proxy_routes 守护。
 const DESKTOP_TIER_ROUTES: &[(&str, &str)] = &[
     ("sonnet", "claude-sonnet-5"),
     ("opus", CURRENT_OPUS_ROUTE_ID),
@@ -1812,6 +1812,22 @@ mod tests {
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "Kimi K2", "supports1m": true }])
         );
         assert!(!profile.to_string().contains("kimi-k2"));
+    }
+
+    #[test]
+    fn desktop_tier_routes_stay_aligned_with_default_proxy_routes() {
+        // tier 路由 spec 靠 name 覆盖 DEFAULT_PROXY_ROUTES 派生的 fallback，
+        // 故 DESKTOP_TIER_ROUTES 的每个 route_id 都必须在 DEFAULT_PROXY_ROUTES 里。
+        // 上游再 bump 模型版本时只改 DEFAULT_PROXY_ROUTES 一处，遗漏会被这里拦下。
+        for &(tier, route_id) in DESKTOP_TIER_ROUTES {
+            assert!(
+                DEFAULT_PROXY_ROUTES
+                    .iter()
+                    .any(|route| route.route_id == route_id),
+                "DESKTOP_TIER_ROUTES 的 {tier} 档 route_id={route_id} 不在 DEFAULT_PROXY_ROUTES 中，\
+                 二者必须对齐，否则 tier 路由覆盖 fallback 时同档会留下重复模型条目"
+            );
+        }
     }
 
     #[test]
