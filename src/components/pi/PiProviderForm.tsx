@@ -25,6 +25,8 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
+import JsonEditor from "@/components/JsonEditor";
+import { useDarkMode } from "@/hooks/useDarkMode";
 
 interface PiProviderFormProps {
   value?: PiProviderDraft;
@@ -69,9 +71,49 @@ const API_KEY_MODE_OPTIONS: {
   { value: "none", labelKey: "pi.form.apiKeyModeNone", hint: "" },
 ];
 
+function buildConfigJsonPreview(draft: PiProviderDraft): string {
+  const apiKeyValue =
+    draft.apiKey.mode === "env"
+      ? `$${draft.apiKey.value}`
+      : draft.apiKey.mode === "command"
+        ? draft.apiKey.value
+        : draft.apiKey.value;
+
+  const headers = draft.headers.reduce<Record<string, string>>((acc, h) => {
+    if (h.key.trim()) acc[h.key] = h.value;
+    return acc;
+  }, {});
+
+  const models = draft.models
+    .filter((m) => m.id.trim())
+    .map((m) => {
+      const model: Record<string, unknown> = { id: m.id };
+      if (m.name) model.name = m.name;
+      if (m.reasoning) model.reasoning = true;
+      if (m.input && m.input.length > 0) model.input = m.input;
+      if (m.contextWindow) model.contextWindow = m.contextWindow;
+      if (m.maxTokens) model.maxTokens = m.maxTokens;
+      return model;
+    });
+
+  const provider: Record<string, unknown> = {};
+  if (draft.baseUrl?.trim()) provider.baseUrl = draft.baseUrl;
+  if (draft.api) provider.api = draft.api;
+  if (apiKeyValue) provider.apiKey = apiKeyValue;
+  if (Object.keys(headers).length > 0) provider.headers = headers;
+  if (models.length > 0) provider.models = models;
+  if (draft.compat && Object.keys(draft.compat).length > 0) {
+    provider.compat = draft.compat;
+  }
+
+  return JSON.stringify(provider, null, 2);
+}
+
 export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
   const { t } = useTranslation();
+  const isDarkMode = useDarkMode();
   const draft = value ?? emptyPiProviderDraft;
+  const configJson = buildConfigJsonPreview(draft);
 
   // ─── Template selection ───────────────────────────────────────────────────
   const selectTemplate = (template: PiProviderTemplate) => {
@@ -300,6 +342,33 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
         </div>
       </section>
 
+      {/* Extra Options / Headers */}
+      <section aria-label="Extra options" className="space-y-3">
+        <h3 className="text-sm font-semibold">{t("pi.form.extraOptions")}</h3>
+        <label className="space-y-1">
+          <span className="text-xs text-muted-foreground">
+            {t("pi.form.headersLabel")}
+          </span>
+          <Textarea
+            aria-label="Headers JSON"
+            placeholder='{"x-extra":"$EXTRA_TOKEN"}'
+            defaultValue={
+              draft.headers.length > 0
+                ? JSON.stringify(
+                    Object.fromEntries(
+                      draft.headers.map((h) => [h.key, h.value]),
+                    ),
+                    null,
+                    2,
+                  )
+                : ""
+            }
+            onBlur={(e) => updateHeadersJson(e.target.value)}
+            rows={3}
+          />
+        </label>
+      </section>
+
       {/* Models */}
       <section aria-label="Models" className="space-y-3">
         <div className="flex items-center justify-between">
@@ -460,31 +529,27 @@ export function PiProviderForm({ value, onChange }: PiProviderFormProps) {
         </section>
       )}
 
-      {/* Advanced (headers + raw JSON) */}
-      <section aria-label="Advanced config" className="space-y-3">
-        <h3 className="text-sm font-semibold">{t("pi.form.advanced")}</h3>
-        <label className="space-y-1">
+      {/* Config JSON Preview */}
+      <section aria-label="Config JSON" className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">{t("pi.form.configJson")}</h3>
           <span className="text-xs text-muted-foreground">
-            {t("pi.form.headersLabel")}
+            {t("pi.form.configJsonReadOnly")}
           </span>
-          <Textarea
-            aria-label="Headers JSON"
-            placeholder='{"x-extra":"$EXTRA_TOKEN"}'
-            defaultValue={
-              draft.headers.length > 0
-                ? JSON.stringify(
-                    Object.fromEntries(
-                      draft.headers.map((h) => [h.key, h.value]),
-                    ),
-                    null,
-                    2,
-                  )
-                : ""
-            }
-            onBlur={(e) => updateHeadersJson(e.target.value)}
-            rows={3}
-          />
-        </label>
+        </div>
+        <JsonEditor
+          value={configJson}
+          onChange={() => {}}
+          rows={14}
+          showValidation={false}
+          language="json"
+          darkMode={isDarkMode}
+          readOnly
+        />
+      </section>
+
+      {/* Actions */}
+      <section aria-label="Actions" className="space-y-3">
         <div className="flex gap-2">
           <Button
             type="button"

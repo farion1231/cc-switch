@@ -2924,16 +2924,8 @@
     "descriptionSuffix": "。組み込みプロバイダー（OpenAI、Anthropic、Google など）は /login または環境変数でそのまま利用できます。",
     "refresh": "更新",
     "addProvider": "プロバイダーを追加",
-    "tabs": {
-      "providers": "プロバイダー",
-      "edit": "追加 / 編集",
-      "review": "確認"
-    },
-    "previewReview": "プレビューして確認",
-    "previewHint": "ディスクに書き込む前に JSON パッチをプレビュー",
     "toast": {
       "readFailed": "Pi models.json の読み取りに失敗しました",
-      "previewFailed": "Pi プロバイダーパッチのプレビューに失敗しました",
       "saved": "Pi プロバイダーを保存しました",
       "savedDesc": "バックアップ: {{path}}",
       "applyFailed": "Pi プロバイダーパッチの適用に失敗しました",
@@ -2946,7 +2938,6 @@
       "unreachable": "プロバイダー \"{{id}}\" に到達できません"
     },
     "list": {
-      "custom": "カスタムプロバイダー",
       "builtin": "組み込みプロバイダーの上書き",
       "empty": "~/.pi/agent/models.json にプロバイダーが設定されていません",
       "emptyHint": "「プロバイダーを追加」をクリックしてカスタムプロバイダーを設定するか、/login で Pi の組み込みプロバイダーを使用してください。",
@@ -2957,15 +2948,6 @@
       "testConnectivity": "接続テスト",
       "delete": "削除",
       "moreModels": "+{{count}} 件"
-    },
-    "review": {
-      "empty": "Pi models.json に書き込む前にパッチをプレビューしてください。",
-      "title": "確認して適用",
-      "fileHash": "現在のファイルハッシュ: {{hash}}",
-      "newFile": "（新規ファイル）",
-      "delete": "プロバイダーを削除",
-      "applying": "適用中...",
-      "apply": "models.json に適用"
     },
     "form": {
       "quickStart": "クイックスタート — プロバイダーを選択",
@@ -2988,7 +2970,9 @@
       "usageInStreaming": "ストリーミングの usage",
       "eagerToolStreaming": "eager tool ストリーミング",
       "adaptiveThinking": "アダプティブ思考",
-      "advanced": "高度な設定",
+      "extraOptions": "追加オプション",
+      "configJson": "設定 JSON",
+      "configJsonReadOnly": "読み取り専用プレビュー",
       "headersLabel": "カスタムヘッダー（JSON オブジェクト、$ENV_VAR と !command をサポート）",
       "resetAll": "すべてリセット",
       "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
@@ -2999,6 +2983,16 @@
       "apiKeyModeLiteral": "リテラルキー",
       "apiKeyModeCommand": "シェルコマンド",
       "apiKeyModeNone": "なし（auth.json / /login を使用）"
+    },
+    "editor": {
+      "title": "プロバイダーを編集"
+    },
+    "deleteConfirm": {
+      "title": "プロバイダーを削除",
+      "message": "プロバイダー \"{{id}}\" を削除してもよろしいですか？この操作は元に戻せません。"
+    },
+    "save": {
+      "providerIdRequired": "プロバイダー ID を入力してください"
     }
   }
 }

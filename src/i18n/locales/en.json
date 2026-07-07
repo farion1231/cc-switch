@@ -2924,16 +2924,8 @@
     "descriptionSuffix": ". Built-in providers (OpenAI, Anthropic, Google, etc.) work out of the box with /login or environment variables.",
     "refresh": "Refresh",
     "addProvider": "Add Provider",
-    "tabs": {
-      "providers": "Providers",
-      "edit": "Add / Edit",
-      "review": "Review"
-    },
-    "previewReview": "Preview & Review",
-    "previewHint": "Preview the JSON patch before writing to disk",
     "toast": {
       "readFailed": "Failed to read Pi models.json",
-      "previewFailed": "Failed to preview Pi provider patch",
       "saved": "Pi provider saved",
       "savedDesc": "Backup: {{path}}",
       "applyFailed": "Failed to apply Pi provider patch",
@@ -2946,7 +2938,6 @@
       "unreachable": "Provider \"{{id}}\" is unreachable"
     },
     "list": {
-      "custom": "Custom Providers",
       "builtin": "Built-in Overrides",
       "empty": "No providers configured in ~/.pi/agent/models.json",
       "emptyHint": "Click \"Add Provider\" to configure a custom provider, or use Pi's built-in providers via /login.",
@@ -2957,15 +2948,6 @@
       "testConnectivity": "Test connectivity",
       "delete": "Delete",
       "moreModels": "+{{count}} more"
-    },
-    "review": {
-      "empty": "Preview a patch before writing to Pi models.json.",
-      "title": "Review & Apply",
-      "fileHash": "Current file hash: {{hash}}",
-      "newFile": "(new file)",
-      "delete": "Delete Provider",
-      "applying": "Applying...",
-      "apply": "Apply to models.json"
     },
     "form": {
       "quickStart": "Quick Start — Select Provider",
@@ -2988,7 +2970,9 @@
       "usageInStreaming": "usage in streaming",
       "eagerToolStreaming": "eager tool streaming",
       "adaptiveThinking": "adaptive thinking",
-      "advanced": "Advanced",
+      "extraOptions": "Extra Options",
+      "configJson": "Config JSON",
+      "configJsonReadOnly": "Read-only preview",
       "headersLabel": "Custom Headers (JSON object, supports $ENV_VAR and !command)",
       "resetAll": "Reset All",
       "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
@@ -2999,6 +2983,16 @@
       "apiKeyModeLiteral": "Literal Key",
       "apiKeyModeCommand": "Shell Command",
       "apiKeyModeNone": "None (use auth.json / /login)"
+    },
+    "editor": {
+      "title": "Edit Provider"
+    },
+    "deleteConfirm": {
+      "title": "Delete Provider",
+      "message": "Are you sure you want to delete provider \"{{id}}\"? This action cannot be undone."
+    },
+    "save": {
+      "providerIdRequired": "Please enter a provider ID"
     }
   }
 }

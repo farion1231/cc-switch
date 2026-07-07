@@ -2924,16 +2924,8 @@
     "descriptionSuffix": "。内置提供商（OpenAI、Anthropic、Google 等）通过 /login 或环境变量即可开箱即用。",
     "refresh": "刷新",
     "addProvider": "添加提供商",
-    "tabs": {
-      "providers": "提供商",
-      "edit": "添加 / 编辑",
-      "review": "审查"
-    },
-    "previewReview": "预览并审查",
-    "previewHint": "写入磁盘前预览 JSON 补丁",
     "toast": {
       "readFailed": "读取 Pi models.json 失败",
-      "previewFailed": "预览 Pi 提供商补丁失败",
       "saved": "Pi 提供商已保存",
       "savedDesc": "备份：{{path}}",
       "applyFailed": "应用 Pi 提供商补丁失败",
@@ -2946,7 +2938,6 @@
       "unreachable": "提供商 \"{{id}}\" 不可达"
     },
     "list": {
-      "custom": "自定义提供商",
       "builtin": "内置覆盖",
       "empty": "~/.pi/agent/models.json 中尚未配置提供商",
       "emptyHint": "点击“添加提供商”配置自定义提供商，或通过 /login 使用 Pi 的内置提供商。",
@@ -2957,15 +2948,6 @@
       "testConnectivity": "测试连通性",
       "delete": "删除",
       "moreModels": "+{{count}} 个"
-    },
-    "review": {
-      "empty": "写入 Pi models.json 前请先预览补丁。",
-      "title": "审查并应用",
-      "fileHash": "当前文件哈希：{{hash}}",
-      "newFile": "（新文件）",
-      "delete": "删除提供商",
-      "applying": "应用中...",
-      "apply": "写入 models.json"
     },
     "form": {
       "quickStart": "快速开始 — 选择提供商",
@@ -2988,7 +2970,9 @@
       "usageInStreaming": "流式中的 usage",
       "eagerToolStreaming": "eager tool 流式",
       "adaptiveThinking": "自适应思考",
-      "advanced": "高级",
+      "extraOptions": "额外选项",
+      "configJson": "配置 JSON",
+      "configJsonReadOnly": "只读预览",
       "headersLabel": "自定义请求头（JSON 对象，支持 $ENV_VAR 和 !command）",
       "resetAll": "全部重置",
       "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
@@ -2999,6 +2983,16 @@
       "apiKeyModeLiteral": "字面密钥",
       "apiKeyModeCommand": "Shell 命令",
       "apiKeyModeNone": "无（使用 auth.json / /login）"
+    },
+    "editor": {
+      "title": "编辑供应商"
+    },
+    "deleteConfirm": {
+      "title": "删除供应商",
+      "message": "确定要删除供应商 \"{{id}}\" 吗？此操作不可撤销。"
+    },
+    "save": {
+      "providerIdRequired": "请填写供应商标识"
     }
   }
 }

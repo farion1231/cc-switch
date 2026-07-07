@@ -1,5 +1,13 @@
 import "@testing-library/jest-dom";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
+
+// CodeMirror measures text ranges in jsdom; provide a no-op fallback.
+if (typeof Range !== "undefined" && !Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+}
+if (typeof Range !== "undefined" && !Range.prototype.getBoundingClientRect) {
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}
 import { cleanup } from "@testing-library/react";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
