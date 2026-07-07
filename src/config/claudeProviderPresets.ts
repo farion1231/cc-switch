@@ -587,11 +587,12 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.longcat.chat/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "LongCat-Flash-Chat",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "LongCat-Flash-Chat",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-Flash-Chat",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "LongCat-Flash-Chat",
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "6000",
+        ANTHROPIC_MODEL: "LongCat-2.0",
+        ANTHROPIC_SMALL_FAST_MODEL: "LongCat-2.0",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "LongCat-2.0",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-2.0",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "LongCat-2.0",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "131072",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 1,
       },
     },
@@ -864,7 +865,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://code0.ai",
