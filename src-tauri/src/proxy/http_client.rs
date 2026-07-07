@@ -8,6 +8,12 @@ use reqwest::Client;
 use std::sync::RwLock;
 use std::time::Duration;
 
+#[cfg(test)]
+use std::env;
+
+#[cfg(test)]
+use serial_test::serial;
+
 /// 全局 HTTP 客户端实例
 static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
 
@@ -31,7 +37,6 @@ pub fn set_proxy_port(port: u16) {
         log::debug!("[GlobalProxy] Initialized CC Switch proxy port to {port}");
     }
 }
-
 
 /// 初始化全局 HTTP 客户端
 ///
@@ -323,5 +328,104 @@ mod tests {
         // 使用明确无效的 scheme 来触发错误
         let result = build_client(Some("invalid-scheme://127.0.0.1:7890"));
         assert!(result.is_err(), "Should reject invalid proxy scheme");
+    }
+
+    /// RAII guard that snapshots env vars on construction and restores them
+    /// on drop, including when the test panics or an assertion fails, so no
+    /// HTTP_PROXY/HTTPS_PROXY ever leaks into sibling tests.
+    struct EnvVarGuard {
+        entries: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl EnvVarGuard {
+        fn set(entries: impl IntoIterator<Item = (&'static str, String)>) -> Self {
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    let original = env::var(key).ok();
+                    env::set_var(key, value);
+                    (key, original)
+                })
+                .collect();
+            Self { entries }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            for (key, original) in &self.entries {
+                match original {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    /// Regression test: `build_client(None)` must produce a client that does
+    /// NOT route requests through the system proxy (HTTP_PROXY/HTTPS_PROXY).
+    ///
+    /// Spins up a mock TCP listener as a fake "system proxy", points the env
+    /// vars at it, then sends a request to a different address through the
+    /// built client. If the system proxy is used the mock receives a
+    /// connection (test fails); if it is bypassed the mock stays dark.
+    ///
+    /// The previous conditional-bypass logic (`system_proxy_points_to_loopback`)
+    /// would have failed this test: with HTTP_PROXY set to a non-CC-Switch
+    /// loopback port it took the else branch and let reqwest follow the env
+    /// var, exactly the bug this test locks down.
+    ///
+    /// See: #4478, #4642, #1695, #4562, #1264
+    #[tokio::test]
+    #[serial]
+    async fn build_client_none_does_not_use_system_proxy() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Mock "system proxy": any incoming connection means the proxy was used.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock proxy listener");
+        let proxy_addr = listener.local_addr().expect("local_addr");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_server = hits.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok(_) => {
+                        hits_for_server.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // Point the system proxy env vars at our mock. The guard restores the
+        // originals (or removes them) on drop, even on panic.
+        let _guard = EnvVarGuard::set([
+            ("HTTP_PROXY", format!("http://{proxy_addr}")),
+            ("HTTPS_PROXY", format!("http://{proxy_addr}")),
+        ]);
+
+        let client = build_client(None).expect("build_client(None) succeeds");
+
+        // Fire a request at a different, closed address. Whether it succeeds
+        // or fails is irrelevant; we only care whether it went through the mock.
+        let _ = client
+            .get("http://127.0.0.1:1/never")
+            .timeout(Duration::from_millis(200))
+            .send()
+            .await;
+
+        // Let the spawned accept loop process any pending connection.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.abort();
+
+        let count = hits.load(Ordering::SeqCst);
+        assert_eq!(
+            count, 0,
+            "build_client(None) must bypass HTTP_PROXY/HTTPS_PROXY; \
+             saw {count} connection(s) to the mock proxy"
+        );
     }
 }
