@@ -116,7 +116,12 @@ impl CodexCatalogToolProfile {
     /// tool; everything else keeps the proxy-chat behavior.
     pub fn from_api_format(api_format: Option<&str>) -> Self {
         match api_format {
-            Some("openai_responses") => CodexCatalogToolProfile::NativeResponses,
+            // Neither native Responses nor the Anthropic gateway accepts Codex's
+            // freeform custom tools (apply_patch, etc.); both go through the
+            // NativeResponses profile to strip them.
+            Some("openai_responses") | Some("anthropic") => {
+                CodexCatalogToolProfile::NativeResponses
+            }
             _ => CodexCatalogToolProfile::ProxyChat,
         }
     }
@@ -1699,6 +1704,26 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn catalog_tool_profile_from_api_format() {
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(Some("anthropic")),
+            CodexCatalogToolProfile::NativeResponses
+        );
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(Some("openai_responses")),
+            CodexCatalogToolProfile::NativeResponses
+        );
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(Some("openai_chat")),
+            CodexCatalogToolProfile::ProxyChat
+        );
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(None),
+            CodexCatalogToolProfile::ProxyChat
+        );
+    }
 
     #[test]
     fn unified_session_bucket_injects_for_empty_official_config() {

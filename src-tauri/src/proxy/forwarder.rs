@@ -1302,8 +1302,24 @@ impl RequestForwarder {
         };
         let codex_responses_to_chat = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
+            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        // Codex → Anthropic: Claude Code emulation is off by default and only
+        // enabled when the user explicitly turns it on in the UI, so requests can
+        // pass a gateway's "Claude Code only" fingerprint check (User-Agent /
+        // anthropic-beta / x-app / system prompt first line). Defaulting to off
+        // avoids leaking the Claude Code fingerprint and identity prompt to
+        // general-purpose gateways.
+        let codex_impersonate_claude_code = codex_responses_to_anthropic
+            && provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.impersonate_claude_code)
+                == Some(true);
         let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
+        } else if codex_responses_to_anthropic {
+            rewrite_codex_responses_endpoint_to_anthropic(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
             let api_format = resolved_claude_api_format
                 .as_deref()
@@ -1345,6 +1361,10 @@ impl RequestForwarder {
             .filter(|m| !m.is_empty())
             .map(str::to_string);
 
+        // Codex→Anthropic: when the model name carries the [1m] marker, strip the
+        // suffix and add the context-1m beta header.
+        let mut codex_anthropic_one_m = false;
+
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
@@ -1364,6 +1384,36 @@ impl RequestForwarder {
                 mapped_body,
                 reasoning_config.as_ref(),
             )?
+        } else if codex_responses_to_anthropic {
+            let mut mapped_body = mapped_body;
+            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            // Anthropic requires max_tokens; fall back to this default only when the
+            // Codex request omits max_output_tokens (rare — Codex normally sends it).
+            // Sized for Codex-scale outputs and kept within current Claude output
+            // ceilings (Opus 4.x = 32000, Sonnet 4 = 64000) so the fallback itself
+            // won't 400; the transform clamps any thinking budget below this value.
+            const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 32000;
+            let mut anthropic_body =
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                    mapped_body,
+                    DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+                )?;
+            // Handle the 1M-context marker [1m]: strip the model-name suffix (the
+            // gateway doesn't recognize it) and set the flag so the beta header is
+            // added. apply_codex_upstream_model may have just written back a model
+            // name carrying [1m] from the provider config, so strip it once more on
+            // the final body here.
+            if let Some(model) = anthropic_body.get("model").and_then(|v| v.as_str()) {
+                let stripped = super::model_mapper::strip_one_m_suffix_for_upstream(model);
+                if stripped != model {
+                    codex_anthropic_one_m = true;
+                    anthropic_body["model"] = Value::String(stripped.to_string());
+                }
+            }
+            if codex_impersonate_claude_code {
+                prepend_claude_code_system_prompt(&mut anthropic_body);
+            }
+            anthropic_body
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
@@ -1420,8 +1470,10 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
-        let force_identity_encoding =
-            needs_transform || codex_responses_to_chat || request_is_streaming;
+        let force_identity_encoding = needs_transform
+            || codex_responses_to_chat
+            || codex_responses_to_anthropic
+            || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
@@ -1563,6 +1615,13 @@ impl RequestForwarder {
                 .as_ref()
                 .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
         };
+        // Codex→Anthropic emulation: when there is no custom UA, override Codex's
+        // codex_cli_rs UA with the Claude Code UA.
+        let custom_user_agent = if custom_user_agent.is_none() && codex_impersonate_claude_code {
+            Some(http::HeaderValue::from_static(CLAUDE_CODE_USER_AGENT))
+        } else {
+            custom_user_agent
+        };
 
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
@@ -1648,6 +1707,17 @@ impl RequestForwarder {
             } else {
                 CLAUDE_CODE_BETA.to_string()
             })
+        } else if codex_impersonate_claude_code || codex_anthropic_one_m {
+            // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
+            // model injects the context-1m marker.
+            let mut betas: Vec<&str> = Vec::new();
+            if codex_impersonate_claude_code {
+                betas.push("claude-code-20250219");
+            }
+            if codex_anthropic_one_m {
+                betas.push("context-1m-2025-08-07");
+            }
+            Some(betas.join(","))
         } else {
             None
         };
@@ -1658,6 +1728,7 @@ impl RequestForwarder {
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
+        let mut saw_accept = false;
         let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
@@ -1719,6 +1790,27 @@ impl RequestForwarder {
                     for (ah_name, ah_value) in &auth_headers {
                         ordered_headers.append(ah_name.clone(), ah_value.clone());
                     }
+                }
+                continue;
+            }
+
+            // --- x-app — during Codex→Anthropic emulation, `cli` is injected uniformly below ---
+            if codex_impersonate_claude_code && key_str.eq_ignore_ascii_case("x-app") {
+                continue;
+            }
+
+            // --- accept — force application/json on the Codex→Anthropic path ---
+            // The Codex CLI sends `Accept: text/event-stream`, whereas a native
+            // Anthropic client sends `application/json` (streaming is driven by
+            // the body's stream:true). Strict Anthropic gateways return 406 Not
+            // Acceptable for an event-stream Accept, so normalize it here.
+            if codex_responses_to_anthropic && key_str.eq_ignore_ascii_case("accept") {
+                if !saw_accept {
+                    saw_accept = true;
+                    ordered_headers.append(
+                        http::header::ACCEPT,
+                        http::HeaderValue::from_static("application/json"),
+                    );
                 }
                 continue;
             }
@@ -1801,6 +1893,19 @@ impl RequestForwarder {
             );
         }
 
+        // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
+        if codex_responses_to_anthropic && !saw_accept {
+            ordered_headers.append(
+                http::header::ACCEPT,
+                http::HeaderValue::from_static("application/json"),
+            );
+        }
+
+        // Codex→Anthropic emulation: inject Claude Code's x-app: cli
+        if codex_impersonate_claude_code {
+            ordered_headers.append("x-app", http::HeaderValue::from_static("cli"));
+        }
+
         if !saw_user_agent {
             if let Some(ref ua) = custom_user_agent {
                 ordered_headers.append(http::header::USER_AGENT, ua.clone());
@@ -1816,8 +1921,13 @@ impl RequestForwarder {
             }
         }
 
-        // anthropic-version：仅在缺失时补充默认值
-        if should_send_anthropic_headers && !saw_anthropic_version {
+        // anthropic-version: add the default only when it is missing.
+        // The Codex→Anthropic path also needs this header. Note this is independent
+        // of anthropic-beta: the Claude Code-specific beta is only sent when
+        // impersonation is on (handled above); on the plain Codex→Anthropic path
+        // (impersonation off) anthropic-version is still required but no beta is sent.
+        if (should_send_anthropic_headers || codex_responses_to_anthropic) && !saw_anthropic_version
+        {
             ordered_headers.append(
                 "anthropic-version",
                 http::HeaderValue::from_static("2023-06-01"),
@@ -2347,6 +2457,55 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<S
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
     let target_path = "/chat/completions";
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
+}
+
+/// Claude Code client fingerprint (used for Codex→Anthropic emulation to pass a
+/// gateway's "Claude Code only" check).
+const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/1.0.119 (external, cli)";
+const CLAUDE_CODE_SYSTEM_IDENTITY: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/// Insert the Claude Code identity as the first line before the `system` field in
+/// the Anthropic request body.
+///
+/// Anthropic subscription/OAuth plans require the first system block to be exactly
+/// this identity line. After conversion `system` is a string (from Codex
+/// instructions); normalize it into an array here: [identity line, original system...].
+fn prepend_claude_code_system_prompt(body: &mut Value) {
+    let identity = serde_json::json!({ "type": "text", "text": CLAUDE_CODE_SYSTEM_IDENTITY });
+    let mut blocks: Vec<Value> = vec![identity];
+    match body.get("system") {
+        Some(Value::String(existing)) if !existing.is_empty() => {
+            blocks.push(serde_json::json!({ "type": "text", "text": existing }));
+        }
+        Some(Value::Array(existing)) => {
+            // Idempotent: skip re-injection if the first block is already the identity line.
+            if existing
+                .first()
+                .and_then(|b| b.get("text"))
+                .and_then(|t| t.as_str())
+                == Some(CLAUDE_CODE_SYSTEM_IDENTITY)
+            {
+                return;
+            }
+            blocks.extend(existing.iter().cloned());
+        }
+        _ => {}
+    }
+    body["system"] = Value::Array(blocks);
+}
+
+/// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
+fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Option<String>) {
+    let (_path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let target_path = "/v1/messages";
     let rewritten = match passthrough_query.as_deref() {
         Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
         _ => target_path.to_string(),
@@ -3345,6 +3504,46 @@ mod tests {
 
         assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn prepend_claude_code_system_prompt_from_string() {
+        let mut body = json!({ "system": "You are a Codex agent." });
+        prepend_claude_code_system_prompt(&mut body);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system[0]["text"], CLAUDE_CODE_SYSTEM_IDENTITY);
+        assert_eq!(system[1]["text"], "You are a Codex agent.");
+    }
+
+    #[test]
+    fn prepend_claude_code_system_prompt_when_absent() {
+        let mut body = json!({});
+        prepend_claude_code_system_prompt(&mut body);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 1);
+        assert_eq!(system[0]["text"], CLAUDE_CODE_SYSTEM_IDENTITY);
+    }
+
+    #[test]
+    fn prepend_claude_code_system_prompt_is_idempotent() {
+        let mut body = json!({ "system": "orig" });
+        prepend_claude_code_system_prompt(&mut body);
+        prepend_claude_code_system_prompt(&mut body);
+        let system = body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[0]["text"], CLAUDE_CODE_SYSTEM_IDENTITY);
+        assert_eq!(system[1]["text"], "orig");
+    }
+
+    #[test]
+    fn rewrite_codex_responses_endpoint_to_anthropic_preserves_query() {
+        let (endpoint, passthrough_query) =
+            rewrite_codex_responses_endpoint_to_anthropic("/responses?x=1");
+        assert_eq!(endpoint, "/v1/messages?x=1");
+        assert_eq!(passthrough_query.as_deref(), Some("x=1"));
+
+        let (endpoint, _) = rewrite_codex_responses_endpoint_to_anthropic("/v1/responses");
+        assert_eq!(endpoint, "/v1/messages");
     }
 
     #[test]
