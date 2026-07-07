@@ -5,8 +5,6 @@
 
 use once_cell::sync::OnceCell;
 use reqwest::Client;
-use std::env;
-use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -34,14 +32,6 @@ pub fn set_proxy_port(port: u16) {
     }
 }
 
-/// 获取 CC Switch 代理服务器的监听端口
-fn get_proxy_port() -> u16 {
-    CC_SWITCH_PROXY_PORT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|port| *port)
-        .unwrap_or(15721) // 默认端口作为回退
-}
 
 /// 初始化全局 HTTP 客户端
 ///
@@ -246,73 +236,22 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         builder = builder.proxy(proxy);
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
     } else {
-        // 未设置全局代理时，让 reqwest 自动检测系统代理（环境变量）
-        // 若系统代理指向本机，禁用系统代理避免自环
-        if system_proxy_points_to_loopback() {
-            builder = builder.no_proxy();
-            log::warn!(
-                "[GlobalProxy] System proxy points to localhost, bypassing to avoid recursion"
-            );
-        } else {
-            log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
-        }
+        // No explicit proxy configured — always use direct connection for upstream
+        // provider requests. System proxy (e.g. v2rayN, Clash) is for user-facing
+        // outbound traffic, not for CC Switch's internal API calls to AI providers.
+        // If a user needs to reach AI providers through a proxy, they should
+        // configure it explicitly in CC Switch settings.
+        //
+        // Fixes: #4478, #4642, #1695, #4562, #1264
+        builder = builder.no_proxy();
+        log::debug!(
+            "[GlobalProxy] Using direct connection (system proxy bypassed for upstream provider requests)"
+        );
     }
 
     builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
-}
-
-fn system_proxy_points_to_loopback() -> bool {
-    const KEYS: [&str; 6] = [
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-    ];
-
-    KEYS.iter()
-        .filter_map(|key| env::var(key).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .any(|value| proxy_points_to_loopback(&value))
-}
-
-fn proxy_points_to_loopback(value: &str) -> bool {
-    fn host_is_loopback(host: &str) -> bool {
-        if host.eq_ignore_ascii_case("localhost") {
-            return true;
-        }
-        host.parse::<IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-    }
-
-    // 检查是否指向 CC Switch 自己的代理端口
-    // 只有指向自己的代理才需要跳过，避免递归
-    fn is_cc_switch_proxy_port(port: Option<u16>) -> bool {
-        let cc_switch_port = get_proxy_port();
-        port == Some(cc_switch_port)
-    }
-
-    if let Ok(parsed) = url::Url::parse(value) {
-        if let Some(host) = parsed.host_str() {
-            // 只有当主机是 loopback 且端口是 CC Switch 的端口时才返回 true
-            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
-        }
-        return false;
-    }
-
-    let with_scheme = format!("http://{value}");
-    if let Ok(parsed) = url::Url::parse(&with_scheme) {
-        if let Some(host) = parsed.host_str() {
-            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
-        }
-    }
-
-    false
 }
 
 /// 隐藏 URL 中的敏感信息（用于日志）
@@ -337,12 +276,6 @@ pub fn mask_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     #[test]
     fn test_mask_url() {
@@ -390,61 +323,5 @@ mod tests {
         // 使用明确无效的 scheme 来触发错误
         let result = build_client(Some("invalid-scheme://127.0.0.1:7890"));
         assert!(result.is_err(), "Should reject invalid proxy scheme");
-    }
-
-    #[test]
-    fn test_proxy_points_to_loopback() {
-        // 设置 CC Switch 代理端口为 15721（默认值）
-        set_proxy_port(15721);
-
-        // 只有指向 CC Switch 自己端口的 loopback 地址才返回 true
-        assert!(proxy_points_to_loopback("http://127.0.0.1:15721"));
-        assert!(proxy_points_to_loopback("socks5://localhost:15721"));
-        assert!(proxy_points_to_loopback("127.0.0.1:15721"));
-
-        // 其他 loopback 端口不应该被跳过（允许使用其他本地代理工具）
-        assert!(!proxy_points_to_loopback("http://127.0.0.1:7890"));
-        assert!(!proxy_points_to_loopback("socks5://localhost:1080"));
-
-        // 非 loopback 地址不应该被跳过
-        assert!(!proxy_points_to_loopback("http://192.168.1.10:7890"));
-        assert!(!proxy_points_to_loopback("http://192.168.1.10:15721"));
-    }
-
-    #[test]
-    fn test_system_proxy_points_to_loopback() {
-        let _guard = env_lock().lock().unwrap();
-
-        // 设置 CC Switch 代理端口
-        set_proxy_port(15721);
-
-        let keys = [
-            "HTTP_PROXY",
-            "http_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-        ];
-
-        for key in &keys {
-            std::env::remove_var(key);
-        }
-
-        // 指向 CC Switch 端口的代理应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:15721");
-        assert!(system_proxy_points_to_loopback());
-
-        // 指向其他端口的本地代理不应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:7890");
-        assert!(!system_proxy_points_to_loopback());
-
-        // 非 loopback 地址不应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://10.0.0.2:7890");
-        assert!(!system_proxy_points_to_loopback());
-
-        for key in &keys {
-            std::env::remove_var(key);
-        }
     }
 }
