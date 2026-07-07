@@ -418,6 +418,22 @@ fn extract_codex_top_level_u64(config_text: &str, field: &str) -> Option<u64> {
         .filter(|value| *value > 0)
 }
 
+fn sanitize_codex_input_modalities<'a>(
+    items: impl IntoIterator<Item = &'a str>,
+) -> Option<Vec<String>> {
+    let mut modalities = Vec::new();
+    for item in items {
+        let normalized = item.trim().to_ascii_lowercase();
+        if (normalized == "text" || normalized == "image")
+            && !modalities.iter().any(|m| m == &normalized)
+        {
+            modalities.push(normalized);
+        }
+    }
+
+    (!modalities.is_empty()).then_some(modalities)
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
@@ -472,10 +488,19 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
-        if let Some(modalities) = &spec.input_modalities {
-            entry_obj.insert("input_modalities".to_string(), json!(modalities));
-        }
     }
+
+    let modalities = spec
+        .input_modalities
+        .as_ref()
+        .and_then(|items| sanitize_codex_input_modalities(items.iter().map(String::as_str)))
+        .unwrap_or_else(|| vec!["text".to_string()]);
+    let supports_image = modalities.iter().any(|item| item == "image");
+    entry_obj.insert("input_modalities".to_string(), json!(modalities));
+    entry_obj.insert(
+        "supports_image_detail_original".to_string(),
+        json!(supports_image),
+    );
 
     entry
 }
@@ -549,14 +574,9 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .get("inputModalities")
             .or_else(|| model_config.get("input_modalities"))
             .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|items| !items.is_empty());
+            .and_then(|items| {
+                sanitize_codex_input_modalities(items.iter().filter_map(|item| item.as_str()))
+            });
 
         let base_instructions = model_config
             .get("baseInstructions")
@@ -2450,8 +2470,87 @@ base_url = "https://production.api/v1"
             "per-row inputModalities override must apply"
         );
         assert_eq!(
+            entry.get("supports_image_detail_original"),
+            Some(&json!(true)),
+            "image input modalities must enable original image detail support"
+        );
+        assert_eq!(
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn catalog_sanitizes_input_modalities_and_disables_image_detail_for_text_only() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "text-only",
+                        "inputModalities": [" Text ", "audio", "text"]
+                    },
+                    {
+                        "model": "empty-modalities",
+                        "input_modalities": ["audio", " "]
+                    },
+                    {
+                        "model": "explicit-image",
+                        "inputModalities": ["text", "image"]
+                    },
+                    {
+                        "model": "legacy-missing-modalities"
+                    }
+                ]
+            }
+        });
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation should not error")
+                .expect("non-empty modelCatalog must yield a catalog");
+
+        let text_entry = &catalog["models"][0];
+        assert_eq!(text_entry.get("input_modalities"), Some(&json!(["text"])));
+        assert_eq!(
+            text_entry.get("supports_image_detail_original"),
+            Some(&json!(false)),
+            "explicit text-only modalities must override image-capable template defaults"
+        );
+
+        let empty_entry = &catalog["models"][1];
+        assert_eq!(
+            empty_entry.get("input_modalities"),
+            Some(&json!(["text"])),
+            "invalid or empty modalities must fall back to text-only"
+        );
+        assert_eq!(
+            empty_entry.get("supports_image_detail_original"),
+            Some(&json!(false)),
+            "invalid or empty modalities must not inherit image-capable template defaults"
+        );
+
+        let image_entry = &catalog["models"][2];
+        assert_eq!(
+            image_entry.get("input_modalities"),
+            Some(&json!(["text", "image"])),
+            "explicit image support must be preserved"
+        );
+        assert_eq!(
+            image_entry.get("supports_image_detail_original"),
+            Some(&json!(true)),
+            "explicit image support must keep image detail enabled"
+        );
+
+        let legacy_entry = &catalog["models"][3];
+        assert_eq!(
+            legacy_entry.get("input_modalities"),
+            Some(&json!(["text"])),
+            "legacy rows missing modalities must default to text-only"
+        );
+        assert_eq!(
+            legacy_entry.get("supports_image_detail_original"),
+            Some(&json!(false)),
+            "legacy rows missing modalities must not inherit image-capable template defaults"
         );
     }
 

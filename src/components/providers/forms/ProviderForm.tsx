@@ -170,9 +170,17 @@ export const normalizeCodexCatalogModelsForSave = (
       ? Number.parseInt(rawContextWindow, 10)
       : undefined;
 
-    const inputModalities = item.inputModalities?.filter(
-      (m) => typeof m === "string" && m.trim(),
-    );
+    const inputModalities = item.inputModalities?.reduce<string[]>((acc, m) => {
+      if (typeof m !== "string") return acc;
+      const normalized = m.trim().toLowerCase();
+      if (
+        (normalized === "text" || normalized === "image") &&
+        !acc.includes(normalized)
+      ) {
+        acc.push(normalized);
+      }
+      return acc;
+    }, []);
 
     const baseInstructions = item.baseInstructions?.trim();
 

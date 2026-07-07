@@ -15,7 +15,7 @@ export function ModelDropdown({
   onSelect,
 }: {
   models: FetchedModel[];
-  onSelect: (id: string) => void;
+  onSelect: (id: string, model?: FetchedModel) => void;
 }) {
   const grouped: Record<string, FetchedModel[]> = {};
   for (const model of models) {
@@ -41,7 +41,7 @@ export function ModelDropdown({
             {vi > 0 && <DropdownMenuSeparator />}
             <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
             {grouped[vendor].map((m) => (
-              <DropdownMenuItem key={m.id} onSelect={() => onSelect(m.id)}>
+              <DropdownMenuItem key={m.id} onSelect={() => onSelect(m.id, m)}>
                 {m.id}
               </DropdownMenuItem>
             ))}
