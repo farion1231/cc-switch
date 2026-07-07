@@ -1096,8 +1096,10 @@
     "modelRoleOpus": "Opus",
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
+    "modelRoleSubagent": "Subagent",
     "modelDisplayNameLabel": "顯示名稱",
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
+    "modelNoDisplayName": "不顯示於 /model 選單",
     "requestModelLabel": "實際請求模型",
     "modelOneMHeader": "聲明支援 1M",
     "modelOneMLabel": "1M",
@@ -1835,6 +1837,41 @@
       "deleteTitle": "確認刪除",
       "deleteMessage": "確定要刪除提示詞 \"{{name}}\" 嗎？"
     }
+  },
+  "profiles": {
+    "switcherTooltip": {
+      "claude": "專案：一鍵切換 Claude Code 的供應商 / MCP / Skills / 記憶檔案",
+      "claude-desktop": "專案：一鍵切換 Claude Desktop 的供應商",
+      "codex": "專案：一鍵切換 Codex 的供應商 / MCP / Skills / 記憶檔案"
+    },
+    "none": "不使用專案",
+    "searchPlaceholder": "搜尋專案",
+    "empty": "尚無專案",
+    "createFromCurrent": "新建專案",
+    "createDescription": {
+      "claude": "把 Claude Code 目前的供應商、MCP、Skills、記憶檔案儲存為一個專案，之後可一鍵切換。",
+      "claude-desktop": "把 Claude Desktop 目前的供應商儲存為一個專案，之後可一鍵切換。",
+      "codex": "把 Codex 目前的供應商、MCP、Skills 和記憶檔案設定儲存為一個專案，之後可一鍵切換。"
+    },
+    "manage": "管理專案…",
+    "manageTitle": "管理專案",
+    "manageDescription": "專案是設定快照。切換專案時，目前設定會自動儲存回原專案。",
+    "namePlaceholder": "例如：開發、繪圖",
+    "rename": "重新命名",
+    "noSnapshotForScope": "本側未儲存",
+    "delete": "刪除",
+    "deleteConfirmTitle": "確認刪除",
+    "deleteConfirmMessage": "確定要刪除專案 \"{{name}}\" 嗎？不會改動任何現有設定。",
+    "createSuccess": "專案已建立",
+    "createFailed": "建立專案失敗: {{detail}}",
+    "updateSuccess": "專案已更新",
+    "updateFailed": "更新專案失敗: {{detail}}",
+    "deleteSuccess": "專案已刪除",
+    "deleteFailed": "刪除專案失敗: {{detail}}",
+    "applySuccess": "專案已套用",
+    "applyFailed": "套用專案失敗: {{detail}}",
+    "applyWarnings": "專案已套用，{{warningCount}} 條警告：\n{{details}}",
+    "clearSuccess": "已切換為不使用專案"
   },
   "workspace": {
     "title": "Workspace 檔案管理",

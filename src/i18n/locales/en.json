@@ -1124,8 +1124,10 @@
     "modelRoleOpus": "Opus",
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
+    "modelRoleSubagent": "Subagent",
     "modelDisplayNameLabel": "Display name",
     "modelDisplayNamePlaceholder": "e.g. DeepSeek V4 Pro",
+    "modelNoDisplayName": "Not shown in /model",
     "requestModelLabel": "Requested model",
     "modelOneMHeader": "Declare 1M",
     "modelOneMLabel": "1M",
@@ -1863,6 +1865,41 @@
       "deleteTitle": "Confirm Delete",
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"
     }
+  },
+  "profiles": {
+    "switcherTooltip": {
+      "claude": "Projects: switch the Claude Code provider / MCP / Skills / memory files in one click",
+      "claude-desktop": "Projects: switch the Claude Desktop provider in one click",
+      "codex": "Projects: switch the Codex provider / MCP / Skills / memory files in one click"
+    },
+    "none": "No project",
+    "searchPlaceholder": "Search projects",
+    "empty": "No projects yet",
+    "createFromCurrent": "New project",
+    "createDescription": {
+      "claude": "Save the current Claude Code provider, MCP, Skills and memory file as a project you can switch to later.",
+      "claude-desktop": "Save the current Claude Desktop provider as a project you can switch to later.",
+      "codex": "Save the current Codex provider, MCP, Skills and memory file configuration as a project you can switch to later."
+    },
+    "manage": "Manage projects…",
+    "manageTitle": "Manage Projects",
+    "manageDescription": "Projects are configuration snapshots. When you switch projects, the current configuration is automatically saved back to the project you are leaving.",
+    "namePlaceholder": "e.g. Development, Drawing",
+    "rename": "Rename",
+    "noSnapshotForScope": "Not saved for this app yet",
+    "delete": "Delete",
+    "deleteConfirmTitle": "Confirm Delete",
+    "deleteConfirmMessage": "Are you sure you want to delete project \"{{name}}\"? Your current configuration will not be changed.",
+    "createSuccess": "Project created",
+    "createFailed": "Failed to create project: {{detail}}",
+    "updateSuccess": "Project updated",
+    "updateFailed": "Failed to update project: {{detail}}",
+    "deleteSuccess": "Project deleted",
+    "deleteFailed": "Failed to delete project: {{detail}}",
+    "applySuccess": "Project applied",
+    "applyFailed": "Failed to apply project: {{detail}}",
+    "applyWarnings": "Project applied with {{warningCount}} warning(s):\n{{details}}",
+    "clearSuccess": "Switched to no project"
   },
   "workspace": {
     "title": "Workspace Files",

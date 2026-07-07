@@ -1124,8 +1124,10 @@
     "modelRoleOpus": "Opus",
     "modelRoleFable": "Fable",
     "modelRoleHaiku": "Haiku",
+    "modelRoleSubagent": "Subagent",
     "modelDisplayNameLabel": "显示名称",
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
+    "modelNoDisplayName": "不显示在 /model 菜单",
     "requestModelLabel": "实际请求模型",
     "modelOneMHeader": "声明支持 1M",
     "modelOneMLabel": "1M",
@@ -1863,6 +1865,41 @@
       "deleteTitle": "确认删除",
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"
     }
+  },
+  "profiles": {
+    "switcherTooltip": {
+      "claude": "项目：一键切换 Claude Code 的供应商 / MCP / Skills / 记忆文件",
+      "claude-desktop": "项目：一键切换 Claude Desktop 的供应商",
+      "codex": "项目：一键切换 Codex 的供应商 / MCP / Skills / 记忆文件"
+    },
+    "none": "不使用项目",
+    "searchPlaceholder": "搜索项目",
+    "empty": "暂无项目",
+    "createFromCurrent": "新建项目",
+    "createDescription": {
+      "claude": "把 Claude Code 当前的供应商、MCP、Skills、记忆文件保存为一个项目，之后可一键切换。",
+      "claude-desktop": "把 Claude Desktop 当前的供应商保存为一个项目，之后可一键切换。",
+      "codex": "把 Codex 当前的供应商、MCP、Skills 和记忆文件配置保存为一个项目，之后可一键切换。"
+    },
+    "manage": "管理项目…",
+    "manageTitle": "管理项目",
+    "manageDescription": "项目是配置快照。切换项目时，当前配置会自动保存回原项目。",
+    "namePlaceholder": "例如：开发、绘图",
+    "rename": "重命名",
+    "noSnapshotForScope": "本侧未保存",
+    "delete": "删除",
+    "deleteConfirmTitle": "确认删除",
+    "deleteConfirmMessage": "确定要删除项目 \"{{name}}\" 吗？不会改动任何现有配置。",
+    "createSuccess": "项目已创建",
+    "createFailed": "创建项目失败: {{detail}}",
+    "updateSuccess": "项目已更新",
+    "updateFailed": "更新项目失败: {{detail}}",
+    "deleteSuccess": "项目已删除",
+    "deleteFailed": "删除项目失败: {{detail}}",
+    "applySuccess": "项目已应用",
+    "applyFailed": "应用项目失败: {{detail}}",
+    "applyWarnings": "项目已应用，{{warningCount}} 条警告：\n{{details}}",
+    "clearSuccess": "已切换为不使用项目"
   },
   "workspace": {
     "title": "Workspace 文件管理",

@@ -672,6 +672,7 @@ mod tests {
                 "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
                 "ANTHROPIC_BASE_URL": "https://example.com",
                 "ANTHROPIC_MODEL": "claude-x",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini",
                 // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
                 "ENABLE_TOOL_SEARCH": "true",
                 "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
@@ -714,6 +715,9 @@ mod tests {
         // 端点/模型（provider-specific 非机密）也应剥掉
         assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
         assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .is_none());
 
         // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
         assert_eq!(
@@ -2635,6 +2639,7 @@ impl ProviderService {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
             "ANTHROPIC_BASE_URL",
         ];
 

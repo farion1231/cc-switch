@@ -295,6 +295,35 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
+        //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                sort_order INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 修复跑过未发布开发版的库：current 标记曾是全局 key，现按应用分组
+        // （随 v12 定稿为 current_profile_id_<scope>，不单独 bump 版本）
+        if conn
+            .execute(
+                "INSERT OR REPLACE INTO settings (key, value)
+                 SELECT 'current_profile_id_claude', value FROM settings
+                 WHERE key = 'current_profile_id'",
+                [],
+            )
+            .is_ok()
+        {
+            let _ = conn.execute("DELETE FROM settings WHERE key = 'current_profile_id'", []);
+        }
+
         // 尝试添加 live_takeover_active 列到 proxy_config 表
         let _ = conn.execute(
             "ALTER TABLE proxy_config ADD COLUMN live_takeover_active INTEGER NOT NULL DEFAULT 0",
@@ -443,6 +472,11 @@ impl Database {
                         log::info!("迁移数据库从 v10 到 v11（usage_daily_rollups 保留 request_model 维度）");
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
+                    }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1267,6 +1301,24 @@ impl Database {
         log::info!(
             "v10 -> v11 迁移完成：usage_daily_rollups 已保留 request_model/pricing_model 维度"
         );
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：添加项目 Profiles 表
+    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                sort_order INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
         Ok(())
     }
 
