@@ -29,7 +29,10 @@ pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<
     let mut paths = Vec::new();
     // Newer Codex Desktop builds keep the state database under a sqlite/
     // subdirectory. Keep the legacy root path too for older installs.
-    push_unique_path(&mut paths, config_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME));
+    push_unique_path(
+        &mut paths,
+        config_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
+    );
     push_unique_path(&mut paths, config_dir.join(CODEX_STATE_DB_FILENAME));
     // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
     if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {

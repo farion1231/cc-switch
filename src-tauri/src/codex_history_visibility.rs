@@ -87,16 +87,14 @@ struct SessionIndexEntry {
     updated_at: Option<String>,
 }
 
-pub fn diagnose_codex_history_visibility(
-) -> Result<CodexHistoryVisibilityDiagnosis, AppError> {
+pub fn diagnose_codex_history_visibility() -> Result<CodexHistoryVisibilityDiagnosis, AppError> {
     let _guard = CODEX_HISTORY_VISIBILITY_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     diagnose_inner()
 }
 
-pub fn repair_codex_history_visibility(
-) -> Result<CodexHistoryVisibilityRepairResult, AppError> {
+pub fn repair_codex_history_visibility() -> Result<CodexHistoryVisibilityRepairResult, AppError> {
     let _guard = CODEX_HISTORY_VISIBILITY_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -171,8 +169,7 @@ fn diagnose_inner() -> Result<CodexHistoryVisibilityDiagnosis, AppError> {
         &scan.user_event_thread_ids,
         &scan.thread_cwd_by_id,
     )?;
-    let session_index =
-        inspect_session_index(&codex_dir, sqlite.unique_thread_ids_for_index)?;
+    let session_index = inspect_session_index(&codex_dir, sqlite.unique_thread_ids_for_index)?;
     let workspace_roots_needing_repair = inspect_workspace_roots(&codex_dir)?;
 
     let mut warnings = Vec::new();
@@ -192,7 +189,10 @@ fn diagnose_inner() -> Result<CodexHistoryVisibilityDiagnosis, AppError> {
         ));
     }
     if session_index.needs_rebuild {
-        warnings.push("session_index.jsonl is missing, invalid, or behind the SQLite thread index".to_string());
+        warnings.push(
+            "session_index.jsonl is missing, invalid, or behind the SQLite thread index"
+                .to_string(),
+        );
     }
 
     Ok(CodexHistoryVisibilityDiagnosis {
@@ -315,9 +315,9 @@ fn inspect_rollout_file(
         .and_then(Value::as_str)
         .map(to_desktop_workspace_path)
         .filter(|value| !value.trim().is_empty());
-    let has_encrypted_content = bytes.windows(b"encrypted_content".len()).any(|window| {
-        window == b"encrypted_content"
-    });
+    let has_encrypted_content = bytes
+        .windows(b"encrypted_content".len())
+        .any(|window| window == b"encrypted_content");
     let has_user_event = rollout_has_user_event(first_line, &bytes[body_offset..]);
     let change = if current_provider != target_provider {
         payload.insert(
@@ -482,7 +482,8 @@ fn read_sqlite_diagnosis(
             |row| row.get::<_, i64>(0),
         )? as usize;
 
-        let mut id_stmt = conn.prepare("SELECT id FROM threads WHERE id IS NOT NULL AND id <> ''")?;
+        let mut id_stmt =
+            conn.prepare("SELECT id FROM threads WHERE id IS NOT NULL AND id <> ''")?;
         let ids = id_stmt.query_map([], |row| row.get::<_, String>(0))?;
         for id in ids {
             unique_thread_ids.insert(id?);
@@ -547,11 +548,10 @@ fn update_sqlite_metadata(
         let columns = table_columns(&conn, "threads")?;
         let tx = conn.transaction()?;
         if columns.contains("model_provider") {
-            result.provider_rows += tx
-                .execute(
-                    "UPDATE threads SET model_provider = ?1 WHERE COALESCE(model_provider, '') <> ?1",
-                    params![target_provider],
-                )? as usize;
+            result.provider_rows += tx.execute(
+                "UPDATE threads SET model_provider = ?1 WHERE COALESCE(model_provider, '') <> ?1",
+                params![target_provider],
+            )? as usize;
         }
         if columns.contains("has_user_event") {
             let mut stmt = tx.prepare(
@@ -563,9 +563,8 @@ fn update_sqlite_metadata(
             drop(stmt);
         }
         if columns.contains("cwd") {
-            let mut stmt = tx.prepare(
-                "UPDATE threads SET cwd = ?1 WHERE id = ?2 AND COALESCE(cwd, '') <> ?1",
-            )?;
+            let mut stmt = tx
+                .prepare("UPDATE threads SET cwd = ?1 WHERE id = ?2 AND COALESCE(cwd, '') <> ?1")?;
             for (thread_id, cwd) in thread_cwd_by_id {
                 if !cwd.trim().is_empty() {
                     result.cwd_rows += stmt.execute(params![cwd, thread_id])? as usize;
@@ -982,7 +981,8 @@ fn backup_static_files(
         "codexDir": codex_dir.to_string_lossy(),
         "createdAt": Utc::now().to_rfc3339(),
     });
-    let bytes = serde_json::to_vec_pretty(&meta).map_err(|e| AppError::JsonSerialize { source: e })?;
+    let bytes =
+        serde_json::to_vec_pretty(&meta).map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write(&backup_dir.join("metadata.json"), &bytes)
 }
 
