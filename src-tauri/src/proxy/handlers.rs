@@ -26,9 +26,9 @@ use super::{
         transform_codex_chat, transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, process_response, read_decoded_body,
-        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
-        usage_logging_enabled, SseUsageCollector,
+        create_logged_passthrough_stream, process_codex_responses_response, process_response,
+        read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -751,7 +751,7 @@ pub async fn handle_responses(
         .await;
     }
 
-    process_response(
+    process_codex_responses_response(
         response,
         &ctx,
         &state,
@@ -830,7 +830,7 @@ pub async fn handle_responses_compact(
         .await;
     }
 
-    process_response(
+    process_codex_responses_response(
         response,
         &ctx,
         &state,
