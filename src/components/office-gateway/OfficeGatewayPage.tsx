@@ -181,7 +181,7 @@ export default function OfficeGatewayPage() {
 
   const providerHelp = useMemo(() => {
     if (activeProvider === "auto") {
-      return "Auto 会按请求里的 key 前缀分流：dk-* → DeepSeek，sk-kimi-* → Kimi，tp-* / sk-mimo-* / 普通 sk-* → MiMo。";
+      return "Auto 会按请求里的 key 前缀分流：dk-* → DeepSeek，sk-kimi-* → Kimi，sk-api-* / sk-cp-* → MiniMax，tp-* / sk-mimo-* / 普通 sk-* → MiMo。";
     }
     return "固定 Provider 模式会优先使用本页保存的 API Key；留空时从 Office 请求头读取。";
   }, [activeProvider]);

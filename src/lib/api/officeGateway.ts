@@ -82,16 +82,14 @@ export interface OfficeGatewayUpstreamTestResult {
 }
 
 export const officeGatewayApi = {
-  getConfig: () =>
-    invoke<OfficeGatewayConfig>("get_office_gateway_config"),
+  getConfig: () => invoke<OfficeGatewayConfig>("get_office_gateway_config"),
   saveConfig: (config: OfficeGatewayConfig) =>
     invoke<OfficeGatewayConfig>("save_office_gateway_config", { config }),
   start: () => invoke<OfficeGatewayStatus>("start_office_gateway"),
   stop: () => invoke<void>("stop_office_gateway"),
   restart: () => invoke<OfficeGatewayStatus>("restart_office_gateway"),
   getStatus: () => invoke<OfficeGatewayStatus>("get_office_gateway_status"),
-  getLogs: () =>
-    invoke<OfficeGatewayLogSnapshot>("get_office_gateway_logs"),
+  getLogs: () => invoke<OfficeGatewayLogSnapshot>("get_office_gateway_logs"),
   testUpstream: () =>
     invoke<OfficeGatewayUpstreamTestResult>("test_office_gateway_upstream"),
   clearLogs: () => invoke<void>("clear_office_gateway_logs"),

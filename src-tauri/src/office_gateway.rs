@@ -6,6 +6,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use futures::StreamExt;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -17,6 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::task::JoinHandle;
+use tokio::time::{sleep, Duration};
 use tower_http::cors::{Any, CorsLayer};
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -25,6 +29,27 @@ const LOG_RING_LIMIT: usize = 600;
 const MAX_REQUEST_BODY_BYTES: usize = 4 * 1024 * 1024;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const MAX_TOOL_DESC_LEN: usize = 8_000;
+const SHUTDOWN_GRACE_TIMEOUT_SECS: u64 = 2;
+
+static SECRET_HEADER_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?ix)
+        (
+            \b(?:authorization|x-api-key|api[_-]?key)\b
+            ["']?\s*[:=]\s*["']?
+            (?:bearer\s+)?
+        )
+        ([^"',\s}\]]+)
+        "#,
+    )
+    .expect("valid secret header regex")
+});
+static BEARER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"(?i)\bbearer\s+([^"',\s}\]]+)"#).expect("valid bearer regex"));
+static KEY_PREFIX_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"\b(?:sk|dk|tp)-[A-Za-z0-9._-]+\b|\bgho_[A-Za-z0-9_]+\b"#)
+        .expect("valid key prefix regex")
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -189,6 +214,8 @@ pub struct OfficeGatewayService {
     config_path: PathBuf,
     logger: OfficeGatewayLogger,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
+    server_task: Mutex<Option<JoinHandle<()>>>,
+    bound_addr: RwLock<Option<SocketAddr>>,
     started_at: RwLock<Option<String>>,
 }
 
@@ -207,6 +234,8 @@ impl OfficeGatewayService {
             config_path,
             logger,
             shutdown: Mutex::new(None),
+            server_task: Mutex::new(None),
+            bound_addr: RwLock::new(None),
             started_at: RwLock::new(None),
         }
     }
@@ -235,11 +264,19 @@ impl OfficeGatewayService {
     pub async fn status(&self) -> OfficeGatewayStatus {
         let config = self.config.read().await.clone();
         let running = self.shutdown.lock().await.is_some();
+        let bound_addr = *self.bound_addr.read().await;
+        let (host, port) = if running {
+            bound_addr
+                .map(|addr| (addr.ip().to_string(), addr.port()))
+                .unwrap_or_else(|| (config.listen_host.clone(), config.listen_port))
+        } else {
+            (config.listen_host.clone(), config.listen_port)
+        };
         OfficeGatewayStatus {
             running,
-            host: config.listen_host.clone(),
-            port: config.listen_port,
-            base_url: format!("http://{}:{}", config.listen_host, config.listen_port),
+            base_url: format!("http://{host}:{port}"),
+            host,
+            port,
             active_provider: config.active_provider,
             log_file: self.logger.path_string(),
             started_at: self.started_at.read().await.clone(),
@@ -300,7 +337,7 @@ impl OfficeGatewayService {
             .with_state(state.clone());
 
         let logger = self.logger.clone();
-        tokio::spawn(async move {
+        let server_task = tokio::spawn(async move {
             let result = axum::serve(listener, app)
                 .with_graceful_shutdown(async {
                     let _ = rx.await;
@@ -317,6 +354,8 @@ impl OfficeGatewayService {
         });
 
         *self.shutdown.lock().await = Some(tx);
+        *self.server_task.lock().await = Some(server_task);
+        *self.bound_addr.write().await = Some(local_addr);
         *self.started_at.write().await = Some(Utc::now().to_rfc3339());
         self.logger
             .info(
@@ -328,10 +367,27 @@ impl OfficeGatewayService {
     }
 
     pub async fn stop(&self) -> Result<(), String> {
-        if let Some(tx) = self.shutdown.lock().await.take() {
+        let tx = self.shutdown.lock().await.take();
+        let server_task = self.server_task.lock().await.take();
+        if let Some(tx) = tx {
             let _ = tx.send(());
-            self.logger.info("server", "Office Gateway stopped").await;
         }
+        if let Some(server_task) = server_task {
+            let mut server_task = server_task;
+            tokio::select! {
+                _ = &mut server_task => {
+                    self.logger.info("server", "Office Gateway stopped").await;
+                }
+                _ = sleep(Duration::from_secs(SHUTDOWN_GRACE_TIMEOUT_SECS)) => {
+                    server_task.abort();
+                    let _ = server_task.await;
+                    self.logger
+                        .info("server", "Office Gateway forced stop after graceful shutdown timeout")
+                        .await;
+                }
+            }
+        }
+        *self.bound_addr.write().await = None;
         *self.started_at.write().await = None;
         Ok(())
     }
@@ -569,7 +625,7 @@ async fn messages(
         .body
         .get("messages")
         .and_then(Value::as_array)
-        .map_or(true, |m| m.is_empty())
+        .is_none_or(|m| m.is_empty())
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -800,6 +856,8 @@ fn classify_auto_provider(key: &str) -> OfficeGatewayProviderKind {
         OfficeGatewayProviderKind::DeepSeek
     } else if lower.starts_with("sk-kimi-") {
         OfficeGatewayProviderKind::Kimi
+    } else if lower.starts_with("sk-api-") || lower.starts_with("sk-cp-") {
+        OfficeGatewayProviderKind::MiniMax
     } else {
         OfficeGatewayProviderKind::Mimo
     }
@@ -1136,12 +1194,11 @@ fn normalize_system(system: Value) -> Value {
                     Value::String(text) if !text.trim().is_empty() => {
                         out.push(json!({"type": "text", "text": text}))
                     }
-                    Value::Object(obj) => {
+                    Value::Object(obj)
                         if obj.get("type").and_then(Value::as_str) == Some("text")
-                            && obj.get("text").and_then(Value::as_str).is_some()
-                        {
-                            out.push(Value::Object(obj));
-                        }
+                            && obj.get("text").and_then(Value::as_str).is_some() =>
+                    {
+                        out.push(Value::Object(obj));
                     }
                     _ => {}
                 }
@@ -1187,7 +1244,7 @@ fn normalize_messages(
             continue;
         };
         let normalized_content = normalize_content(content, dropped, supported_types);
-        if normalized_content.as_array().map_or(true, |a| a.is_empty()) {
+        if normalized_content.as_array().is_none_or(|a| a.is_empty()) {
             increment_drop(dropped, "message_empty_after_sanitize");
             continue;
         }
@@ -1237,17 +1294,13 @@ fn sanitize_content_block(
         return None;
     }
     match block_type.as_str() {
-        "text" => {
-            if obj.get("text").and_then(Value::as_str).is_none() {
-                increment_drop(dropped, "text_missing_text");
-                return None;
-            }
+        "text" if obj.get("text").and_then(Value::as_str).is_none() => {
+            increment_drop(dropped, "text_missing_text");
+            return None;
         }
-        "thinking" => {
-            if obj.get("thinking").and_then(Value::as_str).is_none() {
-                increment_drop(dropped, "thinking_missing_thinking");
-                return None;
-            }
+        "thinking" if obj.get("thinking").and_then(Value::as_str).is_none() => {
+            increment_drop(dropped, "thinking_missing_thinking");
+            return None;
         }
         "tool_use" => {
             if obj.get("id").and_then(Value::as_str).is_none()
@@ -1260,17 +1313,13 @@ fn sanitize_content_block(
                 obj.insert("input".to_string(), json!({}));
             }
         }
-        "tool_result" => {
-            if obj.get("tool_use_id").and_then(Value::as_str).is_none() {
-                increment_drop(dropped, "tool_result_invalid");
-                return None;
-            }
+        "tool_result" if obj.get("tool_use_id").and_then(Value::as_str).is_none() => {
+            increment_drop(dropped, "tool_result_invalid");
+            return None;
         }
-        "image" => {
-            if obj.get("source").is_none() {
-                increment_drop(dropped, "image_missing_source");
-                return None;
-            }
+        "image" if obj.get("source").is_none() => {
+            increment_drop(dropped, "image_missing_source");
+            return None;
         }
         _ => {}
     }
@@ -1476,7 +1525,7 @@ fn sse_shim_stream(
                 Ok(bytes) => bytes,
                 Err(err) => {
                     logger.error("stream", format!("upstream stream error: {err}")).await;
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+                    Err(std::io::Error::other(err.to_string()))?;
                     unreachable!();
                 }
             };
@@ -1730,26 +1779,12 @@ fn emit_sse_frame(event_name: Option<&str>, data_payload: Option<&str>) -> bytes
 }
 
 fn redact_secrets(input: &str) -> String {
-    let mut out = String::new();
-    for token in input.split_whitespace() {
-        let redacted = if token.starts_with("sk-")
-            || token.starts_with("dk-")
-            || token.starts_with("tp-")
-            || token.starts_with("gho_")
-            || token.to_lowercase().starts_with("bearer")
-        {
-            "[redacted]"
-        } else {
-            token
-        };
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(redacted);
-    }
+    let out = SECRET_HEADER_RE.replace_all(input, "$1[redacted]");
+    let out = BEARER_RE.replace_all(&out, "Bearer [redacted]");
+    let mut out = KEY_PREFIX_RE.replace_all(&out, "[redacted]").into_owned();
     if out.len() > 3000 {
         out.truncate(3000);
-        out.push_str("…");
+        out.push('…');
     }
     out
 }
@@ -1788,6 +1823,14 @@ mod tests {
         );
         assert_eq!(
             classify_auto_provider("sk-api-test"),
+            OfficeGatewayProviderKind::MiniMax
+        );
+        assert_eq!(
+            classify_auto_provider("sk-cp-test"),
+            OfficeGatewayProviderKind::MiniMax
+        );
+        assert_eq!(
+            classify_auto_provider("sk-test"),
             OfficeGatewayProviderKind::Mimo
         );
     }
@@ -2057,9 +2100,14 @@ mod tests {
 
     #[test]
     fn redacts_log_secrets() {
-        let redacted = redact_secrets("Authorization Bearer sk-test tp-secret dk-secret");
+        let redacted = redact_secrets(
+            r#"Authorization Bearer sk-test tp-secret dk-secret {"x-api-key":"sk-json"} Authorization: Bearer sk-header api_key=plain-secret"#,
+        );
         assert!(!redacted.contains("sk-test"));
         assert!(!redacted.contains("tp-secret"));
         assert!(!redacted.contains("dk-secret"));
+        assert!(!redacted.contains("sk-json"));
+        assert!(!redacted.contains("sk-header"));
+        assert!(!redacted.contains("plain-secret"));
     }
 }
