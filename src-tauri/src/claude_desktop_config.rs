@@ -74,8 +74,11 @@ pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
 ];
 
 const MODEL_TIER_ROUTING_APP: &str = "claude-desktop";
+// tier → route_id。route_id 必须与 `DEFAULT_PROXY_ROUTES` 里的 route_id 完全一致：
+// 否则「开/关 tier 路由」会让 Desktop profile 里同一 tier 的模型名突变（如 sonnet
+// 在 4-6 / 5 之间跳），客户端按名字寻址会错乱。Sonnet 已随上游升级到 claude-sonnet-5。
 const DESKTOP_TIER_ROUTES: &[(&str, &str)] = &[
-    ("sonnet", "claude-sonnet-4-6"),
+    ("sonnet", "claude-sonnet-5"),
     ("opus", CURRENT_OPUS_ROUTE_ID),
     ("haiku", "claude-haiku-4-5"),
     ("fable", "claude-fable-5"),
@@ -1867,8 +1870,8 @@ mod tests {
             .expect("inferenceModels array");
         assert_eq!(models.len(), 4);
         assert_eq!(
-            find_model(models, "claude-sonnet-4-6")["name"],
-            json!("claude-sonnet-4-6")
+            find_model(models, "claude-sonnet-5")["name"],
+            json!("claude-sonnet-5")
         );
         let opus = find_model(models, CURRENT_OPUS_ROUTE_ID);
         assert_eq!(opus["labelOverride"], json!("GLM-5.2"));
