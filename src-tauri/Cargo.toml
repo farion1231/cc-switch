@@ -15,6 +15,10 @@ name = "cc_switch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 doctest = false
 
+[[bin]]
+name = "cc-switch-proxy"
+path = "src/bin/cc_switch_proxy.rs"
+
 [features]
 default = []
 test-hooks = []
@@ -45,6 +49,7 @@ flate2 = "1"
 brotli = "7"
 zstd = "0.13"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "signal"] }
+env_logger = "0.11"
 futures = "0.3"
 async-stream = "0.3"
 bytes = "1.5"
