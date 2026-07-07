@@ -99,9 +99,34 @@ curl -X DELETE http://127.0.0.1:15721/admin/providers/<id>
 curl http://127.0.0.1:15721/admin/status
 ```
 
-**`api_format`**：
-- `openai_chat`：上游是 Chat Completions（deepseek/kimi/glm/qwen/minimax/ark 等）→ 代理做 Responses→Chat 转换
-- `openai_responses`：上游是 Responses API → 透传
+**`api_format`**（决定是否做协议转换）：
+- `openai_chat`：上游是 Chat Completions（deepseek/kimi/glm/qwen/minimax/ark 等）→ **需要转换**，代理把 Codex 的 Responses 请求改写成 Chat 发上游，再把 Chat 响应转回 Responses
+- `openai_responses`：上游是 Responses API（官方 OpenAI、或 PackyCode 等聚合商的 Responses 端点）→ **不转换**，透传
+
+**需转换（deepseek 类）示例**：
+
+```bash
+curl -X POST http://127.0.0.1:15721/admin/providers \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"DeepSeek","base_url":"https://api.deepseek.com","api_key":"sk-xxx","model":"deepseek-chat","api_format":"openai_chat","enable":true}'
+```
+
+**不需转换（Responses 兼容上游）示例**：
+
+```bash
+curl -X POST http://127.0.0.1:15721/admin/providers \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"OpenAI-Resp","base_url":"https://api.openai.com/v1","api_key":"sk-xxx","model":"gpt-4o","api_format":"openai_responses","enable":true}'
+```
+
+`GET /admin/providers` 的响应里，每个 provider 都带 `needs_transform`（true=需转换，false=透传）和 `api_format` 两个字段，一眼区分：
+
+```json
+{"providers":[
+  {"id":"...","name":"DeepSeek","base_url":"https://api.deepseek.com/v1","model":"deepseek-chat","api_format":"openai_chat","needs_transform":true,"is_current":true},
+  {"id":"...","name":"OpenAI-Resp","base_url":"https://api.openai.com/v1","model":"gpt-4o","api_format":"openai_responses","needs_transform":false,"is_current":false}
+]}
+```
 
 > 管理 API 改动后**立即生效**（代理每次请求实时从 DB 读 provider），无需重启。
 

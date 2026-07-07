@@ -47,7 +47,10 @@ struct ProviderSummary {
     name: String,
     base_url: String,
     model: String,
+    /// 上游 API 格式："openai_chat" | "openai_responses" | None
     api_format: Option<String>,
+    /// 是否需要 Responses<->Chat 协议转换（`api_format=openai_chat` 时为 true，透传时为 false）。
+    needs_transform: bool,
     is_current: bool,
 }
 
@@ -134,12 +137,14 @@ async fn list_providers(State(state): State<ProxyState>) -> Result<Json<Value>, 
                 .and_then(|c| c.as_str())
                 .and_then(extract_model_from_toml)
                 .unwrap_or_default();
+            let api_format = p.meta.as_ref().and_then(|m| m.api_format.clone());
             ProviderSummary {
                 id: p.id.clone(),
                 name: p.name.clone(),
                 base_url,
                 model,
-                api_format: p.meta.as_ref().and_then(|m| m.api_format.clone()),
+                api_format: api_format.clone(),
+                needs_transform: api_format.as_deref() == Some("openai_chat"),
                 is_current: current.as_deref() == Some(p.id.as_str()),
             }
         })
