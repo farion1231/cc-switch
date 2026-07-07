@@ -4,7 +4,7 @@
 
 mod endpoints;
 mod gemini_auth;
-mod live;
+pub(crate) mod live;
 mod usage;
 
 use indexmap::IndexMap;

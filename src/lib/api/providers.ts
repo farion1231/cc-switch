@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  ClaudeLauncherPermissionMode,
   Provider,
   UniversalProvider,
   UniversalProvidersMap,
@@ -23,6 +24,37 @@ export interface SwitchResult {
 
 export interface OpenTerminalOptions {
   cwd?: string;
+}
+
+export type ClaudeShortcutStatus =
+  | "installed"
+  | "stale"
+  | "missing"
+  | "conflict";
+
+export interface ClaudeShortcutInfo {
+  name: string;
+  targetPath: string;
+  status: ClaudeShortcutStatus;
+  currentProfileDir?: string | null;
+}
+
+export interface ClaudeShortcutCommandResult {
+  info: ClaudeShortcutInfo;
+  targetKind: string;
+  userBinDir: string;
+  pathOnPath: boolean;
+  pathExportSnippet?: string | null;
+  launchCommand?: string | null;
+  installed: boolean;
+  removed: boolean;
+  error?: string | null;
+}
+
+export interface ClaudeLauncherSettingsUpdate {
+  enabled?: boolean;
+  shortcutName?: string;
+  launcherPermissionMode?: ClaudeLauncherPermissionMode | null;
 }
 
 export interface ClaudeDesktopStatus {
@@ -146,6 +178,69 @@ export const providersApi = {
       providerId,
       app: appId,
       cwd,
+    });
+  },
+
+  /**
+   * Synchronize a managed Claude profile for a provider.
+   * Creates profile directory, writes settings/MCP/onboarding.
+   */
+  async syncClaudeProfile(providerId: string): Promise<{
+    profileDir: string;
+    status: string;
+    settingsWritten: boolean;
+    mcpWritten: boolean;
+    error: string | null;
+  }> {
+    return await invoke("sync_claude_profile", { providerId });
+  },
+
+  /**
+   * Get the status of a managed Claude profile.
+   */
+  async getClaudeProfileStatus(providerId: string): Promise<string> {
+    return await invoke("get_claude_profile_status", { providerId });
+  },
+
+  async getClaudeShortcutStatus(
+    providerId: string,
+  ): Promise<ClaudeShortcutCommandResult> {
+    return await invoke("get_claude_shortcut_status", {
+      providerId,
+    });
+  },
+
+  async updateClaudeLauncherSettings(
+    providerId: string,
+    settings: ClaudeLauncherSettingsUpdate,
+  ): Promise<Provider> {
+    return await invoke("update_claude_launcher_settings", {
+      providerId,
+      enabled: settings.enabled,
+      shortcutName: settings.shortcutName,
+      launcherPermissionMode: settings.launcherPermissionMode,
+    });
+  },
+
+  async installClaudeShortcut(
+    providerId: string,
+    shortcutName?: string,
+    launcherPermissionMode?: ClaudeLauncherPermissionMode | null,
+    removePreviousShortcut?: boolean,
+  ): Promise<ClaudeShortcutCommandResult> {
+    return await invoke("install_claude_shortcut", {
+      providerId,
+      shortcutName,
+      launcherPermissionMode,
+      removePreviousShortcut,
+    });
+  },
+
+  async removeClaudeShortcut(
+    providerId: string,
+  ): Promise<ClaudeShortcutCommandResult> {
+    return await invoke("remove_claude_shortcut", {
+      providerId,
     });
   },
 
