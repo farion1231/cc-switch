@@ -43,7 +43,11 @@ fn parse_cli_args() -> Option<CliArgs> {
                 db_path = std::path::PathBuf::from(v);
             }
             "--address" => {
-                address = args.next().unwrap_or(address);
+                let Some(v) = args.next() else {
+                    eprintln!("--address 需要参数");
+                    return None;
+                };
+                address = v;
             }
             "--port" => {
                 let Some(v) = args.next() else {
@@ -80,6 +84,21 @@ fn parse_cli_args() -> Option<CliArgs> {
     })
 }
 
+/// 归一化监听地址，确保 `ProxyServer::start` 的 `format!("{addr}:{port}")` 能解析为合法 `SocketAddr`。
+///
+/// - `localhost` → `127.0.0.1`（`SocketAddr` 不解析主机名）
+/// - IPv6（如 `::1`）→ `[::1]`（IPv6 字面量必须用方括号）
+/// - IPv4 / 已带方括号 → 原样
+fn normalize_listen_address(addr: &str) -> String {
+    if addr == "localhost" {
+        "127.0.0.1".to_string()
+    } else if addr.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{addr}]")
+    } else {
+        addr.to_string()
+    }
+}
+
 /// 启动 standalone 代理。返回进程退出码（见 spec §9）。
 pub async fn run() -> i32 {
     let Some(args) = parse_cli_args() else {
@@ -113,7 +132,7 @@ pub async fn run() -> i32 {
     };
 
     let config = ProxyConfig {
-        listen_address: args.address.clone(),
+        listen_address: normalize_listen_address(&args.address),
         listen_port: args.port,
         ..ProxyConfig::default()
     };
@@ -167,4 +186,27 @@ pub async fn run() -> i32 {
         eprintln!("[cc-switch-proxy] 停止异常: {e}");
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_listen_address_handles_variants() {
+        assert_eq!(normalize_listen_address("localhost"), "127.0.0.1");
+        assert_eq!(normalize_listen_address("127.0.0.1"), "127.0.0.1");
+        assert_eq!(normalize_listen_address("::1"), "[::1]");
+        assert_eq!(normalize_listen_address("fe80::1"), "[fe80::1]");
+
+        // 归一化后拼端口必须能 parse 成合法 SocketAddr（回归 guard）
+        for addr in ["127.0.0.1", "::1"] {
+            let norm = normalize_listen_address(addr);
+            let joined = format!("{norm}:15721");
+            assert!(
+                joined.parse::<std::net::SocketAddr>().is_ok(),
+                "{joined} 应为合法 SocketAddr"
+            );
+        }
+    }
 }
