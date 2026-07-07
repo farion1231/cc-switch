@@ -93,8 +93,20 @@ impl Database {
     /// 初始化数据库连接并创建表
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
+    /// 在指定路径打开/创建 DB 并建表迁移。standalone CLI 用，与 GUI 的 `init()` 隔离。
+    ///
+    /// 复用 [`open_at_inner`] 的全部建表/迁移/seed/维护逻辑，仅跳过
+    /// `register_db_change_hook`（standalone 不启动 webdav/s3 sync worker，
+    /// 避免向无 receiver 的 channel 发消息）。
+    pub fn open_at<P: AsRef<std::path::Path>>(path: P) -> Result<Self, AppError> {
+        Self::open_at_inner(path.as_ref(), false)
+    }
+
     pub fn init() -> Result<Self, AppError> {
-        let db_path = get_app_config_dir().join("cc-switch.db");
+        Self::open_at_inner(&get_app_config_dir().join("cc-switch.db"), true)
+    }
+
+    fn open_at_inner(db_path: &std::path::Path, register_hook: bool) -> Result<Self, AppError> {
         let db_exists = db_path.exists();
 
         // 确保父目录存在
@@ -102,7 +114,7 @@ impl Database {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+        let conn = Connection::open(db_path).map_err(|e| AppError::Database(e.to_string()))?;
 
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
@@ -113,7 +125,9 @@ impl Database {
             conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
-        register_db_change_hook(&conn);
+        if register_hook {
+            register_db_change_hook(&conn);
+        }
 
         let db = Self {
             conn: Mutex::new(conn),
