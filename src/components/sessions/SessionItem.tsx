@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { ChevronRight, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -26,10 +27,10 @@ interface SessionItemProps {
   isCheckDisabled?: boolean;
   searchQuery?: string;
   onSelect: (key: string) => void;
-  onToggleChecked: (checked: boolean) => void;
+  onToggleChecked: (session: SessionMeta, checked: boolean) => void;
 }
 
-export function SessionItem({
+export const SessionItem = memo(function SessionItem({
   session,
   isSelected,
   selectionMode,
@@ -61,7 +62,7 @@ export function SessionItem({
             aria-label={t("sessionManager.selectForBatch", {
               defaultValue: "选择会话",
             })}
-            onCheckedChange={(checked) => onToggleChecked(Boolean(checked))}
+            onCheckedChange={(checked) => onToggleChecked(session, Boolean(checked))}
           />
         </div>
       )}
@@ -107,4 +108,4 @@ export function SessionItem({
       </button>
     </div>
   );
-}
+});

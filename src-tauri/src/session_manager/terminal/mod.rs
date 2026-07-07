@@ -10,6 +10,16 @@ pub fn launch_terminal(
         return Err("Resume command is empty".to_string());
     }
 
+    let dangerous_chars = [';', '&', '|', '$', '`', '<', '>', '\n', '\r', '(', ')', '{', '}', '!', '#', '*', '?'];
+    if command.contains(|c: char| dangerous_chars.contains(&c)) {
+        return Err("Invalid terminal command: contains dangerous shell characters".to_string());
+    }
+    if let Some(dir) = cwd {
+        if dir.contains(|c: char| dangerous_chars.contains(&c)) {
+            return Err("Invalid cwd path: contains dangerous shell characters".to_string());
+        }
+    }
+
     if !cfg!(target_os = "macos") {
         return Err("Terminal resume is only supported on macOS".to_string());
     }
@@ -316,12 +326,20 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 }
 
 fn shell_escape(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`");
     format!("\"{escaped}\"")
 }
 
 fn escape_osascript(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
 }
 
 #[cfg(test)]
