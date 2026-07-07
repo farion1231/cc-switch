@@ -3,6 +3,8 @@
 //! 路由挂载于 `/admin/*`，与代理路由共用 `ProxyState`（含 `db`）作 axum state。
 //! 调用方（standalone）构建 `Router<ProxyState>` 但**不** `with_state`，由
 //! `ProxyServer::build_router` 末尾统一注入。
+//!
+//! 安全：无鉴权，依赖 `standalone::run` 限制监听地址为回环（见设计文档 §12）。
 
 use axum::{
     extract::{Path, State},
@@ -58,7 +60,8 @@ fn build_codex_provider_from_dto(dto: &CreateProviderRequest) -> Result<Provider
         None => "openai_responses",
     };
 
-    let id = format!("cli-{}", short_random_id());
+    // 用 UUID v4 作 id 后缀，避免基于时间戳在并发/时钟回拨时碰撞导致静默覆盖。
+    let id = format!("cli-{}", uuid::Uuid::new_v4().simple());
     let mut universal = UniversalProvider::new(
         id,
         dto.name.clone(),
@@ -84,25 +87,15 @@ fn build_codex_provider_from_dto(dto: &CreateProviderRequest) -> Result<Provider
         .ok_or_else(|| "to_codex_provider 返回 None（apps.codex 未启用）".to_string())
 }
 
-/// 生成短随机 id（基于系统时间纳秒，取前 8 个十六进制字符）。
-fn short_random_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("{nanos:x}").chars().take(8).collect()
-}
-
-/// `AppError` → `(StatusCode, message)`。
+/// `AppError` → `(StatusCode, 对外文案)`。完整错误记日志，避免对外泄露 SQL/路径。
 fn map_err(e: AppError) -> (StatusCode, String) {
     let msg = e.to_string();
-    let status = if msg.contains("not found") || msg.contains("不存在") {
-        StatusCode::NOT_FOUND
+    if msg.contains("not found") || msg.contains("不存在") {
+        (StatusCode::NOT_FOUND, msg)
     } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    };
-    (status, msg)
+        log::error!("[admin] 数据库错误: {e}");
+        (StatusCode::INTERNAL_SERVER_ERROR, "数据库错误".to_string())
+    }
 }
 
 pub fn build_admin_router() -> Router<ProxyState> {
@@ -178,19 +171,38 @@ async fn enable_provider(
         .db
         .set_current_provider(CODEX, &id)
         .map_err(map_err)?;
+    // 防御并发 TOCTOU：设置后再读回验证，避免「客户端收 200 但实际无 current」。
+    let current = state.db.get_current_provider(CODEX).unwrap_or(None);
+    if current.as_deref() != Some(id.as_str()) {
+        return Err((
+            StatusCode::CONFLICT,
+            "provider 在启用期间被移除，当前无启用的 provider".to_string(),
+        ));
+    }
     Ok(Json(json!({ "ok": true, "id": id })))
 }
 
 async fn status(State(state): State<ProxyState>) -> impl IntoResponse {
-    let s = state.status.read().await.clone();
+    let mut s = state.status.read().await.clone();
+    // last_error 可能承载上游返回的敏感信息，对外只暴露是否存在。
+    if s.last_error.is_some() {
+        s.last_error = Some("[error] 上游返回错误，详见代理日志".to_string());
+    }
     Json(serde_json::to_value(s).unwrap_or(json!({})))
 }
 
-/// 从 codex `config.toml` 文本粗提取 `model = "..."` 的值（仅用于列表展示）。
+/// 从 codex `config.toml` 粗提取 `model = "..."` 的值（仅用于列表展示）。
+/// 容忍 `model=`/`model =`/`model  =` 等空格变体。
 fn extract_model_from_toml(toml: &str) -> Option<String> {
-    let line = toml
-        .lines()
-        .find(|l| l.trim_start().starts_with("model "))?;
+    let line = toml.lines().find(|l| {
+        let t = l.trim_start();
+        t.starts_with("model")
+            && t
+                .as_bytes()
+                .get(5)
+                .map(|&c| c == b' ' || c == b'\t' || c == b'=')
+                .unwrap_or(false)
+    })?;
     let v = line.split('=').nth(1)?;
     let v = v.trim().trim_matches('"');
     Some(v.to_string())
@@ -213,7 +225,7 @@ mod tests {
         };
         let provider = build_codex_provider_from_dto(&dto).expect("map dto");
 
-        assert!(provider.id.starts_with("universal-codex-"));
+        assert!(provider.id.starts_with("universal-codex-cli-"));
         assert_eq!(provider.name, "DeepSeek");
         assert_eq!(
             provider
@@ -247,5 +259,14 @@ mod tests {
             enable: false,
         };
         assert!(build_codex_provider_from_dto(&dto).is_err());
+    }
+
+    #[test]
+    fn extract_model_handles_spacing_variants() {
+        assert_eq!(extract_model_from_toml(r#"model = "gpt-4o""#), Some("gpt-4o".into()));
+        assert_eq!(extract_model_from_toml(r#"model="gpt-4o""#), Some("gpt-4o".into()));
+        assert_eq!(extract_model_from_toml(r#"model  =  "gpt-4o""#), Some("gpt-4o".into()));
+        // 不能误匹配 model_reasoning_effort
+        assert_eq!(extract_model_from_toml("model_reasoning_effort = \"high\""), None);
     }
 }

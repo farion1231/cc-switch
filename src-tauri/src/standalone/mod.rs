@@ -36,6 +36,10 @@ fn parse_cli_args() -> Option<CliArgs> {
                     eprintln!("--db 需要参数");
                     return None;
                 };
+                if v.is_empty() {
+                    eprintln!("--db 不能为空字符串");
+                    return None;
+                }
                 db_path = std::path::PathBuf::from(v);
             }
             "--address" => {
@@ -82,6 +86,21 @@ pub async fn run() -> i32 {
         return 2;
     };
 
+    // 安全：admin API 无鉴权，强制监听回环地址（设计文档 §12）。
+    let is_loopback = args.address == "localhost"
+        || args
+            .address
+            .parse::<std::net::IpAddr>()
+            .map(|a| a.is_loopback())
+            .unwrap_or(false);
+    if !is_loopback {
+        eprintln!(
+            "[cc-switch-proxy] 拒绝启动：--address {} 非回环地址。admin API 无鉴权，仅允许 127.0.0.1/localhost。",
+            args.address
+        );
+        return 2;
+    }
+
     let db = match Database::open_at(&args.db_path) {
         Ok(db) => Arc::new(db),
         Err(e) => {
@@ -125,10 +144,17 @@ pub async fn run() -> i32 {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
+            }
+            Err(e) => {
+                log::warn!("[cc-switch-proxy] SIGTERM handler 安装失败，仅依赖 Ctrl-C: {e}");
+                let _ = tokio::signal::ctrl_c().await;
+            }
         }
     }
     #[cfg(not(unix))]
