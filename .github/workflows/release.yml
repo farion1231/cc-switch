@@ -26,7 +26,9 @@ jobs:
           - os: ubuntu-22.04
           - os: ubuntu-22.04-arm
             arch: arm64
-          - os: macos-14
+          # macOS 已禁用：fork 无 Apple 证书和公证密钥，构建必失败。
+          # 如需启用，取消下一行注释并确保已配置 secrets.APPLE_*
+          # - os: macos-14
 
     steps:
       - name: Checkout
@@ -579,11 +581,12 @@ jobs:
           ls -la release-assets/*.sig || echo "No signatures found"
 
       - name: Upload release artifacts to workflow
+        if: ${{ !(runner.os == 'macOS' && env.NO_SIGNING == '1') }}
         uses: actions/upload-artifact@v7
         with:
           name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
           path: release-assets/*
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: List generated bundles (debug)
         if: always()
