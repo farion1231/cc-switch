@@ -3002,6 +3002,16 @@
       "apiKeyModeLiteral": "Literal Key",
       "apiKeyModeCommand": "Shell Command",
       "apiKeyModeNone": "None (use auth.json / /login)"
+    },
+    "editor": {
+      "title": "Edit Provider"
+    },
+    "deleteConfirm": {
+      "title": "Delete Provider",
+      "message": "Are you sure you want to delete provider \"{{id}}\"? This action cannot be undone."
+    },
+    "save": {
+      "providerIdRequired": "Please enter a provider ID"
     }
   }
 }

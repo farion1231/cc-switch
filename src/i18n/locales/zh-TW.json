@@ -2974,6 +2974,16 @@
       "apiKeyModeLiteral": "字面金鑰",
       "apiKeyModeCommand": "Shell 命令",
       "apiKeyModeNone": "無（使用 auth.json / /login）"
+    },
+    "editor": {
+      "title": "編輯供應商"
+    },
+    "deleteConfirm": {
+      "title": "刪除供應商",
+      "message": "確定要刪除供應商 \"{{id}}\" 嗎？此操作不可復原。"
+    },
+    "save": {
+      "providerIdRequired": "請填寫供應商識別"
     }
   }
 }

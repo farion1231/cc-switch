@@ -3002,6 +3002,16 @@
       "apiKeyModeLiteral": "字面密钥",
       "apiKeyModeCommand": "Shell 命令",
       "apiKeyModeNone": "无（使用 auth.json / /login）"
+    },
+    "editor": {
+      "title": "编辑供应商"
+    },
+    "deleteConfirm": {
+      "title": "删除供应商",
+      "message": "确定要删除供应商 \"{{id}}\" 吗？此操作不可撤销。"
+    },
+    "save": {
+      "providerIdRequired": "请填写供应商标识"
     }
   }
 }

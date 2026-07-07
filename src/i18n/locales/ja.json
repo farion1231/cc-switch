@@ -3002,6 +3002,16 @@
       "apiKeyModeLiteral": "リテラルキー",
       "apiKeyModeCommand": "シェルコマンド",
       "apiKeyModeNone": "なし（auth.json / /login を使用）"
+    },
+    "editor": {
+      "title": "プロバイダーを編集"
+    },
+    "deleteConfirm": {
+      "title": "プロバイダーを削除",
+      "message": "プロバイダー \"{{id}}\" を削除してもよろしいですか？この操作は元に戻せません。"
+    },
+    "save": {
+      "providerIdRequired": "プロバイダー ID を入力してください"
     }
   }
 }
