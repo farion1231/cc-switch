@@ -100,6 +100,11 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 </tr>
 
 <tr>
+<td width="180"><a href="https://astraflow.ucloud-global.com"><img src="assets/partners/logos/ucloud.png" alt="Astraflow" width="150"></a></td>
+<td>Thanks to Astraflow by UCloud for sponsoring this project! Astraflow is an OpenAI-compatible AI model aggregation platform supporting 200+ models through global and China endpoints. Register via <a href="https://astraflow.ucloud-global.com">Astraflow Global</a> or <a href="https://astraflow.ucloud.cn">Astraflow China</a>.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch"><img src="assets/partners/logos/crazyrouter.png" alt="Crazyrouter" width="150"></a></td>
 <td>Thanks to Crazyrouter for sponsoring this project! Crazyrouter is a high-performance AI API aggregation platform — one API key for 300+ models including Claude Code, Codex, Gemini CLI, and more. All models at 55% of official pricing with auto-failover, smart routing, and unlimited concurrency. Crazyrouter offers an exclusive deal for CC Switch users: register via <a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch">this link</a> and contact customer support to claim <strong>$2 free credit</strong>, plus enter promo code `CCSWITCH` on your first top-up for an extra <strong>30% bonus credit</strong>! </td>
 </tr>
