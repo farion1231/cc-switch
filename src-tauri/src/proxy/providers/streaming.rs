@@ -1231,11 +1231,11 @@ mod tests {
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("error")));
         assert!(!events
             .iter()
-           .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_delta")));
-       assert!(!events
-           .iter()
-           .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
-   }
+            .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_delta")));
+        assert!(!events
+            .iter()
+            .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
 
     /// 回归测试：DeepSeek-V4-Pro（ModelScope）等 Provider 在正文阶段每个 chunk 仍带
     /// `"reasoning_content": ""`（空字符串，非 null）。修复前 reasoning 分支不判空，会在每个
@@ -1257,24 +1257,49 @@ mod tests {
             .iter()
             .filter(|e| event_type(e) == Some("content_block_start"))
             .collect();
-       let text_block_starts: Vec<&Value> = content_block_starts
-            .iter().copied()
-           .filter(|e| e.get("content_block").and_then(|c| c.get("type")).and_then(|t| t.as_str()) == Some("text"))
-           .collect();
-       assert_eq!(text_block_starts.len(), 1, "正文阶段应只启动一个 text block，实际 {} 个 —— 空 reasoning_content 仍在触发逐字 block 切换", text_block_starts.len());
-       let thinking_block_starts: Vec<&Value> = content_block_starts
-            .iter().copied()
-           .filter(|e| e.get("content_block").and_then(|c| c.get("type")).and_then(|t| t.as_str()) == Some("thinking"))
-           .collect();
-        assert_eq!(thinking_block_starts.len(), 1, "思考阶段应只启动一个 thinking block，实际 {} 个", thinking_block_starts.len());
+        let text_block_starts: Vec<&Value> = content_block_starts
+            .iter()
+            .copied()
+            .filter(|e| {
+                e.get("content_block")
+                    .and_then(|c| c.get("type"))
+                    .and_then(|t| t.as_str())
+                    == Some("text")
+            })
+            .collect();
+        assert_eq!(text_block_starts.len(), 1, "正文阶段应只启动一个 text block，实际 {} 个 —— 空 reasoning_content 仍在触发逐字 block 切换", text_block_starts.len());
+        let thinking_block_starts: Vec<&Value> = content_block_starts
+            .iter()
+            .copied()
+            .filter(|e| {
+                e.get("content_block")
+                    .and_then(|c| c.get("type"))
+                    .and_then(|t| t.as_str())
+                    == Some("thinking")
+            })
+            .collect();
+        assert_eq!(
+            thinking_block_starts.len(),
+            1,
+            "思考阶段应只启动一个 thinking block，实际 {} 个",
+            thinking_block_starts.len()
+        );
         let merged: String = events
             .iter()
             .filter_map(|e| {
                 if event_type(e) == Some("content_block_delta") {
-                    e.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()).map(|s| s.to_string())
-                } else { None }
+                    e.get("delta")
+                        .and_then(|d| d.get("text"))
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
             })
             .collect();
-        assert!(merged.contains("你好！很高兴见到你，有什么可以帮你的吗？"), "正文应完整拼接，实际得到: {merged}");
+        assert!(
+            merged.contains("你好！很高兴见到你，有什么可以帮你的吗？"),
+            "正文应完整拼接，实际得到: {merged}"
+        );
     }
 }
