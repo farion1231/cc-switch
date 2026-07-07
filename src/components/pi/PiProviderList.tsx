@@ -60,14 +60,19 @@ export function PiProviderList({
   return (
     <div className="space-y-6">
       {custom.length > 0 && (
-        <ProviderGroup
-          title={t("pi.list.custom")}
-          entries={custom}
-          onEdit={onEdit}
-          onDuplicate={onDuplicate}
-          onDelete={onDelete}
-          onTestConnectivity={onTestConnectivity}
-        />
+        <div className="space-y-3">
+          {custom.map(([id, config]) => (
+            <PiProviderCard
+              key={id}
+              id={id}
+              config={config}
+              onEdit={onEdit}
+              onDuplicate={onDuplicate}
+              onDelete={onDelete}
+              onTestConnectivity={onTestConnectivity}
+            />
+          ))}
+        </div>
       )}
       {builtin.length > 0 && (
         <ProviderGroup
@@ -91,7 +96,7 @@ function ProviderGroup({
   onDelete,
   onTestConnectivity,
 }: {
-  title: string;
+  title?: string;
   entries: [string, unknown][];
   onEdit: (providerId: string) => void;
   onDuplicate?: (providerId: string) => void;
@@ -100,7 +105,9 @@ function ProviderGroup({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-semibold text-muted-foreground">{title}</h3>
+      {title && (
+        <h3 className="text-sm font-semibold text-muted-foreground">{title}</h3>
+      )}
       <div className="space-y-3">
         {entries.map(([id, config]) => (
           <PiProviderCard
