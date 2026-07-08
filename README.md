@@ -40,7 +40,9 @@
 
 ### 托盘用量总览
 
-![CC Switch 托盘用量总览](docs/images/usage/tray-usage-overview.png)
+| 系统原生风格 | 信息卡片风格 |
+|------|------|
+| ![CC Switch 托盘用量总览系统原生风格样例](docs/images/usage/tray-usage-sample-native.png) | ![CC Switch 托盘用量总览信息卡片风格样例](docs/images/usage/tray-usage-sample-card.png) |
 
 托盘浮层可以直接查看真实消耗 Tokens、缓存命中、成本、请求数、成功率与小时趋势,适合在切换账号或监控多账号额度时快速判断当前消耗状态。
 
