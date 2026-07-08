@@ -57,6 +57,7 @@ fn make_error(msg: String) -> UsageResult {
     }
 }
 
+/// 统一构造「账号凭证无效/无权限」的返回体，便于前端识别鉴权失败态。
 fn make_auth_error(status: reqwest::StatusCode) -> UsageResult {
     UsageResult {
         success: false,
@@ -98,6 +99,7 @@ fn make_single_result(
     }
 }
 
+/// 阿里云签名规范要求的 RFC3986 百分号编码（不同于通用 form-url-encode）。
 fn aliyun_percent_encode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for &byte in input.as_bytes() {
@@ -122,6 +124,7 @@ fn aliyun_signature_nonce() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+/// 把请求参数按字典序拼成 canonical query，作为签名原文的一部分。
 fn build_aliyun_canonical_query(params: &BTreeMap<String, String>) -> String {
     params
         .iter()
@@ -136,6 +139,7 @@ fn build_aliyun_canonical_query(params: &BTreeMap<String, String>) -> String {
         .join("&")
 }
 
+/// 使用账号级 AK/SK（HMAC-SHA1）生成阿里云 OpenAPI 所需 Signature。
 fn sign_aliyun_request(secret_access_key: &str, canonical_query: &str) -> Result<String, String> {
     type HmacSha1 = Hmac<Sha1>;
 
@@ -148,6 +152,7 @@ fn sign_aliyun_request(secret_access_key: &str, canonical_query: &str) -> Result
     Ok(base64::engine::general_purpose::STANDARD.encode(digest))
 }
 
+/// 用于测试环境强制走真实阿里云请求（默认测试环境走 mock，避免泄漏真实账号调用）。
 fn is_live_aliyun_request_enabled() -> bool {
     std::env::var_os("CC_SWITCH_LIVE_ALIYUN_REQUESTS").is_some()
 }
@@ -160,6 +165,7 @@ fn should_mock_aliyun_balance_request(in_test_harness: bool, live_enabled: bool)
     in_test_harness && !live_enabled
 }
 
+/// 阿里云余额查询的测试桩数据（仅用于 test harness）。
 fn mocked_aliyun_balance_result() -> UsageResult {
     make_single_result(
         "Alibaba Cloud",
@@ -171,6 +177,7 @@ fn mocked_aliyun_balance_result() -> UsageResult {
     )
 }
 
+/// 通过阿里云账号 AccessKey ID / SecretAccessKey 发起余额查询。
 async fn query_aliyun_balance(access_key_id: &str, secret_access_key: &str) -> UsageResult {
     if should_mock_aliyun_balance_request(in_test_harness(), is_live_aliyun_request_enabled()) {
         return mocked_aliyun_balance_result();
@@ -228,6 +235,7 @@ async fn query_aliyun_balance(access_key_id: &str, secret_access_key: &str) -> U
     parse_aliyun_balance_response(body)
 }
 
+/// 解析阿里云余额响应，提取账户可用现金、信用额度等字段。
 fn parse_aliyun_balance_response(body: serde_json::Value) -> UsageResult {
     let success = body
         .get("Success")
@@ -273,6 +281,7 @@ fn parse_aliyun_balance_response(body: serde_json::Value) -> UsageResult {
 // GET https://api.deepseek.com/user/balance
 // Response: { balance_infos: [{ currency, total_balance, granted_balance, topped_up_balance }], is_available }
 
+/// 使用 DeepSeek 账号 API Key 查询账户余额。
 async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
@@ -351,6 +360,7 @@ async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
 // GET https://api.stepfun.com/v1/accounts
 // Response: { object, type, balance, total_cash_balance, total_voucher_balance }
 
+/// 使用 StepFun 账号 API Key 查询账户余额。
 async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
@@ -409,6 +419,7 @@ async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
 // GET https://api.siliconflow.cn/v1/user/info (or .com for EN)
 // Response: { code, data: { balance, chargeBalance, totalBalance, status } }
 
+/// 使用 SiliconFlow 账号 API Key 查询账户余额。
 async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
@@ -486,6 +497,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
 // GET https://openrouter.ai/api/v1/credits
 // Response: { data: { total_credits, total_usage } }
 
+/// 使用 OpenRouter 账号 API Key 查询账户 credits。
 async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
@@ -552,6 +564,7 @@ async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
 // Response: { availableBalance, cashBalance, creditLimit, outstandingInvoices }
 // 金额单位：0.0001 USD
 
+/// 使用 Novita 账号 API Key 查询账户余额。
 async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
@@ -625,6 +638,9 @@ fn parse_f64_field(obj: &serde_json::Value, field: &str) -> Option<f64> {
 
 /// 查询余额。瞬时传输失败返回 `Err`（前端 reject → retry + 保留上次成功值），
 /// 确定性失败返回 `Ok(success:false)`（见模块级文档）。
+///
+/// - `api_key`：通用余额查询凭证（阿里云场景下对应 AccessKeyId）
+/// - `secret_access_key`：仅阿里云余额查询需要（对应 AccessKey Secret）
 pub async fn get_balance(
     base_url: &str,
     api_key: &str,
@@ -666,9 +682,9 @@ pub async fn get_balance(
                     error: Some("AccessKey Secret is empty".to_string()),
                 });
             };
-            query_aliyun_balance(api_key, secret_access_key).await
+            Ok(query_aliyun_balance(api_key, secret_access_key).await)
         }
     };
 
-    Ok(result)
+    result
 }
