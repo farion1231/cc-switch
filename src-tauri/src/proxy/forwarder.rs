@@ -3872,4 +3872,159 @@ mod tests {
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
     }
+
+    /// 当上游返回错误（如 402）且配置了模型映射时，ForwardError.outbound_model
+    /// 应为映射后的上游模型名，而非客户端请求的模型别名。
+    #[tokio::test]
+    async fn forward_error_carries_mapped_outbound_model() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // 启动一个返回 402 的 TCP mock 服务器
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = b"HTTP/1.1 402 Payment Required\r\n\
+                             content-type: application/json\r\n\
+                             content-length: 52\r\n\
+                             \r\n\
+                             {\"error\":{\"code\":\"402\",\"message\":\"Insufficient balance\"}}";
+                let _ = stream.write_all(resp).await;
+            }
+        });
+
+        // 创建带模型映射的 Provider
+        let provider = Provider {
+            id: "test-provider".to_string(),
+            name: "Test Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://127.0.0.1:{}", addr.port()),
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "mimo-v2.5",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "mimo-v2.5",
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("upstream 402 should produce an error"),
+            Err(e) => e,
+        };
+
+        // 关键断言：outbound_model 应为映射后的模型名
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("mimo-v2.5"),
+            "outbound_model 应为映射后的上游模型 mimo-v2.5，而非客户端别名 claude-opus-4-8"
+        );
+    }
+
+    /// 无模型映射时，ForwardError.outbound_model 应为客户端请求的模型名。
+    #[tokio::test]
+    async fn forward_error_outbound_model_without_mapping() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = b"HTTP/1.1 404 Not Found\r\n\
+                             content-type: text/html\r\n\
+                             content-length: 35\r\n\
+                             \r\n\
+                             <html><body>404 Not Found</body></html>";
+                let _ = stream.write_all(resp).await;
+            }
+        });
+
+        // 无模型映射的 Provider
+        let provider = Provider {
+            id: "no-map-provider".to_string(),
+            name: "No Map Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://127.0.0.1:{}", addr.port()),
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("upstream 404 should produce an error"),
+            Err(e) => e,
+        };
+
+        // 无映射时，outbound_model 应为请求中的原始模型名
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("claude-opus-4-8"),
+            "无映射时 outbound_model 应为客户端请求模型"
+        );
+    }
 }
