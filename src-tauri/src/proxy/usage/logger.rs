@@ -14,8 +14,8 @@ pub struct RequestLog {
     pub request_id: String,
     pub provider_id: String,
     pub app_type: String,
-    pub model: String,
-    pub request_model: String,
+    pub model: String,         // 实际上游模型（路由接管/映射后的值）
+    pub request_model: String, // 客户端请求模型（映射前的别名）
     /// 写入时实际用于计价的模型名（pricing_model_source 解析后的结果）。
     /// 落库供回填使用：缺价行补价后必须按写入时的基准重算，而不是
     /// 用 model/request_model 猜——路由接管下三者可能各不相同。
@@ -154,14 +154,18 @@ impl<'a> UsageLogger<'a> {
 
     /// 记录失败的请求（带更多上下文信息）
     ///
-    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文
+    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文。
+    /// - `outbound_model`：实际上游模型（路由接管/映射后的值）。
+    ///   `None` 表示错误发生在映射之前或映射值不可用，此时使用 `request_model` 作为`outbound_model`。
+    /// - `request_model`：客户端请求模型（映射前的别名）。
     #[allow(clippy::too_many_arguments)]
     pub fn log_error_with_context(
         &self,
         request_id: String,
         provider_id: String,
         app_type: String,
-        model: String,
+        outbound_model: Option<String>,
+        request_model: String,
         status_code: u16,
         error_message: String,
         latency_ms: u64,
@@ -169,12 +173,17 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
     ) -> Result<(), AppError> {
-        let request_model = model.clone();
+        // outbound_model 为 None 或空字符串时回退到 request_model：
+        // 错误发生在映射前、或映射值不可用，此时两者一致
+        let outbound_model = outbound_model
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| request_model.clone());
+
         let log = RequestLog {
             request_id,
             provider_id,
             app_type,
-            model,
+            model: outbound_model,
             request_model,
             // 错误行未经过计价，留空（回填的 has_usage 闸门也不会碰全 0 行）
             pricing_model: String::new(),

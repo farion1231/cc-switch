@@ -55,6 +55,9 @@ pub struct ForwardResult {
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+    /// 映射后的上游模型名（路由接管/模型映射后的真值，无映射时为 None）。
+    /// 供错误日志正确记录"实际请求了哪个上游模型"。
+    pub outbound_model: Option<String>,
 }
 
 /// 活跃连接 RAII guard
@@ -271,6 +274,7 @@ impl RequestForwarder {
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
+        outbound_model: Option<String>,
     ) -> Option<ForwardError> {
         // Provider 错误：本家上游/网络确实出问题，下一家 provider 可能可用 → 继续故障转移。
         // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
@@ -316,6 +320,7 @@ impl RequestForwarder {
         Some(ForwardError {
             error: retry_err,
             provider: Some(provider.clone()),
+            outbound_model,
         })
     }
 
@@ -384,6 +389,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -640,6 +646,7 @@ impl RequestForwarder {
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
+                                            None,
                                         )
                                         .await
                                     {
@@ -679,6 +686,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
+                                    outbound_model: None,
                                 });
                             }
 
@@ -789,6 +797,7 @@ impl RequestForwarder {
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
+                                                None,
                                             )
                                             .await
                                         {
@@ -831,6 +840,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
+                                    outbound_model: None,
                                 });
                             }
 
@@ -857,6 +867,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
+                                    outbound_model: None,
                                 });
                             }
 
@@ -949,6 +960,7 @@ impl RequestForwarder {
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
+                                            None,
                                         )
                                         .await
                                     {
@@ -979,6 +991,7 @@ impl RequestForwarder {
                         return Err(ForwardError {
                             error: e,
                             provider: Some(provider.clone()),
+                            outbound_model: None,
                         });
                     }
 
@@ -1042,6 +1055,7 @@ impl RequestForwarder {
                             return Err(ForwardError {
                                 error: e,
                                 provider: Some(provider.clone()),
+                                outbound_model: None,
                             });
                         }
                     }
@@ -1063,6 +1077,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -1086,6 +1101,7 @@ impl RequestForwarder {
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
+            outbound_model: None,
         })
     }
 

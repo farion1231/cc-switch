@@ -203,7 +203,7 @@ async fn handle_messages_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
+            log_forward_error(&state, &ctx, is_stream, &err.error, None);
             return Err(err.error);
         }
     };
@@ -662,7 +662,7 @@ pub async fn handle_chat_completions(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
+            log_forward_error(&state, &ctx, is_stream, &err.error, None);
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -729,7 +729,7 @@ pub async fn handle_responses(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
+            log_forward_error(&state, &ctx, is_stream, &err.error, None);
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -808,7 +808,7 @@ pub async fn handle_responses_compact(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
+            log_forward_error(&state, &ctx, is_stream, &err.error, None);
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -1384,7 +1384,7 @@ pub async fn handle_gemini(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
+            log_forward_error(&state, &ctx, is_stream, &err.error, None);
             return Err(err.error);
         }
     };
@@ -1960,6 +1960,7 @@ fn log_forward_error(
     ctx: &RequestContext,
     is_streaming: bool,
     error: &ProxyError,
+    outbound_model: Option<&str>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -1972,6 +1973,7 @@ fn log_forward_error(
         request_id,
         ctx.provider.id.clone(),
         ctx.app_type_str.to_string(),
+        outbound_model.map(|s| s.to_string()),
         ctx.request_model.clone(),
         status_code,
         error_message,
