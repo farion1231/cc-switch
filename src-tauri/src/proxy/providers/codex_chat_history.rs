@@ -150,7 +150,7 @@ impl CodexChatHistoryStore {
                 Some(item_type) if is_call_item_type(item_type) => {
                     if let Some(call_id) = response_item_call_id(&item) {
                         if let Some(cached) = lookup.call(&call_id) {
-                            if enrich_call_item_reasoning(&mut item, cached) {
+                            if enrich_call_item_from_cache(&mut item, cached) {
                                 enriched += 1;
                             }
                         }
@@ -466,17 +466,26 @@ fn is_call_output_item_type(item_type: &str) -> bool {
     )
 }
 
-fn enrich_call_item_reasoning(item: &mut Value, cached: &Value) -> bool {
+fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
     let mut changed = false;
-    for key in ["reasoning_content", "reasoning"] {
+    for key in [
+        "name",
+        "namespace",
+        "arguments",
+        "input",
+        "status",
+        "execution",
+        "reasoning_content",
+        "reasoning",
+    ] {
         if item.get(key).is_some_and(|value| !is_empty_value(value)) {
             continue;
         }
-        let Some(reasoning) = cached.get(key).filter(|value| !is_empty_value(value)) else {
+        let Some(value) = cached.get(key).filter(|value| !is_empty_value(value)) else {
             continue;
         };
         if let Some(object) = item.as_object_mut() {
-            object.insert(key.to_string(), reasoning.clone());
+            object.insert(key.to_string(), value.clone());
             changed = true;
         }
     }
@@ -673,6 +682,48 @@ mod tests {
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
         assert_eq!(input.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn enriches_existing_function_call_missing_name_and_arguments() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(&json!({
+                "id": "resp_1",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "read_file",
+                        "arguments": "{\"path\":\"README.md\"}",
+                        "reasoning_content": "Need to inspect the file."
+                    }
+                ]
+            }))
+            .await;
+
+        let mut request = json!({
+            "previous_response_id": "resp_1",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok"
+                }
+            ]
+        });
+
+        assert_eq!(history.enrich_request(&mut request).await, 1);
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "function_call");
+        assert_eq!(input[0]["name"], "read_file");
+        assert_eq!(input[0]["arguments"], "{\"path\":\"README.md\"}");
+        assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
+        assert_eq!(input[1]["type"], "function_call_output");
     }
 
     #[tokio::test]

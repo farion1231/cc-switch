@@ -108,9 +108,18 @@ export function UsageDashboard() {
       return getUsageRangePresetLabel(range.preset, t);
     }
 
-    return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
-      resolvedRange.endDate * 1000,
-    ).toLocaleString(locale)}`;
+    const startStr = new Date(resolvedRange.startDate * 1000).toLocaleString(
+      locale,
+    );
+
+    if (range.liveEndTime) {
+      return `${startStr} → ${t("usage.liveEndTimeNow", "现在")}`;
+    }
+
+    const endStr = new Date(resolvedRange.endDate * 1000).toLocaleString(
+      locale,
+    );
+    return `${startStr} - ${endStr}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
   // 顶栏下拉的选项池：Provider 列表只跟应用/时间范围走（不受自身选中值影响），
