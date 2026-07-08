@@ -494,6 +494,23 @@ impl Database {
         Ok(count > 0)
     }
 
+    /// 同步版本：检查是否有任一 app 的 enabled = true
+    ///
+    /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
+    pub fn is_live_takeover_active_sync(&self) -> bool {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 0
+    }
+
     // ==================== Provider Health ====================
 
     /// 获取Provider健康状态

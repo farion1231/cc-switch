@@ -63,6 +63,19 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
 
     let message = extract_error_text(body);
     let message = message.to_ascii_lowercase();
+
+    // 自证性表述：这类短语本身就断言了"仅接受文本"，属于模态拒绝，无需再要求
+    // 错误提到 image/media 等字样——火山方舟等网关的报错是
+    // "Model only support text input"，全程不出现 image（issue #5025）。
+    // 国产网关的英文常缺三单 s，因此带 s / 不带 s 两种形式都要列。
+    const TEXT_ONLY_SELF_EVIDENT_HINTS: &[&str] = &["only support text", "only supports text"];
+    if TEXT_ONLY_SELF_EVIDENT_HINTS
+        .iter()
+        .any(|hint| message.contains(hint))
+    {
+        return true;
+    }
+
     let mentions_image = message.contains("image")
         || message.contains("vision")
         || message.contains("multimodal")
@@ -83,7 +96,6 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "doesn't support",
         "do not support",
         "don't support",
-        "only supports text",
         "text only",
         "text-only",
         "invalid content type",
@@ -250,6 +262,9 @@ fn known_text_only_model(model: &str) -> bool {
         "deepseek-v4-flash",
         "deepseek-v4-pro",
         "glm-5.1",
+        // 精确匹配而非 TAIL_PREFIXES：智谱视觉版沿用 4v/5v 命名（glm-5.2v），
+        // 前缀匹配会误剥未来多模态变体的图片。
+        "glm-5.2",
         "kat-coder",
         "kat-coder-pro",
         "kat-coder-pro v1",
@@ -257,6 +272,7 @@ fn known_text_only_model(model: &str) -> bool {
         "kat-coder-pro-v1",
         "kat-coder-pro-v2",
         "ling-2.5-1t",
+        "longcat-2.0",
         "longcat-flash-chat",
         "mimo-v2.5-pro",
         "us.deepseek.r1-v1",
@@ -482,6 +498,15 @@ mod tests {
             body["input"][0]["content"][1]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    #[test]
+    fn longcat_models_are_classified_text_only() {
+        // LongCat-2.0 (like the retired Flash Chat) is a text-only model; the
+        // preset ships it in mixed case, so the classifier must normalize first.
+        assert!(known_text_only_model("LongCat-2.0"));
+        assert!(known_text_only_model("longcat/LongCat-2.0"));
+        assert!(known_text_only_model("LongCat-Flash-Chat"));
     }
 
     #[test]
@@ -715,6 +740,32 @@ mod tests {
         };
 
         assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_text_only_errors_without_image_mention() {
+        // 火山方舟真实报错（issue #5025）：不含 image/media 等字样，且英文缺
+        // 三单 s——旧逻辑的 mentions_image 门与 "only supports text" 提示都拦不住。
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Model only support text input Request id: 021783"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn glm_52_is_classified_text_only() {
+        // issue #5025：火山 Coding Plan 的 GLM 5.2 是纯文本端点，
+        // 映射链 glm-5.2[1M] 归一化后尾部为 glm-5.2。
+        assert!(known_text_only_model("glm-5.2"));
+        assert!(known_text_only_model("GLM-5.2[1M]"));
+        assert!(known_text_only_model("zai-org/GLM-5.2"));
+        // 未来视觉版（智谱 4v/5v 命名惯例）不能被误判为纯文本。
+        assert!(!known_text_only_model("glm-5.2v"));
     }
 
     #[test]

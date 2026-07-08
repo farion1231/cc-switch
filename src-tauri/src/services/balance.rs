@@ -2,6 +2,12 @@
 //!
 //! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI、阿里云 BSS 的账户余额查询。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
+//!
+//! 错误通道语义（与 coding_plan / subscription 两个服务保持一致）：
+//! - `Err(String)` = 瞬时传输失败（网络不可达/超时/读体中断）。前端 invoke reject，
+//!   react-query 触发 retry 并保留上一次成功的 data（天然 keep-last-good）。
+//! - `Ok(success:false)` = 确定性失败（空 key/未知供应商/鉴权/非 2xx/响应体非法 JSON），
+//!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
 use crate::provider::{UsageData, UsageResult};
 use base64::Engine;
@@ -267,7 +273,7 @@ fn parse_aliyun_balance_response(body: serde_json::Value) -> UsageResult {
 // GET https://api.deepseek.com/user/balance
 // Response: { balance_infos: [{ currency, total_balance, granted_balance, topped_up_balance }], is_available }
 
-async fn query_deepseek(api_key: &str) -> UsageResult {
+async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -280,21 +286,27 @@ async fn query_deepseek(api_key: &str) -> UsageResult {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return make_auth_error(status);
+        return Ok(make_auth_error(status));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     let is_available = body
@@ -328,18 +340,18 @@ async fn query_deepseek(api_key: &str) -> UsageResult {
         }
     }
 
-    UsageResult {
+    Ok(UsageResult {
         success: true,
         data: if data.is_empty() { None } else { Some(data) },
         error: None,
-    }
+    })
 }
 
 // ── StepFun ─────────────────────────────────────────────────
 // GET https://api.stepfun.com/v1/accounts
 // Response: { object, type, balance, total_cash_balance, total_voucher_balance }
 
-async fn query_stepfun(api_key: &str) -> UsageResult {
+async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -352,26 +364,32 @@ async fn query_stepfun(api_key: &str) -> UsageResult {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return make_auth_error(status);
+        return Ok(make_auth_error(status));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     let balance = parse_f64_field(&body, "balance").unwrap_or(0.0);
 
-    UsageResult {
+    Ok(UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("StepFun".to_string()),
@@ -384,14 +402,14 @@ async fn query_stepfun(api_key: &str) -> UsageResult {
             extra: None,
         }]),
         error: None,
-    }
+    })
 }
 
 // ── SiliconFlow ─────────────────────────────────────────────
 // GET https://api.siliconflow.cn/v1/user/info (or .com for EN)
 // Response: { code, data: { balance, chargeBalance, totalBalance, status } }
 
-async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
+async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
     let domain = if is_cn {
@@ -411,26 +429,32 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return make_auth_error(status);
+        return Ok(make_auth_error(status));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     let data = match body.get("data") {
         Some(d) => d,
-        None => return make_error("Missing 'data' field in response".to_string()),
+        None => return Ok(make_error("Missing 'data' field in response".to_string())),
     };
 
     let total_balance = parse_f64_field(data, "totalBalance").unwrap_or(0.0);
@@ -442,7 +466,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
         "SiliconFlow (EN)"
     };
 
-    UsageResult {
+    Ok(UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some(plan_name.to_string()),
@@ -455,14 +479,14 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
             extra: None,
         }]),
         error: None,
-    }
+    })
 }
 
 // ── OpenRouter ──────────────────────────────────────────────
 // GET https://openrouter.ai/api/v1/credits
 // Response: { data: { total_credits, total_usage } }
 
-async fn query_openrouter(api_key: &str) -> UsageResult {
+async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -475,21 +499,27 @@ async fn query_openrouter(api_key: &str) -> UsageResult {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return make_auth_error(status);
+        return Ok(make_auth_error(status));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     let data = body.get("data").unwrap_or(&body);
@@ -497,7 +527,7 @@ async fn query_openrouter(api_key: &str) -> UsageResult {
     let total_usage = parse_f64_field(data, "total_usage").unwrap_or(0.0);
     let remaining = total_credits - total_usage;
 
-    UsageResult {
+    Ok(UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("OpenRouter".to_string()),
@@ -514,7 +544,7 @@ async fn query_openrouter(api_key: &str) -> UsageResult {
             extra: None,
         }]),
         error: None,
-    }
+    })
 }
 
 // ── Novita AI ───────────────────────────────────────────────
@@ -522,7 +552,7 @@ async fn query_openrouter(api_key: &str) -> UsageResult {
 // Response: { availableBalance, cashBalance, creditLimit, outstandingInvoices }
 // 金额单位：0.0001 USD
 
-async fn query_novita(api_key: &str) -> UsageResult {
+async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -535,27 +565,33 @@ async fn query_novita(api_key: &str) -> UsageResult {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return make_auth_error(status);
+        return Ok(make_auth_error(status));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     // Novita 金额单位为 0.0001 USD，需除以 10000 转为 USD
     let available = parse_f64_field(&body, "availableBalance").unwrap_or(0.0) / 10000.0;
 
-    UsageResult {
+    Ok(UsageResult {
         success: true,
         data: Some(vec![UsageData {
             plan_name: Some("Novita AI".to_string()),
@@ -572,7 +608,7 @@ async fn query_novita(api_key: &str) -> UsageResult {
             extra: None,
         }]),
         error: None,
-    }
+    })
 }
 
 // ── 工具函数 ────────────────────────────────────────────────
@@ -587,6 +623,8 @@ fn parse_f64_field(obj: &serde_json::Value, field: &str) -> Option<f64> {
 
 // ── 公开入口 ────────────────────────────────────────────────
 
+/// 查询余额。瞬时传输失败返回 `Err`（前端 reject → retry + 保留上次成功值），
+/// 确定性失败返回 `Ok(success:false)`（见模块级文档）。
 pub async fn get_balance(
     base_url: &str,
     api_key: &str,
