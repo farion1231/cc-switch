@@ -306,6 +306,40 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+/// 前端表单勾选/取消"使用通用配置"时，对编辑器里的 config.toml 文本做
+/// 结构化合并/剥离。必须在后端用 toml_edit 做：前端 smol-toml 只能
+/// parse → merge → 整文档重序列化，注释全丢、键序重排，还会生成多余的
+/// 空父表头（如 `[model_providers]`）。
+pub fn update_toml_common_config_snippet(
+    config_toml: &str,
+    snippet_toml: &str,
+    enabled: bool,
+) -> Result<String, AppError> {
+    let trimmed = snippet_toml.trim();
+    if trimmed.is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut target_doc = if config_toml.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        config_toml
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?
+    };
+    let source_doc = trimmed
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+
+    if enabled {
+        merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    } else {
+        remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    }
+
+    Ok(target_doc.to_string())
+}
+
 fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
@@ -1677,6 +1711,71 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。
+    /// smol-toml 的 parse→merge→stringify 整文档重序列化会丢注释、
+    /// 按字母序重排键、并为 dotted 表生成多余的空父表头。
+    #[test]
+    fn update_toml_common_config_snippet_preserves_comments_and_key_order() {
+        // 刻意非字母序的键序 + 注释，模拟用户手写格式
+        let config = r#"# my precious comment
+model = "gpt-5.5"
+model_provider = "aprov"
+disable_response_storage = true
+
+[model_providers.aprov]
+# provider comment
+name = "A Prov"
+base_url = "https://a.example/v1"
+"#;
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged = update_toml_common_config_snippet(config, snippet, true).unwrap();
+        assert!(merged.contains("# my precious comment"));
+        assert!(merged.contains("# provider comment"));
+        let model_pos = merged.find("model = ").unwrap();
+        let provider_pos = merged.find("model_provider = ").unwrap();
+        let disable_pos = merged.find("disable_response_storage").unwrap();
+        assert!(
+            model_pos < provider_pos && provider_pos < disable_pos,
+            "merge must not reorder user keys, got: {merged}"
+        );
+        assert!(merged.contains("[tui]"));
+        assert!(merged.contains("notifications = true"));
+        assert!(
+            !merged.contains("[model_providers]\n"),
+            "merge must not synthesize an empty parent table header, got: {merged}"
+        );
+
+        let removed = update_toml_common_config_snippet(&merged, snippet, false).unwrap();
+        assert!(!removed.contains("[tui]"), "snippet keys must be stripped");
+        assert!(removed.contains("# my precious comment"));
+        assert!(removed.contains("disable_response_storage = true"));
+    }
+
+    /// 合并时标量=片段覆盖供应商值（与 Claude 侧 deepMerge 一致）；
+    /// 剥离按值匹配：用户改过的值不删（与 strip 路径的
+    /// toml_value_is_subset 语义一致）。
+    #[test]
+    fn update_toml_common_config_snippet_scalar_override_and_value_matched_removal() {
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, true)
+                .unwrap();
+        assert!(
+            merged.contains("notifications = true"),
+            "snippet scalar should override provider value, got: {merged}"
+        );
+
+        let removed =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, false)
+                .unwrap();
+        assert!(
+            removed.contains("notifications = false"),
+            "user-modified value must survive removal, got: {removed}"
+        );
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
