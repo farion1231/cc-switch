@@ -594,7 +594,7 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "ko"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
