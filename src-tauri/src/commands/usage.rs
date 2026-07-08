@@ -4,8 +4,19 @@ use crate::error::AppError;
 use crate::services::usage_stats::*;
 use crate::store::AppState;
 use rust_decimal::Decimal;
+use serde::Serialize;
 use std::str::FromStr;
+use std::time::Instant;
 use tauri::State;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrayUsageOverview {
+    pub summary_by_app: Vec<UsageSummaryByApp>,
+    pub providers: Vec<ProviderStats>,
+    pub models: Vec<ModelStats>,
+    pub trends: Vec<DailyStats>,
+}
 
 /// 获取使用量汇总
 #[tauri::command]
@@ -41,6 +52,73 @@ pub fn get_usage_summary_by_app(
         provider_name.as_deref(),
         model.as_deref(),
     )
+}
+
+/// 获取菜单栏用量速览所需的聚合数据。
+#[tauri::command]
+pub fn get_tray_usage_overview(
+    state: State<'_, AppState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    provider_name: Option<String>,
+    model: Option<String>,
+) -> Result<TrayUsageOverview, AppError> {
+    let total_started = Instant::now();
+
+    let step_started = Instant::now();
+    let summary_by_app = state.db.get_usage_summary_by_app(
+        start_date,
+        end_date,
+        provider_name.as_deref(),
+        model.as_deref(),
+    )?;
+    let summary_ms = step_started.elapsed().as_millis();
+
+    let step_started = Instant::now();
+    let providers = state.db.get_provider_stats(
+        start_date,
+        end_date,
+        None,
+        provider_name.as_deref(),
+        model.as_deref(),
+    )?;
+    let providers_ms = step_started.elapsed().as_millis();
+
+    let step_started = Instant::now();
+    let models = state.db.get_model_stats(
+        start_date,
+        end_date,
+        None,
+        provider_name.as_deref(),
+        model.as_deref(),
+    )?;
+    let models_ms = step_started.elapsed().as_millis();
+
+    let step_started = Instant::now();
+    let trends = state.db.get_daily_trends(
+        start_date,
+        end_date,
+        None,
+        provider_name.as_deref(),
+        model.as_deref(),
+    )?;
+    let trends_ms = step_started.elapsed().as_millis();
+
+    log::debug!(
+        "[tray-usage] overview summary_by_app={}ms providers={}ms models={}ms trends={}ms total={}ms",
+        summary_ms,
+        providers_ms,
+        models_ms,
+        trends_ms,
+        total_started.elapsed().as_millis()
+    );
+
+    Ok(TrayUsageOverview {
+        summary_by_app,
+        providers,
+        models,
+        trends,
+    })
 }
 
 /// 获取每日趋势

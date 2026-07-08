@@ -1481,6 +1481,7 @@ pub fn run() {
             // Usage statistics
             commands::get_usage_summary,
             commands::get_usage_summary_by_app,
+            commands::get_tray_usage_overview,
             commands::get_usage_trends,
             commands::get_usage_activity_heatmap,
             commands::get_provider_stats,

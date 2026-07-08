@@ -1433,7 +1433,12 @@
       "day": "日",
       "week": "週",
       "month": "月",
-      "apps": "應用"
+      "apps": "應用",
+      "models": "模型",
+      "sources": "來源",
+      "success": "成功率",
+      "themeNative": "原生主題",
+      "themeCard": "卡片主題"
     },
     "today": "24 小時",
     "last7days": "7 天",

@@ -1,4 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
@@ -12,6 +17,7 @@ const ACTIVITY_HEATMAP_DAYS = 365;
 const SECONDS_PER_DAY = 24 * 60 * 60;
 
 type UsageQueryOptions = {
+  placeholderData?: typeof keepPreviousData;
   refetchInterval?: number | false;
   refetchIntervalInBackground?: boolean;
 };
@@ -66,6 +72,23 @@ export const usageKeys = {
     [
       ...usageKeys.all,
       "summary-by-app",
+      preset,
+      customStartDate ?? 0,
+      customEndDate ?? 0,
+      liveEndTime ?? false,
+      filters?.providerName ?? null,
+      filters?.model ?? null,
+    ] as const,
+  trayOverview: (
+    preset: UsageRangeSelection["preset"],
+    customStartDate: number | undefined,
+    customEndDate: number | undefined,
+    filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+    liveEndTime?: boolean,
+  ) =>
+    [
+      ...usageKeys.all,
+      "tray-overview",
       preset,
       customStartDate ?? 0,
       customEndDate ?? 0,
@@ -210,6 +233,7 @@ export function useUsageSummary(
         effective.model,
       );
     },
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -237,6 +261,35 @@ export function useUsageSummaryByApp(
         filters?.model,
       );
     },
+    placeholderData: options?.placeholderData,
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
+  });
+}
+
+export function useTrayUsageOverview(
+  range: UsageRangeSelection,
+  filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+  options?: UsageQueryOptions,
+) {
+  return useQuery({
+    queryKey: usageKeys.trayOverview(
+      range.preset,
+      range.customStartDate,
+      range.customEndDate,
+      filters,
+      range.liveEndTime,
+    ),
+    queryFn: () => {
+      const { startDate, endDate } = resolveUsageRange(range);
+      return usageApi.getTrayUsageOverview(
+        startDate,
+        endDate,
+        filters?.providerName,
+        filters?.model,
+      );
+    },
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -266,6 +319,7 @@ export function useUsageTrends(
         effective.model,
       );
     },
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -281,6 +335,7 @@ export function useUsageActivityHeatmap(
     queryKey: usageKeys.activityHeatmap(startDate, endDate, effectiveAppType),
     queryFn: () =>
       usageApi.getUsageActivityHeatmap(startDate, endDate, effectiveAppType),
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -310,6 +365,7 @@ export function useProviderStats(
         effective.model,
       );
     },
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -339,6 +395,7 @@ export function useModelStats(
         effective.model,
       );
     },
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
@@ -368,6 +425,7 @@ export function useRequestLogs({
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
+    placeholderData: options?.placeholderData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });

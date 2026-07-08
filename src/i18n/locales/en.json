@@ -1461,7 +1461,12 @@
       "day": "Day",
       "week": "Week",
       "month": "Month",
-      "apps": "Apps"
+      "apps": "Apps",
+      "models": "Models",
+      "sources": "Sources",
+      "success": "Success",
+      "themeNative": "Native theme",
+      "themeCard": "Card theme"
     },
     "today": "24 Hours",
     "last7days": "7 Days",

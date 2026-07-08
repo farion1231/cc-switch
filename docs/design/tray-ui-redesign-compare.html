@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CC Switch Tray UI Redesign Compare</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #0b0d12;
+      --muted: #747882;
+      --line: #e8eaee;
+      --blue: #16a5e8;
+      --green: #19ba83;
+      --violet: #8b5cf6;
+      --amber: #f59e0b;
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background:
+        linear-gradient(180deg, #f6f7f9 0%, #eef1f4 100%);
+      letter-spacing: 0;
+    }
+
+    .stage {
+      width: 1500px;
+      min-height: 1240px;
+      margin: 0 auto;
+      padding: 34px 42px 42px;
+    }
+
+    .stage-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      margin: 0 6px 24px;
+    }
+
+    .stage-title {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.2;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .stage-subtitle {
+      margin-top: 8px;
+      color: #747986;
+      font-size: 14px;
+    }
+
+    .stage-meta {
+      color: #8a8e98;
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 34px;
+      align-items: start;
+    }
+
+    .variant {
+      min-width: 0;
+    }
+
+    .variant-label {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      height: 38px;
+      padding: 0 10px;
+      color: #4e545f;
+      font-size: 15px;
+      font-weight: 720;
+    }
+
+    .variant-label span {
+      color: #8b909a;
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .panel {
+      width: 100%;
+      max-width: 638px;
+      height: 1020px;
+      margin: 0 auto;
+      overflow: hidden;
+      box-shadow:
+        0 28px 70px rgba(17, 24, 39, 0.14),
+        0 1px 0 rgba(255, 255, 255, 0.85) inset;
+    }
+
+    .huashu {
+      background: #ffffff;
+      border: 1px solid #e3e5e9;
+      border-radius: 24px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 18px;
+      align-items: center;
+      padding: 28px 30px 24px;
+      border-bottom: 1px solid #edf0f3;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 15px;
+    }
+
+    .mark {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      color: #0ca678;
+      border: 1px solid #b8ead6;
+      border-radius: 12px;
+      background: #effbf5;
+    }
+
+    .mark-bars {
+      width: 24px;
+      height: 22px;
+      display: grid;
+      grid-template-columns: repeat(4, 3px);
+      gap: 4px;
+      align-items: end;
+    }
+
+    .mark-bars i {
+      display: block;
+      width: 3px;
+      background: currentColor;
+      border-radius: 2px;
+    }
+
+    .mark-bars i:nth-child(1) { height: 16px; }
+    .mark-bars i:nth-child(2) { height: 22px; }
+    .mark-bars i:nth-child(3) { height: 11px; }
+    .mark-bars i:nth-child(4) { height: 19px; }
+
+    .brand-title {
+      font-size: 26px;
+      line-height: 1.1;
+      font-weight: 780;
+    }
+
+    .brand-sub {
+      margin-top: 7px;
+      color: #747985;
+      font-size: 17px;
+      font-weight: 520;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(3, 52px);
+      height: 52px;
+      align-items: center;
+      padding: 3px;
+      border: 1px solid #e6e8ec;
+      border-radius: 15px;
+      background: #fafafa;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04) inset;
+    }
+
+    .segmented div {
+      display: grid;
+      place-items: center;
+      height: 44px;
+      color: #6f737d;
+      font-size: 21px;
+      font-weight: 660;
+      border-radius: 11px;
+    }
+
+    .segmented .active {
+      color: #111318;
+      background: #fff;
+      box-shadow: 0 1px 8px rgba(15, 23, 42, 0.08);
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: #777c86;
+      font-size: 34px;
+      line-height: 1;
+    }
+
+    .content {
+      padding: 28px 30px 30px;
+    }
+
+    .hero-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+
+    .eyebrow {
+      color: #777b86;
+      font-size: 17px;
+      font-weight: 710;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .hero-number {
+      margin-top: 12px;
+      font-size: 60px;
+      line-height: .96;
+      font-weight: 780;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cost-plain {
+      min-width: 146px;
+      padding-top: 10px;
+      text-align: right;
+    }
+
+    .cost-plain .label {
+      color: #777b86;
+      font-size: 16px;
+      font-weight: 680;
+    }
+
+    .cost-plain .value {
+      margin-top: 14px;
+      color: #0f956d;
+      font-size: 33px;
+      line-height: 1;
+      font-weight: 780;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .mix-track {
+      height: 16px;
+      display: flex;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #edf2f7;
+      margin: 18px 0 17px;
+    }
+
+    .seg-blue { width: 5.7%; background: var(--blue); }
+    .seg-violet { width: .33%; background: var(--violet); min-width: 5px; }
+    .seg-amber { width: .05%; background: var(--amber); min-width: 3px; }
+    .seg-green { flex: 1; background: var(--green); }
+
+    .legend-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      row-gap: 13px;
+      column-gap: 22px;
+      margin-bottom: 18px;
+    }
+
+    .legend-item,
+    .mini-metric {
+      min-width: 0;
+    }
+
+    .legend-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      color: #6f7480;
+      font-size: 19px;
+      font-weight: 520;
+    }
+
+    .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+    }
+
+    .legend-value {
+      color: #707581;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .mini-metric {
+      min-height: 88px;
+      padding: 17px 22px 15px;
+      border-radius: 10px;
+      background: #fafbfc;
+    }
+
+    .metric-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #707680;
+      font-size: 19px;
+      font-weight: 640;
+    }
+
+    .glyph {
+      width: 21px;
+      height: 21px;
+      border: 2px solid currentColor;
+      border-radius: 6px;
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .glyph.pulse {
+      border: 0;
+      border-radius: 0;
+    }
+
+    .glyph.pulse::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 9px;
+      width: 21px;
+      height: 2px;
+      background: currentColor;
+      box-shadow:
+        5px -7px 0 -1px currentColor,
+        10px 8px 0 -1px currentColor,
+        16px -4px 0 -1px currentColor;
+    }
+
+    .glyph.database {
+      border-radius: 50% / 30%;
+    }
+
+    .glyph.database::after {
+      content: "";
+      position: absolute;
+      left: -2px;
+      right: -2px;
+      top: 6px;
+      border-top: 2px solid currentColor;
+    }
+
+    .glyph.server::before,
+    .glyph.server::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      right: 4px;
+      border-top: 2px solid currentColor;
+    }
+
+    .glyph.server::before { top: 6px; }
+    .glyph.server::after { top: 13px; }
+
+    .glyph.check {
+      border-radius: 50%;
+    }
+
+    .glyph.check::after {
+      content: "";
+      position: absolute;
+      width: 8px;
+      height: 4px;
+      border-left: 2px solid currentColor;
+      border-bottom: 2px solid currentColor;
+      transform: rotate(-45deg);
+      left: 5px;
+      top: 6px;
+    }
+
+    .metric-value {
+      margin-top: 14px;
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 780;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .section {
+      border-top: 1px solid #e9ecef;
+      padding-top: 16px;
+      margin-top: 4px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      color: #737884;
+      font-size: 20px;
+      font-weight: 720;
+    }
+
+    .chart {
+      height: 128px;
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 11px;
+      align-items: end;
+      padding: 14px 0 26px;
+    }
+
+    .chart::before,
+    .chart::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: #eef0f3;
+    }
+
+    .chart::before { top: 38px; }
+    .chart::after { bottom: 40px; }
+
+    .barcol {
+      height: 100%;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      align-items: end;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .bar {
+      width: 100%;
+      min-height: 3px;
+      border-radius: 5px 5px 0 0;
+      background:
+        linear-gradient(to top, var(--green) calc(100% - 8px), #a78bfa calc(100% - 8px));
+      position: relative;
+      z-index: 1;
+    }
+
+    .bar.empty {
+      background: transparent;
+    }
+
+    .x {
+      color: #747985;
+      font-size: 16px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .rank-list {
+      display: grid;
+      gap: 12px;
+      padding-top: 4px;
+    }
+
+    .rank-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 13px;
+      min-width: 0;
+    }
+
+    .app-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 9px;
+      color: #111318;
+      background: #f5f6f8;
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    .rank-name {
+      min-width: 0;
+      font-size: 20px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rank-value {
+      font-size: 21px;
+      font-weight: 760;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .rail {
+      grid-column: 1 / -1;
+      height: 10px;
+      overflow: hidden;
+      border-radius: 6px;
+      background: #edf2f7;
+    }
+
+    .rail span {
+      display: block;
+      height: 100%;
+      width: 100%;
+      border-radius: inherit;
+      background: #189ce5;
+    }
+
+    .model-line {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 16px;
+      align-items: baseline;
+      min-width: 0;
+      margin-top: 16px;
+    }
+
+    .model-line .name {
+      font-size: 20px;
+      font-weight: 720;
+    }
+
+    .model-line .cost {
+      color: #747985;
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .model-line .tokens {
+      font-size: 20px;
+      font-weight: 760;
+    }
+
+    .rail.violet span {
+      background: #8b5cf6;
+    }
+
+    .baoyu {
+      position: relative;
+      border: 2px solid #1e293b;
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at 18px 18px, rgba(30, 41, 59, .08) 1px, transparent 1.5px) 0 0 / 18px 18px,
+        linear-gradient(180deg, #fff9ed 0%, #fffdf8 100%);
+    }
+
+    .baoyu::before {
+      content: "";
+      position: absolute;
+      inset: 14px;
+      border: 1px dashed rgba(30, 41, 59, .17);
+      border-radius: 17px;
+      pointer-events: none;
+    }
+
+    .b-inner {
+      position: relative;
+      z-index: 1;
+      padding: 27px 29px 28px;
+    }
+
+    .b-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: start;
+      margin-bottom: 21px;
+    }
+
+    .b-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      width: fit-content;
+      padding: 8px 12px;
+      color: #0f766e;
+      font-size: 13px;
+      font-weight: 820;
+      border: 2px solid #0f766e;
+      border-radius: 999px;
+      background: #dff9eb;
+    }
+
+    .b-title {
+      margin-top: 14px;
+      font-size: 31px;
+      line-height: 1;
+      font-weight: 850;
+    }
+
+    .b-title small {
+      display: block;
+      margin-top: 8px;
+      color: #69717e;
+      font-size: 16px;
+      font-weight: 620;
+    }
+
+    .b-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 5px;
+      border: 2px solid #1e293b;
+      border-radius: 15px;
+      background: #fff;
+      box-shadow: 3px 3px 0 #1e293b;
+    }
+
+    .b-tabs span {
+      width: 42px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      color: #69717e;
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .b-tabs .on {
+      color: #111827;
+      background: #ffe08a;
+    }
+
+    .b-hero {
+      display: grid;
+      grid-template-columns: 1fr 178px;
+      gap: 18px;
+      align-items: stretch;
+      margin-bottom: 17px;
+    }
+
+    .b-total {
+      padding: 21px 20px 19px;
+      border: 2px solid #1e293b;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 5px 5px 0 #bae6fd;
+    }
+
+    .b-total .cap {
+      color: #64748b;
+      font-size: 15px;
+      font-weight: 760;
+      text-transform: uppercase;
+    }
+
+    .b-total .big {
+      margin-top: 10px;
+      font-size: 64px;
+      line-height: .95;
+      font-weight: 890;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .b-total .subline {
+      display: flex;
+      gap: 9px;
+      align-items: center;
+      margin-top: 13px;
+      color: #475569;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .chip-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 16px 0 0 var(--blue), 32px 0 0 var(--violet), 48px 0 0 var(--amber);
+      margin-right: 48px;
+    }
+
+    .b-cost {
+      padding: 19px 17px;
+      border: 2px solid #0f766e;
+      border-radius: 16px;
+      color: #0f766e;
+      background: #dff9eb;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 5px 5px 0 #99f6e4;
+    }
+
+    .b-cost .label {
+      color: #0f766e;
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .b-cost .value {
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 860;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .flow-card {
+      border: 2px solid #1e293b;
+      border-radius: 16px;
+      background: #fff;
+      padding: 17px 17px 15px;
+      margin-bottom: 17px;
+      box-shadow: 5px 5px 0 #ddd6fe;
+    }
+
+    .flow-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      color: #334155;
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .flow-track {
+      height: 26px;
+      display: flex;
+      overflow: hidden;
+      border: 2px solid #1e293b;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .flow-track span {
+      border-right: 2px solid rgba(30, 41, 59, .35);
+    }
+
+    .flow-legend {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 16px;
+      margin-top: 14px;
+    }
+
+    .flow-legend div {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 8px;
+      align-items: center;
+      color: #4b5563;
+      font-size: 16px;
+      font-weight: 610;
+    }
+
+    .stamp-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .stamp {
+      min-height: 85px;
+      padding: 12px 11px;
+      border: 2px solid #1e293b;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 3px 3px 0 #e2e8f0;
+    }
+
+    .stamp .label {
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .stamp .value {
+      margin-top: 13px;
+      font-size: 24px;
+      line-height: 1;
+      font-weight: 850;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stamp:nth-child(2) { box-shadow: 3px 3px 0 #bbf7d0; }
+    .stamp:nth-child(3) { box-shadow: 3px 3px 0 #fed7aa; }
+    .stamp:nth-child(4) { box-shadow: 3px 3px 0 #ddd6fe; }
+
+    .b-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 0 11px;
+      color: #334155;
+      font-size: 18px;
+      font-weight: 850;
+    }
+
+    .b-chart {
+      height: 145px;
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 10px;
+      align-items: end;
+      padding: 17px 12px 16px;
+      border: 2px solid #1e293b;
+      border-radius: 16px;
+      background:
+        linear-gradient(#eef2f7 1px, transparent 1px) 0 24px / 100% 43px,
+        #fff;
+      margin-bottom: 17px;
+      box-shadow: 5px 5px 0 #fed7aa;
+    }
+
+    .b-barcol {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 9px;
+      height: 100%;
+      align-items: end;
+      min-width: 0;
+    }
+
+    .b-bar {
+      width: 100%;
+      min-height: 3px;
+      border: 2px solid #1e293b;
+      border-radius: 8px 8px 3px 3px;
+      background:
+        linear-gradient(to top, #19ba83 calc(100% - 9px), #a78bfa calc(100% - 9px));
+    }
+
+    .b-bar.empty {
+      border-color: transparent;
+      background: transparent;
+    }
+
+    .b-x {
+      color: #667085;
+      font-size: 13px;
+      font-weight: 680;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .b-ranks {
+      display: grid;
+      gap: 12px;
+    }
+
+    .b-rank {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 13px;
+      border: 2px solid #1e293b;
+      border-radius: 15px;
+      background: #fff;
+    }
+
+    .b-rank .ico {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 2px solid #1e293b;
+      border-radius: 9px;
+      background: #f8fafc;
+      font-weight: 900;
+    }
+
+    .b-rank .main {
+      min-width: 0;
+      font-size: 18px;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .b-rank .sub {
+      margin-top: 3px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 620;
+    }
+
+    .b-rank .num {
+      font-size: 19px;
+      font-weight: 870;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <header class="stage-head">
+      <div>
+        <h1 class="stage-title">CC Switch 菜单栏用量速览 · UI 方向对比</h1>
+        <div class="stage-subtitle">同一份截图数据：真实消耗 1.45亿 tokens，成本 $123.84，日视图。</div>
+      </div>
+      <div class="stage-meta">A 偏产品落地 · B 偏信息图表达</div>
+    </header>
+
+    <section class="compare-grid">
+      <article class="variant">
+        <div class="variant-label">
+          A · Huashu Design
+          <span>系统原生 / 高可落地 / 扫读优先</span>
+        </div>
+        <div class="panel huashu">
+          <div class="topbar">
+            <div class="brand">
+              <div class="mark" aria-hidden="true">
+                <div class="mark-bars"><i></i><i></i><i></i><i></i></div>
+              </div>
+              <div>
+                <div class="brand-title">CC Switch</div>
+                <div class="brand-sub">用量速览</div>
+              </div>
+            </div>
+            <div class="segmented" aria-label="range">
+              <div class="active">日</div><div>周</div><div>月</div>
+            </div>
+            <div class="actions" aria-hidden="true"><span>↻</span><span>×</span></div>
+          </div>
+
+          <div class="content">
+            <div class="hero-row">
+              <div>
+                <div class="eyebrow">真实消耗 Tokens</div>
+                <div class="hero-number">1.45亿</div>
+              </div>
+              <div class="cost-plain">
+                <div class="label">成本</div>
+                <div class="value">$123.84</div>
+              </div>
+            </div>
+
+            <div class="mix-track" aria-label="token mix">
+              <span class="seg-blue"></span>
+              <span class="seg-violet"></span>
+              <span class="seg-amber"></span>
+              <span class="seg-green"></span>
+            </div>
+            <div class="legend-grid">
+              <div class="legend-item"><span class="dot" style="background:#16a5e8"></span><span>新增输入</span><span class="legend-value">825.1万</span></div>
+              <div class="legend-item"><span class="dot" style="background:#8b5cf6"></span><span>输出</span><span class="legend-value">47.9万</span></div>
+              <div class="legend-item"><span class="dot" style="background:#f59e0b"></span><span>缓存创建</span><span class="legend-value">0</span></div>
+              <div class="legend-item"><span class="dot" style="background:#19ba83"></span><span>缓存命中</span><span class="legend-value">1.36亿</span></div>
+            </div>
+
+            <div class="metric-grid">
+              <div class="mini-metric">
+                <div class="metric-label" style="color:#087eca"><span class="glyph pulse"></span><span>总请求数</span></div>
+                <div class="metric-value">1,148</div>
+              </div>
+              <div class="mini-metric">
+                <div class="metric-label" style="color:#059669"><span class="glyph database"></span><span>缓存命中率</span></div>
+                <div class="metric-value">94%</div>
+              </div>
+              <div class="mini-metric">
+                <div class="metric-label" style="color:#ea580c"><span class="glyph server"></span><span>来源</span></div>
+                <div class="metric-value">1</div>
+              </div>
+              <div class="mini-metric">
+                <div class="metric-label" style="color:#7c3aed"><span class="glyph check"></span><span>成功率</span></div>
+                <div class="metric-value">100%</div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head"><span>使用趋势</span><span>小时</span></div>
+              <div class="chart">
+                <div class="barcol"><div class="bar" style="height:74%"></div><div class="x">05:00</div></div>
+                <div class="barcol"><div class="bar" style="height:100%"></div><div class="x">06:00</div></div>
+                <div class="barcol"><div class="bar" style="height:15%"></div><div class="x">07:00</div></div>
+                <div class="barcol"><div class="bar empty" style="height:0"></div><div class="x">08:00</div></div>
+                <div class="barcol"><div class="bar" style="height:13%"></div><div class="x">09:00</div></div>
+                <div class="barcol"><div class="bar" style="height:38%"></div><div class="x">10:00</div></div>
+                <div class="barcol"><div class="bar" style="height:91%"></div><div class="x">11:00</div></div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-head"><span>应用</span><span>1</span></div>
+              <div class="rank-list">
+                <div class="rank-row">
+                  <div class="app-icon">◎</div>
+                  <div class="rank-name">Codex</div>
+                  <div class="rank-value">1.39亿</div>
+                  <div class="rail"><span></span></div>
+                </div>
+              </div>
+              <div class="section-head" style="margin-top:20px"><span>模型</span><span>1</span></div>
+              <div class="model-line">
+                <div class="name">gpt-5.5</div>
+                <div class="cost">$119.56</div>
+                <div class="tokens">1.39亿</div>
+              </div>
+              <div class="rail violet" style="margin-top:9px"><span></span></div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="variant">
+        <div class="variant-label">
+          B · Baoyu Design
+          <span>数据卡 / 记忆点更强 / 表达更外放</span>
+        </div>
+        <div class="panel baoyu">
+          <div class="b-inner">
+            <div class="b-head">
+              <div>
+                <div class="b-kicker"><span class="chip-dot"></span>今日用量速览</div>
+                <div class="b-title">CC Switch<small>Codex 正在消耗最多 token</small></div>
+              </div>
+              <div class="b-tabs"><span class="on">日</span><span>周</span><span>月</span></div>
+            </div>
+
+            <div class="b-hero">
+              <div class="b-total">
+                <div class="cap">真实消耗 Tokens</div>
+                <div class="big">1.45亿</div>
+                <div class="subline"><span class="chip-dot"></span>缓存命中贡献 1.36亿</div>
+              </div>
+              <div class="b-cost">
+                <div class="label">成本</div>
+                <div class="value">$123.84</div>
+              </div>
+            </div>
+
+            <div class="flow-card">
+              <div class="flow-head"><span>Token 流向</span><span>94% Cache Hit</span></div>
+              <div class="flow-track">
+                <span style="width:5.7%;background:#16a5e8"></span>
+                <span style="width:.33%;min-width:6px;background:#8b5cf6"></span>
+                <span style="width:.05%;min-width:4px;background:#f59e0b"></span>
+                <span style="flex:1;background:#19ba83;border-right:0"></span>
+              </div>
+              <div class="flow-legend">
+                <div><span class="dot" style="background:#16a5e8"></span><span>新增输入</span><b>825.1万</b></div>
+                <div><span class="dot" style="background:#8b5cf6"></span><span>输出</span><b>47.9万</b></div>
+                <div><span class="dot" style="background:#f59e0b"></span><span>缓存创建</span><b>0</b></div>
+                <div><span class="dot" style="background:#19ba83"></span><span>缓存命中</span><b>1.36亿</b></div>
+              </div>
+            </div>
+
+            <div class="stamp-grid">
+              <div class="stamp"><div class="label">请求</div><div class="value">1,148</div></div>
+              <div class="stamp"><div class="label">缓存</div><div class="value">94%</div></div>
+              <div class="stamp"><div class="label">来源</div><div class="value">1</div></div>
+              <div class="stamp"><div class="label">成功</div><div class="value">100%</div></div>
+            </div>
+
+            <div class="b-section-title"><span>使用趋势</span><span>05:00 → 11:00</span></div>
+            <div class="b-chart">
+              <div class="b-barcol"><div class="b-bar" style="height:74%"></div><div class="b-x">05</div></div>
+              <div class="b-barcol"><div class="b-bar" style="height:100%"></div><div class="b-x">06</div></div>
+              <div class="b-barcol"><div class="b-bar" style="height:15%"></div><div class="b-x">07</div></div>
+              <div class="b-barcol"><div class="b-bar empty" style="height:0"></div><div class="b-x">08</div></div>
+              <div class="b-barcol"><div class="b-bar" style="height:13%"></div><div class="b-x">09</div></div>
+              <div class="b-barcol"><div class="b-bar" style="height:38%"></div><div class="b-x">10</div></div>
+              <div class="b-barcol"><div class="b-bar" style="height:91%"></div><div class="b-x">11</div></div>
+            </div>
+
+            <div class="b-ranks">
+              <div class="b-rank">
+                <div class="ico">◎</div>
+                <div><div class="main">Codex</div><div class="sub">应用 · Top 1</div></div>
+                <div class="num">1.39亿</div>
+              </div>
+              <div class="b-rank">
+                <div class="ico">M</div>
+                <div><div class="main">gpt-5.5</div><div class="sub">模型 · $119.56</div></div>
+                <div class="num">1.39亿</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

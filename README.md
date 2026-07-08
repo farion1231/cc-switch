@@ -38,6 +38,12 @@
 | Notch 浮层用量摘要 | ❌ | ✅ | Notch overlay 窗口 |
 | Codex proxy takeover 恢复一致性 | 基础行为 | ✅ 增强 | 后台服务 |
 
+### 托盘用量总览
+
+![CC Switch 托盘用量总览](docs/images/usage/tray-usage-overview.png)
+
+托盘浮层可以直接查看真实消耗 Tokens、缓存命中、成本、请求数、成功率与小时趋势,适合在切换账号或监控多账号额度时快速判断当前消耗状态。
+
 ### 1. Codex 多账号实时用量监控
 
 - **🔄 全账号并发查询** — 一次性遍历所有 Codex 快照账号,无需切换账号即可查看每个账号的官方用量

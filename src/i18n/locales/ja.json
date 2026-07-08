@@ -1461,7 +1461,12 @@
       "day": "日",
       "week": "週",
       "month": "月",
-      "apps": "アプリ"
+      "apps": "アプリ",
+      "models": "モデル",
+      "sources": "ソース",
+      "success": "成功率",
+      "themeNative": "ネイティブテーマ",
+      "themeCard": "カードテーマ"
     },
     "today": "24時間",
     "last7days": "7日間",

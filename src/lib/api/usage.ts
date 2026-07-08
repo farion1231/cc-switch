@@ -13,6 +13,7 @@ import type {
   PaginatedLogs,
   SessionSyncResult,
   DataSourceSummary,
+  TrayUsageOverview,
 } from "@/types/usage";
 import type { UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -72,6 +73,20 @@ export const usageApi = {
     model?: string,
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
+      startDate,
+      endDate,
+      providerName,
+      model,
+    });
+  },
+
+  getTrayUsageOverview: async (
+    startDate?: number,
+    endDate?: number,
+    providerName?: string,
+    model?: string,
+  ): Promise<TrayUsageOverview> => {
+    return invoke("get_tray_usage_overview", {
       startDate,
       endDate,
       providerName,

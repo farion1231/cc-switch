@@ -267,8 +267,6 @@ fn format_usd_badge(cost: &str) -> String {
         format!("{value:.0}")
     } else if value.abs() >= 10.0 {
         format!("{value:.1}")
-    } else if value.abs() >= 1.0 {
-        format!("{value:.2}")
     } else if value.abs() >= 0.01 {
         format!("{value:.2}")
     } else {
@@ -494,9 +492,10 @@ fn toggle_tray_usage_window(app: &tauri::AppHandle, rect: Rect) -> Result<(), St
     .max_inner_size(TRAY_USAGE_WINDOW_WIDTH, TRAY_USAGE_WINDOW_HEIGHT)
     .resizable(false)
     .decorations(false)
+    .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
-    .shadow(true)
+    .shadow(false)
     .visible(false)
     .focused(true)
     .accept_first_mouse(true);

@@ -121,6 +121,13 @@ export interface ModelStats {
   avgCostPerRequest: string;
 }
 
+export interface TrayUsageOverview {
+  summaryByApp: UsageSummaryByApp[];
+  providers: ProviderStats[];
+  models: ModelStats[];
+  trends: DailyStats[];
+}
+
 export interface LogFilters {
   appType?: string;
   providerName?: string;
