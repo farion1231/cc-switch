@@ -55,6 +55,13 @@ describe("PiAgentPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedListProviders.mockResolvedValue({});
+    // PiProviderForm now calls previewProviderPatch (debounced) to render the
+    // read-only config JSON preview while a provider is being edited.
+    mockedPreview.mockResolvedValue({
+      currentFileHash: "hash-preview",
+      nextModelsJson: { providers: {} },
+      summary: [],
+    });
   });
 
   it("renders the provider list and opens the editor when edit is clicked", async () => {
@@ -86,7 +93,7 @@ describe("PiAgentPanel", () => {
   });
 
   it("saves a provider with one click using preview then apply", async () => {
-    mockedPreview.mockResolvedValueOnce({
+    mockedPreview.mockResolvedValue({
       currentFileHash: "hash-1",
       nextModelsJson: { providers: { myprovider: {} } },
       summary: ["Upsert Pi provider myprovider"],
