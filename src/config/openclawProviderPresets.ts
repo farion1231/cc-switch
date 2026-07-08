@@ -2500,32 +2500,4 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
-
-  // ========== Custom Template ==========
-  {
-    name: "OpenAI Compatible",
-    websiteUrl: "",
-    settingsConfig: {
-      baseUrl: "",
-      apiKey: "",
-      api: "openai-completions",
-      models: [],
-    },
-    category: "custom",
-    isCustomTemplate: true,
-    icon: "generic",
-    iconColor: "#6B7280",
-    templateValues: {
-      baseUrl: {
-        label: "Base URL",
-        placeholder: "https://api.example.com/v1",
-        editorValue: "",
-      },
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
 ];

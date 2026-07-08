@@ -2020,36 +2020,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "OpenAI Compatible",
-    websiteUrl: "",
-    settingsConfig: {
-      npm: "@ai-sdk/openai-compatible",
-      options: {
-        baseURL: "",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {},
-    },
-    category: "custom",
-    isCustomTemplate: true,
-    icon: "generic",
-    iconColor: "#6B7280",
-    templateValues: {
-      baseURL: {
-        label: "Base URL",
-        placeholder: "https://api.example.com/v1",
-        editorValue: "",
-      },
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-
-  {
     name: "Oh My OpenCode",
     websiteUrl: "https://github.com/code-yeongyu/oh-my-openagent",
     settingsConfig: {
