@@ -516,12 +516,20 @@ async fn query_provider_usage_inner(
         // 其他供应商为 None，service 层沿用 api_key。
         let access_key_id = usage_script.and_then(|s| s.access_key_id.clone());
         let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+        // 智谱团队版：显式 provider 标识 + 组织/项目 ID（与个人版智谱 base_url 相同，
+        // 靠 coding_plan_provider == "zhipu_team" 在 service 层路由）。
+        let coding_plan_provider = usage_script.and_then(|s| s.coding_plan_provider.clone());
+        let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
+        let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
 
         let quota = crate::services::coding_plan::get_coding_plan_quota(
             &base_url,
             &api_key,
             access_key_id.as_deref(),
             secret_access_key.as_deref(),
+            coding_plan_provider.as_deref(),
+            team_organization_id.as_deref(),
+            team_project_id.as_deref(),
         )
         .await
         .map_err(|e| format!("Failed to query coding plan: {e}"))?;
@@ -1079,6 +1087,8 @@ mod native_query_credentials_tests {
             coding_plan_provider: coding_plan_provider.map(str::to_string),
             access_key_id: None,
             secret_access_key: None,
+            team_organization_id: None,
+            team_project_id: None,
         }
     }
 
