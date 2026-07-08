@@ -468,4 +468,41 @@ impl McpService {
 
         Ok(new_count)
     }
+
+    /// 从所有支持 MCP 的应用导入服务器，返回新导入的数量。
+    ///
+    /// Best-effort：单个应用导入失败（如坏 config.toml）不阻断其余应用；
+    /// 全部跑完后若有失败，聚合成一个错误上报——历史实现逐应用
+    /// `unwrap_or(0)` 吞错，坏文件只会表现为"导入成功 0 个"，用户
+    /// 无从得知哪个应用出了问题。
+    pub fn import_from_all_apps(state: &AppState) -> Result<usize, AppError> {
+        let mut total = 0;
+        let mut failures: Vec<String> = Vec::new();
+
+        let results: [(&str, Result<usize, AppError>); 5] = [
+            ("claude", Self::import_from_claude(state)),
+            ("codex", Self::import_from_codex(state)),
+            ("gemini", Self::import_from_gemini(state)),
+            ("opencode", Self::import_from_opencode(state)),
+            ("hermes", Self::import_from_hermes(state)),
+        ];
+        for (app, result) in results {
+            match result {
+                Ok(count) => total += count,
+                Err(err) => {
+                    log::warn!("从 {app} 导入 MCP 失败: {err}");
+                    failures.push(format!("{app}: {err}"));
+                }
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(total)
+        } else {
+            Err(AppError::Message(format!(
+                "已导入 {total} 个，部分应用导入失败: {}",
+                failures.join("; ")
+            )))
+        }
+    }
 }
