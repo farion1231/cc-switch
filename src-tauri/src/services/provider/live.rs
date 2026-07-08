@@ -596,6 +596,15 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
+    // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
+    if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {
+        log::warn!(
+            "Failed to strip mcp_servers while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
     // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
     // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
     if provider.category.as_deref() == Some("official") {
@@ -1858,6 +1867,42 @@ mod tests {
             result.get("modelCatalog"),
             live_settings.get("modelCatalog"),
             "backfill must keep the Live-reconstructed catalog when the DB has none"
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_strips_synced_mcp_servers() {
+        // Live 里的 [mcp_servers] 是 MCP 同步的投影（SSOT 在 DB 表），
+        // 回填进供应商存储配置会让已删除的服务器随快照复活。
+        let provider = Provider::with_id(
+            "prov".to_string(),
+            "Prov".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model = \"gpt-5.5\"\n"
+            }),
+            None,
+        );
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": "model = \"gpt-5.5\"\n\n[mcp_servers.echo]\ntype = \"stdio\"\ncommand = \"echo\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        let config_text = result
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(
+            !config_text.contains("mcp_servers"),
+            "backfill must strip synced [mcp_servers] from the stored provider config, got: {config_text}"
+        );
+        assert!(
+            config_text.contains("model = \"gpt-5.5\""),
+            "non-MCP content must survive the strip"
         );
     }
 }
