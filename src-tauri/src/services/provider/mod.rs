@@ -1364,6 +1364,46 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn import_openclaw_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("existing-openclaw");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed existing openclaw provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["baseUrl"] = Value::String("https://api.example.com/v1".to_string());
+            live_settings["models"][0]["name"] = Value::String("Claude Sonnet 4.1".to_string());
+            crate::openclaw_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live openclaw provider");
+
+            let updated = import_openclaw_providers_from_live(state)
+                .expect("import openclaw providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .expect("query updated openclaw provider")
+                .expect("openclaw provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(saved.settings_config["baseUrl"], json!("https://api.example.com/v1"));
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("Claude Sonnet 4.1")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn legacy_additive_provider_still_errors_on_live_config_parse_failure() {
         with_test_home(|state, home| {
             let provider = openclaw_provider("legacy-provider");

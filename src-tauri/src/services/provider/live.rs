@@ -1479,6 +1479,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("openclaw")?;
 
     for (id, config) in providers {
@@ -1492,12 +1493,6 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
             continue;
         }
 
-        // Skip if already exists in database
-        if existing_ids.contains(&id) {
-            log::debug!("OpenClaw provider '{id}' already exists in database, skipping");
-            continue;
-        }
-
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
@@ -1506,6 +1501,30 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
                 continue;
             }
         };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "openclaw") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != settings_config {
+                        let mut provider = existing;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+                            log::warn!(
+                                "Failed to update OpenClaw provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated OpenClaw provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("OpenClaw provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up OpenClaw provider '{id}': {e}"),
+            }
+            continue;
+        }
 
         // Determine display name: use first model name if available, otherwise use id
         let display_name = config
@@ -1531,7 +1550,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Imported OpenClaw provider '{id}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Import all providers from Hermes live config to database
