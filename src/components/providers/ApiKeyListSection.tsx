@@ -1,6 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import {
   DndContext,
   PointerSensor,
@@ -27,6 +27,7 @@ import {
   AlertCircle,
   Clock,
   Pencil,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -89,6 +90,20 @@ export function ApiKeyListSection({ appId, providerId }: ApiKeyListSectionProps)
   // 的顺序铺到 row 上。注意：query key 故意不带 providerId；keyId 唯一即可。
   // 用户切到另一个 provider 时，cache 里这份 (keyId, appId) 也保留（10 分钟
   // gcTime），不会因为切走立刻扔掉——避免来回切时反复闪"loading"。
+  //
+  // **forceRefreshTick** 是一个手动触发器：用户点刷新按钮时 +1，把所有
+  // per-key query 的 `enabled` 暂时顶到 true——**包括 k.enabled=false 的 key**。
+  // 普通的 `invalidateQueries` / `refetchQueries` 对 disabled 的 query 是
+  // no-op（TanStack Query 文档明确：「The query will ignore query client
+  // `invalidateQueries` and `refetchQueries` calls that would normally
+  // result in the query refetching」），所以必须用一个真正能改 `enabled`
+  // 判定结果的 state 来「骗」React Query 重启这些 query。
+  //
+  // 使用场景：用户 7d 配额 100% 后手动把 key 停用，等一周后想看
+  // 「这把 key 现在是不是恢复成 0%」——此时如果只用 invalidate，disabled
+  // 的 key 永远停在旧的 100% 缓存上。forceRefreshTick 临时解锁 → 拿到
+  // 新 snapshot → 全部查询都 settle 后 effect 把 tick 归零、恢复原 `enabled`。
+  const [forceRefreshTick, setForceRefreshTick] = useState(0);
   const perKeyQueries = useQueries({
     queries: keys.map((k) => ({
       queryKey: ["keyUsage", k.id, appId] as const,
@@ -102,7 +117,10 @@ export function ApiKeyListSection({ appId, providerId }: ApiKeyListSectionProps)
         }
         return usageApi.queryForKey(providerId, k.id, appId);
       },
-      enabled: enabled && k.enabled,
+      // k.enabled 默认控制 query 启停（停用的 key 不浪费 API 调用）。
+      // forceRefreshTick > 0 时**强制打开所有 key**——让被停用的 key
+      // 也能在用户主动刷新时拉一次最新数据；用户重启用前不会自动重拉。
+      enabled: enabled && (k.enabled || forceRefreshTick > 0),
       retry: 1,
       retryDelay: 1500,
       staleTime: 5 * 60 * 1000,
@@ -145,6 +163,62 @@ export function ApiKeyListSection({ appId, providerId }: ApiKeyListSectionProps)
   const [exhaustedKeyIds, setExhaustedKeyIds] = useState<Set<string>>(
     () => new Set(),
   );
+
+  // 「refreshing」状态：监听所有相关 query 的 in-flight 数量。
+  // 不用局部 boolean 是因为 React Query 已经在管 refetch 生命周期，
+  // 直接读它的计数器最准确——即便 handleRefresh 被并发触发也不会丢状态。
+  // per-key 状态直接读 useQueries 返回的 `q.isFetching`，无需再 hook。
+  const isApiKeysFetching = useIsFetching({
+    queryKey: ["apiKeys", providerId, appId],
+  });
+  const isPerKeyFetching = perKeyQueries.some((q) => q.isFetching);
+  const isRefreshing = isApiKeysFetching > 0 || isPerKeyFetching;
+
+  // 手动刷新：同 KeyPoolList 的 handleRefresh 一致——同时刷三类数据。
+  // 1) `["apiKeys", providerId, appId]`——冷却 / 失败计数 / 启用状态
+  //    （key 是否被用户手动停用 / 是否在 cooldown 由这里反映）
+  // 2) `["keyUsage", keyId, appId]`——每把 key 自己的用量配额进度
+  // 3) `["usage", providerId, appId]`（若存在）——provider-level 兜底
+  //
+  // **forceRefreshTick > 0 的特殊路径**：普通的 invalidate 对 disabled
+  // 的 query 是 no-op（TanStack Query 明确把 disabled query 排除在
+  // invalidate/refetch 之外）。如果只 invalidate，**停用的 key 永远拿
+  // 不到新数据**——这就是用户报的「7d 配额重置后进度条不更新」的根因。
+  // 这里用 +1 触发的 useQueries 重新计算 `enabled` 来让 disabled key
+  // 也参与本次 refetch。所有 query settle 后 effect 会把 tick 归零，
+  // 让 enabled 判定回到「尊重 k.enabled」的常态。
+  const handleRefresh = useCallback(() => {
+    if (isRefreshing) return;
+    setForceRefreshTick((t) => t + 1);
+    queryClient.invalidateQueries({
+      queryKey: ["apiKeys", providerId, appId],
+    });
+    keys.forEach((k) => {
+      queryClient.invalidateQueries({
+        queryKey: ["keyUsage", k.id, appId],
+      });
+    });
+    queryClient.invalidateQueries({
+      queryKey: ["usage", providerId, appId],
+    });
+  }, [
+    isRefreshing,
+    queryClient,
+    providerId,
+    appId,
+    keys,
+  ]);
+
+  // forceRefreshTick 归零：所有相关 query 都 settle 后，把 tick 拉回 0，
+  // 让 enabled 判定恢复「k.enabled 必须为 true」——避免下一次组件 re-render
+  // 仍然让 disabled key 持续触发 refetch。
+  // 「settle」= apiKeys 和 per-key 都不在 fetching 状态。effect 的依赖里
+  // 包含 forceRefreshTick，确保每次 +1 后都会重新评估 settle 条件。
+  useEffect(() => {
+    if (forceRefreshTick === 0) return;
+    if (isApiKeysFetching > 0 || isPerKeyFetching) return;
+    setForceRefreshTick(0);
+  }, [forceRefreshTick, isApiKeysFetching, isPerKeyFetching]);
 
   // Active key 一律置顶——它是用户最关心的那把，列表里也最容易被误以为在轮换。
   // 其他 key 保持 sortIndex 顺序不变。
@@ -219,15 +293,47 @@ export function ApiKeyListSection({ appId, providerId }: ApiKeyListSectionProps)
           </p>
         </div>
         {!addingNew && (
-          <Button
-            size="sm"
-            variant="outline"
-            type="button"
-            onClick={() => setAddingNew(true)}
-          >
-            <Plus className="h-4 w-4 mr-1" />
-            {t("apiKeyList.add", { defaultValue: "添加 Key" })}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {/* 手动刷新：与 KeyPoolList 同一套 UX 风格——icon 按钮 + loading
+                期间换成 Loader2 旋转。disabling 避免并发点击导致重复
+                refetch；disabled 状态下连同 enabled-but-still-in-flight
+                的 query 也压住，让 isRefreshing 信号能跨过最后一次响应。
+                关键作用：对「已被用户停用」的 key 也能触发一次 refresh——
+                这是处理 7d 配额 100% → 用户停用 → 等一周后想看新数据
+                场景的关键入口。详见 handleRefresh 注释。 */}
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              aria-label={t("keyPool.refresh", { defaultValue: "刷新" })}
+              title={
+                isRefreshing
+                  ? t("keyPool.refreshing", { defaultValue: "刷新中…" })
+                  : t("keyPool.refresh", { defaultValue: "刷新" })
+              }
+              className={cn(
+                "inline-flex h-7 w-7 items-center justify-center rounded-md",
+                "text-muted-foreground/70 hover:text-foreground hover:bg-muted/60",
+                "transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              )}
+            >
+              {isRefreshing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <Button
+              size="sm"
+              variant="outline"
+              type="button"
+              onClick={() => setAddingNew(true)}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              {t("apiKeyList.add", { defaultValue: "添加 Key" })}
+            </Button>
+          </div>
         )}
       </div>
 

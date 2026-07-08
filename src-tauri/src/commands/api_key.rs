@@ -204,6 +204,10 @@ pub async fn cmd_create_api_key(
     // per-key 文件。失败仅告警（不阻塞 UI）。
     refresh_per_key_live(&state, &saved.provider_id, &saved.app_type, Some(&saved.id));
 
+    // 同步刷新运行中的 KeyRing——用户在 takeover 模式下加 key 后，下一次
+    // next_key 必须立即看到新 key，否则只能等下次 30s flush tick 重载整个池。
+    reload_provider_keys(&state, &saved.provider_id, &saved.app_type);
+
     Ok(saved.into())
 }
 
@@ -265,6 +269,11 @@ pub async fn cmd_update_api_key(
     // key 在 on-disk 的副本过时——统一调一次。
     refresh_per_key_live(&state, &updated.provider_id, &updated.app_type, Some(&updated.id));
 
+    // 同步刷新运行中的 KeyRing——用户改了 label/api_key/enabled/sort_index 后，
+    // 下一次 next_key 必须立即看到新状态；不刷新则被 disable 的 key 仍可能
+    // 被选中、active 切换后 cursor 仍指老位置，直到下次 30s flush tick。
+    reload_provider_keys(&state, &updated.provider_id, &updated.app_type);
+
     Ok(updated.into())
 }
 
@@ -312,6 +321,10 @@ pub async fn cmd_delete_api_key(
     // DB row 已经删除——regen 内 stale-cleanup 会清掉 on-disk 文件。
     refresh_per_key_live(&state, &r.provider_id, &r.app_type, None);
 
+    // 同步刷新运行中的 KeyRing——被删的 key 必须立刻从内存池中清掉，
+    // 否则 next_key 仍可能选中它，cursor 也可能停在已删除的位置。
+    reload_provider_keys(&state, &r.provider_id, &r.app_type);
+
     Ok(DeletedApiKeyInfo {
         key_id: r.id,
         provider_id: r.provider_id,
@@ -332,7 +345,24 @@ pub async fn cmd_reorder_api_keys(
     state
         .db
         .reorder_api_keys(&app_type, &ordered_ids, now)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // 拖拽重排后刷新 KeyRing——cursor 必须立即重置到新 active 位置，
+    // 否则 round-robin 仍按老 sort_index 顺序选 key（直到下次 30s flush tick）。
+    // 当前命令签名只有 app_type + ordered_ids；通过查任一行的 provider_id
+    // 推断（一次单行 DB read，开销可忽略）。
+    if let Some(first_id) = ordered_ids.first() {
+        match state.db.get_api_key(first_id) {
+            Ok(Some(row)) => reload_provider_keys(&state, &row.provider_id, &app_type),
+            // 空 list / 行已被删（拖拽中途 race）：无需 reload。
+            Ok(None) => {}
+            Err(e) => log::warn!(
+                "[api_key] reorder 后查首行 provider_id 失败（key={first_id}）: {e}"
+            ),
+        }
+    }
+
+    Ok(())
 }
 
 // =====================================================================
@@ -475,6 +505,48 @@ pub async fn cmd_mark_key_usage_high(
         .proxy_service
         .notify_key_usage_high(&key_id, usage_percent, reset_at)
         .await)
+}
+
+// =====================================================================
+// KeyRing reload helper（per-mutation 触发）
+// =====================================================================
+//
+// 把"DB 写完后立即让运行中的 KeyRing 重新载入某 provider 的池"这一步抽到
+// 一个 helper，与 cmd_set_active_api_key 已经在用的 reload_provider_keys
+// 路径对齐（见 cmd_set_active_api_key:399-407）。
+//
+// 设计要点：
+// - **fire-and-forget** (`tokio::spawn`)：命令响应路径不阻塞在 KeyRing 重载
+//   上（reload_provider_keys 内部要读 DB + 写内存池，几十毫秒级）。当前请求
+//   不需要立即看到新 key，下一个请求看到就够了——这与 proxy_service 现有
+//   异步风格一致（failover_manager.try_switch 也是 tokio::spawn）。
+// - **代理未运行时 no-op**：`reload_provider_keys` 在 server.read().await
+//   拿到 None 时直接返回 Ok(())，所以 startup 期间的 cmd_create/delete 等
+//   不会 panic。
+// - **app_type 未知时 warn-and-skip**：理论上 schema 已约束，但保留防御
+//   ——避免把脏字符串传进 ProxyService 触发预期外错误。
+fn reload_provider_keys(state: &State<'_, AppState>, provider_id: &str, app_type: &str) {
+    use crate::app_config::AppType;
+    let at = match app_type {
+        "claude" => AppType::Claude,
+        "codex" => AppType::Codex,
+        "gemini" => AppType::Gemini,
+        "hermes" => AppType::Hermes,
+        "openclaw" => AppType::OpenClaw,
+        "opencode" => AppType::OpenCode,
+        "claude-desktop" => AppType::ClaudeDesktop,
+        other => {
+            log::warn!("[api_key] reload_provider_keys: 未知 app_type '{other}'");
+            return;
+        }
+    };
+    let proxy = state.proxy_service.clone();
+    let pid = provider_id.to_string();
+    tokio::spawn(async move {
+        if let Err(e) = proxy.reload_provider_keys(&pid, &at).await {
+            log::warn!("[api_key] KeyRing reload 失败 (provider={pid}): {e}");
+        }
+    });
 }
 
 // =====================================================================

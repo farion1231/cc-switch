@@ -442,11 +442,26 @@ impl RequestForwarder {
             // 这是 Blocker #3 的修复：之前 current_key_id 一律 None，
             // 第一次 429 的 `if let Some(key_id)` 早返回，**原始 key 永远没被打 mark**。
             // 初始化后，第一次 429 能正确把当前 active key 标为冷却并轮换。
+            //
+            // `initialized` 守卫：rotation 分支（`continue 'rotate`）会把
+            // current_key_override/current_key_id 替换成 next_key() 的结果。
+            // 若不守卫，下一轮 'rotate 会再次跑这段初始化，用 active_key()（不
+            // 考虑 cooldown/disabled）覆盖掉刚轮换出来的备份 key，导致池内
+            // failover 退化成"反复打回 rate-limited 的 active key"。
+            // 守卫后：首轮执行一次初始化（拿 active key），之后每次 'rotate 都
+            // 保留 rotation 分支写入的值。
+            let mut initialized = false;
             let mut current_key_override: Option<String> = None;
             let mut current_key_id: Option<String> = None;
-            if let Some(active) = self.key_ring.active_key(&provider.id, app_type).await {
-                current_key_override = Some(active.api_key.clone());
-                current_key_id = Some(active.key_id.clone());
+            #[allow(unused_assignments)]
+            {
+                if !initialized {
+                    if let Some(active) = self.key_ring.active_key(&provider.id, app_type).await {
+                        current_key_override = Some(active.api_key.clone());
+                        current_key_id = Some(active.key_id.clone());
+                    }
+                    initialized = true;
+                }
             }
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。

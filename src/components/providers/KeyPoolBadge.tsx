@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueries, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { KeyRound, AlertCircle, Clock, Battery, BatteryLow, BatteryMedium, BatteryFull, RefreshCw, Loader2, GripVertical } from "lucide-react";
 import {
@@ -197,7 +197,15 @@ export function KeyPoolList({
   // `isFetching` 翻 true → 用 Loader2 旋转图标给出反馈。
   // 注意：disable 状态由后端在「key 达到失败阈值时自动改 enabled=false」，
   // 也会反映在 `apiKeys` query 里——必须 invalidate 它。
-  const handleRefresh = () => {
+  //
+  // **forceRefreshTick 同步 +1**：让 disabled key 也能在本次刷新里
+  // 重新拉数据。普通 invalidate 对 disabled query 是 no-op（TanStack
+  // Query 文档明确「The query will ignore `invalidateQueries` and
+  // `refetchQueries` calls」），所以 +1 是必需的——具体见 useQueries 的
+  // `enabled` 判定注释。所有 query settle 后 effect 把 tick 归零。
+  const [forceRefreshTick, setForceRefreshTick] = useState(0);
+  const handleRefresh = useCallback(() => {
+    setForceRefreshTick((t) => t + 1);
     queryClient.invalidateQueries({
       queryKey: ["apiKeys", providerId, appId],
     });
@@ -209,7 +217,7 @@ export function KeyPoolList({
     queryClient.invalidateQueries({
       queryKey: ["usage", providerId, appId],
     });
-  };
+  }, [queryClient, providerId, appId, keys]);
 
   // 5h 配额窗口到点重置：每把 key 各自挂 setTimeout，倒计到 0 时由
   // <ApiKeyStatusBar onFiveHourResetReached> 触发本回调。我们只 invalidate
@@ -239,12 +247,16 @@ export function KeyPoolList({
   // 去重——同 keyId 多次出现（拖拽、re-render）只发一次请求。`enabled` 双控：
   //   - usageEnabled：父组件判断 provider 启用了 usage_script；
   //   - k.enabled：单把 key 关闭时不消耗一次 API 调用。
+  //   - **forceRefreshTick > 0**：用户主动点刷新按钮时临时「骗」React Query
+  //     打开所有 query，包括 k.enabled=false 的——见 handleRefresh 注释。
+  //     不用这条的话，被用户停用的 key 永远停在 invalidate 之前的旧缓存
+  //     上，是「7d 配额重置后进度条不更新」的根因。
   // query key 故意不带 providerId；keyId 唯一即可。
   const perKeyQueries = useQueries({
     queries: keys.map((k) => ({
       queryKey: ["keyUsage", k.id, appId] as const,
       queryFn: () => usageApi.queryForKey(providerId, k.id, appId),
-      enabled: usageEnabled && k.enabled,
+      enabled: usageEnabled && (k.enabled || forceRefreshTick > 0),
       retry: 1,
       retryDelay: 1500,
       staleTime:
@@ -280,6 +292,18 @@ export function KeyPoolList({
   });
   const isPerKeyFetching = perKeyQueries.some((q) => q.isFetching);
   const isRefreshing = isApiKeysFetching > 0 || isPerKeyFetching;
+
+  // forceRefreshTick 归零：所有相关 query 都 settle 后，把 tick 拉回 0，
+  // 让 enabled 判定恢复「k.enabled 必须为 true」——避免下一次组件
+  // re-render 仍然让 disabled key 持续触发 refetch。
+  // 「settle」= apiKeys 和 per-key 都不在 fetching 状态。effect 的依赖
+  // 里包含 forceRefreshTick，确保每次 +1 后都会重新评估 settle 条件。
+  // 与 ApiKeyListSection 的同名 effect 同源。
+  useEffect(() => {
+    if (forceRefreshTick === 0) return;
+    if (isApiKeysFetching > 0 || isPerKeyFetching) return;
+    setForceRefreshTick(0);
+  }, [forceRefreshTick, isApiKeysFetching, isPerKeyFetching]);
 
   if (keys.length === 0) return null;
 

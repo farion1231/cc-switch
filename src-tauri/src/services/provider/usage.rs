@@ -49,6 +49,10 @@ pub(crate) async fn query_special_template(
         // 火山方舟用账号 AK/SK 签名（与数据面 api_key 分离）；其他供应商 None。
         let access_key_id = usage_script.and_then(|s| s.access_key_id.clone());
         let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+        // 智谱团队版：base_url 与个人版相同，靠显式 provider 路由。
+        let coding_plan_provider = usage_script.and_then(|s| s.coding_plan_provider.clone());
+        let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
+        let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
         // MiniMax Coding Plan 缺 GroupId 时接口返回占位零值（误显示 0%）。
         let group_id = usage_script.and_then(|s| s.group_id.clone());
 
@@ -57,6 +61,9 @@ pub(crate) async fn query_special_template(
             api_key,
             access_key_id.as_deref(),
             secret_access_key.as_deref(),
+            coding_plan_provider.as_deref(),
+            team_organization_id.as_deref(),
+            team_project_id.as_deref(),
             group_id.as_deref(),
         )
         .await

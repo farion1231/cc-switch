@@ -753,6 +753,7 @@ mod tests {
                 r#"{"error":{"message":"Model only support text input Request id: 021783"}}"#
                     .to_string(),
             ),
+            retry_after_secs: None,
         };
 
         assert!(is_unsupported_image_error(&error));

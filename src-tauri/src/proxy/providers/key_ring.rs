@@ -394,16 +394,21 @@ impl KeyRing {
     /// 把内存中的 dirty 改动（cooldown / failure_count / last_used_at /
     /// last_error）持久化到 DB。失败仅告警——内存已更新，下次 tick 重试。
     ///
-    /// 锁顺序：
+    /// 锁顺序（与 mark_* 一致：`pools` → `dirty`）：
     ///   1. `dirty.read()` 收集所有 dirty key 列表（短持锁）
-    ///   2. `pools.write()` 短暂持锁，clone 出每个 key 的运行时快照
+    ///   2. `pools.write()` 短暂持锁，clone 出每个 key 的运行时快照，
+    ///      同时记下"该 key 是否仍在任何池中"（用于 stale 清理）
     ///   3. 释放 pools 锁
     ///   4. **DB 写在锁外**——`db.write_api_key_runtime` 是 sync 调用（~1ms/key），
     ///      不能阻塞 forwarder 的 `next_key` / `snapshot` 读路径
-    ///   5. 拿 `dirty.write()`，移除已成功持久化的 key
+    ///   5. 拿 `dirty.write()`，移除已成功持久化的 key + stale 入口（仅同步操作）
     ///
-    /// 与 `mark_*` 反向锁序（pools → dirty）：flush 路径"先 dirty 后 pools"，
-    /// mark 路径"先 pools 后 dirty"。两路径各取一个锁时不会循环等待。
+    /// 关键不变量：拿 `dirty.write()` 期间绝不 await 任何 `pools` 锁——否则与
+    /// `apply_update`（pools → dirty）形成 AB-BA 死锁。
+    /// 所有 "key 是否仍在池中" 的判断都在 Step 2 持 pools 锁时同步完成。
+    ///
+    /// 与 `mark_*` 共用同一锁顺序（pools → dirty）：所有路径都先 pools 后 dirty，
+    /// 任何路径各持一个锁时不会循环等待。
     pub async fn flush_dirty(&self, db: &Database) -> Result<usize, AppError> {
         let dirty_keys: Vec<String> = {
             let dirty = self.dirty.read().await;
@@ -413,78 +418,86 @@ impl KeyRing {
             return Ok(0);
         }
 
-        // Step 1: 在持有 pools 锁期间收集快照（DB 写需要的字段）。
+        // Step 1: 在持有 pools 锁期间收集快照（DB 写需要的字段），同时记录
+        // 每个 dirty key 是否仍在任何池中（用于后续 stale 清理）。
+        //
         // 这一段保持锁，迫使 forwarder 短暂等待，但写入逻辑很轻（仅 clone 字段），
         // 不是原来的"边 hold 锁边做 sync DB 写"那种长临界区。
+        //
+        // 关键："is_in_pool" 在此一次性算出，**不在 Step 3 重取 pools 锁**——
+        // Step 3 持 dirty.write() 期间绝不能 await pools 锁，否则与
+        // mark_failure / apply_update（pools → dirty）形成 AB-BA 死锁。
         let now = chrono::Utc::now().timestamp();
-        let to_persist: Vec<(String, i64, i64, Option<i64>, Option<String>)> = {
+        // snapshots[i] 是 Option：Some = 仍在池中 + 运行时快照；None = 已不在池中（stale）
+        let snapshots: Vec<Option<(String, i64, i64, Option<i64>, Option<String>)>> = {
             let mut pools = self.pools.write().await;
-            let mut out = Vec::with_capacity(dirty_keys.len());
-            for key_id in &dirty_keys {
-                if let Some(snapshot) = pools.values_mut().find_map(|pool| {
-                    pool.iter_mut().find(|k| &k.key_id == key_id).map(|k| {
-                        if k.last_used_at.is_none() {
-                            k.last_used_at = Some(now);
+            dirty_keys
+                .iter()
+                .map(|key_id| {
+                    let mut found = None;
+                    for pool in pools.values_mut() {
+                        if let Some(k) = pool.iter_mut().find(|k| &k.key_id == key_id) {
+                            if k.last_used_at.is_none() {
+                                k.last_used_at = Some(now);
+                            }
+                            let snap = (
+                                k.key_id.clone(),
+                                k.cooldown_until,
+                                k.failure_count,
+                                k.last_used_at,
+                                k.last_error.clone(),
+                            );
+                            found = Some(snap);
+                            break;
                         }
-                        (
-                            k.key_id.clone(),
-                            k.cooldown_until,
-                            k.failure_count,
-                            k.last_used_at,
-                            k.last_error.clone(),
-                        )
-                    })
-                }) {
-                    out.push(snapshot);
-                }
-            }
-            out
+                    }
+                    found
+                })
+                .collect()
         };
         // 锁在此释放（pools write guard drop）
 
         // Step 2: 在无锁状态下写 DB（失败仅告警，不阻断 forwarder 读路径）。
-        let mut persisted_keys: Vec<String> = Vec::with_capacity(to_persist.len());
-        for (key_id, cooldown_until, failure_count, last_used_at, last_error) in to_persist {
+        // to_persist 只含仍在池中的 key——已被删除的 key 在 Step 1 时
+        // found == None，自然跳过 DB 写，留在 dirty 等 Step 3 当 stale 清掉。
+        let mut persisted_keys: Vec<String> = Vec::with_capacity(snapshots.len());
+        for (key_id, cooldown_until, failure_count, last_used_at, last_error) in
+            snapshots.iter().flatten()
+        {
             if let Err(e) = db.write_api_key_runtime(
-                &key_id,
-                cooldown_until,
-                failure_count,
-                last_used_at,
+                key_id,
+                *cooldown_until,
+                *failure_count,
+                *last_used_at,
                 last_error.as_deref(),
                 now,
             ) {
-                log::warn!("[KeyRing] flush dirty key={} 失败: {e}", key_id);
+                log::warn!("[KeyRing] flush dirty key={key_id} 失败: {e}");
                 continue;
             }
-            persisted_keys.push(key_id);
+            persisted_keys.push(key_id.clone());
         }
 
         // Step 3: 把"已被处理"的 key（写成功 + 池中找不到 / 已被删除）从 dirty 集合移除。
         // —— 之前只移写成功的，留下了"已被 delete 但仍在 dirty"的脏 entry，
         // 下次 flush_dirty 又重新尝试并失败，永久 stuck。修复：池中找不到也视作处理完。
+        //
+        // 严格同步 critical section——不 await 任何 pools 锁。判断"该 key 是否仍在池中"
+        // 完全复用 Step 1 的 `snapshots` 结果（在那里已经一次性取过了）。
         let mut dirty = self.dirty.write().await;
         // 先把写成功的移走
         for key_id in &persisted_keys {
             dirty.remove(key_id);
         }
-        // 再扫描 dirty 集合：如果某 key 在 pools 里找不到，永久清掉（避免 stuck）；
-        // 写失败但 pools 仍有 → 留在 dirty 等下次 tick 重试。
-        let stale: Vec<String> = {
-            let pools = self.pools.read().await;
-            dirty
-                .iter()
-                .filter(|key_id| {
-                    !persisted_keys.contains(*key_id)
-                        && !pools
-                            .values()
-                            .any(|pool| pool.iter().any(|k| &k.key_id == *key_id))
-                })
-                .cloned()
-                .collect()
-        };
-        for key_id in &stale {
-            dirty.remove(key_id);
-            log::debug!("[KeyRing] dropped stale dirty key={key_id} (no longer in pool)");
+        // 再清理 stale：snapshots 中 found == None 意味着该 key 已不在任何池中。
+        // 即便 Step 2 之后并发 mark 又把它 dirty 回去，下一次 30s tick 仍会处理——
+        // 当前 tick 与并发 mark 的最坏竞争是"我们刚清掉它、mark 立刻又加回来"，
+        // 那是良性竞争：mark 的 runtime 数据本就需要持久化，让下一个 flush tick 做。
+        for (key_id, snap_opt) in dirty_keys.iter().zip(snapshots.iter()) {
+            if snap_opt.is_none() {
+                dirty.remove(key_id);
+                log::debug!("[KeyRing] dropped stale dirty key={key_id} (no longer in pool)");
+            }
         }
         Ok(persisted_keys.len())
     }
@@ -1309,6 +1322,97 @@ mod tests {
             d.len()
         };
         assert_eq!(dirty_size, 0, "dirty must be drained after successful flush");
+        Ok(())
+    }
+
+    /// 防回归：flush_dirty 不应在"池中没有该 dirty key"时仍尝试持久化。
+    /// 修复前 Step 3 在 dirty.write() 期间 await pools.read()——与 mark_failure
+    /// 的 pools → dirty 锁序形成 AB-BA 死锁。修复后 Step 3 完全同步，
+    /// "key 是否仍在池中" 在 Step 1 持 pools 锁时一次性算出。
+    #[tokio::test]
+    async fn flush_dirty_drops_keys_no_longer_in_pool() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        seed_provider(&db, "p1", "claude")?;
+        let k = make_key("k0", 0, true);
+        db.insert_api_key(&k)?;
+
+        let ring = KeyRing::new();
+        ring.reload_from_db(&db).await?;
+
+        // 把 k0 标记为 dirty
+        ring.mark_failure("k0", "transient").await;
+
+        // 模拟 key 被从池中清掉（reload 后只剩下 k0 的 dirtyp 入口）
+        ring.invalidate_provider("p1", &AppType::Claude).await;
+
+        // flush 应正确清理 stale dirty，不报 NOT FOUND 错误，不死锁
+        let written = ring.flush_dirty(&db).await?;
+        assert_eq!(written, 0, "no key in pool → nothing to persist");
+
+        // dirty 集合应为空——这是死锁修复的次要目标：
+        // 防止"deleted key 留在 dirty → 每次 flush 重新尝试 → 永远 stuck"
+        let dirty_size = {
+            let d = ring.dirty.read().await;
+            d.len()
+        };
+        assert_eq!(dirty_size, 0, "stale dirty entries must be cleaned");
+        Ok(())
+    }
+
+    /// 防回归：并发 mark + flush + reload_provider 必须不挂死。
+    /// 锁定 invariant：flush_dirty 的 dirty.write() 关键段内不 await pools 锁。
+    /// 如果 invariant 被打破（如重新引入 stale-scan 的 pools.read()），
+    /// 测试会在 3s 内 panic。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn flush_dirty_does_not_deadlock_under_concurrent_reload() -> Result<(), AppError> {
+        let db = std::sync::Arc::new(Database::memory()?);
+        seed_provider(&db, "p1", "claude")?;
+        let k = make_key("k0", 0, true);
+        db.insert_api_key(&k)?;
+
+        let ring = std::sync::Arc::new(KeyRing::new());
+        ring.reload_from_db(&db).await?;
+
+        // 模拟"用户高频 CRUD + flush tick"的真实场景：
+        // - 1 个 mark 任务持续 mark_failure/mark_success
+        // - 1 个 flush tick 任务持续 flush_dirty
+        // - 1 个 reload 任务持续 reload_provider（模拟 cmd_create/delete）
+        // 三者并发跑应该都不挂。
+        let work = async {
+            let r1 = ring.clone();
+            let mark_handle = tokio::spawn(async move {
+                for _ in 0..200 {
+                    r1.mark_failure("k0", "boom").await;
+                    r1.mark_success("k0").await;
+                    tokio::task::yield_now().await;
+                }
+            });
+
+            let r2 = ring.clone();
+            let db2 = db.clone();
+            let flush_handle = tokio::spawn(async move {
+                for _ in 0..50 {
+                    let _ = r2.flush_dirty(&db2).await;
+                    tokio::task::yield_now().await;
+                }
+            });
+
+            let r3 = ring.clone();
+            let db3 = db.clone();
+            let reload_handle = tokio::spawn(async move {
+                for _ in 0..20 {
+                    let _ = r3.reload_provider(&db3, "p1", "claude").await;
+                    tokio::task::yield_now().await;
+                }
+            });
+
+            for h in [mark_handle, flush_handle, reload_handle] {
+                h.await.unwrap();
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(3), work)
+            .await
+            .expect("concurrent mark/flush/reload must not deadlock");
         Ok(())
     }
 
