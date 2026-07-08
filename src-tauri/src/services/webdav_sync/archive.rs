@@ -15,7 +15,12 @@ use crate::services::sync_protocol::{
 };
 
 /// Maximum number of entries allowed in a zip archive.
-const MAX_EXTRACT_ENTRIES: usize = 10_000;
+///
+/// 打包侧（`zip_skills_ssot`）没有条目数限制，真正的 zip-bomb 防线是
+/// `MAX_SYNC_ARTIFACT_BYTES` 的解压总量上限；此处的条目数只用于拦截
+/// 病态的海量小文件压缩包。大型 skill 集合（如包含完整仓库的 skills）
+/// 很容易超过 1 万个文件，因此上限需明显高于正常使用规模（#5024）。
+const MAX_EXTRACT_ENTRIES: usize = 100_000;
 
 pub(crate) struct SkillsBackup {
     _tmp: TempDir,
@@ -89,19 +94,7 @@ pub(crate) fn restore_skills_zip(raw: &[u8]) -> Result<(), AppError> {
     let extracted = tmp.path().join("skills-extracted");
     fs::create_dir_all(&extracted).map_err(|e| AppError::io(&extracted, e))?;
 
-    if archive.len() > MAX_EXTRACT_ENTRIES {
-        return Err(localized(
-            "webdav.sync.skills_zip_too_many_entries",
-            format!(
-                "skills.zip 条目数过多（{}），上限 {MAX_EXTRACT_ENTRIES}",
-                archive.len()
-            ),
-            format!(
-                "skills.zip has too many entries ({}), limit is {MAX_EXTRACT_ENTRIES}",
-                archive.len()
-            ),
-        ));
-    }
+    ensure_extract_entry_count(archive.len())?;
 
     let mut total_bytes: u64 = 0;
     for idx in 0..archive.len() {
@@ -331,6 +324,17 @@ fn mark_visited_dir(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<bool,
     Ok(visited.insert(canonical))
 }
 
+fn ensure_extract_entry_count(count: usize) -> Result<(), AppError> {
+    if count > MAX_EXTRACT_ENTRIES {
+        return Err(localized(
+            "webdav.sync.skills_zip_too_many_entries",
+            format!("skills.zip 条目数过多（{count}），上限 {MAX_EXTRACT_ENTRIES}"),
+            format!("skills.zip has too many entries ({count}), limit is {MAX_EXTRACT_ENTRIES}"),
+        ));
+    }
+    Ok(())
+}
+
 fn copy_entry_with_total_limit<R: Read, W: Write>(
     reader: &mut R,
     writer: &mut W,
@@ -368,11 +372,31 @@ fn copy_entry_with_total_limit<R: Read, W: Write>(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_entry_with_total_limit, mark_visited_dir};
+    use super::{
+        copy_entry_with_total_limit, ensure_extract_entry_count, mark_visited_dir,
+        MAX_EXTRACT_ENTRIES,
+    };
     use std::collections::HashSet;
     use std::io::Cursor;
     use std::path::Path;
     use tempfile::tempdir;
+
+    // 大型 skill 集合可能包含数万个文件，条目数上限必须容纳正常规模（#5024）。
+    #[test]
+    fn ensure_extract_entry_count_allows_large_skill_collections() {
+        assert!(ensure_extract_entry_count(10_001).is_ok());
+        assert!(ensure_extract_entry_count(MAX_EXTRACT_ENTRIES).is_ok());
+    }
+
+    #[test]
+    fn ensure_extract_entry_count_rejects_pathological_archives() {
+        let err = ensure_extract_entry_count(MAX_EXTRACT_ENTRIES + 1)
+            .expect_err("entry count above the limit should be rejected");
+        assert!(
+            err.to_string().contains("too many entries") || err.to_string().contains("条目数过多"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[test]
     fn mark_visited_dir_tracks_canonical_duplicates() {
