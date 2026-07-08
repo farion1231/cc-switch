@@ -26,6 +26,7 @@ import {
   CACHE_INCLUSIVE_APP_TYPES,
   type AppType,
   type UsageRangeSelection,
+  type UsageSourceFilter,
   type UsageSummary,
   type UsageSummaryByApp,
 } from "@/types/usage";
@@ -33,6 +34,7 @@ import {
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
+  source?: UsageSourceFilter;
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
@@ -161,6 +163,7 @@ function AppGlyph({
 export function UsageHero({
   range,
   appType,
+  source,
   providerName,
   model,
   refreshIntervalMs,
@@ -170,7 +173,7 @@ export function UsageHero({
 
   const { data, isLoading } = useUsageSummaryByApp(
     range,
-    { providerName, model },
+    { source, providerName, model },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },

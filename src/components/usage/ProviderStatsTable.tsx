@@ -9,11 +9,12 @@ import {
 } from "@/components/ui/table";
 import { useProviderStats } from "@/lib/query/usage";
 import { fmtUsd } from "./format";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { UsageRangeSelection, UsageSourceFilter } from "@/types/usage";
 
 interface ProviderStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
+  source?: UsageSourceFilter;
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
@@ -22,6 +23,7 @@ interface ProviderStatsTableProps {
 export function ProviderStatsTable({
   range,
   appType,
+  source,
   providerName,
   model,
   refreshIntervalMs,
@@ -29,7 +31,7 @@ export function ProviderStatsTable({
   const { t } = useTranslation();
   const { data: stats, isLoading } = useProviderStats(
     range,
-    { appType, providerName, model },
+    { appType, source, providerName, model },
     {
       refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
     },

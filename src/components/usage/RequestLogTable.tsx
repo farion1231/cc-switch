@@ -23,6 +23,7 @@ import {
   isUnpricedUsage,
   type LogFilters,
   type UsageRangeSelection,
+  type UsageSourceFilter,
 } from "@/types/usage";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
@@ -37,6 +38,7 @@ interface RequestLogTableProps {
   range: UsageRangeSelection;
   rangeLabel: string;
   appType?: string;
+  source?: UsageSourceFilter;
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
@@ -47,6 +49,7 @@ export function RequestLogTable({
   range,
   rangeLabel,
   appType: dashboardAppType,
+  source,
   providerName,
   model,
   refreshIntervalMs,
@@ -66,6 +69,7 @@ export function RequestLogTable({
       dashboardAppType && dashboardAppType !== "all"
         ? dashboardAppType
         : undefined,
+    source: source && source !== "all" ? source : undefined,
     providerName,
     model,
     statusCode,
@@ -93,7 +97,10 @@ export function RequestLogTable({
     model,
     range.customEndDate,
     range.customStartDate,
+    range.liveEndTime,
     range.preset,
+    source,
+    statusCode,
   ]);
 
   const handleGoToPage = () => {

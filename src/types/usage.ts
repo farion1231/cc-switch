@@ -36,6 +36,13 @@ export interface RequestLog {
   dataSource?: string;
 }
 
+export type UsageSourceFilter =
+  | "all"
+  | "local"
+  | "remote"
+  | `remote:${string}`
+  | `multi:${string}`;
+
 export interface SessionSyncResult {
   imported: number;
   skipped: number;
@@ -115,6 +122,7 @@ export interface ModelStats {
 
 export interface LogFilters {
   appType?: string;
+  source?: UsageSourceFilter;
   providerName?: string;
   model?: string;
   statusCode?: number;
@@ -132,6 +140,7 @@ export interface LogFilters {
  */
 export interface UsageScopeFilters {
   appType?: string;
+  source?: UsageSourceFilter;
   providerName?: string;
   model?: string;
 }

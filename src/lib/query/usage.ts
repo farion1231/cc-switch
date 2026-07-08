@@ -5,6 +5,7 @@ import type {
   LogFilters,
   UsageRangeSelection,
   UsageScopeFilters,
+  UsageSourceFilter,
 } from "@/types/usage";
 
 const DEFAULT_REFETCH_INTERVAL_MS = 30000;
@@ -28,6 +29,7 @@ type RequestLogsKey = {
   customEndDate?: number;
   liveEndTime?: boolean;
   appType?: string;
+  source?: UsageSourceFilter;
   providerName?: string;
   model?: string;
   statusCode?: number;
@@ -51,6 +53,7 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.source ?? "all",
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
@@ -58,7 +61,7 @@ export const usageKeys = {
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+    filters?: Pick<UsageScopeFilters, "source" | "providerName" | "model">,
     liveEndTime?: boolean,
   ) =>
     [
@@ -68,6 +71,7 @@ export const usageKeys = {
       customStartDate ?? 0,
       customEndDate ?? 0,
       liveEndTime ?? false,
+      filters?.source ?? "all",
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
@@ -86,6 +90,7 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.source ?? "all",
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
@@ -104,6 +109,7 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.source ?? "all",
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
@@ -122,6 +128,7 @@ export const usageKeys = {
       customEndDate ?? 0,
       liveEndTime ?? false,
       filters?.appType ?? null,
+      filters?.source ?? "all",
       filters?.providerName ?? null,
       filters?.model ?? null,
     ] as const,
@@ -134,6 +141,7 @@ export const usageKeys = {
       key.customEndDate ?? 0,
       key.liveEndTime ?? false,
       key.appType ?? "",
+      key.source ?? "all",
       key.providerName ?? "",
       key.model ?? "",
       key.statusCode ?? -1,
@@ -150,9 +158,12 @@ export const usageKeys = {
 };
 
 /** 把 UI 侧的 "all" 哨兵归一成 undefined（后端语义：不过滤）。 */
-function normalizeScopeFilters(filters?: UsageScopeFilters): UsageScopeFilters {
+function normalizeScopeFilters(
+  filters?: Partial<UsageScopeFilters>,
+): UsageScopeFilters {
   return {
     appType: filters?.appType === "all" ? undefined : filters?.appType,
+    source: filters?.source === "all" ? undefined : filters?.source,
     providerName: filters?.providerName,
     model: filters?.model,
   };
@@ -179,6 +190,7 @@ export function useUsageSummary(
         startDate,
         endDate,
         effective.appType,
+        effective.source,
         effective.providerName,
         effective.model,
       );
@@ -190,15 +202,16 @@ export function useUsageSummary(
 
 export function useUsageSummaryByApp(
   range: UsageRangeSelection,
-  filters?: Pick<UsageScopeFilters, "providerName" | "model">,
+  filters?: Pick<UsageScopeFilters, "source" | "providerName" | "model">,
   options?: UsageQueryOptions,
 ) {
+  const effective = normalizeScopeFilters(filters);
   return useQuery({
     queryKey: usageKeys.summaryByApp(
       range.preset,
       range.customStartDate,
       range.customEndDate,
-      filters,
+      effective,
       range.liveEndTime,
     ),
     queryFn: () => {
@@ -206,8 +219,9 @@ export function useUsageSummaryByApp(
       return usageApi.getUsageSummaryByApp(
         startDate,
         endDate,
-        filters?.providerName,
-        filters?.model,
+        effective.source,
+        effective.providerName,
+        effective.model,
       );
     },
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
@@ -235,6 +249,7 @@ export function useUsageTrends(
         startDate,
         endDate,
         effective.appType,
+        effective.source,
         effective.providerName,
         effective.model,
       );
@@ -264,6 +279,7 @@ export function useProviderStats(
         startDate,
         endDate,
         effective.appType,
+        effective.source,
         effective.providerName,
         effective.model,
       );
@@ -293,6 +309,7 @@ export function useModelStats(
         startDate,
         endDate,
         effective.appType,
+        effective.source,
         effective.providerName,
         effective.model,
       );
@@ -315,6 +332,7 @@ export function useRequestLogs({
     customEndDate: range.customEndDate,
     liveEndTime: range.liveEndTime,
     appType: filters.appType,
+    source: filters.source,
     providerName: filters.providerName,
     model: filters.model,
     statusCode: filters.statusCode,
@@ -326,7 +344,7 @@ export function useRequestLogs({
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }

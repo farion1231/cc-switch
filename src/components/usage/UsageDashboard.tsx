@@ -10,17 +10,32 @@ import {
   type AppType,
   type AppTypeFilter,
   type UsageRangeSelection,
+  type UsageSourceFilter,
 } from "@/types/usage";
 import { motion } from "framer-motion";
 import {
   BarChart3,
+  ChevronDown,
+  Database,
+  HardDrive,
   ListFilter,
   Activity,
   RefreshCw,
   Coins,
   LayoutGrid,
+  Server,
+  Trash2,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -28,9 +43,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usageKeys, useModelStats, useProviderStats } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
+import { usageApi } from "@/lib/api/usage";
 import {
   Accordion,
   AccordionContent,
@@ -43,8 +59,36 @@ import { getLocaleFromLanguage } from "./format";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { toast } from "sonner";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
+const SOURCE_MULTI_SEPARATOR = "\u001f";
+type SourceMode = "all" | "local" | "remote";
+type RemoteSourceOption = `remote:${string}`;
+
+const remoteHostFromSource = (source: string) =>
+  source.startsWith("remote:") ? source.slice("remote:".length) : "";
+
+const serializeSourceFilter = (
+  sourceMode: SourceMode,
+  selectedRemoteSources: RemoteSourceOption[],
+): UsageSourceFilter => {
+  if (sourceMode !== "remote") {
+    return sourceMode;
+  }
+
+  if (selectedRemoteSources.length === 0) {
+    return "remote";
+  }
+
+  if (selectedRemoteSources.length === 1) {
+    return selectedRemoteSources[0];
+  }
+
+  return `multi:${selectedRemoteSources.join(SOURCE_MULTI_SEPARATOR)}`;
+};
 
 // 0 表示关闭自动刷新（refetchInterval=false）
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
@@ -69,17 +113,36 @@ export function UsageDashboard() {
   const queryClient = useQueryClient();
   const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("all");
+  const [selectedRemoteSources, setSelectedRemoteSources] = useState<
+    RemoteSourceOption[]
+  >([]);
+  const [deleteRemoteSource, setDeleteRemoteSource] =
+    useState<RemoteSourceOption | null>(null);
   const [providerName, setProviderName] = useState<string | undefined>(
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
 
-  // 切应用时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
+  const source = useMemo(
+    () => serializeSourceFilter(sourceMode, selectedRemoteSources),
+    [selectedRemoteSources, sourceMode],
+  );
+
+  // 切应用/来源时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
   // 切 Provider 同理清掉模型（模型选项随 Provider 级联）。
   const changeAppType = (next: AppTypeFilter) => {
     setAppType(next);
     if (next !== appType) {
+      setProviderName(undefined);
+      setModel(undefined);
+    }
+  };
+  const changeSourceMode = (next: SourceMode) => {
+    setSourceMode(next);
+    if (next !== sourceMode) {
+      setSelectedRemoteSources([]);
       setProviderName(undefined);
       setModel(undefined);
     }
@@ -94,6 +157,13 @@ export function UsageDashboard() {
   // 后端写入新日志时 emit `usage-log-recorded`，本 hook 立刻 invalidate 所有
   // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
   useUsageEventBridge();
+
+  const { data: dataSources } = useQuery({
+    queryKey: [...usageKeys.all, "data-sources"],
+    queryFn: usageApi.getDataSourceBreakdown,
+    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    refetchIntervalInBackground: false,
+  });
 
   const changeRefreshInterval = (next: number) => {
     setRefreshIntervalMs(next);
@@ -122,6 +192,82 @@ export function UsageDashboard() {
     return `${startStr} - ${endStr}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
+  const remoteSourceOptions = useMemo(() => {
+    const remoteSources =
+      dataSources
+        ?.map((item) => item.dataSource)
+        .filter((item): item is RemoteSourceOption =>
+          item.startsWith("remote:"),
+        ) ?? [];
+    return Array.from(new Set(remoteSources));
+  }, [dataSources]);
+
+  const toggleRemoteSource = (option: RemoteSourceOption) => {
+    setSourceMode("remote");
+    setProviderName(undefined);
+    setModel(undefined);
+    setSelectedRemoteSources((previous) => {
+      const next = previous.includes(option)
+        ? previous.filter((item) => item !== option)
+        : [...previous, option];
+      return Array.from(new Set(next));
+    });
+  };
+
+  const getRemoteSourceLabel = (option: RemoteSourceOption) =>
+    t("usage.sourceFilter.remoteHost", {
+      defaultValue: "{{host}}",
+      host: remoteHostFromSource(option),
+    });
+
+  const deleteRemoteUsageMutation = useMutation({
+    mutationFn: (dataSource: RemoteSourceOption) =>
+      usageApi.deleteRemoteUsageData(dataSource),
+    onSuccess: (result, dataSource) => {
+      setSelectedRemoteSources((previous) =>
+        previous.filter((item) => item !== dataSource),
+      );
+      setDeleteRemoteSource(null);
+      void queryClient.invalidateQueries({ queryKey: usageKeys.all });
+      toast.success(
+        t("usage.sourceFilter.deleteSuccess", {
+          defaultValue: "已删除远端用量数据",
+        }),
+        {
+          description: t("usage.sourceFilter.deleteSuccessDescription", {
+            defaultValue:
+              "删除 {{logs}} 条明细、{{rollups}} 条聚合、{{states}} 条同步状态",
+            logs: result.deletedRequestLogs,
+            rollups: result.deletedRollups,
+            states: result.deletedSyncStates,
+          }),
+        },
+      );
+    },
+    onError: (error) => {
+      toast.error(
+        t("usage.sourceFilter.deleteFailed", {
+          defaultValue: "删除远端用量数据失败",
+        }),
+        { description: extractErrorMessage(error) },
+      );
+    },
+  });
+
+  const remoteModeLabel = useMemo(() => {
+    if (selectedRemoteSources.length === 0) {
+      return t("usage.sourceFilter.remote", { defaultValue: "仅远程" });
+    }
+    if (selectedRemoteSources.length > 1) {
+      return t("usage.sourceFilter.remoteHostCount", {
+        defaultValue: "{{count}} 台远端",
+        count: selectedRemoteSources.length,
+      });
+    }
+
+    return getRemoteSourceLabel(selectedRemoteSources[0]);
+  }, [selectedRemoteSources, t]);
+
   // 顶栏下拉的选项池：Provider 列表只跟应用/时间范围走（不受自身选中值影响），
   // 模型列表随所选 Provider 级联。两者都只列当前范围内真实有数据的条目。
   // refetchInterval 必须跟随面板的刷新设置——未筛选时这两个查询与统计表共享
@@ -132,12 +278,12 @@ export function UsageDashboard() {
   };
   const { data: providerOptionsData } = useProviderStats(
     range,
-    { appType },
+    { appType, source },
     optionsRefetch,
   );
   const { data: modelOptionsData } = useModelStats(
     range,
-    { appType, providerName },
+    { appType, source, providerName },
     optionsRefetch,
   );
 
@@ -206,6 +352,130 @@ export function UsageDashboard() {
                 </button>
               );
             })}
+          </div>
+
+          <div className="mx-2 h-5 w-px bg-border" />
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => changeSourceMode("all")}
+              className={cn(
+                "inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                sourceMode === "all"
+                  ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
+                  : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
+              )}
+            >
+              <Database className="h-3.5 w-3.5" />
+              {t("usage.sourceFilter.all", { defaultValue: "全部" })}
+            </button>
+            <button
+              type="button"
+              onClick={() => changeSourceMode("local")}
+              className={cn(
+                "inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                sourceMode === "local"
+                  ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
+                  : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
+              )}
+            >
+              <HardDrive className="h-3.5 w-3.5" />
+              {t("usage.sourceFilter.local", { defaultValue: "仅本地" })}
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setSourceMode("remote")}
+                  className={cn(
+                    "inline-flex h-9 max-w-[13rem] items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                    sourceMode === "remote"
+                      ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
+                      : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
+                  )}
+                >
+                  <Server className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {sourceMode === "remote"
+                      ? remoteModeLabel
+                      : t("usage.sourceFilter.remote", {
+                          defaultValue: "仅远程",
+                        })}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuLabel>
+                  {t("usage.sourceFilter.label", {
+                    defaultValue: "数据来源",
+                  })}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setSourceMode("remote");
+                    setSelectedRemoteSources([]);
+                    setProviderName(undefined);
+                    setModel(undefined);
+                  }}
+                  className="pl-2"
+                >
+                  <Server className="h-3.5 w-3.5" />
+                  <span className="truncate">
+                    {t("usage.sourceFilter.remoteAggregateTitle", {
+                      defaultValue: "仅统计所有远端服务器",
+                    })}
+                  </span>
+                </DropdownMenuItem>
+                {remoteSourceOptions.length > 0 ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    {remoteSourceOptions.map((option) => (
+                      <DropdownMenuCheckboxItem
+                        key={option}
+                        checked={selectedRemoteSources.includes(option)}
+                        onCheckedChange={() => toggleRemoteSource(option)}
+                        onSelect={(event) => event.preventDefault()}
+                        className="gap-2 pl-8 pr-2"
+                      >
+                        <Server className="h-3.5 w-3.5" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {getRemoteSourceLabel(option)}
+                        </span>
+                        <button
+                          type="button"
+                          className="ml-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          title={t("usage.sourceFilter.deleteRemote", {
+                            defaultValue: "删除该远端数据",
+                          })}
+                          aria-label={t("usage.sourceFilter.deleteRemote", {
+                            defaultValue: "删除该远端数据",
+                          })}
+                          disabled={deleteRemoteUsageMutation.isPending}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setDeleteRemoteSource(option);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </>
+                ) : (
+                  <div className="px-2 py-2 text-xs text-muted-foreground">
+                    {t("usage.sourceFilter.remoteEmpty", {
+                      defaultValue: "暂无远端数据",
+                    })}
+                  </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <Select
@@ -296,6 +566,7 @@ export function UsageDashboard() {
       <UsageHero
         range={range}
         appType={appType === "all" ? undefined : appType}
+        source={source}
         providerName={providerName}
         model={model}
         refreshIntervalMs={refreshIntervalMs}
@@ -305,6 +576,7 @@ export function UsageDashboard() {
         range={range}
         rangeLabel={rangeLabel}
         appType={appType}
+        source={source}
         providerName={providerName}
         model={model}
         refreshIntervalMs={refreshIntervalMs}
@@ -339,6 +611,7 @@ export function UsageDashboard() {
                 range={range}
                 rangeLabel={rangeLabel}
                 appType={appType}
+                source={source}
                 providerName={providerName}
                 model={model}
                 refreshIntervalMs={refreshIntervalMs}
@@ -350,6 +623,7 @@ export function UsageDashboard() {
               <ProviderStatsTable
                 range={range}
                 appType={appType}
+                source={source}
                 providerName={providerName}
                 model={model}
                 refreshIntervalMs={refreshIntervalMs}
@@ -360,6 +634,7 @@ export function UsageDashboard() {
               <ModelStatsTable
                 range={range}
                 appType={appType}
+                source={source}
                 providerName={providerName}
                 model={model}
                 refreshIntervalMs={refreshIntervalMs}
@@ -392,6 +667,36 @@ export function UsageDashboard() {
           </AccordionContent>
         </AccordionItem>
       </Accordion>
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteRemoteSource)}
+        title={t("usage.sourceFilter.deleteConfirmTitle", {
+          defaultValue: "删除远端用量数据？",
+        })}
+        message={t("usage.sourceFilter.deleteConfirmMessage", {
+          defaultValue:
+            "这只会删除本地数据库中 {{host}} 的远端用量记录和同步状态，不会删除远端服务器上的日志文件。之后重新同步会重新导入该服务器的用量。",
+          host: deleteRemoteSource
+            ? remoteHostFromSource(deleteRemoteSource)
+            : "",
+        })}
+        confirmText={
+          deleteRemoteUsageMutation.isPending
+            ? t("common.deleting", { defaultValue: "删除中..." })
+            : t("common.delete", { defaultValue: "删除" })
+        }
+        cancelText={t("common.cancel")}
+        onConfirm={() => {
+          if (deleteRemoteSource && !deleteRemoteUsageMutation.isPending) {
+            deleteRemoteUsageMutation.mutate(deleteRemoteSource);
+          }
+        }}
+        onCancel={() => {
+          if (!deleteRemoteUsageMutation.isPending) {
+            setDeleteRemoteSource(null);
+          }
+        }}
+      />
     </motion.div>
   );
 }

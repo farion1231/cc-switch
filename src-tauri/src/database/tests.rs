@@ -346,17 +346,22 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 }
 
 #[test]
-fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
+fn migration_v10_to_current_rebuilds_rollups_with_usage_dimensions() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
-    // 模拟 v10 形状的 rollup 表（主键不含 request_model）+ 一行历史聚合数据，
-    // 以及 v10 形状的明细表（无 pricing_model 列）
+    // 模拟 v10 形状的 rollup 表（主键不含 data_source/request_model/pricing_model）
+    // + 一行历史聚合数据，以及 v10 形状的明细表（无 data_source/pricing_model 列）。
     conn.execute_batch(
         r#"
         CREATE TABLE proxy_request_logs (
             request_id TEXT PRIMARY KEY,
+            provider_id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
             model TEXT NOT NULL,
-            request_model TEXT
+            request_model TEXT,
+            session_id TEXT,
+            status_code INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
         );
         CREATE TABLE usage_daily_rollups (
             date TEXT NOT NULL,
@@ -382,9 +387,21 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
     .expect("seed v10 rollup table");
 
     Database::set_user_version(&conn, 10).expect("set user_version=10");
+    Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
 
-    // 新列存在且 NOT NULL DEFAULT ''
+    assert!(
+        Database::has_column(&conn, "proxy_request_logs", "data_source").expect("check logs"),
+        "proxy_request_logs.data_source should be added by migration"
+    );
+    let rollup_data_source = get_column_info(&conn, "usage_daily_rollups", "data_source");
+    assert_eq!(rollup_data_source.r#type, "TEXT");
+    assert_eq!(rollup_data_source.notnull, 1);
+
+    let log_pricing_model = get_column_info(&conn, "proxy_request_logs", "pricing_model");
+    assert_eq!(log_pricing_model.r#type, "TEXT");
+    assert_eq!(log_pricing_model.notnull, 0);
+
     let request_model = get_column_info(&conn, "usage_daily_rollups", "request_model");
     assert_eq!(request_model.r#type, "TEXT");
     assert_eq!(request_model.notnull, 1);
@@ -392,33 +409,68 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
     assert_eq!(rollup_pricing_model.r#type, "TEXT");
     assert_eq!(rollup_pricing_model.notnull, 1);
 
-    // 明细表补上 pricing_model 列（可空，历史行 NULL）
-    let pricing_model = get_column_info(&conn, "proxy_request_logs", "pricing_model");
-    assert_eq!(pricing_model.r#type, "TEXT");
-    assert_eq!(pricing_model.notnull, 0);
-
-    // 历史行保留，request_model 填 ''（未知）
-    let (rm, count, input, cost): (String, i64, i64, String) = conn
+    // 历史行保留，data_source 填 proxy，request/pricing model 填 ''（未知）。
+    let (ds, rm, pm, count, input, cost): (String, String, String, i64, i64, String) = conn
         .query_row(
-            "SELECT request_model, request_count, input_tokens, total_cost_usd
+            "SELECT data_source, request_model, pricing_model, request_count, input_tokens, total_cost_usd
              FROM usage_daily_rollups WHERE model = 'kimi-k2'",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
         )
         .expect("migrated row");
+    assert_eq!(ds, "proxy");
     assert_eq!(rm, "");
+    assert_eq!(pm, "");
     assert_eq!(count, 7);
     assert_eq!(input, 1000);
     assert_eq!(cost, "0.07");
 
-    // 主键包含 request_model：同 model 不同别名可共存
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(\"usage_daily_rollups\")")
+        .expect("rollup table info");
+    let pk_columns = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(5)?, row.get::<_, String>(1)?))
+        })
+        .expect("query rollup table info")
+        .filter_map(|row| {
+            let (pk_order, name) = row.expect("rollup table info row");
+            (pk_order > 0).then_some((pk_order, name))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pk_columns
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>(),
+        vec![
+            "date",
+            "app_type",
+            "provider_id",
+            "data_source",
+            "model",
+            "request_model",
+            "pricing_model"
+        ]
+    );
+
+    // 主键包含 data_source/request_model：同 model 不同来源或别名可共存。
     conn.execute(
         "INSERT INTO usage_daily_rollups
-            (date, app_type, provider_id, model, request_model, request_count)
-         VALUES ('2026-05-01', 'claude', 'p1', 'kimi-k2', 'claude-sonnet-4-6', 1)",
+            (date, app_type, provider_id, data_source, model, request_model, request_count)
+         VALUES ('2026-05-01', 'claude', 'p1', 'remote:pjlab', 'kimi-k2', 'claude-sonnet-4-6', 1)",
         [],
     )
-    .expect("insert row with same model but different request_model");
+    .expect("insert row with same model but different source/request_model");
 
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),

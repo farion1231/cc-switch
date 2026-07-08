@@ -101,6 +101,7 @@ pub struct ModelStats {
 #[serde(rename_all = "camelCase")]
 pub struct LogFilters {
     pub app_type: Option<String>,
+    pub source: Option<String>,
     pub provider_name: Option<String>,
     pub model: Option<String>,
     pub status_code: Option<u16>,
@@ -203,11 +204,14 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
-         WHEN '_session' THEN 'Claude (Session)' \
-         WHEN '_codex_session' THEN 'Codex (Session)' \
-         WHEN '_gemini_session' THEN 'Gemini (Session)' \
-         WHEN '_opencode_session' THEN 'OpenCode (Session)' \
+        "COALESCE({provider_alias}.name, CASE \
+         WHEN {log_alias}.provider_id LIKE '_remote:claude:%' THEN 'Remote ' || substr({log_alias}.provider_id, length('_remote:claude:') + 1) || ' (Claude Session)' \
+         WHEN {log_alias}.provider_id LIKE '_remote:codex:%' THEN 'Remote ' || substr({log_alias}.provider_id, length('_remote:codex:') + 1) || ' (Codex Session)' \
+         WHEN {log_alias}.provider_id LIKE '_remote:gemini:%' THEN 'Remote ' || substr({log_alias}.provider_id, length('_remote:gemini:') + 1) || ' (Gemini Session)' \
+         WHEN {log_alias}.provider_id = '_session' THEN 'Claude (Session)' \
+         WHEN {log_alias}.provider_id = '_codex_session' THEN 'Codex (Session)' \
+         WHEN {log_alias}.provider_id = '_gemini_session' THEN 'Gemini (Session)' \
+         WHEN {log_alias}.provider_id = '_opencode_session' THEN 'OpenCode (Session)' \
          ELSE {log_alias}.provider_id END)"
     )
 }
@@ -220,7 +224,64 @@ pub(crate) const SESSION_PROXY_DEDUP_WINDOW_SECONDS: i64 = 10 * 60;
 /// `tests::create_legacy_nullable_logs_table`）。所有用到 data_source 的查询
 /// 都应通过此 helper 生成片段，避免遗漏。
 fn data_source_expr(log_alias: &str) -> String {
-    format!("COALESCE({log_alias}.data_source, 'proxy')")
+    if log_alias.is_empty() {
+        "COALESCE(data_source, 'proxy')".to_string()
+    } else {
+        format!("COALESCE({log_alias}.data_source, 'proxy')")
+    }
+}
+
+fn push_source_filter(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    alias: &str,
+    source: Option<&str>,
+) {
+    let Some(source) = source.filter(|value| !value.is_empty() && *value != "all") else {
+        return;
+    };
+
+    let data_source = data_source_expr(alias);
+    if let Some(multi_source) = source.strip_prefix("multi:") {
+        let mut clauses = Vec::new();
+        for item in multi_source
+            .split('\u{1f}')
+            .filter(|item| !item.is_empty() && *item != "all")
+        {
+            match item {
+                "local" => {
+                    clauses.push(format!("{data_source} NOT LIKE 'remote:%'"));
+                }
+                "remote" => {
+                    clauses.push(format!("{data_source} LIKE 'remote:%'"));
+                }
+                remote if remote.starts_with("remote:") => {
+                    clauses.push(format!("{data_source} = ?"));
+                    params.push(Box::new(remote.to_string()));
+                }
+                _ => {}
+            }
+        }
+
+        if !clauses.is_empty() {
+            conditions.push(format!("({})", clauses.join(" OR ")));
+        }
+        return;
+    }
+
+    match source {
+        "local" => {
+            conditions.push(format!("{data_source} NOT LIKE 'remote:%'"));
+        }
+        "remote" => {
+            conditions.push(format!("{data_source} LIKE 'remote:%'"));
+        }
+        remote if remote.starts_with("remote:") => {
+            conditions.push(format!("{data_source} = ?"));
+            params.push(Box::new(remote.to_string()));
+        }
+        _ => {}
+    }
 }
 
 /// SQL 标量表达式：把 Claude Desktop 网关的 `claude-desktop` app_type 在“展示口径”
@@ -288,6 +349,26 @@ fn push_provider_model_filters(
     }
 }
 
+fn push_usage_scope_filters(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    log_alias: &str,
+    provider_alias: &str,
+    source: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
+) {
+    push_source_filter(conditions, params, log_alias, source);
+    push_provider_model_filters(
+        conditions,
+        params,
+        log_alias,
+        provider_alias,
+        provider_name,
+        model,
+    );
+}
+
 pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let data_source = data_source_expr(log_alias);
     let proxy_data_source = data_source_expr("proxy_dedup");
@@ -343,15 +424,20 @@ pub(crate) struct DedupKey<'a> {
 ///
 /// 命中以下任一条件即跳过插入：① `request_id` 已存在；② 时间窗口内存在
 /// 与 `key` 匹配的 proxy 日志（指纹去重）。
-pub(crate) fn should_skip_session_insert(
+pub(crate) fn should_skip_session_insert_with_proxy_dedup(
     conn: &Connection,
     request_id: &str,
     key: &DedupKey,
+    dedup_with_proxy: bool,
 ) -> Result<bool, AppError> {
     if proxy_request_id_exists(conn, request_id)? {
         return Ok(true);
     }
-    has_matching_proxy_usage_log(conn, key)
+    if dedup_with_proxy {
+        has_matching_proxy_usage_log(conn, key)
+    } else {
+        Ok(false)
+    }
 }
 
 fn proxy_request_id_exists(conn: &Connection, request_id: &str) -> Result<bool, AppError> {
@@ -507,6 +593,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<UsageSummary, AppError> {
@@ -528,11 +615,12 @@ impl Database {
             conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             params_vec.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut conditions,
             &mut params_vec,
             "l",
             "p",
+            source,
             provider_name,
             model,
         );
@@ -563,11 +651,12 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
+            source,
             provider_name,
             model,
         );
@@ -667,6 +756,7 @@ impl Database {
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
+        source: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
@@ -682,11 +772,12 @@ impl Database {
             detail_conditions.push("l.created_at <= ?".to_string());
             detail_params.push(Box::new(end));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
+            source,
             provider_name,
             model,
         );
@@ -706,11 +797,12 @@ impl Database {
             "r.date",
             &rollup_bounds,
         );
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
+            source,
             provider_name,
             model,
         );
@@ -831,6 +923,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<DailyStats>, AppError> {
@@ -862,11 +955,12 @@ impl Database {
                 extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
                 extra_params.push(Box::new(at.to_string()));
             }
-            push_provider_model_filters(
+            push_usage_scope_filters(
                 &mut extra_conditions,
                 &mut extra_params,
                 "l",
                 "p",
+                source,
                 provider_name,
                 model,
             );
@@ -975,11 +1069,12 @@ impl Database {
             extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             extra_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut extra_conditions,
             &mut extra_params,
             "l",
             "p",
+            source,
             provider_name,
             model,
         );
@@ -1058,11 +1153,12 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
+            source,
             provider_name,
             model,
         );
@@ -1171,6 +1267,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ProviderStats>, AppError> {
@@ -1190,11 +1287,12 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
+            source,
             provider_name,
             model,
         );
@@ -1217,11 +1315,12 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
+            source,
             provider_name,
             model,
         );
@@ -1315,6 +1414,7 @@ impl Database {
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        source: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<ModelStats>, AppError> {
@@ -1334,11 +1434,12 @@ impl Database {
             detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
             detail_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut detail_conditions,
             &mut detail_params,
             "l",
             "p",
+            source,
             provider_name,
             model,
         );
@@ -1366,11 +1467,12 @@ impl Database {
             rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
             rollup_params.push(Box::new(at.to_string()));
         }
-        push_provider_model_filters(
+        push_usage_scope_filters(
             &mut rollup_conditions,
             &mut rollup_params,
             "r",
             "p2",
+            source,
             provider_name,
             model,
         );
@@ -1475,12 +1577,14 @@ impl Database {
             params.push(Box::new(app_type.clone()));
         }
         // 与 Dashboard 顶部下拉筛选同口径：Provider 按展示名精确匹配（会话占位
-        // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配。
-        push_provider_model_filters(
+        // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配，并保留 SSH
+        // 远程/本地来源筛选。
+        push_usage_scope_filters(
             &mut conditions,
             &mut params,
             "l",
             "p",
+            filters.source.as_deref(),
             filters.provider_name.as_deref(),
             filters.model.as_deref(),
         );
@@ -2418,7 +2522,7 @@ mod tests {
         }
 
         // ① 分应用汇总：desktop 折叠进 claude，不再单列 claude-desktop 桶。
-        let by_app = db.get_usage_summary_by_app(None, None, None, None)?;
+        let by_app = db.get_usage_summary_by_app(None, None, None, None, None)?;
         assert_eq!(by_app.len(), 1, "应只剩一个合并后的 claude 桶");
         assert_eq!(by_app[0].app_type, "claude");
         assert_eq!(by_app[0].summary.total_requests, 2, "两条行都计入 claude");
@@ -2428,7 +2532,7 @@ mod tests {
         );
 
         // ② 选中 claude 过滤：汇总应同时覆盖 desktop 行。
-        let claude_summary = db.get_usage_summary(None, None, Some("claude"), None, None)?;
+        let claude_summary = db.get_usage_summary(None, None, Some("claude"), None, None, None)?;
         assert_eq!(claude_summary.total_requests, 2);
 
         // ③ 请求日志按 claude 过滤返回两行，且 desktop 行投影仍是原始 app_type。
@@ -2447,7 +2551,7 @@ mod tests {
         );
 
         // ④ 折叠不外溢：codex 过滤为空。
-        let codex_summary = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+        let codex_summary = db.get_usage_summary(None, None, Some("codex"), None, None, None)?;
         assert_eq!(codex_summary.total_requests, 0);
 
         Ok(())
@@ -2808,9 +2912,90 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        let summary = db.get_usage_summary(None, None, None, None, None, None)?;
         assert_eq!(summary.total_requests, 2);
         assert_eq!(summary.success_rate, 100.0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_source_filter_supports_multiple_remote_hosts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "local-proxy",
+                "claude",
+                "local-provider",
+                "claude-haiku-4-5",
+                "proxy",
+                1000,
+                10,
+                1,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "remote-pjlab",
+                "claude",
+                "_remote:claude:pjlab",
+                "claude-haiku-4-5",
+                "remote:pjlab",
+                1001,
+                20,
+                2,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "remote-other",
+                "claude",
+                "_remote:claude:other",
+                "claude-haiku-4-5",
+                "remote:other",
+                1002,
+                30,
+                3,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        let source = "multi:remote:pjlab\u{1f}remote:other";
+        let summary = db.get_usage_summary(None, None, Some("claude"), Some(source), None, None)?;
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.total_input_tokens, 50);
+        assert_eq!(summary.total_output_tokens, 5);
+
+        let logs = db.get_request_logs(
+            &LogFilters {
+                app_type: Some("claude".to_string()),
+                source: Some(source.to_string()),
+                ..Default::default()
+            },
+            0,
+            10,
+        )?;
+        let request_ids: Vec<&str> = logs
+            .data
+            .iter()
+            .map(|log| log.request_id.as_str())
+            .collect();
+        assert_eq!(logs.total, 2);
+        assert!(request_ids.contains(&"remote-pjlab"));
+        assert!(request_ids.contains(&"remote-other"));
+        assert!(!request_ids.contains(&"local-proxy"));
 
         Ok(())
     }
@@ -2888,7 +3073,8 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None)?;
+        let summary =
+            db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None, None)?;
         assert_eq!(summary.total_requests, 20);
         assert_eq!(summary.total_input_tokens, 2000);
         assert_eq!(summary.total_output_tokens, 1000);
@@ -2991,38 +3177,40 @@ mod tests {
         }
 
         // ① 汇总按 Provider 展示名过滤：明细 + rollup 都命中。
-        let packy = db.get_usage_summary(None, None, None, Some("Packy"), None)?;
+        let packy = db.get_usage_summary(None, None, None, None, Some("Packy"), None)?;
         assert_eq!(packy.total_requests, 7, "a-1 + a-2 + rollup 5");
 
         // ② 汇总按模型过滤（有效计价模型口径）。
-        let deepseek = db.get_usage_summary(None, None, None, None, Some("deepseek-v3"))?;
+        let deepseek = db.get_usage_summary(None, None, None, None, None, Some("deepseek-v3"))?;
         assert_eq!(deepseek.total_requests, 8, "b-1 + rollup 7");
 
         // ③ pricing_model 优先于 model：alias-model 查不到，real-model 查得到。
-        let by_alias = db.get_usage_summary(None, None, None, None, Some("alias-model"))?;
+        let by_alias = db.get_usage_summary(None, None, None, None, None, Some("alias-model"))?;
         assert_eq!(by_alias.total_requests, 0);
-        let by_real = db.get_usage_summary(None, None, None, None, Some("real-model"))?;
+        let by_real = db.get_usage_summary(None, None, None, None, None, Some("real-model"))?;
         assert_eq!(by_real.total_requests, 1);
 
         // ④ 会话占位行可按可读名选中。
-        let session = db.get_usage_summary(None, None, None, Some("Claude (Session)"), None)?;
+        let session =
+            db.get_usage_summary(None, None, None, None, Some("Claude (Session)"), None)?;
         assert_eq!(session.total_requests, 1);
 
         // ⑤ Provider 统计 + 模型过滤：只剩 DeepSeek 一行。
-        let provider_stats = db.get_provider_stats(None, None, None, None, Some("deepseek-v3"))?;
+        let provider_stats =
+            db.get_provider_stats(None, None, None, None, None, Some("deepseek-v3"))?;
         assert_eq!(provider_stats.len(), 1);
         assert_eq!(provider_stats[0].provider_name, "DeepSeek");
         assert_eq!(provider_stats[0].request_count, 8);
 
         // ⑥ 模型统计 + Provider 过滤：只剩 Packy 名下的模型。
-        let model_stats = db.get_model_stats(None, None, None, Some("Packy"), None)?;
+        let model_stats = db.get_model_stats(None, None, None, None, Some("Packy"), None)?;
         let models: Vec<&str> = model_stats.iter().map(|m| m.model.as_str()).collect();
         assert!(models.contains(&"claude-sonnet-4-6"));
         assert!(models.contains(&"real-model"));
         assert!(!models.contains(&"deepseek-v3"));
 
         // ⑦ 分应用汇总（Hero 卡片数据源）同样受过滤影响。
-        let by_app = db.get_usage_summary_by_app(None, None, Some("Packy"), None)?;
+        let by_app = db.get_usage_summary_by_app(None, None, None, Some("Packy"), None)?;
         assert_eq!(by_app.len(), 1);
         assert_eq!(by_app[0].app_type, "claude");
         assert_eq!(by_app[0].summary.total_requests, 7);
@@ -3030,7 +3218,8 @@ mod tests {
         // ⑧ 趋势（>24h 走天分桶 + rollup 分支）。
         let t_start = local_ts(2026, 6, 8, 0, 0, 0);
         let t_end = local_ts(2026, 6, 10, 23, 59, 0);
-        let trends = db.get_daily_trends(Some(t_start), Some(t_end), None, Some("Packy"), None)?;
+        let trends =
+            db.get_daily_trends(Some(t_start), Some(t_end), None, None, Some("Packy"), None)?;
         let total_req: u64 = trends.iter().map(|d| d.request_count).sum();
         assert_eq!(total_req, 7, "明细 2 + rollup 5");
 
@@ -3041,6 +3230,7 @@ mod tests {
         let hourly = db.get_daily_trends(
             Some(h_start),
             Some(h_end),
+            None,
             None,
             Some("Packy"),
             Some("claude-sonnet-4-6"),
@@ -3117,7 +3307,8 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None)?;
+        let summary =
+            db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None, None)?;
         assert_eq!(summary.total_requests, 30);
         assert_eq!(summary.total_input_tokens, 3000);
         assert_eq!(summary.total_output_tokens, 1500);
@@ -3238,7 +3429,7 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        let summary = db.get_usage_summary(None, None, None, None, None, None)?;
         assert_eq!(summary.total_requests, 4);
         // codex-proxy contributes 100-10=90; gemini-proxy contributes 200-30=170
         // (both cache-inclusive providers). claude-proxy=300, codex-session-only=50.
@@ -3253,10 +3444,10 @@ mod tests {
         let expected_hit_rate = 60.0_f64 / 682.0_f64;
         assert!((summary.cache_hit_rate - expected_hit_rate).abs() < 1e-9);
 
-        let trends = db.get_daily_trends(Some(0), Some(40_000), None, None, None)?;
+        let trends = db.get_daily_trends(Some(0), Some(40_000), None, None, None, None)?;
         assert_eq!(trends.iter().map(|stat| stat.request_count).sum::<u64>(), 4);
 
-        let provider_stats = db.get_provider_stats(None, None, None, None, None)?;
+        let provider_stats = db.get_provider_stats(None, None, None, None, None, None)?;
         assert_eq!(
             provider_stats
                 .iter()
@@ -3274,7 +3465,7 @@ mod tests {
             .iter()
             .any(|stat| stat.provider_id == "_session"));
 
-        let model_stats = db.get_model_stats(None, None, None, None, None)?;
+        let model_stats = db.get_model_stats(None, None, None, None, None, None)?;
         assert_eq!(
             model_stats
                 .iter()
@@ -3466,7 +3657,7 @@ mod tests {
             )?;
         }
 
-        let summary = db.get_usage_summary(None, None, None, None, None)?;
+        let summary = db.get_usage_summary(None, None, None, None, None, None)?;
         assert_eq!(summary.total_requests, 9);
 
         let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
@@ -3514,7 +3705,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_model_stats(None, None, None, None, None)?;
+        let stats = db.get_model_stats(None, None, None, None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].model, "claude-3-sonnet");
         assert_eq!(stats[0].request_count, 1);
@@ -3546,7 +3737,8 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_provider_stats(Some(1500), Some(2500), Some("claude"), None, None)?;
+        let stats =
+            db.get_provider_stats(Some(1500), Some(2500), Some("claude"), None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "p1");
         assert_eq!(stats[0].request_count, 1);
@@ -3578,7 +3770,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_provider_stats(None, None, Some("opencode"), None, None)?;
+        let stats = db.get_provider_stats(None, None, Some("opencode"), None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "_opencode_session");
         assert_eq!(stats[0].provider_name, "OpenCode (Session)");
@@ -3659,7 +3851,8 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_provider_stats(Some(start), Some(end), Some("claude"), None, None)?;
+        let stats =
+            db.get_provider_stats(Some(start), Some(end), Some("claude"), None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].provider_id, "p-rollup");
         assert_eq!(stats[0].request_count, 8);
@@ -3695,7 +3888,14 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"), None, None)?;
+        let stats = db.get_daily_trends(
+            Some(0),
+            Some(15 * 60 * 60),
+            Some("claude"),
+            None,
+            None,
+            None,
+        )?;
         assert_eq!(stats.len(), 15);
         assert_eq!(stats[3].request_count, 1);
 
@@ -3772,7 +3972,8 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_daily_trends(Some(start), Some(end), Some("claude"), None, None)?;
+        let stats =
+            db.get_daily_trends(Some(start), Some(end), Some("claude"), None, None, None)?;
         assert_eq!(stats.len(), 3);
         assert_eq!(stats[0].request_count, 1);
         assert_eq!(stats[0].total_tokens, 150);
@@ -3857,7 +4058,7 @@ mod tests {
             )?;
         }
 
-        let stats = db.get_model_stats(Some(start), Some(end), Some("claude"), None, None)?;
+        let stats = db.get_model_stats(Some(start), Some(end), Some("claude"), None, None, None)?;
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].model, "claude-3-haiku");
         assert_eq!(stats[0].request_count, 9);

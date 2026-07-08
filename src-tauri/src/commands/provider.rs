@@ -6,7 +6,9 @@ use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::services::{
-    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+    EndpointLatency, ProviderService, ProviderSortUpdate, RemoteApplyResult, RemoteImportResult,
+    RemoteProviderService, RemoteProviderState, RemoteUsageSyncProgress, RemoteUsageSyncResult,
+    SpeedtestService, SshConnectionTarget, SshHostEntry, SwitchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -17,6 +19,7 @@ const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
+const REMOTE_USAGE_SYNC_PROGRESS_EVENT: &str = "remote-usage-sync-progress";
 
 /// 获取所有供应商
 #[tauri::command]
@@ -107,6 +110,123 @@ pub fn switch_provider(
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_ssh_config_hosts() -> Result<Vec<SshHostEntry>, String> {
+    tauri::async_runtime::spawn_blocking(RemoteProviderService::list_ssh_hosts)
+        .await
+        .map_err(|e| format!("读取 SSH Host 失败: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn apply_provider_to_remote(
+    state: State<'_, AppState>,
+    app: String,
+    id: String,
+    target: SshConnectionTarget,
+    force_overwrite: Option<bool>,
+) -> Result<RemoteApplyResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = AppState::new(db);
+        RemoteProviderService::apply_provider_to_remote(
+            &app_state,
+            app_type,
+            &id,
+            &target,
+            force_overwrite.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|e| format!("远端切换失败: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn inspect_remote_provider(
+    state: State<'_, AppState>,
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteProviderState, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = AppState::new(db);
+        RemoteProviderService::inspect_remote_provider(&app_state, app_type, &target)
+    })
+    .await
+    .map_err(|e| format!("读取远端配置失败: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn import_remote_provider(
+    state: State<'_, AppState>,
+    app: String,
+    target: SshConnectionTarget,
+) -> Result<RemoteImportResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = AppState::new(db);
+        RemoteProviderService::import_remote_provider(&app_state, app_type, &target)
+    })
+    .await
+    .map_err(|e| format!("下载远端配置失败: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn sync_remote_session_usage(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    app: String,
+    target: SshConnectionTarget,
+    sync_id: Option<String>,
+) -> Result<RemoteUsageSyncResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = AppState::new(db);
+        let target_label = target
+            .alias
+            .as_deref()
+            .or(target.host.as_deref())
+            .unwrap_or("remote")
+            .to_string();
+        let sync_id = sync_id.as_deref().filter(|value| !value.trim().is_empty());
+        let progress_app_handle = app_handle.clone();
+        let progress = move |payload: RemoteUsageSyncProgress| {
+            let _ = progress_app_handle.emit(REMOTE_USAGE_SYNC_PROGRESS_EVENT, payload);
+        };
+        let result = RemoteProviderService::sync_remote_session_usage_with_progress(
+            &app_state,
+            app_type.clone(),
+            &target,
+            sync_id,
+            sync_id.map(|_| &progress as &dyn Fn(RemoteUsageSyncProgress)),
+        );
+
+        if let (Some(sync_id), Err(error)) = (sync_id, result.as_ref()) {
+            let _ = app_handle.emit(
+                REMOTE_USAGE_SYNC_PROGRESS_EVENT,
+                RemoteUsageSyncProgress::failed(
+                    sync_id,
+                    &target_label,
+                    &app_type,
+                    error.to_string(),
+                ),
+            );
+        }
+
+        result
+    })
+    .await
+    .map_err(|e| format!("同步远端用量失败: {e}"))?
+    .map_err(|e| e.to_string())
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
