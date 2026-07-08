@@ -707,12 +707,11 @@ fn push_codex_rate_limit_tiers(tiers: &mut Vec<QuotaTier>, rate_limit: CodexRate
         .into_iter()
         .flatten()
     {
-        if let Some(used) = window.used_percent {
+        if let (Some(used), Some(window_seconds)) =
+            (window.used_percent, window.limit_window_seconds)
+        {
             tiers.push(QuotaTier {
-                name: window
-                    .limit_window_seconds
-                    .map(window_seconds_to_tier_name)
-                    .unwrap_or_else(|| "unknown".to_string()),
+                name: window_seconds_to_tier_name(window_seconds),
                 utilization: used,
                 resets_at: window.reset_at.and_then(unix_ts_to_iso),
                 used_value_usd: None,
@@ -731,10 +730,12 @@ fn codex_usage_response_to_quota_parts(
         push_codex_rate_limit_tiers(&mut tiers, rate_limit);
     }
 
-    if let Some(additional_rate_limits) = body.additional_rate_limits {
-        for additional_rate_limit in additional_rate_limits {
-            if let Some(rate_limit) = additional_rate_limit.rate_limit {
-                push_codex_rate_limit_tiers(&mut tiers, rate_limit);
+    if tiers.is_empty() {
+        if let Some(additional_rate_limits) = body.additional_rate_limits {
+            for additional_rate_limit in additional_rate_limits {
+                if let Some(rate_limit) = additional_rate_limit.rate_limit {
+                    push_codex_rate_limit_tiers(&mut tiers, rate_limit);
+                }
             }
         }
     }
@@ -1573,6 +1574,77 @@ mod tests {
         assert_eq!(tiers[0].utilization, 7.0);
         assert_eq!(tiers[1].name, TIER_SEVEN_DAY);
         assert_eq!(tiers[1].utilization, 42.0);
+        assert!(extra_usage.is_none());
+    }
+
+    #[test]
+    fn codex_additional_rate_limits_do_not_duplicate_standard_windows() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 12,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783439823
+                },
+                "secondary_window": {
+                    "used_percent": 80,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784026623
+                }
+            },
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark-Preview",
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 7,
+                            "limit_window_seconds": 18000,
+                            "reset_at": 1783441644
+                        },
+                        "secondary_window": {
+                            "used_percent": 92,
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1784028444
+                        }
+                    }
+                }
+            ],
+            "spend_control": null
+        }))
+        .expect("combined rate limit response should deserialize");
+
+        let (tiers, extra_usage) = codex_usage_response_to_quota_parts(body);
+
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(tiers[0].utilization, 12.0);
+        assert_eq!(tiers[1].name, TIER_SEVEN_DAY);
+        assert_eq!(tiers[1].utilization, 80.0);
+        assert!(extra_usage.is_none());
+    }
+
+    #[test]
+    fn codex_additional_rate_limits_without_window_seconds_are_ignored() {
+        let body: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "rate_limit": null,
+            "additional_rate_limits": [
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 7,
+                            "reset_at": 1783441644
+                        }
+                    }
+                }
+            ],
+            "spend_control": null
+        }))
+        .expect("additional rate limits response should deserialize");
+
+        let (tiers, extra_usage) = codex_usage_response_to_quota_parts(body);
+
+        assert!(tiers.is_empty());
         assert!(extra_usage.is_none());
     }
 }
