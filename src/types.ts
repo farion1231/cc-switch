@@ -281,6 +281,7 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  zcode: boolean;
 }
 
 // WebDAV 同步状态
@@ -397,6 +398,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 ZCode 配置目录（可选）
+  zcodeConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -488,6 +491,7 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  zcode?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -611,6 +615,34 @@ export interface OpenCodeProviderConfig {
   name?: string; // 供应商显示名称
   options: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
+}
+
+export interface ZCodeModel {
+  name?: string;
+  limit?: {
+    context?: number;
+    output?: number;
+  };
+  reasoning?: unknown;
+  modalities?: unknown;
+  [key: string]: unknown;
+}
+
+export interface ZCodeProviderOptions {
+  baseURL?: string;
+  apiKey?: string;
+  apiKeyRequired?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ZCodeProviderConfig {
+  name?: string;
+  kind: "anthropic" | "openai" | "openai-compatible" | string;
+  options: ZCodeProviderOptions;
+  enabled?: boolean;
+  source?: string;
+  models: Record<string, ZCodeModel>;
+  systemDisabledReason?: string;
 }
 
 // OpenCode MCP 服务器配置（与统一格式不同）

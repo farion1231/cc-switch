@@ -50,9 +50,14 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  zcodeProviderPresets,
+  type ZCodeProviderPreset,
+} from "@/config/zcodeProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { ZCodeFormFields } from "./ZCodeFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -102,6 +107,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useZcodeFormState,
   useCopilotAuth,
   useCodexOauth,
 } from "./hooks";
@@ -128,7 +134,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | ZCodeProviderPreset;
 };
 
 const codexApiFormatFromWireApi = (
@@ -409,7 +416,13 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "zcode"
+                    ? JSON.stringify(
+                        zcodeProviderPresets[0].settingsConfig,
+                        null,
+                        2,
+                      )
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -680,6 +693,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "zcode") {
+      return zcodeProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `zcode-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -887,6 +905,22 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const zcodeForm = useZcodeFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+  const {
+    data: zcodeLiveProviderIds = [],
+    isLoading: isZcodeLiveProviderIdsLoading,
+  } = useQuery({
+    queryKey: ["zcodeLiveProviderIds"],
+    queryFn: () => providersApi.getZCodeLiveProviderIds(),
+    enabled: appId === "zcode",
+  });
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -919,6 +953,10 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "zcode") {
+      return zcodeLiveProviderIds.filter((key) => key !== providerId);
+    }
+
     return [];
   }, [
     appId,
@@ -930,6 +968,7 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
+    zcodeLiveProviderIds,
   ]);
 
   const isProviderKeyLockStateLoading = useMemo(() => {
@@ -943,6 +982,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
     }
+    if (appId === "zcode") {
+      return isZcodeLiveProviderIdsLoading;
+    }
     return false;
   }, [
     appId,
@@ -951,6 +993,7 @@ function ProviderFormFull({
     isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
+    isZcodeLiveProviderIdsLoading,
   ]);
 
   const isProviderKeyLocked = useMemo(() => {
@@ -964,6 +1007,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
     }
+    if (appId === "zcode") {
+      return zcodeLiveProviderIds.includes(providerId);
+    }
     return false;
   }, [
     appId,
@@ -973,6 +1019,7 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
+    zcodeLiveProviderIds,
   ]);
 
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
@@ -1120,6 +1167,47 @@ function ProviderFormFull({
       ) {
         toast.error(t("hermes.form.providerKeyDuplicate"));
         return;
+      }
+    }
+
+    if (appId === "zcode") {
+      if (!zcodeForm.zcodeProviderKey.trim()) {
+        toast.error(
+          t("zcode.providerKeyRequired", {
+            defaultValue: "Provider key is required",
+          }),
+        );
+        return;
+      }
+      if (!keyPattern.test(zcodeForm.zcodeProviderKey)) {
+        toast.error(
+          t("zcode.providerKeyInvalid", {
+            defaultValue: "Provider key is invalid",
+          }),
+        );
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(zcodeForm.zcodeProviderKey)
+      ) {
+        toast.error(
+          t("zcode.providerKeyDuplicate", {
+            defaultValue: "Provider key already exists",
+          }),
+        );
+        return;
+      }
+      if (Object.keys(zcodeForm.zcodeModels).length === 0) {
+        issues.push(t("opencode.modelsRequired"));
       }
     }
 
@@ -1362,6 +1450,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "zcode") {
+      payload.providerKey = zcodeForm.zcodeProviderKey;
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1640,6 +1730,9 @@ function ProviderFormFull({
       if (appId === "hermes") {
         hermesForm.resetHermesState();
       }
+      if (appId === "zcode") {
+        zcodeForm.resetZcodeState();
+      }
       return;
     }
 
@@ -1756,6 +1849,22 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    if (appId === "zcode") {
+      const preset = entry.preset as ZCodeProviderPreset;
+      const config = preset.settingsConfig;
+
+      zcodeForm.resetZcodeState(config);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2031,6 +2140,54 @@ function ProviderFormFull({
                       </p>
                     )}
                 </div>
+              ) : appId === "zcode" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="zcode-key">
+                    {t("zcode.providerKey", { defaultValue: "Provider Key" })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="zcode-key"
+                    value={zcodeForm.zcodeProviderKey}
+                    onChange={(e) =>
+                      zcodeForm.setZcodeProviderKey(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                      )
+                    }
+                    placeholder="my-provider"
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        zcodeForm.zcodeProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (zcodeForm.zcodeProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          zcodeForm.zcodeProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    zcodeForm.zcodeProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("zcode.providerKeyDuplicate", {
+                          defaultValue: "Provider key already exists",
+                        })}
+                      </p>
+                    )}
+                  <p className="text-xs text-muted-foreground">
+                    {t("zcode.providerKeyHint", {
+                      defaultValue:
+                        "Lowercase letters, numbers, and hyphens only. Used as the provider id in config.json.",
+                    })}
+                  </p>
+                </div>
               ) : undefined
             }
           />
@@ -2204,6 +2361,26 @@ function ProviderFormFull({
               onExtraOptionsChange={
                 opencodeForm.handleOpencodeExtraOptionsChange
               }
+            />
+          )}
+
+          {appId === "zcode" && (
+            <ZCodeFormFields
+              kind={zcodeForm.zcodeKind}
+              onKindChange={zcodeForm.handleZcodeKindChange}
+              apiKey={zcodeForm.zcodeApiKey}
+              onApiKeyChange={zcodeForm.handleZcodeApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowOpencodeApiKeyLink}
+              websiteUrl={opencodeWebsiteUrl}
+              isPartner={isOpencodePartner}
+              partnerPromotionKey={opencodePartnerPromotionKey}
+              baseUrl={zcodeForm.zcodeBaseUrl}
+              onBaseUrlChange={zcodeForm.handleZcodeBaseUrlChange}
+              models={zcodeForm.zcodeModels}
+              onModelsChange={zcodeForm.handleZcodeModelsChange}
+              extraOptions={zcodeForm.zcodeExtraOptions}
+              onExtraOptionsChange={zcodeForm.handleZcodeExtraOptionsChange}
             />
           )}
 

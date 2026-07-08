@@ -137,6 +137,10 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::ZCode => {
+                // ZCode does not expose an MCP config file under ~/.zcode (v1)
+                log::debug!("ZCode MCP sync is not supported yet, skipping sync");
+            }
         }
         Ok(())
     }
@@ -171,6 +175,10 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::ZCode => {
+                // ZCode does not expose an MCP config file under ~/.zcode (v1)
+                log::debug!("ZCode MCP remove is not supported yet, skipping remove");
             }
         }
         Ok(())

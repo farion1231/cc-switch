@@ -42,7 +42,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "zcode"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"

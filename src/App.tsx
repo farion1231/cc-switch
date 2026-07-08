@@ -189,7 +189,7 @@ function App() {
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+  const visibleApps: VisibleApps = {
     claude: true,
     "claude-desktop": true,
     codex: true,
@@ -197,6 +197,8 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    zcode: true,
+    ...(settingsData?.visibleApps ?? {}),
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -207,6 +209,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.zcode) return "zcode";
     return "claude"; // fallback
   };
 
@@ -672,6 +675,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "zcode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["zcodeLiveProviderIds"],
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -995,7 +1002,8 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "zcode"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
