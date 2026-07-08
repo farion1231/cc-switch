@@ -1313,6 +1313,8 @@
     "reasoningEffortHint": "Enable when the upstream supports thinking-depth control such as low/high/max. Enabling this also turns on thinking mode and converts Codex's reasoning.effort into the upstream Chat parameter.",
     "reasoningGroupTitle": "Reasoning Capability",
     "reasoningSectionHint": "Preset providers are configured automatically; custom providers are inferred from name/URL. Override manually only when auto-detection is wrong.",
+    "stripImageGenerationToolsToggle": "Strip image-generation tool declarations",
+    "stripImageGenerationToolsHint": "When enabled, Codex Responses requests have image_generation tool declarations removed before they are sent upstream, avoiding 403 errors from relays that check image-generation permissions.",
     "advancedSectionHint": "Includes upstream format, model mapping, reasoning overrides and custom User-Agent. Providers using the Chat Completions protocol require routing takeover to be enabled."
   },
   "geminiConfig": {

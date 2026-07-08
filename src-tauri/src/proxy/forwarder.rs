@@ -4,7 +4,7 @@
 
 use super::hyper_client::ProxyResponse;
 use super::{
-    body_filter::filter_private_params_with_whitelist,
+    body_filter::{filter_private_params_with_whitelist, strip_image_generation_tools},
     content_encoding::{decompress_body, get_content_encoding},
     error::*,
     failover_switch::FailoverSwitchManager,
@@ -1302,6 +1302,14 @@ impl RequestForwarder {
         };
         let codex_responses_to_chat = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        if matches!(app_type, AppType::Codex) {
+            mapped_body = strip_codex_image_generation_tools_for_endpoint(
+                app_type,
+                provider,
+                endpoint,
+                mapped_body,
+            );
+        }
         let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
@@ -1398,6 +1406,12 @@ impl RequestForwarder {
                 .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
             {
                 if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
+                    filtered_body = strip_codex_image_generation_tools_for_endpoint(
+                        app_type,
+                        provider,
+                        endpoint,
+                        filtered_body,
+                    );
                     filtered_body = prepare_upstream_request_body(filtered_body);
                 }
             }
@@ -2733,6 +2747,42 @@ fn prepare_upstream_request_body(request_body: Value) -> Value {
     canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
 }
 
+fn strip_codex_image_generation_tools_for_endpoint(
+    app_type: &AppType,
+    provider: &Provider,
+    endpoint: &str,
+    body: Value,
+) -> Value {
+    if !matches!(app_type, AppType::Codex) || !is_codex_responses_endpoint(endpoint) {
+        return body;
+    }
+
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.strip_codex_image_generation_tools)
+        == Some(false)
+    {
+        return body;
+    }
+
+    let (filtered, removed) = strip_image_generation_tools(body);
+    if removed > 0 {
+        log::info!(
+            "[Codex] Stripped {removed} image-generation tool declaration(s) from {endpoint}"
+        );
+    }
+    filtered
+}
+
+fn is_codex_responses_endpoint(endpoint: &str) -> bool {
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(
+        path,
+        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+    )
+}
+
 fn log_prompt_cache_trace(
     app_type: &AppType,
     provider: &Provider,
@@ -2989,6 +3039,80 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
+        );
+    }
+
+    #[test]
+    fn codex_responses_body_strips_image_generation_tools_only_for_codex() {
+        let body = json!({
+            "model": "gpt-5-codex",
+            "tools": [
+                {"type": "function", "name": "shell"},
+                {"type": "image_generation"}
+            ]
+        });
+
+        let stripped = strip_codex_image_generation_tools_for_endpoint(
+            &AppType::Codex,
+            &test_provider_with_type(None),
+            "/responses?trace=1",
+            body.clone(),
+        );
+        assert_eq!(
+            stripped["tools"],
+            json!([{"type": "function", "name": "shell"}])
+        );
+
+        let untouched_claude = strip_codex_image_generation_tools_for_endpoint(
+            &AppType::Claude,
+            &test_provider_with_type(None),
+            "/v1/messages",
+            body.clone(),
+        );
+        assert_eq!(untouched_claude, body);
+
+        let untouched_codex_models = strip_codex_image_generation_tools_for_endpoint(
+            &AppType::Codex,
+            &test_provider_with_type(None),
+            "/v1/models",
+            body.clone(),
+        );
+        assert_eq!(untouched_codex_models, body);
+    }
+
+    #[test]
+    fn codex_responses_body_respects_image_generation_strip_toggle() {
+        let body = json!({
+            "model": "gpt-5-codex",
+            "tools": [
+                {"type": "function", "name": "shell"},
+                {"type": "image_generation"}
+            ]
+        });
+        let mut disabled_provider = test_provider_with_type(None);
+        disabled_provider.meta = Some(crate::provider::ProviderMeta {
+            strip_codex_image_generation_tools: Some(false),
+            ..Default::default()
+        });
+
+        let untouched = strip_codex_image_generation_tools_for_endpoint(
+            &AppType::Codex,
+            &disabled_provider,
+            "/responses",
+            body.clone(),
+        );
+        assert_eq!(untouched, body);
+
+        let default_provider = test_provider_with_type(None);
+        let stripped = strip_codex_image_generation_tools_for_endpoint(
+            &AppType::Codex,
+            &default_provider,
+            "/responses",
+            body,
+        );
+        assert_eq!(
+            stripped["tools"],
+            json!([{"type": "function", "name": "shell"}])
         );
     }
 

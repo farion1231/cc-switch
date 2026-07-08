@@ -222,6 +222,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Strip Codex image-generation tool declarations from Responses requests.
+  stripCodexImageGenerationTools?: boolean;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.

@@ -1313,6 +1313,8 @@
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
+    "stripImageGenerationToolsToggle": "过滤生图工具声明",
+    "stripImageGenerationToolsHint": "开启后，Codex Responses 请求发往上游前会移除 image_generation 相关工具声明，避免部分中转站因生图权限检查直接返回 403。",
     "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
   },
   "geminiConfig": {
