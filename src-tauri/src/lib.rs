@@ -689,16 +689,16 @@ pub fn run() {
             }
             match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                    log::info!("✓ Synced {count} OpenClaw provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
+                Ok(_) => log::debug!("○ No OpenClaw provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
             match crate::services::provider::import_hermes_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                    log::info!("✓ Synced {count} Hermes provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
 

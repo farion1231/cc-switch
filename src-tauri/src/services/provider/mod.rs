@@ -310,6 +310,32 @@ mod tests {
         }
     }
 
+    fn hermes_provider(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({
+                "api": "openai-chat",
+                "base_url": "https://api.example.com/v1",
+                "api_key": "test-key",
+                "models": {
+                    "gpt-4o": {
+                        "name": "GPT-4o"
+                    }
+                }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
     fn opencode_provider(id: &str) -> Provider {
         Provider {
             id: id.to_string(),
@@ -1359,6 +1385,89 @@ base_url = "http://localhost:8080"
                 Some(true),
                 "providers imported from live should be treated as live-managed"
             );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_openclaw_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("existing-openclaw");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed existing openclaw provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["baseUrl"] = Value::String("https://api.example.com/v1".to_string());
+            live_settings["models"][0]["name"] = Value::String("Claude Sonnet 4.1".to_string());
+            crate::openclaw_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live openclaw provider");
+
+            let updated = import_openclaw_providers_from_live(state)
+                .expect("import openclaw providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .expect("query updated openclaw provider")
+                .expect("openclaw provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["baseUrl"],
+                json!("https://api.example.com/v1")
+            );
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("Claude Sonnet 4.1")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_hermes_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = hermes_provider("existing-hermes");
+            state
+                .db
+                .save_provider(AppType::Hermes.as_str(), &provider)
+                .expect("seed existing hermes provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["base_url"] = Value::String("https://api.hermes.example/v1".to_string());
+            live_settings["models"]["gpt-4o"]["name"] = Value::String("GPT-4o Updated".to_string());
+            crate::hermes_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live hermes provider");
+
+            let updated = import_hermes_providers_from_live(state)
+                .expect("import hermes providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Hermes.as_str())
+                .expect("query updated hermes provider")
+                .expect("hermes provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["base_url"],
+                json!("https://api.hermes.example/v1")
+            );
+            // models are denormalized from YAML dict to UI-friendly array by
+            // get_providers(), so access by index rather than dict key
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("GPT-4o Updated")
+            );
+            assert_eq!(saved.settings_config["models"][0]["id"], json!("gpt-4o"));
         });
     }
 
