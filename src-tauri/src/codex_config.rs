@@ -15,14 +15,14 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
-const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
+pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
 /// Value that disables the web-search tool. Some native `/responses` gateways
 /// reject a `web_search` tool with `responses_feature_not_supported` ("tool type
 /// 'web_search' is not supported by this gateway phase"), so for those we write
 /// this per the vendors' official Codex docs. Also doubles as cc-switch's
 /// ownership sentinel: we only ever remove a `web_search` key whose value equals
 /// this string, never a user's own setting.
-const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
+pub(crate) const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
 
 /// Native `/responses` gateways whose first-party models do NOT support the Codex
 /// `web_search` hosted tool. A BLACKLIST (default-on): everything not listed keeps

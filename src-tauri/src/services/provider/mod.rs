@@ -809,10 +809,18 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+    fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
+        // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
+        // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
+        // 顶层 wire_api 模拟无 model_provider 时的 fallback 写法；
+        // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+wire_api = "chat"
 disable_response_storage = true
+experimental_bearer_token = "sk-live-secret"
+model_catalog_json = "cc-switch-model-catalog.json"
+web_search = "disabled"
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -821,6 +829,9 @@ wire_api = "responses"
 
 [mcp_servers.my_server]
 base_url = "http://localhost:8080"
+
+[mcp.servers.legacy_server]
+command = "legacy-cmd"
 "#;
 
         let settings = json!({ "config": config_toml });
@@ -843,9 +854,51 @@ base_url = "http://localhost:8080"
             !extracted.contains("[model_providers"),
             "should remove entire model_providers table"
         );
+        // MCP 归 DB mcp_servers 表所有，不得进共享片段（含历史错误格式 [mcp.servers]）
         assert!(
-            extracted.contains("http://localhost:8080"),
-            "should keep mcp_servers.* base_url"
+            !extracted.contains("mcp_servers") && !extracted.contains("http://localhost:8080"),
+            "should strip mcp_servers from the shared snippet, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("[mcp") && !extracted.contains("legacy-cmd"),
+            "should strip the legacy [mcp.servers] form from the shared snippet, got: {extracted}"
+        );
+        // 顶层 wire_api 是供应商路由语义（model_providers 整表已剥，
+        // 剩余任何 wire_api 都意味着泄漏）
+        assert!(
+            !extracted.contains("wire_api"),
+            "should strip top-level wire_api from the shared snippet, got: {extracted}"
+        );
+        // 注入产物不得进共享片段（bearer token 泄漏为密钥级问题）
+        assert!(
+            !extracted.contains("experimental_bearer_token")
+                && !extracted.contains("sk-live-secret"),
+            "should strip top-level fallback bearer token, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("model_catalog_json"),
+            "should strip catalog projection pointer, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("web_search"),
+            "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
+        );
+        // 真正可共享的键保留
+        assert!(
+            extracted.contains("disable_response_storage = true"),
+            "shareable keys must survive extraction, got: {extracted}"
+        );
+    }
+
+    #[test]
+    fn extract_codex_common_config_keeps_user_set_web_search() {
+        let config_toml = "web_search = \"enabled\"\ndisable_response_storage = true\n";
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract should succeed");
+        assert!(
+            extracted.contains("web_search = \"enabled\""),
+            "a user-set web_search value is a shareable preference, got: {extracted}"
         );
     }
 
@@ -2859,9 +2912,47 @@ impl ProviderService {
         root.remove("model_provider");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
+        // wire_api 与 base_url 同属供应商路由语义：无 model_provider 时
+        // update_codex_toml_field / 前端 setCodexWireApi 都会把它落在顶层，
+        // 进了片段会改写其它供应商的协议选择（chat vs responses）。
+        root.remove("wire_api");
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+
+        // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
+        // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
+        // 显示为一份"重复"的 MCP 配置。
+        root.remove("mcp_servers");
+        // 历史错误格式 [mcp.servers] 一并剥离（与 strip_codex_mcp_servers_from_settings
+        // 一致）：sync_all_enabled 只管理 [mcp_servers.*]，legacy 形态一旦进了
+        // 片段就会被合并进所有供应商，且没有任何同步路径能清掉这个孤儿。
+        if let Some(mcp_tbl) = root
+            .get_mut("mcp")
+            .and_then(|item| item.as_table_like_mut())
+        {
+            mcp_tbl.remove("servers");
+            if mcp_tbl.is_empty() {
+                root.remove("mcp");
+            }
+        }
+
+        // cc-switch 写 live 时注入的产物一律不进共享片段：
+        // - experimental_bearer_token 正常写在 [model_providers.<id>] 内（上面
+        //   整表已剥），但无活跃路由 / 内建保留 id / 路由表缺失三种 fallback
+        //   会落在顶层——不剥等于把 API 密钥写进共享片段。
+        root.remove("experimental_bearer_token");
+        // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
+        root.remove("model_catalog_json");
+        // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
+        //   属于可共享偏好，保留。
+        if root
+            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .and_then(|item| item.as_str())
+            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+        {
+            root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
+        }
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();
