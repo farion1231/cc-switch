@@ -882,6 +882,203 @@ requires_openai_auth = true
 }
 
 #[test]
+fn reapply_codex_official_live_resyncs_mcp_servers() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        let mut official = Provider::with_id(
+            "official-provider".to_string(),
+            "Official".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+                },
+                "config": ""
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official);
+    }
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("switch to official provider");
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "switch should sync enabled MCP servers into live"
+    );
+
+    // 统一会话开关变更触发的 reapply 会整体重写 live config.toml（有意设计），
+    // 写完必须重新投影 DB 里启用的 MCP，否则用户的 MCP 会静默失效。
+    let reapplied =
+        cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply official live");
+    assert!(
+        reapplied,
+        "current provider is official, reapply should run"
+    );
+
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after reapply");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "reapply must re-project enabled MCP servers after the full live rewrite, got: {live}"
+    );
+}
+
+/// reapply 走到 MCP 投影时 live 已按新开关状态落盘、开关事实上已生效：
+/// ① 投影失败若上抛，save_settings 会回滚开关设置，制造"设置=旧值、
+/// live=新桶"的会话分裂——必须降级为警告而不是失败；
+/// ② 投影必须只针对 Codex：sync_all_enabled 按 AppType::all() 顺序短路，
+/// Claude 排在 Codex 前面，损坏的 ~/.claude.json 会在轮到 Codex 之前
+/// 报错——若吞错了事，刚被整体重写清掉的 [mcp_servers] 就无人补回，
+/// Codex MCP 静默消失。这里用坏 JSON 的 ~/.claude.json 复现该场景。
+#[test]
+fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        let mut official = Provider::with_id(
+            "official-provider".to_string(),
+            "Official".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+                },
+                "config": ""
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official);
+    }
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    // 切换路径仍走 sync_all_enabled（会碰 claude），所以先切换、后破坏。
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("switch to official provider");
+
+    // 破坏 ~/.claude.json：坏 JSON 能通过 should_sync_claude_mcp 门控
+    // （文件存在即过），但 read_mcp_servers_map 解析必然报错。
+    // 注意 codex-only 的服务器也会触发 claude 的 remove 分支读该文件。
+    let claude_json = cc_switch_lib::get_claude_mcp_path();
+    std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
+
+    let reapplied = cc_switch_lib::reapply_current_codex_official_live(&state)
+        .expect("MCP projection failure must degrade to a warning, not fail the toggle");
+    assert!(
+        reapplied,
+        "current provider is official, reapply should run"
+    );
+
+    // 定向投影不碰 claude：Codex 的 MCP 投影必须完成，不能被
+    // 无关应用的损坏文件阻断后静默丢失。
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after reapply");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "codex MCP projection must not be blocked by a broken ~/.claude.json, got: {live}"
+    );
+
+    // 顺带锁定：定向投影不应把手改坏的 ~/.claude.json 触碰或"修复"。
+    let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
+    assert_eq!(
+        claude_after, "{ not valid json",
+        "codex-only projection must not touch claude's live file"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_official_accounts_write_auth_json() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

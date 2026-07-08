@@ -181,16 +181,35 @@ impl McpService {
         let servers = Self::get_all_servers(state)?;
 
         for app in AppType::all() {
-            if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
-                continue;
-            }
+            Self::project_servers_to_app(state, &servers, &app)?;
+        }
 
-            for server in servers.values() {
-                if server.apps.is_enabled_for(&app) {
-                    Self::sync_server_to_app(state, server, &app)?;
-                } else {
-                    Self::remove_server_from_app(state, &server.id, &app)?;
-                }
+        Ok(())
+    }
+
+    /// 只把启用状态投影到单个应用。某个应用的 live 被整体重写后用它做
+    /// 定向重投影：sync_all_enabled 按 AppType::all() 顺序逐应用短路，
+    /// 排在前面的无关应用 live 损坏（如 ~/.claude.json 坏 JSON）会阻断
+    /// 后面应用的投影。
+    pub fn sync_enabled_for_app(state: &AppState, app: &AppType) -> Result<(), AppError> {
+        let servers = Self::get_all_servers(state)?;
+        Self::project_servers_to_app(state, &servers, app)
+    }
+
+    fn project_servers_to_app(
+        state: &AppState,
+        servers: &IndexMap<String, McpServer>,
+        app: &AppType,
+    ) -> Result<(), AppError> {
+        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+            return Ok(());
+        }
+
+        for server in servers.values() {
+            if server.apps.is_enabled_for(app) {
+                Self::sync_server_to_app(state, server, app)?;
+            } else {
+                Self::remove_server_from_app(state, &server.id, app)?;
             }
         }
 
