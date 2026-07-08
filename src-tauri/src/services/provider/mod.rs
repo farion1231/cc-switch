@@ -1296,6 +1296,40 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn import_opencode_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("existing-opencode");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed existing opencode provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings.as_object_mut().unwrap().remove("name");
+            live_settings["npm"] = Value::String("@ai-sdk/anthropic".to_string());
+            live_settings["models"]["gpt-4o"]["name"] = Value::String("Claude Sonnet".to_string());
+            crate::opencode_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live opencode provider");
+
+            let updated = import_opencode_providers_from_live(state)
+                .expect("import opencode providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .expect("query updated opencode provider")
+                .expect("opencode provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(saved.settings_config["npm"], json!("@ai-sdk/anthropic"));
+            assert_eq!(
+                saved.settings_config["models"]["gpt-4o"]["name"],
+                json!("Claude Sonnet")
+            );
+        });
+    }
+    #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");
