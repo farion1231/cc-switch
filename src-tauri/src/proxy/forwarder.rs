@@ -4034,4 +4034,127 @@ mod tests {
             "无映射时 outbound_model 应为客户端请求模型"
         );
     }
+
+    /// reqwest 连接失败（如连接拒绝）时，outbound_model 应被正确携带。
+    /// 覆盖 cfaddd0a 修复的 reqwest send error 路径。
+    #[tokio::test]
+    async fn reqwest_connection_error_carries_outbound_model() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let provider = Provider {
+            id: "reqwest-err-provider".to_string(),
+            name: "Reqwest Error Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    // 连接到不存在的端口，触发连接拒绝
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-r1",
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("connection refused should produce an error"),
+            Err(e) => e,
+        };
+
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("deepseek-r1"),
+            "reqwest 连接失败时 outbound_model 应为映射后的模型 deepseek-r1"
+        );
+    }
+
+    /// hyper 路径连接失败时，outbound_model 应被正确携带。
+    /// 覆盖 2bfb5839 修复的 hyper send error 路径。
+    #[tokio::test]
+    async fn hyper_connection_error_carries_outbound_model() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // Copilot provider → 走 hyper 路径
+        let provider = Provider {
+            id: "hyper-err-provider".to_string(),
+            name: "Hyper Error Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-r1",
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("hyper connection refused should produce an error"),
+            Err(e) => e,
+        };
+
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("deepseek-r1"),
+            "hyper 连接失败时 outbound_model 应为映射后的模型 deepseek-r1"
+        );
+    }
 }
