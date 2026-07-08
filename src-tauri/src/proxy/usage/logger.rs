@@ -102,6 +102,9 @@ impl<'a> UsageLogger<'a> {
         )
         .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
 
+        // 通知前端使用统计有更新（200ms 防抖合并，不阻塞写入路径）
+        crate::usage_events::notify_log_recorded();
+
         Ok(())
     }
 

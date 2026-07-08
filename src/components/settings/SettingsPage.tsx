@@ -44,6 +44,7 @@ import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
@@ -241,6 +242,10 @@ export function SettingsPage({
                         handleAutoSave({ skillSyncMethod: method })
                       }
                     />
+                    <CodexAuthSettings
+                      settings={settings}
+                      onChange={handleAutoSave}
+                    />
                     <WindowSettings
                       settings={settings}
                       onChange={handleAutoSave}
@@ -410,6 +415,7 @@ export function SettingsPage({
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
                           <WebdavSyncSection
                             config={settings?.webdavSync}
+                            s3Config={settings?.s3Sync}
                             settings={settings}
                             onAutoSave={handleAutoSave}
                           />

@@ -18,7 +18,12 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const { t, i18n } = useTranslation();
 
   const sortedProviders = useMemo(() => {
-    const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
+    const locale =
+      i18n.language === "zh"
+        ? "zh-CN"
+        : i18n.language === "zh-TW"
+          ? "zh-TW"
+          : "en-US";
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;

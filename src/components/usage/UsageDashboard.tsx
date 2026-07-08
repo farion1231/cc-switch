@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
+import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageApi } from "@/lib/api/usage";
 import {
   Accordion,
@@ -92,6 +93,10 @@ export function UsageDashboard() {
   const [deleteRemoteSource, setDeleteRemoteSource] =
     useState<RemoteSourceOption | null>(null);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+
+  // 后端写入新日志时 emit `usage-log-recorded`，本 hook 立刻 invalidate 所有
+  // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
+  useUsageEventBridge();
 
   const { data: dataSources } = useQuery({
     queryKey: [...usageKeys.all, "data-sources"],
@@ -210,175 +215,173 @@ export function UsageDashboard() {
       transition={{ duration: 0.4 }}
       className="space-y-8 pb-8"
     >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-2xl font-bold">{t("usage.title")}</h2>
-            <p className="text-sm text-muted-foreground">
-              {t("usage.subtitle")}
-            </p>
-          </div>
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-2xl font-bold tracking-tight">
+            {t("usage.title")}
+          </h2>
+          <p className="text-sm text-muted-foreground">{t("usage.subtitle")}</p>
         </div>
 
-        <div className="rounded-xl border border-border/50 bg-card/40 backdrop-blur-sm p-4">
-          <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center p-1 bg-muted/30 rounded-lg border border-border/50">
             {APP_FILTER_OPTIONS.map((type) => (
               <button
                 key={type}
                 type="button"
                 onClick={() => setAppType(type)}
                 className={cn(
-                  "px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                  "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
                   appType === type
-                    ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
-                    : "text-muted-foreground hover:text-primary hover:bg-muted/50 border border-transparent",
+                    ? "bg-background text-primary shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                 )}
               >
                 {t(`usage.appFilter.${type}`)}
               </button>
             ))}
+          </div>
 
-            <div className="mx-2 h-5 w-px bg-border" />
+          <div className="mx-2 h-5 w-px bg-border" />
 
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setSourceMode("all")}
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
-                  sourceMode === "all"
-                    ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
-                    : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
-                )}
-              >
-                <Database className="h-3.5 w-3.5" />
-                {t("usage.sourceFilter.all", { defaultValue: "全部" })}
-              </button>
-              <button
-                type="button"
-                onClick={() => setSourceMode("local")}
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
-                  sourceMode === "local"
-                    ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
-                    : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
-                )}
-              >
-                <HardDrive className="h-3.5 w-3.5" />
-                {t("usage.sourceFilter.local", { defaultValue: "仅本地" })}
-              </button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => setSourceMode("remote")}
-                    className={cn(
-                      "inline-flex h-8 max-w-[13rem] items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
-                      sourceMode === "remote"
-                        ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
-                        : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
-                    )}
-                  >
-                    <Server className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">
-                      {sourceMode === "remote"
-                        ? remoteModeLabel
-                        : t("usage.sourceFilter.remote", {
-                            defaultValue: "仅远程",
-                          })}
-                    </span>
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-64">
-                  <DropdownMenuLabel>
-                    {t("usage.sourceFilter.label", {
-                      defaultValue: "数据来源",
-                    })}
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onSelect={(event) => {
-                      event.preventDefault();
-                      setSourceMode("remote");
-                      setSelectedRemoteSources([]);
-                    }}
-                    className="pl-2"
-                  >
-                    <Server className="h-3.5 w-3.5" />
-                    <span className="truncate">
-                      {t("usage.sourceFilter.remoteAggregateTitle", {
-                        defaultValue: "仅统计所有远端服务器",
-                      })}
-                    </span>
-                  </DropdownMenuItem>
-                  {remoteSourceOptions.length > 0 ? (
-                    <>
-                      <DropdownMenuSeparator />
-                      {remoteSourceOptions.map((option) => (
-                        <DropdownMenuCheckboxItem
-                          key={option}
-                          checked={selectedRemoteSources.includes(option)}
-                          onCheckedChange={() => toggleRemoteSource(option)}
-                          onSelect={(event) => event.preventDefault()}
-                          className="gap-2 pl-8 pr-2"
-                        >
-                          <Server className="h-3.5 w-3.5" />
-                          <span className="min-w-0 flex-1 truncate">
-                            {getRemoteSourceLabel(option)}
-                          </span>
-                          <button
-                            type="button"
-                            className="ml-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                            title={t("usage.sourceFilter.deleteRemote", {
-                              defaultValue: "删除该远端数据",
-                            })}
-                            aria-label={t("usage.sourceFilter.deleteRemote", {
-                              defaultValue: "删除该远端数据",
-                            })}
-                            disabled={deleteRemoteUsageMutation.isPending}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              setDeleteRemoteSource(option);
-                            }}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                    </>
-                  ) : (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      {t("usage.sourceFilter.remoteEmpty", {
-                        defaultValue: "暂无远端数据",
-                      })}
-                    </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSourceMode("all")}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                sourceMode === "all"
+                  ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
+                  : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
+              )}
+            >
+              <Database className="h-3.5 w-3.5" />
+              {t("usage.sourceFilter.all", { defaultValue: "全部" })}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSourceMode("local")}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                sourceMode === "local"
+                  ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
+                  : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
+              )}
+            >
+              <HardDrive className="h-3.5 w-3.5" />
+              {t("usage.sourceFilter.local", { defaultValue: "仅本地" })}
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setSourceMode("remote")}
+                  className={cn(
+                    "inline-flex h-8 max-w-[13rem] items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                    sourceMode === "remote"
+                      ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
+                      : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
                   )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                >
+                  <Server className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {sourceMode === "remote"
+                      ? remoteModeLabel
+                      : t("usage.sourceFilter.remote", {
+                          defaultValue: "仅远程",
+                        })}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuLabel>
+                  {t("usage.sourceFilter.label", {
+                    defaultValue: "数据来源",
+                  })}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setSourceMode("remote");
+                    setSelectedRemoteSources([]);
+                  }}
+                  className="pl-2"
+                >
+                  <Server className="h-3.5 w-3.5" />
+                  <span className="truncate">
+                    {t("usage.sourceFilter.remoteAggregateTitle", {
+                      defaultValue: "仅统计所有远端服务器",
+                    })}
+                  </span>
+                </DropdownMenuItem>
+                {remoteSourceOptions.length > 0 ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    {remoteSourceOptions.map((option) => (
+                      <DropdownMenuCheckboxItem
+                        key={option}
+                        checked={selectedRemoteSources.includes(option)}
+                        onCheckedChange={() => toggleRemoteSource(option)}
+                        onSelect={(event) => event.preventDefault()}
+                        className="gap-2 pl-8 pr-2"
+                      >
+                        <Server className="h-3.5 w-3.5" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {getRemoteSourceLabel(option)}
+                        </span>
+                        <button
+                          type="button"
+                          className="ml-2 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          title={t("usage.sourceFilter.deleteRemote", {
+                            defaultValue: "删除该远端数据",
+                          })}
+                          aria-label={t("usage.sourceFilter.deleteRemote", {
+                            defaultValue: "删除该远端数据",
+                          })}
+                          disabled={deleteRemoteUsageMutation.isPending}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setDeleteRemoteSource(option);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </>
+                ) : (
+                  <div className="px-2 py-2 text-xs text-muted-foreground">
+                    {t("usage.sourceFilter.remoteEmpty", {
+                      defaultValue: "暂无远端数据",
+                    })}
+                  </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
 
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2 text-xs text-muted-foreground"
-                title={t("common.refresh", "刷新")}
-                onClick={changeRefreshInterval}
-              >
-                <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
-              </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2 text-xs text-muted-foreground"
+              title={t("common.refresh", "刷新")}
+              onClick={changeRefreshInterval}
+            >
+              <RefreshCw className="mr-1 h-3.5 w-3.5" />
+              {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
+            </Button>
 
-              <UsageDateRangePicker
-                selection={range}
-                triggerLabel={rangeLabel}
-                onApply={(nextRange) => setRange(nextRange)}
-              />
-            </div>
+            <UsageDateRangePicker
+              selection={range}
+              triggerLabel={rangeLabel}
+              onApply={(nextRange) => setRange(nextRange)}
+            />
           </div>
         </div>
       </div>

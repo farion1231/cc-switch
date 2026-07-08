@@ -21,6 +21,38 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    match (&mut incoming.s3_sync, &existing.s3_sync) {
+        // incoming 没有 s3 → 保留现有
+        (None, _) => {
+            incoming.s3_sync = existing.s3_sync.clone();
+        }
+        // incoming 有 s3 但密钥为空，且现有有密钥 → 填回现有密钥
+        (Some(incoming_sync), Some(existing_sync))
+            if incoming_sync.secret_access_key.is_empty()
+                && !existing_sync.secret_access_key.is_empty() =>
+        {
+            incoming_sync.secret_access_key = existing_sync.secret_access_key.clone();
+        }
+        _ => {}
+    }
+    if incoming.local_migrations.is_none() {
+        incoming.local_migrations = existing.local_migrations.clone();
+    } else if let (Some(incoming_migrations), Some(existing_migrations)) =
+        (&mut incoming.local_migrations, &existing.local_migrations)
+    {
+        if incoming_migrations
+            .codex_third_party_history_provider_bucket_v1
+            .is_none()
+        {
+            incoming_migrations.codex_third_party_history_provider_bucket_v1 = existing_migrations
+                .codex_third_party_history_provider_bucket_v1
+                .clone();
+        }
+        if incoming_migrations.codex_provider_template_v1.is_none() {
+            incoming_migrations.codex_provider_template_v1 =
+                existing_migrations.codex_provider_template_v1.clone();
+        }
+    }
     incoming
 }
 
@@ -83,7 +115,10 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::merge_settings_for_save;
-    use crate::settings::{AppSettings, WebDavSyncSettings};
+    use crate::settings::{
+        AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
+        LocalMigrations, S3SyncSettings, WebDavSyncSettings,
+    };
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -202,6 +237,113 @@ mod tests {
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
             Some("")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_existing_s3_when_payload_omits_it() {
+        let existing = AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "secret".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged.s3_sync.is_some());
+        assert_eq!(
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_s3_secret_when_incoming_has_empty_secret() {
+        let existing = AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "secret".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_local_migrations_when_payload_omits_it() {
+        let existing = AppSettings {
+            local_migrations: Some(LocalMigrations {
+                codex_third_party_history_provider_bucket_v1: Some(
+                    CodexThirdPartyHistoryProviderBucketMigration {
+                        completed_at: "2026-05-20T00:00:00Z".to_string(),
+                        target_provider_id: "custom".to_string(),
+                        source_provider_ids: vec!["rightcode".to_string()],
+                        migrated_jsonl_files: 2,
+                        migrated_state_rows: 3,
+                        scanned_history_files: true,
+                    },
+                ),
+                codex_provider_template_v1: Some(CodexProviderTemplateMigration {
+                    completed_at: "2026-05-20T00:01:00Z".to_string(),
+                    migrated_provider_ids: vec!["legacy".to_string()],
+                }),
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        let migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| {
+                migrations
+                    .codex_third_party_history_provider_bucket_v1
+                    .as_ref()
+            })
+            .expect("local migration marker should be preserved");
+        assert_eq!(migration.target_provider_id, "custom");
+        assert_eq!(migration.migrated_jsonl_files, 2);
+        assert_eq!(migration.migrated_state_rows, 3);
+
+        let template_migration = merged
+            .local_migrations
+            .as_ref()
+            .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
+            .expect("template migration marker should be preserved");
+        assert_eq!(
+            template_migration.migrated_provider_ids,
+            vec!["legacy".to_string()]
         );
     }
 }
