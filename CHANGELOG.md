@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Claude Desktop gateway accepts `x-api-key` as a fallback to `Authorization: Bearer`**: `validate_claude_desktop_gateway_auth` in `src-tauri/src/proxy/handlers.rs` previously only accepted the gateway token via `Authorization: Bearer <token>`, but the Claude desktop app sends the token as `x-api-key` (Anthropic's published auth header convention). Requests from the desktop app were rejected with `401 "Claude Desktop gateway 缺少 Authorization 头"`, making Code mode fail with "Request failed · retrying" on the first message despite Cowork mode (and the bare `claude` CLI) working. The auth check now extracts the token from either header; `Authorization: Bearer` continues to work for clients that send it. A new `extract_gateway_token` pure helper holds the parsing logic and is covered by seven unit tests (Bearer / lowercase-bearer / no-prefix / x-api-key / both-present / whitespace-trim / missing-header).
+
 ## [3.16.5] - 2026-07-01
 
 Development since v3.16.4 reworks the Codex native-Responses path — restoring a generated model catalog for proxy-less direct-connect, decoupling model mapping from the local-routing toggle, and adding a host/model-prefix blacklist that disables Codex's built-in web_search on gateways that reject it — alongside a broad wave of new provider presets (Qiniu and Code0.ai across all seven apps, the FennoAI/ZetaAPI/TeamoRouter/NekoCode partners, and the non-partner Amux), Claude Sonnet 5 pricing plus a default-tier bump to it, a categorized two-level session view with group-level batch selection, live auto-sync of the shared Claude common config on switch, and a run of credential-safety, tool-detection, Doubao model-id, branding, and icon-size fixes.

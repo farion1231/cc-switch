@@ -253,25 +253,45 @@ fn validate_claude_desktop_gateway_auth(
 ) -> Result<(), ProxyError> {
     let expected = crate::claude_desktop_config::get_or_create_gateway_token(state.db.as_ref())
         .map_err(|e| ProxyError::AuthError(e.to_string()))?;
-    let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
-        return Err(ProxyError::AuthError(
-            "Claude Desktop gateway 缺少 Authorization 头".to_string(),
-        ));
-    };
-    let value = value
-        .to_str()
-        .map_err(|_| ProxyError::AuthError("Authorization 头格式无效".to_string()))?;
-    let token = value
-        .strip_prefix("Bearer ")
-        .or_else(|| value.strip_prefix("bearer "))
-        .unwrap_or("")
-        .trim();
+
+    let token = extract_gateway_token(headers).ok_or_else(|| {
+        ProxyError::AuthError("Claude Desktop gateway 缺少 Authorization / x-api-key 头".to_string())
+    })?;
     if token != expected {
         return Err(ProxyError::AuthError(
             "Claude Desktop gateway token 无效".to_string(),
         ));
     }
     Ok(())
+}
+
+/// Extract the Claude Desktop gateway token from request headers.
+///
+/// The Claude desktop app sends the token as `x-api-key` (per Anthropic's
+/// published auth header convention). Other clients — and the desktop app's
+/// own explicit setting — may send `Authorization: Bearer <token>`. This
+/// helper accepts either and returns the raw token bytes, with no validity
+/// check; the caller is responsible for comparing to the expected token.
+fn extract_gateway_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    // Prefer `Authorization` if present (more specific).
+    if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(s) = value.to_str() {
+            // Accept either "Bearer " or "bearer " prefix; if neither is
+            // present, treat the whole value as the token (lenient parsing).
+            let token = s
+                .strip_prefix("Bearer ")
+                .or_else(|| s.strip_prefix("bearer "))
+                .unwrap_or(s)
+                .trim();
+            return Some(token.to_string());
+        }
+    }
+    if let Some(value) = headers.get("x-api-key") {
+        if let Ok(s) = value.to_str() {
+            return Some(s.trim().to_string());
+        }
+    }
+    None
 }
 
 /// Claude 格式转换处理（独有逻辑）
@@ -2045,8 +2065,8 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        extract_gateway_token, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
 
@@ -2722,5 +2742,87 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+
+    #[test]
+    fn extract_gateway_token_accepts_authorization_bearer() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer ccs-test-token-123".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_gateway_token(&h).as_deref(),
+            Some("ccs-test-token-123")
+        );
+    }
+
+    #[test]
+    fn extract_gateway_token_accepts_lowercase_bearer() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            "bearer ccs-test-token-123".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_gateway_token(&h).as_deref(),
+            Some("ccs-test-token-123")
+        );
+    }
+
+    #[test]
+    fn extract_gateway_token_accepts_authorization_without_prefix() {
+        // Lenient parsing: if the client doesn't include the Bearer prefix,
+        // treat the whole value as the token.
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            "ccs-test-token-123".parse().unwrap(),
+        );
+        assert_eq!(
+            extract_gateway_token(&h).as_deref(),
+            Some("ccs-test-token-123")
+        );
+    }
+
+    #[test]
+    fn extract_gateway_token_accepts_x_api_key() {
+        // This is what the Claude desktop app actually sends.
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("x-api-key", "ccs-test-token-123".parse().unwrap());
+        assert_eq!(
+            extract_gateway_token(&h).as_deref(),
+            Some("ccs-test-token-123")
+        );
+    }
+
+    #[test]
+    fn extract_gateway_token_prefers_authorization_over_x_api_key() {
+        // If both are present, Authorization wins — the desktop app only
+        // sends one or the other, but a misbehaving client sending both
+        // should still succeed if either is valid.
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer ccs-from-auth".parse().unwrap(),
+        );
+        h.insert("x-api-key", "ccs-from-x-api-key".parse().unwrap());
+        assert_eq!(extract_gateway_token(&h).as_deref(), Some("ccs-from-auth"));
+    }
+
+    #[test]
+    fn extract_gateway_token_trims_whitespace() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("x-api-key", "  ccs-test-token-123  ".parse().unwrap());
+        assert_eq!(
+            extract_gateway_token(&h).as_deref(),
+            Some("ccs-test-token-123")
+        );
+    }
+
+    #[test]
+    fn extract_gateway_token_returns_none_when_no_auth_header() {
+        let h = axum::http::HeaderMap::new();
+        assert_eq!(extract_gateway_token(&h), None);
     }
 }
