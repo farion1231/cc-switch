@@ -2002,7 +2002,7 @@ impl RequestForwarder {
                     outbound_model.clone(),
                 )
             })?;
-            super::hyper_client::send_request(
+            match super::hyper_client::send_request(
                 uri,
                 method.clone(),
                 ordered_headers,
@@ -2011,7 +2011,11 @@ impl RequestForwarder {
                 timeout,
                 upstream_proxy_url.as_deref(),
             )
-            .await?
+            .await
+            {
+                Ok(resp) => resp,
+                Err(e) => return Err((e, outbound_model.clone())),
+            }
         };
 
         // 检查响应状态
