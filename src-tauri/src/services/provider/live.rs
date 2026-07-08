@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -31,6 +32,66 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("openrouterCompatMode");
     }
     v
+}
+
+fn merge_claude_settings_with_local_defaults(
+    local_settings: &Value,
+    provider_settings: &Value,
+) -> Value {
+    let Some(provider_obj) = provider_settings.as_object() else {
+        return provider_settings.clone();
+    };
+
+    let mut merged = if local_settings.is_object() {
+        local_settings.clone()
+    } else {
+        json!({})
+    };
+
+    let Some(merged_obj) = merged.as_object_mut() else {
+        return provider_settings.clone();
+    };
+
+    if let Some(provider_env) = provider_obj.get("env") {
+        merged_obj.insert("env".to_string(), provider_env.clone());
+    }
+
+    for (key, value) in provider_obj {
+        if key == "env" {
+            continue;
+        }
+        match merged_obj.get_mut(key) {
+            Some(existing) => json_deep_merge(existing, value),
+            None => {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    merged
+}
+
+pub(crate) fn build_claude_settings_for_live(
+    provider_settings: &Value,
+    settings_path: &Path,
+) -> Value {
+    let sanitized = sanitize_claude_settings_for_live(provider_settings);
+    let local_settings = if settings_path.exists() {
+        match read_json_file::<Value>(settings_path) {
+            Ok(v) => v,
+            Err(err) => {
+                log::warn!(
+                    "Failed to read existing Claude settings at {}: {err}",
+                    settings_path.display()
+                );
+                serde_json::json!({})
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    merge_claude_settings_with_local_defaults(&local_settings, &sanitized)
 }
 
 pub(crate) fn provider_exists_in_live_config(
@@ -740,7 +801,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let settings = build_claude_settings_for_live(&provider.settings_config, &path);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -1609,27 +1670,58 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
-        let settings = json!({
+    fn merge_claude_settings_uses_local_defaults_and_overrides_env() {
+        let local = json!({
+            "theme": "dark",
             "env": {
-                "ANTHROPIC_API_KEY": "sk-test"
+                "A": "1",
+                "B": "2"
+            },
+            "nested": {
+                "keep": true,
+                "left": 1
             }
         });
-        let snippet = r#"{
-  "includeCoAuthoredBy": false,
-  "env": {
-    "CLAUDE_CODE_USE_BEDROCK": "1"
-  }
-}"#;
+        let provider = json!({
+            "env": {
+                "B": "override",
+                "C": "3"
+            },
+            "nested": {
+                "left": 9,
+                "right": 2
+            },
+            "apiKeyHelper": "custom"
+        });
 
-        let applied =
-            apply_common_config_to_settings(&AppType::Claude, &settings, snippet).unwrap();
-        assert_eq!(applied["includeCoAuthoredBy"], json!(false));
-        assert_eq!(applied["env"]["CLAUDE_CODE_USE_BEDROCK"], json!("1"));
+        let merged = merge_claude_settings_with_local_defaults(&local, &provider);
 
-        let stripped =
-            remove_common_config_from_settings(&AppType::Claude, &applied, snippet).unwrap();
-        assert_eq!(stripped, settings);
+        assert_eq!(
+            merged,
+            json!({
+                "theme": "dark",
+                "env": {
+                    "B": "override",
+                    "C": "3"
+                },
+                "nested": {
+                    "keep": true,
+                    "left": 9,
+                    "right": 2
+                },
+                "apiKeyHelper": "custom"
+            })
+        );
+    }
+
+    #[test]
+    fn merge_claude_settings_preserves_provider_shape_when_not_object() {
+        let local = json!({
+            "theme": "dark"
+        });
+        let provider = json!("invalid");
+        let merged = merge_claude_settings_with_local_defaults(&local, &provider);
+        assert_eq!(merged, provider);
     }
 
     #[test]
