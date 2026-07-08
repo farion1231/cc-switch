@@ -25,6 +25,8 @@ interface UsageTrendChartProps {
   rangeLabel: string;
   appType?: string;
   source?: UsageSourceFilter;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
@@ -33,13 +35,19 @@ export function UsageTrendChart({
   rangeLabel,
   appType,
   source,
+  providerName,
+  model,
   refreshIntervalMs,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
   const { startDate, endDate } = resolveUsageRange(range);
-  const { data: trends, isLoading } = useUsageTrends(range, appType, source, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data: trends, isLoading } = useUsageTrends(
+    range,
+    { appType, source, providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   if (isLoading) {
     return (

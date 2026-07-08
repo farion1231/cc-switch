@@ -336,21 +336,8 @@ pub fn responses_to_chat_completions_with_reasoning(
     // include_usage 才会在末尾吐 usage chunk。Codex CLI 用 Responses 协议、
     // 自身不带 stream_options，缺这一注入会导致 kimi/MiniMax 等第三方流式请求的
     // token/成本/缓存命中率全部漏记（input/output/cache 全为 0）。
-    let is_stream = result
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if is_stream {
-        match result.get_mut("stream_options") {
-            // 保留客户端可能透传的其它 stream_options 字段，仅补 include_usage。
-            Some(Value::Object(opts)) => {
-                opts.insert("include_usage".to_string(), json!(true));
-            }
-            _ => {
-                result["stream_options"] = json!({ "include_usage": true });
-            }
-        }
-    }
+    // 与 Claude→openai_chat 路径共用同一 helper，保证两个客户端方向一致。
+    super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
 }
@@ -1411,6 +1398,14 @@ fn chat_tool_calls_to_response_output_items(
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
+            // Skip tool calls with missing function names (defensive: some models
+            // may generate tool calls without providing a valid name)
+            let function = tool_call.get("function").unwrap_or(&Value::Null);
+            let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                log::warn!("[Codex] Skipping tool call with missing name");
+                continue;
+            }
             output.push(chat_tool_call_to_response_item(
                 tool_call,
                 index,
@@ -1419,11 +1414,11 @@ fn chat_tool_calls_to_response_output_items(
             ));
         }
     } else if let Some(function_call) = message.get("function_call") {
-        output.push(chat_legacy_function_call_to_response_item(
-            function_call,
-            reasoning,
-            tool_context,
-        ));
+        if let Some(item) =
+            chat_legacy_function_call_to_response_item(function_call, reasoning, tool_context)
+        {
+            output.push(item);
+        }
     }
 
     output
@@ -1461,7 +1456,7 @@ fn chat_legacy_function_call_to_response_item(
     function_call: &Value,
     reasoning: Option<&str>,
     tool_context: &CodexToolContext,
-) -> Value {
+) -> Option<Value> {
     let call_id = function_call
         .get("id")
         .and_then(|v| v.as_str())
@@ -1471,10 +1466,18 @@ fn chat_legacy_function_call_to_response_item(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+
+    // Skip legacy function calls with missing names (defensive: some models
+    // may generate function_call without providing a valid name)
+    if name.is_empty() {
+        log::warn!("[Codex] Skipping legacy function_call with missing name");
+        return None;
+    }
+
     let arguments = canonicalize_tool_arguments(function_call.get("arguments"));
 
     let item_id = response_tool_call_item_id_from_chat_name(call_id, name, tool_context);
-    response_tool_call_item_from_chat_name(
+    Some(response_tool_call_item_from_chat_name(
         &item_id,
         "completed",
         call_id,
@@ -1482,7 +1485,7 @@ fn chat_legacy_function_call_to_response_item(
         &arguments,
         reasoning,
         tool_context,
-    )
+    ))
 }
 
 pub(crate) fn response_tool_call_item_id_from_chat_name(

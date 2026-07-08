@@ -346,9 +346,11 @@ fn schema_migration_v4_adds_pricing_model_columns() {
 }
 
 #[test]
-fn schema_migration_v10_to_v11_adds_usage_source_columns() {
+fn migration_v10_to_current_rebuilds_rollups_with_usage_dimensions() {
     let conn = Connection::open_in_memory().expect("open memory db");
-    Database::set_user_version(&conn, 10).expect("set user_version=10");
+
+    // 模拟 v10 形状的 rollup 表（主键不含 data_source/request_model/pricing_model）
+    // + 一行历史聚合数据，以及 v10 形状的明细表（无 data_source/pricing_model 列）。
     conn.execute_batch(
         r#"
         CREATE TABLE proxy_request_logs (
@@ -356,6 +358,7 @@ fn schema_migration_v10_to_v11_adds_usage_source_columns() {
             provider_id TEXT NOT NULL,
             app_type TEXT NOT NULL,
             model TEXT NOT NULL,
+            request_model TEXT,
             session_id TEXT,
             status_code INTEGER NOT NULL,
             created_at INTEGER NOT NULL
@@ -375,24 +378,62 @@ fn schema_migration_v10_to_v11_adds_usage_source_columns() {
             avg_latency_ms INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (date, app_type, provider_id, model)
         );
+        INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_count, success_count,
+             input_tokens, output_tokens, total_cost_usd, avg_latency_ms)
+        VALUES ('2026-05-01', 'claude', 'p1', 'kimi-k2', 7, 7, 1000, 500, '0.07', 120);
         "#,
     )
-    .expect("seed v10 usage schema");
+    .expect("seed v10 rollup table");
 
-    // Startup calls create_tables before the versioned migration. Existing v10
-    // tables do not have data_source yet, so create_tables must not create
-    // indexes that require the new column before migrate_v10_to_v11 runs.
+    Database::set_user_version(&conn, 10).expect("set user_version=10");
     Database::create_tables_on_conn(&conn).expect("create tables");
     Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
 
     assert!(
         Database::has_column(&conn, "proxy_request_logs", "data_source").expect("check logs"),
-        "proxy_request_logs.data_source should be added by v11 migration"
+        "proxy_request_logs.data_source should be added by migration"
     );
-    assert!(
-        Database::has_column(&conn, "usage_daily_rollups", "data_source").expect("check rollups"),
-        "usage_daily_rollups.data_source should be added by v11 migration"
-    );
+    let rollup_data_source = get_column_info(&conn, "usage_daily_rollups", "data_source");
+    assert_eq!(rollup_data_source.r#type, "TEXT");
+    assert_eq!(rollup_data_source.notnull, 1);
+
+    let log_pricing_model = get_column_info(&conn, "proxy_request_logs", "pricing_model");
+    assert_eq!(log_pricing_model.r#type, "TEXT");
+    assert_eq!(log_pricing_model.notnull, 0);
+
+    let request_model = get_column_info(&conn, "usage_daily_rollups", "request_model");
+    assert_eq!(request_model.r#type, "TEXT");
+    assert_eq!(request_model.notnull, 1);
+    let rollup_pricing_model = get_column_info(&conn, "usage_daily_rollups", "pricing_model");
+    assert_eq!(rollup_pricing_model.r#type, "TEXT");
+    assert_eq!(rollup_pricing_model.notnull, 1);
+
+    // 历史行保留，data_source 填 proxy，request/pricing model 填 ''（未知）。
+    let (ds, rm, pm, count, input, cost): (String, String, String, i64, i64, String) = conn
+        .query_row(
+            "SELECT data_source, request_model, pricing_model, request_count, input_tokens, total_cost_usd
+             FROM usage_daily_rollups WHERE model = 'kimi-k2'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("migrated row");
+    assert_eq!(ds, "proxy");
+    assert_eq!(rm, "");
+    assert_eq!(pm, "");
+    assert_eq!(count, 7);
+    assert_eq!(input, 1000);
+    assert_eq!(cost, "0.07");
+
     let mut stmt = conn
         .prepare("PRAGMA table_info(\"usage_daily_rollups\")")
         .expect("rollup table info");
@@ -411,12 +452,86 @@ fn schema_migration_v10_to_v11_adds_usage_source_columns() {
             .into_iter()
             .map(|(_, name)| name)
             .collect::<Vec<_>>(),
-        vec!["date", "app_type", "provider_id", "data_source", "model"]
+        vec![
+            "date",
+            "app_type",
+            "provider_id",
+            "data_source",
+            "model",
+            "request_model",
+            "pricing_model"
+        ]
     );
+
+    // 主键包含 data_source/request_model：同 model 不同来源或别名可共存。
+    conn.execute(
+        "INSERT INTO usage_daily_rollups
+            (date, app_type, provider_id, data_source, model, request_model, request_count)
+         VALUES ('2026-05-01', 'claude', 'p1', 'remote:pjlab', 'kimi-k2', 'claude-sonnet-4-6', 1)",
+        [],
+    )
+    .expect("insert row with same model but different source/request_model");
+
     assert_eq!(
         Database::get_user_version(&conn).expect("version after migration"),
         SCHEMA_VERSION
     );
+}
+
+#[test]
+fn schema_create_tables_repairs_dev_global_profile_marker() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟跑过未发布开发版的库：user_version 已是 12（迁移不会再跑），
+    // 但 current 标记还是全局 key（现按应用分组）
+    conn.execute_batch(
+        r#"
+        CREATE TABLE profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            sort_order INTEGER,
+            created_at INTEGER,
+            updated_at INTEGER
+        );
+        INSERT INTO profiles (id, name, payload) VALUES ('p1', 'Project A', '{}');
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO settings (key, value) VALUES ('current_profile_id', 'p1');
+        "#,
+    )
+    .expect("seed dev v12 shape");
+    Database::set_user_version(&conn, 12).expect("set user_version=12");
+
+    Database::create_tables_on_conn(&conn).expect("create tables should repair marker");
+
+    // 全局 current 标记改名为 claude 组标记，旧 key 删除
+    let claude_marker: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scoped current marker");
+    assert_eq!(claude_marker, "p1");
+    let old_marker: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = 'current_profile_id'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count old marker");
+    assert_eq!(old_marker, 0);
+
+    // 修复必须幂等：再跑一遍不应破坏已迁移的标记
+    Database::create_tables_on_conn(&conn).expect("repair is idempotent");
+    let claude_marker: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scoped current marker survives");
+    assert_eq!(claude_marker, "p1");
 }
 
 #[test]

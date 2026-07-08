@@ -15,6 +15,8 @@ interface ModelStatsTableProps {
   range: UsageRangeSelection;
   appType?: string;
   source?: UsageSourceFilter;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
@@ -22,12 +24,18 @@ export function ModelStatsTable({
   range,
   appType,
   source,
+  providerName,
+  model,
   refreshIntervalMs,
 }: ModelStatsTableProps) {
   const { t } = useTranslation();
-  const { data: stats, isLoading } = useModelStats(range, appType, source, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data: stats, isLoading } = useModelStats(
+    range,
+    { appType, source, providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   if (isLoading) {
     return <div className="h-[400px] animate-pulse rounded bg-gray-100" />;

@@ -7,6 +7,7 @@ import { ProviderStatsTable } from "./ProviderStatsTable";
 import { ModelStatsTable } from "./ModelStatsTable";
 import {
   KNOWN_APP_TYPES,
+  type AppType,
   type AppTypeFilter,
   type UsageRangeSelection,
   type UsageSourceFilter,
@@ -21,10 +22,11 @@ import {
   Activity,
   RefreshCw,
   Coins,
+  LayoutGrid,
   Server,
   Trash2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ProviderIcon } from "@/components/ProviderIcon";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -34,8 +36,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { usageKeys } from "@/lib/query/usage";
+import { usageKeys, useModelStats, useProviderStats } from "@/lib/query/usage";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageApi } from "@/lib/api/usage";
 import {
@@ -81,6 +90,24 @@ const serializeSourceFilter = (
   return `multi:${selectedRemoteSources.join(SOURCE_MULTI_SEPARATOR)}`;
 };
 
+// 0 表示关闭自动刷新（refetchInterval=false）
+const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
+
+// 与 AppSwitcher 的 appIconName 保持一致（codex 复用 openai 图标）
+const APP_FILTER_ICON: Record<AppType, string> = {
+  claude: "claude",
+  codex: "openai",
+  gemini: "gemini",
+  opencode: "opencode",
+};
+
+// Select 的 "all" 哨兵和用户自定义名称同处一个值域——真有来源/模型叫 "all"
+// 就会撞名（重复 value、选中即清空筛选）。动态选项统一加前缀编码隔离值域。
+const DYNAMIC_OPTION_PREFIX = "v:";
+const encodeOptionValue = (name: string) => `${DYNAMIC_OPTION_PREFIX}${name}`;
+const decodeOptionValue = (value: string) =>
+  value === "all" ? undefined : value.slice(DYNAMIC_OPTION_PREFIX.length);
+
 export function UsageDashboard() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -92,7 +119,40 @@ export function UsageDashboard() {
   >([]);
   const [deleteRemoteSource, setDeleteRemoteSource] =
     useState<RemoteSourceOption | null>(null);
+  const [providerName, setProviderName] = useState<string | undefined>(
+    undefined,
+  );
+  const [model, setModel] = useState<string | undefined>(undefined);
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+
+  const source = useMemo(
+    () => serializeSourceFilter(sourceMode, selectedRemoteSources),
+    [selectedRemoteSources, sourceMode],
+  );
+
+  // 切应用/来源时清掉下游筛选，避免留下一个在新范围内查无数据的"幽灵"组合；
+  // 切 Provider 同理清掉模型（模型选项随 Provider 级联）。
+  const changeAppType = (next: AppTypeFilter) => {
+    setAppType(next);
+    if (next !== appType) {
+      setProviderName(undefined);
+      setModel(undefined);
+    }
+  };
+  const changeSourceMode = (next: SourceMode) => {
+    setSourceMode(next);
+    if (next !== sourceMode) {
+      setSelectedRemoteSources([]);
+      setProviderName(undefined);
+      setModel(undefined);
+    }
+  };
+  const changeProviderName = (next: string | undefined) => {
+    setProviderName(next);
+    if (next !== providerName) {
+      setModel(undefined);
+    }
+  };
 
   // 后端写入新日志时 emit `usage-log-recorded`，本 hook 立刻 invalidate 所有
   // usage 查询，实现实时刷新（仅在 Dashboard 挂载时生效，离开页面自动取消监听）
@@ -105,14 +165,7 @@ export function UsageDashboard() {
     refetchIntervalInBackground: false,
   });
 
-  const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
-  const changeRefreshInterval = () => {
-    const currentIndex = refreshIntervalOptionsMs.indexOf(
-      refreshIntervalMs as (typeof refreshIntervalOptionsMs)[number],
-    );
-    const safeIndex = currentIndex >= 0 ? currentIndex : 3;
-    const nextIndex = (safeIndex + 1) % refreshIntervalOptionsMs.length;
-    const next = refreshIntervalOptionsMs[nextIndex];
+  const changeRefreshInterval = (next: number) => {
     setRefreshIntervalMs(next);
     queryClient.invalidateQueries({ queryKey: usageKeys.all });
   };
@@ -125,9 +178,18 @@ export function UsageDashboard() {
       return getUsageRangePresetLabel(range.preset, t);
     }
 
-    return `${new Date(resolvedRange.startDate * 1000).toLocaleString(locale)} - ${new Date(
-      resolvedRange.endDate * 1000,
-    ).toLocaleString(locale)}`;
+    const startStr = new Date(resolvedRange.startDate * 1000).toLocaleString(
+      locale,
+    );
+
+    if (range.liveEndTime) {
+      return `${startStr} → ${t("usage.liveEndTimeNow", "现在")}`;
+    }
+
+    const endStr = new Date(resolvedRange.endDate * 1000).toLocaleString(
+      locale,
+    );
+    return `${startStr} - ${endStr}`;
   }, [locale, range, resolvedRange.endDate, resolvedRange.startDate, t]);
 
   const remoteSourceOptions = useMemo(() => {
@@ -139,13 +201,11 @@ export function UsageDashboard() {
         ) ?? [];
     return Array.from(new Set(remoteSources));
   }, [dataSources]);
-  const source = useMemo(
-    () => serializeSourceFilter(sourceMode, selectedRemoteSources),
-    [selectedRemoteSources, sourceMode],
-  );
 
   const toggleRemoteSource = (option: RemoteSourceOption) => {
     setSourceMode("remote");
+    setProviderName(undefined);
+    setModel(undefined);
     setSelectedRemoteSources((previous) => {
       const next = previous.includes(option)
         ? previous.filter((item) => item !== option)
@@ -208,6 +268,45 @@ export function UsageDashboard() {
     return getRemoteSourceLabel(selectedRemoteSources[0]);
   }, [selectedRemoteSources, t]);
 
+  // 顶栏下拉的选项池：Provider 列表只跟应用/时间范围走（不受自身选中值影响），
+  // 模型列表随所选 Provider 级联。两者都只列当前范围内真实有数据的条目。
+  // refetchInterval 必须跟随面板的刷新设置——未筛选时这两个查询与统计表共享
+  // query key，落下的话会以默认 30s 拖着同 key 查询一起轮询，"--" 形同虚设。
+  const optionsRefetch = {
+    refetchInterval:
+      refreshIntervalMs > 0 ? refreshIntervalMs : (false as const),
+  };
+  const { data: providerOptionsData } = useProviderStats(
+    range,
+    { appType, source },
+    optionsRefetch,
+  );
+  const { data: modelOptionsData } = useModelStats(
+    range,
+    { appType, source, providerName },
+    optionsRefetch,
+  );
+
+  const providerOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const stat of providerOptionsData ?? []) {
+      names.add(stat.providerName);
+    }
+    // 数据刷新后选中项可能掉出列表（如改了时间范围）；补回去保证 Select
+    // 仍能渲染选中文案，用户看得见才能主动清除。
+    if (providerName) names.add(providerName);
+    return Array.from(names);
+  }, [providerOptionsData, providerName]);
+
+  const modelOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const stat of modelOptionsData ?? []) {
+      names.add(stat.model);
+    }
+    if (model) names.add(model);
+    return Array.from(names);
+  }, [modelOptionsData, model]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -225,21 +324,34 @@ export function UsageDashboard() {
 
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center p-1 bg-muted/30 rounded-lg border border-border/50">
-            {APP_FILTER_OPTIONS.map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setAppType(type)}
-                className={cn(
-                  "px-3 py-1.5 rounded-md text-sm font-medium transition-all",
-                  appType === type
-                    ? "bg-background text-primary shadow-sm"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                )}
-              >
-                {t(`usage.appFilter.${type}`)}
-              </button>
-            ))}
+            {APP_FILTER_OPTIONS.map((type) => {
+              const label = t(`usage.appFilter.${type}`);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => changeAppType(type)}
+                  title={label}
+                  aria-label={label}
+                  className={cn(
+                    "flex h-8 items-center justify-center px-2.5 rounded-md transition-all",
+                    appType === type
+                      ? "bg-background text-primary shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {type === "all" ? (
+                    <LayoutGrid className="h-4 w-4" />
+                  ) : (
+                    <ProviderIcon
+                      icon={APP_FILTER_ICON[type]}
+                      name={label}
+                      size={16}
+                    />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           <div className="mx-2 h-5 w-px bg-border" />
@@ -247,9 +359,9 @@ export function UsageDashboard() {
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setSourceMode("all")}
+              onClick={() => changeSourceMode("all")}
               className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                "inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
                 sourceMode === "all"
                   ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
                   : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
@@ -260,9 +372,9 @@ export function UsageDashboard() {
             </button>
             <button
               type="button"
-              onClick={() => setSourceMode("local")}
+              onClick={() => changeSourceMode("local")}
               className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                "inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
                 sourceMode === "local"
                   ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
                   : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
@@ -277,7 +389,7 @@ export function UsageDashboard() {
                   type="button"
                   onClick={() => setSourceMode("remote")}
                   className={cn(
-                    "inline-flex h-8 max-w-[13rem] items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
+                    "inline-flex h-9 max-w-[13rem] items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-all",
                     sourceMode === "remote"
                       ? "border-primary/20 bg-primary/10 text-primary shadow-sm"
                       : "border-transparent text-muted-foreground hover:bg-muted/50 hover:text-primary",
@@ -306,6 +418,8 @@ export function UsageDashboard() {
                     event.preventDefault();
                     setSourceMode("remote");
                     setSelectedRemoteSources([]);
+                    setProviderName(undefined);
+                    setModel(undefined);
                   }}
                   className="pl-2"
                 >
@@ -364,18 +478,81 @@ export function UsageDashboard() {
             </DropdownMenu>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-xs text-muted-foreground"
-              title={t("common.refresh", "刷新")}
-              onClick={changeRefreshInterval}
+          <Select
+            value={
+              providerName != null ? encodeOptionValue(providerName) : "all"
+            }
+            onValueChange={(v) => changeProviderName(decodeOptionValue(v))}
+          >
+            <SelectTrigger
+              className="h-9 w-[100px] bg-background text-xs focus:border-border-default [&>span]:min-w-0 [&>span]:truncate"
+              title={providerName ?? t("usage.filterBySource")}
             >
-              <RefreshCw className="mr-1 h-3.5 w-3.5" />
-              {refreshIntervalMs > 0 ? `${refreshIntervalMs / 1000}s` : "--"}
-            </Button>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-w-[280px]">
+              <SelectItem value="all">{t("usage.allSources")}</SelectItem>
+              {providerOptions.map((name) => (
+                <SelectItem
+                  key={name}
+                  value={encodeOptionValue(name)}
+                  title={name}
+                  className="[&>span]:min-w-0 [&>span]:truncate"
+                >
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={model != null ? encodeOptionValue(model) : "all"}
+            onValueChange={(v) => setModel(decodeOptionValue(v))}
+          >
+            <SelectTrigger
+              className="h-9 w-[100px] bg-background text-xs focus:border-border-default [&>span]:min-w-0 [&>span]:truncate"
+              title={model ?? t("usage.filterByModel")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-w-[280px]">
+              <SelectItem value="all">{t("usage.allModels")}</SelectItem>
+              {modelOptions.map((name) => (
+                <SelectItem
+                  key={name}
+                  value={encodeOptionValue(name)}
+                  title={name}
+                  className="[&>span]:min-w-0 [&>span]:truncate"
+                >
+                  {name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div className="flex items-center gap-2 ml-auto lg:ml-0">
+            <Select
+              value={String(refreshIntervalMs)}
+              onValueChange={(v) => changeRefreshInterval(Number(v))}
+            >
+              <SelectTrigger
+                className="h-9 w-[100px] bg-background text-xs focus:border-border-default"
+                title={t("usage.refreshInterval")}
+                aria-label={t("usage.refreshInterval")}
+              >
+                <span className="flex items-center gap-2">
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                  <SelectValue />
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {REFRESH_INTERVAL_OPTIONS_MS.map((ms) => (
+                  <SelectItem key={ms} value={String(ms)}>
+                    {ms > 0 ? `${ms / 1000}s` : t("usage.refreshOff")}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <UsageDateRangePicker
               selection={range}
@@ -390,6 +567,8 @@ export function UsageDashboard() {
         range={range}
         appType={appType === "all" ? undefined : appType}
         source={source}
+        providerName={providerName}
+        model={model}
         refreshIntervalMs={refreshIntervalMs}
       />
 
@@ -398,6 +577,8 @@ export function UsageDashboard() {
         rangeLabel={rangeLabel}
         appType={appType}
         source={source}
+        providerName={providerName}
+        model={model}
         refreshIntervalMs={refreshIntervalMs}
       />
 
@@ -431,6 +612,8 @@ export function UsageDashboard() {
                 rangeLabel={rangeLabel}
                 appType={appType}
                 source={source}
+                providerName={providerName}
+                model={model}
                 refreshIntervalMs={refreshIntervalMs}
                 onRangeChange={setRange}
               />
@@ -441,6 +624,8 @@ export function UsageDashboard() {
                 range={range}
                 appType={appType}
                 source={source}
+                providerName={providerName}
+                model={model}
                 refreshIntervalMs={refreshIntervalMs}
               />
             </TabsContent>
@@ -450,6 +635,8 @@ export function UsageDashboard() {
                 range={range}
                 appType={appType}
                 source={source}
+                providerName={providerName}
+                model={model}
                 refreshIntervalMs={refreshIntervalMs}
               />
             </TabsContent>

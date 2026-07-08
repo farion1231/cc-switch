@@ -61,16 +61,33 @@ export const usageApi = {
     endDate?: number,
     appType?: string,
     source?: UsageSourceFilter,
+    providerName?: string,
+    model?: string,
   ): Promise<UsageSummary> => {
-    return invoke("get_usage_summary", { startDate, endDate, appType, source });
+    return invoke("get_usage_summary", {
+      startDate,
+      endDate,
+      appType,
+      source,
+      providerName,
+      model,
+    });
   },
 
   getUsageSummaryByApp: async (
     startDate?: number,
     endDate?: number,
     source?: UsageSourceFilter,
+    providerName?: string,
+    model?: string,
   ): Promise<UsageSummaryByApp[]> => {
-    return invoke("get_usage_summary_by_app", { startDate, endDate, source });
+    return invoke("get_usage_summary_by_app", {
+      startDate,
+      endDate,
+      source,
+      providerName,
+      model,
+    });
   },
 
   getUsageTrends: async (
@@ -78,8 +95,17 @@ export const usageApi = {
     endDate?: number,
     appType?: string,
     source?: UsageSourceFilter,
+    providerName?: string,
+    model?: string,
   ): Promise<DailyStats[]> => {
-    return invoke("get_usage_trends", { startDate, endDate, appType, source });
+    return invoke("get_usage_trends", {
+      startDate,
+      endDate,
+      appType,
+      source,
+      providerName,
+      model,
+    });
   },
 
   getProviderStats: async (
@@ -87,12 +113,16 @@ export const usageApi = {
     endDate?: number,
     appType?: string,
     source?: UsageSourceFilter,
+    providerName?: string,
+    model?: string,
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
       endDate,
       appType,
       source,
+      providerName,
+      model,
     });
   },
 
@@ -101,8 +131,17 @@ export const usageApi = {
     endDate?: number,
     appType?: string,
     source?: UsageSourceFilter,
+    providerName?: string,
+    model?: string,
   ): Promise<ModelStats[]> => {
-    return invoke("get_model_stats", { startDate, endDate, appType, source });
+    return invoke("get_model_stats", {
+      startDate,
+      endDate,
+      appType,
+      source,
+      providerName,
+      model,
+    });
   },
 
   getRequestLogs: async (

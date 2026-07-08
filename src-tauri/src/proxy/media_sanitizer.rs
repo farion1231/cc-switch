@@ -41,14 +41,7 @@ pub fn replace_images_for_text_only_model(
 }
 
 pub fn contains_image_blocks(body: &Value) -> bool {
-    body.get("messages")
-        .and_then(Value::as_array)
-        .is_some_and(|messages| {
-            messages
-                .iter()
-                .filter_map(|message| message.get("content"))
-                .any(content_has_image_blocks)
-        })
+    messages_have_image_blocks(body) || responses_input_has_image_blocks(body.get("input"))
 }
 
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
@@ -70,6 +63,19 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
 
     let message = extract_error_text(body);
     let message = message.to_ascii_lowercase();
+
+    // 自证性表述：这类短语本身就断言了"仅接受文本"，属于模态拒绝，无需再要求
+    // 错误提到 image/media 等字样——火山方舟等网关的报错是
+    // "Model only support text input"，全程不出现 image（issue #5025）。
+    // 国产网关的英文常缺三单 s，因此带 s / 不带 s 两种形式都要列。
+    const TEXT_ONLY_SELF_EVIDENT_HINTS: &[&str] = &["only support text", "only supports text"];
+    if TEXT_ONLY_SELF_EVIDENT_HINTS
+        .iter()
+        .any(|hint| message.contains(hint))
+    {
+        return true;
+    }
+
     let mentions_image = message.contains("image")
         || message.contains("vision")
         || message.contains("multimodal")
@@ -90,11 +96,11 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "doesn't support",
         "do not support",
         "don't support",
-        "only supports text",
         "text only",
         "text-only",
         "invalid content type",
         "invalid message content",
+        "unknown variant",
         "unknown content type",
         "unrecognized content type",
         "cannot process",
@@ -113,49 +119,122 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        block.get("type").and_then(Value::as_str) == Some("image")
+        is_image_block_type(block.get("type").and_then(Value::as_str))
             || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
 
 fn replace_images_in_body(body: &mut Value) -> usize {
-    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
-        return 0;
-    };
+    let message_replacements = body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .map(|messages| {
+            messages
+                .iter_mut()
+                .filter_map(|message| message.get_mut("content"))
+                .map(replace_images_in_content)
+                .sum()
+        })
+        .unwrap_or(0);
 
-    messages
-        .iter_mut()
-        .filter_map(|message| message.get_mut("content"))
-        .map(replace_images_in_content)
-        .sum()
+    message_replacements
+        + body
+            .get_mut("input")
+            .map(replace_images_in_responses_input)
+            .unwrap_or(0)
 }
 
 fn replace_images_in_content(content: &mut Value) -> usize {
+    replace_images_in_content_with_text_type(content, "text")
+}
+
+fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str) -> usize {
     let Some(blocks) = content.as_array_mut() else {
         return 0;
     };
 
     let mut replaced = 0usize;
     for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("image") {
-            let cache_control = block.get("cache_control").cloned();
-            *block = json!({
-                "type": "text",
-                "text": UNSUPPORTED_IMAGE_MARKER
-            });
-            if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
-                object.insert("cache_control".to_string(), cache_control);
-            }
+        if is_image_block_type(block.get("type").and_then(Value::as_str)) {
+            replace_image_block_with_text_marker(block, text_type);
             replaced += 1;
             continue;
         }
 
         if let Some(nested_content) = block.get_mut("content") {
-            replaced += replace_images_in_content(nested_content);
+            replaced += replace_images_in_content_with_text_type(nested_content, text_type);
         }
     }
 
     replaced
+}
+
+fn messages_have_image_blocks(body: &Value) -> bool {
+    body.get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| message.get("content"))
+                .any(content_has_image_blocks)
+        })
+}
+
+fn responses_input_has_image_blocks(input: Option<&Value>) -> bool {
+    match input {
+        Some(Value::Array(items)) => items.iter().any(responses_input_item_has_image_blocks),
+        Some(item @ Value::Object(_)) => responses_input_item_has_image_blocks(item),
+        _ => false,
+    }
+}
+
+fn responses_input_item_has_image_blocks(item: &Value) -> bool {
+    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+        return true;
+    }
+
+    item.get("content").is_some_and(content_has_image_blocks)
+}
+
+fn replace_images_in_responses_input(input: &mut Value) -> usize {
+    match input {
+        Value::Array(items) => items
+            .iter_mut()
+            .map(replace_images_in_responses_input_item)
+            .sum(),
+        Value::Object(_) => replace_images_in_responses_input_item(input),
+        _ => 0,
+    }
+}
+
+fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
+    let mut replaced = 0usize;
+
+    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+        replace_image_block_with_text_marker(item, "input_text");
+        replaced += 1;
+    }
+
+    if let Some(content) = item.get_mut("content") {
+        replaced += replace_images_in_content_with_text_type(content, "input_text");
+    }
+
+    replaced
+}
+
+fn is_image_block_type(block_type: Option<&str>) -> bool {
+    matches!(block_type, Some("image" | "image_url" | "input_image"))
+}
+
+fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
+    let cache_control = block.get("cache_control").cloned();
+    *block = json!({
+        "type": text_type,
+        "text": UNSUPPORTED_IMAGE_MARKER
+    });
+    if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
+        object.insert("cache_control".to_string(), cache_control);
+    }
 }
 
 fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
@@ -183,6 +262,9 @@ fn known_text_only_model(model: &str) -> bool {
         "deepseek-v4-flash",
         "deepseek-v4-pro",
         "glm-5.1",
+        // 精确匹配而非 TAIL_PREFIXES：智谱视觉版沿用 4v/5v 命名（glm-5.2v），
+        // 前缀匹配会误剥未来多模态变体的图片。
+        "glm-5.2",
         "kat-coder",
         "kat-coder-pro",
         "kat-coder-pro v1",
@@ -190,6 +272,7 @@ fn known_text_only_model(model: &str) -> bool {
         "kat-coder-pro-v1",
         "kat-coder-pro-v2",
         "ling-2.5-1t",
+        "longcat-2.0",
         "longcat-flash-chat",
         "mimo-v2.5-pro",
         "us.deepseek.r1-v1",
@@ -367,6 +450,63 @@ mod tests {
             body["messages"][0]["content"][0]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    #[test]
+    fn known_text_only_models_replace_chat_image_url_before_send() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "look" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn known_text_only_models_replace_codex_input_image_before_send() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn longcat_models_are_classified_text_only() {
+        // LongCat-2.0 (like the retired Flash Chat) is a text-only model; the
+        // preset ships it in mixed case, so the classifier must normalize first.
+        assert!(known_text_only_model("LongCat-2.0"));
+        assert!(known_text_only_model("longcat/LongCat-2.0"));
+        assert!(known_text_only_model("LongCat-Flash-Chat"));
     }
 
     #[test]
@@ -603,6 +743,32 @@ mod tests {
     }
 
     #[test]
+    fn detects_text_only_errors_without_image_mention() {
+        // 火山方舟真实报错（issue #5025）：不含 image/media 等字样，且英文缺
+        // 三单 s——旧逻辑的 mentions_image 门与 "only supports text" 提示都拦不住。
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Model only support text input Request id: 021783"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn glm_52_is_classified_text_only() {
+        // issue #5025：火山 Coding Plan 的 GLM 5.2 是纯文本端点，
+        // 映射链 glm-5.2[1M] 归一化后尾部为 glm-5.2。
+        assert!(known_text_only_model("glm-5.2"));
+        assert!(known_text_only_model("GLM-5.2[1M]"));
+        assert!(known_text_only_model("zai-org/GLM-5.2"));
+        // 未来视觉版（智谱 4v/5v 命名惯例）不能被误判为纯文本。
+        assert!(!known_text_only_model("glm-5.2v"));
+    }
+
+    #[test]
     fn ignores_non_image_errors() {
         let error = ProxyError::UpstreamError {
             status: 400,
@@ -652,6 +818,19 @@ mod tests {
             body: Some(r#"{"message":"attachments are not supported by this model"}"#.to_string()),
         };
         assert!(is_unsupported_image_error(&attachment_error));
+    }
+
+    #[test]
+    fn detects_chat_content_unknown_variant_image_url_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(
+                r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
     }
 
     #[test]
