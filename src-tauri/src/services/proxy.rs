@@ -2145,9 +2145,7 @@ impl ProxyService {
                 .get("auth")
                 .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
             let config_str = effective_settings.get("config").and_then(|v| v.as_str());
-            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-            );
+            let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &effective_settings,
@@ -2414,9 +2412,7 @@ impl ProxyService {
             .get("auth")
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
-        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-        );
+        let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
@@ -2443,9 +2439,9 @@ impl ProxyService {
                 .filter(|auth| Self::codex_auth_has_proxy_placeholder(auth))
             {
                 let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
-                let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-                    provider.and_then(|p| p.meta.as_ref()?.api_format.as_deref()),
-                );
+                let profile = provider
+                    .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
+                    .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
                 let prepared_config =
                     crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
                         config, config_str, profile,

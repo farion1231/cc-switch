@@ -1122,6 +1122,14 @@ impl RequestForwarder {
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
 
+        // Codex upstream conversion mode — computed early because the [1m]-suffix strip
+        // below must be skipped on the Anthropic path (the marker has to survive to
+        // catalog matching and to the transform's own strip+beta detection).
+        let codex_responses_to_chat = matches!(app_type, AppType::Codex)
+            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
+            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
@@ -1142,7 +1150,11 @@ impl RequestForwarder {
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
                 .await;
-        } else {
+        } else if !codex_responses_to_anthropic {
+            // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
+            // model-catalog match (apply_codex_upstream_model) and the transform's own
+            // strip+`context-1m` beta detection. The marker is stripped later, on the
+            // final anthropic_body.
             mapped_body =
                 super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
         }
@@ -1300,10 +1312,6 @@ impl RequestForwarder {
             Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
             None => adapter.needs_transform(provider),
         };
-        let codex_responses_to_chat = matches!(app_type, AppType::Codex)
-            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
-            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         // Codex → Anthropic: Claude Code emulation is off by default and only
         // enabled when the user explicitly turns it on in the UI, so requests can
         // pass a gateway's "Claude Code only" fingerprint check (User-Agent /
@@ -1334,11 +1342,16 @@ impl RequestForwarder {
             )
         };
 
-        let codex_chat_base_is_full_endpoint = codex_responses_to_chat
-            && base_url
-                .trim_end_matches('/')
-                .to_ascii_lowercase()
-                .ends_with("/chat/completions");
+        let codex_chat_base_is_full_endpoint =
+            codex_responses_to_chat && base_url_is_full_endpoint(&base_url, "/chat/completions");
+
+        // Defensive fallback mirroring `codex_chat_base_is_full_endpoint`: if a user pastes
+        // a base URL already ending in the Anthropic `/v1/messages` endpoint but leaves the
+        // "full URL" switch off, treat it as a full endpoint so we don't double-append
+        // `/v1/messages` (→ `.../v1/messages/v1/messages`, a non-retryable 400). Matches the
+        // exact endpoint suffix, so prefixed gateways like `.../api/v1/messages` are covered.
+        let codex_anthropic_base_is_full_endpoint =
+            codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1346,7 +1359,10 @@ impl RequestForwarder {
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url || codex_chat_base_is_full_endpoint {
+        } else if is_full_url
+            || codex_chat_base_is_full_endpoint
+            || codex_anthropic_base_is_full_endpoint
+        {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
@@ -1389,10 +1405,11 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
             // Anthropic requires max_tokens; fall back to this default only when the
             // Codex request omits max_output_tokens (rare — Codex normally sends it).
-            // Sized for Codex-scale outputs and kept within current Claude output
-            // ceilings (Opus 4.x = 32000, Sonnet 4 = 64000) so the fallback itself
-            // won't 400; the transform clamps any thinking budget below this value.
-            const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 32000;
+            // Kept conservative so a low-output-ceiling model or relay does not hard-400
+            // on the fallback (a too-high default 400s and is non-retryable); 8192 is
+            // accepted by every current Claude model and virtually all gateways. The
+            // transform clamps any thinking budget below this value.
+            const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 8192;
             let mut anthropic_body =
                 super::providers::transform_codex_anthropic::responses_request_to_anthropic(
                     mapped_body,
@@ -1413,6 +1430,19 @@ impl RequestForwarder {
             if codex_impersonate_claude_code {
                 prepend_claude_code_system_prompt(&mut anthropic_body);
             }
+            // Enable Anthropic prompt caching (5m ephemeral — no beta header required):
+            // otherwise system/tools/history are re-sent at full price every round,
+            // inflating cost and first-token latency. The injector handles the
+            // string→array `system` conversion and the 4-breakpoint cap.
+            super::cache_injector::inject(
+                &mut anthropic_body,
+                &super::types::OptimizerConfig {
+                    enabled: true,
+                    thinking_optimizer: false,
+                    cache_injection: true,
+                    cache_ttl: "5m".to_string(),
+                },
+            );
             anthropic_body
         } else if needs_transform {
             if adapter.name() == "Claude" {
@@ -1796,6 +1826,16 @@ impl RequestForwarder {
 
             // --- x-app — during Codex→Anthropic emulation, `cli` is injected uniformly below ---
             if codex_impersonate_claude_code && key_str.eq_ignore_ascii_case("x-app") {
+                continue;
+            }
+
+            // --- Codex/OpenAI fingerprint headers — drop while impersonating Claude Code ---
+            // A native Claude Code client never sends these; forwarding them defeats a
+            // gateway's "Claude Code only" fingerprint check and leaks the Codex/OpenAI
+            // origin. Scoped to impersonation so the plain Codex→Anthropic path is intact.
+            // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
+            // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
+            if codex_impersonate_claude_code && is_codex_client_fingerprint_header(key_str) {
                 continue;
             }
 
@@ -2499,6 +2539,43 @@ fn prepend_claude_code_system_prompt(body: &mut Value) {
         _ => {}
     }
     body["system"] = Value::Array(blocks);
+}
+
+/// Headers a native Claude Code client never sends but the Codex/OpenAI CLI (and its
+/// stainless SDK layer) do. Dropped while impersonating Claude Code so the upstream sees a
+/// clean Claude Code fingerprint. Centralized here so the set stays in one place and future
+/// additions can't miss a code path. `key_str` is already lowercased by the http crate.
+/// Whether `base_url` already ends in `endpoint_suffix` (e.g. `/v1/messages` or
+/// `/chat/completions`), ignoring surrounding whitespace, any `?query`/`#fragment`, and a
+/// trailing slash. Used to avoid double-appending the endpoint when a user pastes a full
+/// URL but leaves the "full URL" switch off (`.../v1/messages` → `.../v1/messages/v1/messages`,
+/// a non-retryable 400). `endpoint_suffix` must be lowercase.
+fn base_url_is_full_endpoint(base_url: &str, endpoint_suffix: &str) -> bool {
+    let trimmed = base_url.trim();
+    // Match against the path only: a `?query`/`#fragment` on a full endpoint URL must not
+    // hide the suffix (`.../v1/messages?beta=true` still ends in the endpoint).
+    let path = match trimmed.split_once(['?', '#']) {
+        Some((head, _)) => head,
+        None => trimmed,
+    };
+    path.trim_end_matches('/')
+        .to_ascii_lowercase()
+        .ends_with(endpoint_suffix)
+}
+
+fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
+    matches!(
+        key_str,
+        "originator"
+            | "session_id"
+            | "conversation_id"
+            | "chatgpt-account-id"
+            | "x-client-request-id"
+            | "openai-beta"
+            | "openai-organization"
+            | "openai-project"
+    ) || key_str.starts_with("x-stainless-")
+        || key_str.starts_with("x-codex-")
 }
 
 /// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
@@ -3544,6 +3621,102 @@ mod tests {
 
         let (endpoint, _) = rewrite_codex_responses_endpoint_to_anthropic("/v1/responses");
         assert_eq!(endpoint, "/v1/messages");
+    }
+
+    #[test]
+    fn codex_anthropic_full_endpoint_guard_avoids_double_messages() {
+        // On the Codex→Anthropic path a base URL already ending in `/v1/messages` (switch
+        // off) must be treated as a full endpoint by the real `base_url_is_full_endpoint`.
+
+        // Without the guard, build_url would concatenate the pasted endpoint with the
+        // rewritten `/v1/messages` target, producing a broken double suffix.
+        use super::super::providers::ProviderAdapter;
+        let doubled = super::super::providers::CodexAdapter::new()
+            .build_url("https://host.example/v1/messages", "/v1/messages");
+        assert_eq!(doubled, "https://host.example/v1/messages/v1/messages");
+
+        // With the guard, the pasted URL is used verbatim (plus preserved query). Includes
+        // query/fragment/whitespace suffixes, which must not hide the endpoint (fix: a base
+        // like `.../v1/messages?beta=true` previously evaded the suffix check).
+        for base in [
+            "https://host.example/v1/messages",
+            "https://host.example/v1/messages/",
+            "https://host.example/api/v1/messages", // prefixed gateway
+            "https://host.example/v1/messages?beta=true",
+            "https://host.example/v1/messages/?beta=true",
+            "https://host.example/v1/messages#frag",
+            "  https://host.example/v1/messages  ",
+        ] {
+            assert!(
+                base_url_is_full_endpoint(base, "/v1/messages"),
+                "expected full-endpoint match: {base:?}"
+            );
+        }
+        assert_eq!(
+            append_query_to_full_url("https://host.example/v1/messages", Some("x=1")),
+            "https://host.example/v1/messages?x=1"
+        );
+        // A base URL that already carries its own query is preserved verbatim (no double
+        // `/v1/messages`, query kept).
+        assert_eq!(
+            append_query_to_full_url("https://host.example/v1/messages?beta=true", None),
+            "https://host.example/v1/messages?beta=true"
+        );
+
+        // A non-endpoint base (origin/prefix) must NOT match, so build_url still appends.
+        assert!(!base_url_is_full_endpoint(
+            "https://host.example",
+            "/v1/messages"
+        ));
+        assert!(!base_url_is_full_endpoint(
+            "https://host.example/v1",
+            "/v1/messages"
+        ));
+        // The shared helper also backs the Chat path's `/chat/completions` guard.
+        assert!(base_url_is_full_endpoint(
+            "https://host.example/v1/chat/completions?api-version=2024",
+            "/chat/completions"
+        ));
+    }
+
+    #[test]
+    fn codex_client_fingerprint_headers_are_dropped_while_impersonating() {
+        // Codex/OpenAI fingerprints a native Claude Code client never sends → must drop.
+        for header in [
+            "originator",
+            "session_id",
+            "conversation_id",
+            "chatgpt-account-id",
+            "x-client-request-id",
+            "x-codex-window-id",
+            "openai-beta",
+            "openai-organization",
+            "openai-project",
+            "x-stainless-lang",
+            "x-stainless-runtime",
+            "x-codex-turn-id",
+        ] {
+            assert!(
+                is_codex_client_fingerprint_header(header),
+                "expected {header} to be dropped while impersonating Claude Code"
+            );
+        }
+
+        // Headers a real Claude Code client sends (or that the forwarder rebuilds) must
+        // NOT be caught by the denylist.
+        for header in [
+            "anthropic-version",
+            "anthropic-beta",
+            "user-agent",
+            "accept",
+            "content-type",
+            "x-app",
+        ] {
+            assert!(
+                !is_codex_client_fingerprint_header(header),
+                "{header} must be preserved while impersonating Claude Code"
+            );
+        }
     }
 
     #[test]

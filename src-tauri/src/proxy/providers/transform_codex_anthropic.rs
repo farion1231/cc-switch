@@ -132,25 +132,14 @@ pub fn responses_request_to_anthropic(
         }
     }
 
-    // input → messages (also detecting whether tool history is present)
-    let (mut messages, has_tool_history) = match body.get("input") {
-        Some(Value::Array(items)) => {
-            let has_tool_history = items.iter().any(|item| {
-                matches!(
-                    item.get("type").and_then(|t| t.as_str()),
-                    Some("function_call") | Some("function_call_output")
-                )
-            });
-            (convert_input_to_messages(items)?, has_tool_history)
-        }
-        Some(Value::String(text)) if is_meaningful_text(text) => (
-            vec![json!({
-                "role": "user",
-                "content": [{ "type": "text", "text": text }]
-            })],
-            false,
-        ),
-        _ => (Vec::new(), false),
+    // input → messages
+    let mut messages = match body.get("input") {
+        Some(Value::Array(items)) => convert_input_to_messages(items)?,
+        Some(Value::String(text)) if is_meaningful_text(text) => vec![json!({
+            "role": "user",
+            "content": [{ "type": "text", "text": text }]
+        })],
+        _ => Vec::new(),
     };
     // Anthropic /v1/messages requires messages to be non-empty and the first to be user.
     // Normalize the history (compacted/resumed sessions may start with
@@ -164,20 +153,30 @@ pub fn responses_request_to_anthropic(
             "cannot convert Codex request: empty messages".to_string(),
         ));
     }
+    // Extended thinking is only safe to enable when the final turn is a *fresh* user
+    // message (plain text, no tool_result). In that case the model starts a new
+    // assistant answer from scratch and no prior signed thinking block is required.
+    //
+    // It must stay off otherwise:
+    // - Mid tool-cycle (final turn is a user tool_result): Anthropic requires the
+    //   assistant's preceding tool_use turn to carry its signed thinking block, which we
+    //   dropped along with OpenAI's reasoning items → enabling thinking 400s.
+    // - Trailing assistant turn (a resumed/compacted history ending in an unpaired
+    //   tool_use): Anthropic requires the final assistant message to start with a
+    //   thinking block, which we likewise don't have → also a 400.
+    // A *completed* tool round is separated from the next user message by the assistant's
+    // answer, so its trailing user turn is text-only and thinking re-enables safely.
+    // (A whole-history scan instead stays disabled forever once any tool was ever used.)
+    let allow_thinking = trailing_turn_allows_thinking(&messages);
     result["messages"] = json!(messages);
 
     // reasoning.effort → thinking budget
     //
-    // Disable extended thinking when tool history is present: we dropped OpenAI's
-    // reasoning items and cannot reconstruct signed thinking blocks; if thinking
-    // were enabled here, Anthropic would 400 because the assistant's tool_use lacks
-    // the accompanying thinking block (inevitable from the second round of the tool
-    // loop onward). Thinking still works normally on the first round with no tool history.
     // Only enable thinking for recognized effort values; unknown values return None,
     // keeping normal sampling (without accidentally swallowing temperature/top_p).
     let mut thinking_enabled = false;
     let mut thinking_budget = 0u64;
-    if !has_tool_history {
+    if allow_thinking {
         if let Some(budget) = body
             .pointer("/reasoning/effort")
             .and_then(|v| v.as_str())
@@ -195,11 +194,14 @@ pub fn responses_request_to_anthropic(
         .filter(|v| *v > 0)
         .unwrap_or(default_max_tokens);
     if thinking_enabled {
-        // Anthropic requires max_tokens > budget_tokens and budget >= 1024. Do not
-        // raise the caller's max_tokens (otherwise it may exceed the model's output
-        // ceiling and 400); instead clamp the budget below max_tokens; if the budget
-        // is too small after clamping, just disable thinking and restore normal sampling.
-        let ceiling = max_tokens.saturating_sub(1);
+        // Anthropic requires max_tokens > budget_tokens and budget >= 1024. Reserve
+        // headroom for the visible answer: cap the thinking budget at half of max_tokens
+        // so a large derived budget (e.g. 24576 for xhigh) can't consume nearly all of a
+        // modest max_tokens and leave ~1 output token (an effectively empty completion).
+        // Do not raise the caller's max_tokens (it may exceed the model's output ceiling
+        // and 400). If the remaining budget is below Anthropic's 1024 floor, disable
+        // thinking and restore normal sampling.
+        let ceiling = max_tokens / 2;
         thinking_budget = thinking_budget.min(ceiling);
         if thinking_budget < 1024 {
             thinking_enabled = false;
@@ -227,6 +229,7 @@ pub fn responses_request_to_anthropic(
     }
 
     // tools: keep only the function type
+    let mut has_tools = false;
     if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
         let anth_tools: Vec<Value> = tools
             .iter()
@@ -250,18 +253,25 @@ pub fn responses_request_to_anthropic(
             })
             .collect();
         if !anth_tools.is_empty() {
+            has_tools = true;
             result["tools"] = json!(anth_tools);
         }
     }
 
-    if let Some(tc) = body.get("tool_choice") {
-        let mapped = map_tool_choice_to_anthropic(tc);
-        // When extended thinking is enabled, Anthropic rejects forced tools (any/tool), so downgrade to auto.
-        result["tool_choice"] = if thinking_enabled {
-            downgrade_forced_tool_choice(mapped)
-        } else {
-            mapped
-        };
+    // Only forward tool_choice when tools survived the filter. Anthropic 400s on a
+    // tool_choice with no tools ("tool_choice may only be specified while providing
+    // tools"), and that 400 is non-retryable — so a request whose only tools were
+    // freeform/hosted (web_search, apply_patch, …) must drop tool_choice too.
+    if has_tools {
+        if let Some(tc) = body.get("tool_choice") {
+            let mapped = map_tool_choice_to_anthropic(tc);
+            // When extended thinking is enabled, Anthropic rejects forced tools (any/tool), so downgrade to auto.
+            result["tool_choice"] = if thinking_enabled {
+                downgrade_forced_tool_choice(mapped)
+            } else {
+                mapped
+            };
+        }
     }
 
     Ok(result)
@@ -487,6 +497,30 @@ fn drop_orphan_tool_results(messages: &mut Vec<Value>) {
                 .map(|arr| !arr.is_empty())
                 .unwrap_or(true)
         });
+    }
+}
+
+/// Whether extended thinking is safe to enable for this request: true only when the
+/// final message is a *fresh* user turn that carries no `tool_result` block. A trailing
+/// user tool_result (mid tool-cycle) or a trailing assistant turn (a resumed/compacted
+/// history ending in an unpaired tool_use) both require a signed thinking block we don't
+/// have, so thinking must stay off there. Computed on the normalized message list so a
+/// dropped orphan tool_result does not count. Defaults to off in every ambiguous case.
+fn trailing_turn_allows_thinking(messages: &[Value]) -> bool {
+    let Some(last) = messages.last() else {
+        return false;
+    };
+    // Only a user turn can be a fresh prompt; a trailing assistant turn is never safe.
+    if last.get("role").and_then(|r| r.as_str()) != Some("user") {
+        return false;
+    }
+    match last.get("content") {
+        // A user turn allows thinking unless it still carries a tool_result block.
+        Some(Value::Array(blocks)) => !blocks
+            .iter()
+            .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result")),
+        // Plain string / absent content = ordinary user text → safe.
+        _ => true,
     }
 }
 
@@ -918,10 +952,13 @@ mod tests {
 
     #[test]
     fn test_request_tool_choice_mapping() {
+        // A function tool must be present, else tool_choice is (correctly) dropped.
         let base = |tc: Value| {
             json!({
                 "model": "c", "max_output_tokens": 100,
-                "input": [{ "role": "user", "content": "hi" }], "tool_choice": tc
+                "input": [{ "role": "user", "content": "hi" }],
+                "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
+                "tool_choice": tc
             })
         };
         assert_eq!(
@@ -1136,7 +1173,9 @@ mod tests {
     fn test_request_effort_to_thinking_and_drops_temperature() {
         let input = json!({
             "model": "c",
-            "max_output_tokens": 20000,
+            // Well above 2× the high-effort budget so the output-headroom cap
+            // (max_tokens/2) does not clamp it — this test covers effort mapping.
+            "max_output_tokens": 40000,
             "temperature": 0.7,
             "top_p": 0.9,
             "reasoning": { "effort": "high" },
@@ -1187,12 +1226,58 @@ mod tests {
     }
 
     #[test]
+    fn test_request_completed_tool_round_reenables_thinking() {
+        // A *completed* tool round (assistant answered after the tool_result) followed
+        // by a fresh user question: the trailing turn is text-only, so thinking must be
+        // re-enabled — unlike a whole-history scan, which would stay off forever.
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 20000,
+            "reasoning": { "effort": "high" },
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] },
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c1", "output": "ok" },
+                { "role": "assistant", "content": [{ "type": "output_text", "text": "done" }] },
+                { "role": "user", "content": [{ "type": "input_text", "text": "next question" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        // The last message is a text-only user turn → not mid tool-cycle → thinking on.
+        let messages = result["messages"].as_array().unwrap();
+        let last = messages.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"][0]["type"], "text");
+        assert_eq!(result["thinking"]["type"], "enabled");
+    }
+
+    #[test]
+    fn test_request_tool_choice_dropped_when_no_function_tools() {
+        // When every tool is filtered out (web_search / apply_patch), no tools are
+        // emitted, so tool_choice must be dropped too — otherwise Anthropic 400s.
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [
+                { "type": "web_search" },
+                { "type": "custom", "name": "apply_patch" }
+            ],
+            "tool_choice": "required"
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert!(result.get("tools").is_none());
+        assert!(result.get("tool_choice").is_none());
+    }
+
+    #[test]
     fn test_request_thinking_downgrades_forced_tool_choice() {
         // First round (no tool history) + effort → thinking enabled; forced tool_choice is downgraded to auto.
         let input = json!({
             "model": "c",
             "max_output_tokens": 20000,
             "reasoning": { "effort": "high" },
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
             "tool_choice": "required",
             "input": [
                 { "role": "user", "content": [{ "type": "input_text", "text": "hi" }] }
@@ -1209,6 +1294,7 @@ mod tests {
         let input = json!({
             "model": "c",
             "max_output_tokens": 100,
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
             "tool_choice": "required",
             "input": [{ "role": "user", "content": "hi" }]
         });
@@ -1236,7 +1322,9 @@ mod tests {
 
     #[test]
     fn test_request_thinking_budget_clamped_below_max_tokens() {
-        // max_tokens is less than the chosen effort budget but still >= 1024 after clamping → budget clamped to max_tokens-1.
+        // The chosen effort budget exceeds half of max_tokens, so it is capped at
+        // max_tokens/2 (reserving the other half for the visible answer) while staying
+        // >= 1024, so thinking stays enabled.
         let input = json!({
             "model": "c",
             "max_output_tokens": 5000,
@@ -1245,8 +1333,51 @@ mod tests {
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["thinking"]["budget_tokens"], 4999);
+        assert_eq!(result["thinking"]["budget_tokens"], 2500);
         assert_eq!(result["max_tokens"], 5000);
+    }
+
+    #[test]
+    fn test_request_default_max_tokens_leaves_output_headroom() {
+        // Regression: on the no-max_output_tokens fallback path, a large derived thinking
+        // budget must not consume nearly all of the default max_tokens. With default 8192
+        // and high effort (16384), the budget is capped at 8192/2 = 4096, leaving 4096 for
+        // the visible answer (previously it clamped to 8191, leaving ~1 output token).
+        let input = json!({
+            "model": "c",
+            "reasoning": { "effort": "high" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+        let result = responses_request_to_anthropic(input, 8192).unwrap();
+        assert_eq!(result["thinking"]["type"], "enabled");
+        assert_eq!(result["thinking"]["budget_tokens"], 4096);
+        assert_eq!(result["max_tokens"], 8192);
+        assert!(
+            result["max_tokens"].as_u64().unwrap()
+                - result["thinking"]["budget_tokens"].as_u64().unwrap()
+                >= 4096,
+            "at least half of max_tokens must remain for the visible answer"
+        );
+    }
+
+    #[test]
+    fn test_request_thinking_disabled_when_trailing_turn_is_assistant() {
+        // A resumed/compacted history ending in an unpaired assistant tool_use must not
+        // re-enable thinking — Anthropic would 400 on the missing signed thinking block.
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 40000,
+            "reasoning": { "effort": "high" },
+            "input": [
+                { "role": "user", "content": [{ "type": "input_text", "text": "run it" }] },
+                { "type": "function_call", "call_id": "c1", "name": "sh", "arguments": "{}" }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        // Trailing message is an assistant tool_use turn → thinking stays off.
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.last().unwrap()["role"], "assistant");
+        assert!(result.get("thinking").is_none());
     }
 
     #[test]
@@ -1469,6 +1600,7 @@ mod tests {
             "model": "c",
             "max_output_tokens": 100,
             "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{ "type": "function", "name": "x", "parameters": {"type": "object"} }],
             "tool_choice": { "type": "allowed_tools", "tools": [] }
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
@@ -1517,6 +1649,24 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
         let msg = anthropic_sse_to_message_value(sse).unwrap();
         assert_eq!(msg["content"][0]["type"], "tool_use");
         assert_eq!(msg["content"][0]["name"], "get_weather");
+        assert_eq!(msg["content"][0]["input"]["city"], "Tokyo");
+        assert_eq!(msg["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn test_anthropic_sse_aggregation_tool_use_input_only_in_start() {
+        // Parity guard with the live streaming emitter's
+        // `test_tool_use_input_only_in_start_event`: a gateway that carries the full tool
+        // `input` on content_block_start and emits NO input_json_delta must still resolve
+        // the same arguments (the empty-accum fallback keeps the start-carried input).
+        let sse = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"c\",\"content\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n\
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Tokyo\"}}}\n\n\
+data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":3}}\n\n";
+        let msg = anthropic_sse_to_message_value(sse).unwrap();
+        assert_eq!(msg["content"][0]["type"], "tool_use");
+        assert_eq!(msg["content"][0]["name"], "get_weather");
+        // Identical to the deltas-only case above — neither path may drop start input.
         assert_eq!(msg["content"][0]["input"]["city"], "Tokyo");
         assert_eq!(msg["stop_reason"], "tool_use");
     }

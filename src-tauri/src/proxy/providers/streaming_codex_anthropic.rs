@@ -6,6 +6,7 @@
 //! those in `streaming_codex_chat.rs` (Chat → Responses); the Codex client only recognizes
 //! this set of events.
 
+use super::codex_responses_sse as sse;
 use super::transform_codex_anthropic::{
     build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
 };
@@ -32,6 +33,10 @@ struct BlockState {
     call_id: String,
     name: String,
     accum: String,
+    /// For `tool_use`: the `input` carried on `content_block_start` (compact JSON),
+    /// used as a fallback when the gateway sends the full input in the start event and
+    /// emits no `input_json_delta`. Empty otherwise.
+    start_input: String,
     done: bool,
 }
 
@@ -110,21 +115,10 @@ impl AnthropicToResponsesState {
             return Vec::new();
         }
         self.response_started = true;
+        let response = self.base_response("in_progress", Vec::new());
         vec![
-            sse_event(
-                "response.created",
-                json!({
-                    "type": "response.created",
-                    "response": self.base_response("in_progress", Vec::new())
-                }),
-            ),
-            sse_event(
-                "response.in_progress",
-                json!({
-                    "type": "response.in_progress",
-                    "response": self.base_response("in_progress", Vec::new())
-                }),
-            ),
+            sse::response_created(&response),
+            sse::response_in_progress(&response),
         ]
     }
 
@@ -161,30 +155,8 @@ impl AnthropicToResponsesState {
             "text" => {
                 let output_index = self.next_output_index();
                 let item_id = format!("{}_msg_{output_index}", self.response_id);
-                events.push(sse_event(
-                    "response.output_item.added",
-                    json!({
-                        "type": "response.output_item.added",
-                        "output_index": output_index,
-                        "item": {
-                            "id": item_id,
-                            "type": "message",
-                            "status": "in_progress",
-                            "role": "assistant",
-                            "content": []
-                        }
-                    }),
-                ));
-                events.push(sse_event(
-                    "response.content_part.added",
-                    json!({
-                        "type": "response.content_part.added",
-                        "item_id": item_id,
-                        "output_index": output_index,
-                        "content_index": 0,
-                        "part": { "type": "output_text", "text": "", "annotations": [] }
-                    }),
-                ));
+                events.push(sse::message_item_added(output_index, &item_id));
+                events.push(sse::message_content_part_added(output_index, &item_id));
                 self.blocks.insert(
                     index,
                     BlockState {
@@ -194,6 +166,7 @@ impl AnthropicToResponsesState {
                         call_id: String::new(),
                         name: String::new(),
                         accum: String::new(),
+                        start_input: String::new(),
                         done: false,
                     },
                 );
@@ -202,20 +175,23 @@ impl AnthropicToResponsesState {
                 let output_index = self.next_output_index();
                 let call_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                // Some gateways put the full tool input on content_block_start and emit
+                // no input_json_delta; capture it as a fallback (see close_block).
+                let start_input = block
+                    .get("input")
+                    .filter(|v| v.as_object().map(|o| !o.is_empty()).unwrap_or(false))
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
                 let item_id = format!("fc_{call_id}");
-                events.push(sse_event(
-                    "response.output_item.added",
-                    json!({
-                        "type": "response.output_item.added",
-                        "output_index": output_index,
-                        "item": {
-                            "id": item_id,
-                            "type": "function_call",
-                            "status": "in_progress",
-                            "call_id": call_id,
-                            "name": name,
-                            "arguments": ""
-                        }
+                events.push(sse::output_item_added(
+                    output_index,
+                    &json!({
+                        "id": item_id,
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": ""
                     }),
                 ));
                 self.blocks.insert(
@@ -227,6 +203,7 @@ impl AnthropicToResponsesState {
                         call_id: call_id.to_string(),
                         name: name.to_string(),
                         accum: String::new(),
+                        start_input,
                         done: false,
                     },
                 );
@@ -234,29 +211,8 @@ impl AnthropicToResponsesState {
             "thinking" | "redacted_thinking" => {
                 let output_index = self.next_output_index();
                 let item_id = format!("rs_{}_{output_index}", self.response_id);
-                events.push(sse_event(
-                    "response.output_item.added",
-                    json!({
-                        "type": "response.output_item.added",
-                        "output_index": output_index,
-                        "item": {
-                            "id": item_id,
-                            "type": "reasoning",
-                            "status": "in_progress",
-                            "summary": []
-                        }
-                    }),
-                ));
-                events.push(sse_event(
-                    "response.reasoning_summary_part.added",
-                    json!({
-                        "type": "response.reasoning_summary_part.added",
-                        "item_id": item_id,
-                        "output_index": output_index,
-                        "summary_index": 0,
-                        "part": { "type": "summary_text", "text": "" }
-                    }),
-                ));
+                events.push(sse::reasoning_item_added(output_index, &item_id));
+                events.push(sse::reasoning_summary_part_added(output_index, &item_id));
                 self.blocks.insert(
                     index,
                     BlockState {
@@ -266,6 +222,7 @@ impl AnthropicToResponsesState {
                         call_id: String::new(),
                         name: String::new(),
                         accum: String::new(),
+                        start_input: String::new(),
                         done: false,
                     },
                 );
@@ -293,16 +250,7 @@ impl AnthropicToResponsesState {
             "text_delta" => {
                 let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
                 block.accum.push_str(text);
-                vec![sse_event(
-                    "response.output_text.delta",
-                    json!({
-                        "type": "response.output_text.delta",
-                        "item_id": item_id,
-                        "output_index": output_index,
-                        "content_index": 0,
-                        "delta": text
-                    }),
-                )]
+                vec![sse::output_text_delta(output_index, &item_id, text)]
             }
             "input_json_delta" => {
                 let partial = delta
@@ -314,28 +262,19 @@ impl AnthropicToResponsesState {
                 if block.name == "Read" {
                     return Vec::new();
                 }
-                vec![sse_event(
-                    "response.function_call_arguments.delta",
-                    json!({
-                        "type": "response.function_call_arguments.delta",
-                        "item_id": item_id,
-                        "output_index": output_index,
-                        "delta": partial
-                    }),
+                vec![sse::function_call_arguments_delta(
+                    output_index,
+                    &item_id,
+                    partial,
                 )]
             }
             "thinking_delta" => {
                 let text = delta.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
                 block.accum.push_str(text);
-                vec![sse_event(
-                    "response.reasoning_summary_text.delta",
-                    json!({
-                        "type": "response.reasoning_summary_text.delta",
-                        "item_id": item_id,
-                        "output_index": output_index,
-                        "summary_index": 0,
-                        "delta": text
-                    }),
+                vec![sse::reasoning_summary_text_delta(
+                    output_index,
+                    &item_id,
+                    text,
                 )]
             }
             // Ignore signature_delta and the like
@@ -367,50 +306,23 @@ impl AnthropicToResponsesState {
 
         match kind {
             BlockKind::Text => {
-                let item = json!({
-                    "id": item_id,
-                    "type": "message",
-                    "status": "completed",
-                    "role": "assistant",
-                    "content": [{ "type": "output_text", "text": text, "annotations": [] }]
-                });
-                self.output_items.push((output_index, item.clone()));
-                vec![
-                    sse_event(
-                        "response.output_text.done",
-                        json!({
-                            "type": "response.output_text.done",
-                            "item_id": item_id,
-                            "output_index": output_index,
-                            "content_index": 0,
-                            "text": text
-                        }),
-                    ),
-                    sse_event(
-                        "response.content_part.done",
-                        json!({
-                            "type": "response.content_part.done",
-                            "item_id": item_id,
-                            "output_index": output_index,
-                            "content_index": 0,
-                            "part": { "type": "output_text", "text": text, "annotations": [] }
-                        }),
-                    ),
-                    sse_event(
-                        "response.output_item.done",
-                        json!({
-                            "type": "response.output_item.done",
-                            "output_index": output_index,
-                            "item": item
-                        }),
-                    ),
-                ]
+                let (events, item) = sse::message_close(output_index, &item_id, &text);
+                self.output_items.push((output_index, item));
+                events
             }
             BlockKind::Tool => {
-                let arguments = if name == "Read" {
-                    sanitize_anthropic_tool_use_input_json("Read", &text)
+                // Prefer streamed input_json_delta; fall back to the input carried on
+                // content_block_start when the gateway emitted no deltas (mirrors the
+                // non-streaming aggregator's precedence in transform_codex_anthropic).
+                let raw_input = if text.trim().is_empty() {
+                    block.start_input.clone()
                 } else {
-                    canonicalize_tool_arguments_str(&text)
+                    text
+                };
+                let arguments = if name == "Read" {
+                    sanitize_anthropic_tool_use_input_json("Read", &raw_input)
+                } else {
+                    canonicalize_tool_arguments_str(&raw_input)
                 };
                 let item = json!({
                     "id": item_id,
@@ -420,64 +332,17 @@ impl AnthropicToResponsesState {
                     "name": name,
                     "arguments": arguments
                 });
-                self.output_items.push((output_index, item.clone()));
-                vec![
-                    sse_event(
-                        "response.function_call_arguments.done",
-                        json!({
-                            "type": "response.function_call_arguments.done",
-                            "item_id": item_id,
-                            "output_index": output_index,
-                            "arguments": arguments
-                        }),
-                    ),
-                    sse_event(
-                        "response.output_item.done",
-                        json!({
-                            "type": "response.output_item.done",
-                            "output_index": output_index,
-                            "item": item
-                        }),
-                    ),
-                ]
+                let events = vec![
+                    sse::function_call_arguments_done(output_index, &item_id, &arguments),
+                    sse::output_item_done(output_index, &item),
+                ];
+                self.output_items.push((output_index, item));
+                events
             }
             BlockKind::Thinking => {
-                let item = json!({
-                    "id": item_id,
-                    "type": "reasoning",
-                    "summary": [{ "type": "summary_text", "text": text }]
-                });
-                self.output_items.push((output_index, item.clone()));
-                vec![
-                    sse_event(
-                        "response.reasoning_summary_text.done",
-                        json!({
-                            "type": "response.reasoning_summary_text.done",
-                            "item_id": item_id,
-                            "output_index": output_index,
-                            "summary_index": 0,
-                            "text": text
-                        }),
-                    ),
-                    sse_event(
-                        "response.reasoning_summary_part.done",
-                        json!({
-                            "type": "response.reasoning_summary_part.done",
-                            "item_id": item_id,
-                            "output_index": output_index,
-                            "summary_index": 0,
-                            "part": { "type": "summary_text", "text": text }
-                        }),
-                    ),
-                    sse_event(
-                        "response.output_item.done",
-                        json!({
-                            "type": "response.output_item.done",
-                            "output_index": output_index,
-                            "item": item
-                        }),
-                    ),
-                ]
+                let (events, item) = sse::reasoning_close(output_index, &item_id, &text);
+                self.output_items.push((output_index, item));
+                events
             }
         }
     }
@@ -533,13 +398,7 @@ impl AnthropicToResponsesState {
             response["incomplete_details"] = json!({ "reason": reason });
         }
 
-        events.push(sse_event(
-            "response.completed",
-            json!({
-                "type": "response.completed",
-                "response": response
-            }),
-        ));
+        events.push(sse::response_completed(&response));
         self.completed = true;
         events
     }
@@ -555,13 +414,7 @@ impl AnthropicToResponsesState {
         let output: Vec<Value> = output.into_iter().map(|(_, item)| item).collect();
         let mut response = self.base_response("failed", output);
         response["error"] = error;
-        sse_event(
-            "response.failed",
-            json!({
-                "type": "response.failed",
-                "response": response
-            }),
-        )
+        sse::response_failed(&response)
     }
 }
 
@@ -582,13 +435,6 @@ fn extract_anthropic_sse_error(value: &Value) -> (String, Option<String>) {
         .and_then(|v| v.as_str())
         .map(ToString::to_string);
     (message, error_type)
-}
-
-fn sse_event(event: &str, data: Value) -> Bytes {
-    Bytes::from(format!(
-        "event: {event}\ndata: {}\n\n",
-        serde_json::to_string(&data).unwrap_or_default()
-    ))
 }
 
 /// Convert the upstream Anthropic Messages SSE into the Responses SSE that Codex expects.
@@ -846,6 +692,31 @@ mod tests {
         assert!(merged.contains("\"name\":\"get_weather\""));
         assert!(merged.contains("event: response.function_call_arguments.delta"));
         assert!(merged.contains("event: response.function_call_arguments.done"));
+        assert!(merged.contains("\"status\":\"completed\""));
+    }
+
+    #[tokio::test]
+    async fn test_tool_use_input_only_in_start_event() {
+        // Some gateways carry the full tool input on content_block_start and emit no
+        // input_json_delta. The arguments must still be populated (previously empty) —
+        // matching the non-streaming aggregator's behavior.
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_si\",\"model\":\"claude\",\"usage\":{\"input_tokens\":5}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_i\",\"name\":\"get_weather\",\"input\":{\"city\":\"Tokyo\"}}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":3}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("\"name\":\"get_weather\""));
+        assert!(merged.contains("event: response.function_call_arguments.done"));
+        // The tool arguments came from the start event, not from any delta.
+        assert!(merged.contains("Tokyo"));
         assert!(merged.contains("\"status\":\"completed\""));
     }
 

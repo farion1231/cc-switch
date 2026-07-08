@@ -131,6 +131,25 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
     ) && codex_provider_uses_anthropic(provider)
 }
 
+/// Resolve the model-catalog tool profile for a Codex provider using the SAME
+/// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
+/// generated catalog never disagrees with the routed transform. A provider whose
+/// Anthropic upstream is declared only via settings `apiFormat` or TOML `wire_api`
+/// (not `meta.api_format`) would otherwise get a `ProxyChat` catalog and emit the
+/// freeform `apply_patch` tool that the Anthropic transform then silently drops.
+/// Non-Anthropic providers keep the existing `meta.api_format` classification.
+pub fn resolve_codex_catalog_tool_profile(
+    provider: &Provider,
+) -> crate::codex_config::CodexCatalogToolProfile {
+    use crate::codex_config::CodexCatalogToolProfile;
+    if codex_provider_uses_anthropic(provider) {
+        return CodexCatalogToolProfile::Anthropic;
+    }
+    CodexCatalogToolProfile::from_api_format(
+        provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+    )
+}
+
 /// Extract the real upstream model configured for a Codex provider.
 pub fn codex_provider_upstream_model(provider: &Provider) -> Option<String> {
     provider
@@ -822,6 +841,79 @@ wire_api = "anthropic"
             &provider,
             "/chat/completions"
         ));
+    }
+
+    #[test]
+    fn test_resolve_catalog_profile_matches_router() {
+        use crate::codex_config::CodexCatalogToolProfile;
+
+        // Anthropic declared only via TOML wire_api (no meta.api_format) must still
+        // resolve to the Anthropic catalog profile — this is the routing/catalog
+        // divergence that let apply_patch leak through.
+        let toml_anthropic = create_provider(json!({
+            "config": r#"model_provider = "custom"
+
+[model_providers.custom]
+wire_api = "anthropic"
+"#
+        }));
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&toml_anthropic),
+            CodexCatalogToolProfile::Anthropic
+        );
+
+        // Anthropic via settings apiFormat.
+        let settings_anthropic = create_provider(json!({ "apiFormat": "anthropic" }));
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&settings_anthropic),
+            CodexCatalogToolProfile::Anthropic
+        );
+
+        // Native openai_responses (meta) → NativeResponses; chat → ProxyChat.
+        let mut native = create_provider(json!({}));
+        native.meta = Some(crate::provider::ProviderMeta {
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&native),
+            CodexCatalogToolProfile::NativeResponses
+        );
+
+        let chat = create_provider(json!({ "apiFormat": "openai_chat" }));
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&chat),
+            CodexCatalogToolProfile::ProxyChat
+        );
+    }
+
+    #[test]
+    fn test_apply_codex_upstream_model_preserves_one_m_catalog_model() {
+        // Regression for the [1m] path: a request model carrying the [1m] marker must
+        // match its catalog entry and be preserved (not overridden by the provider
+        // default) so the transform can later strip [1m] and emit the context-1m beta.
+        // This only works because the forwarder no longer strips [1m] before this call
+        // on the Anthropic path.
+        let provider = create_provider(json!({
+            "config": r#"model_provider = "custom"
+model = "claude-opus-4-1"
+
+[model_providers.custom]
+wire_api = "anthropic"
+"#,
+            "modelCatalog": {
+                "models": [
+                    { "model": "claude-opus-4-1[1m]" }
+                ]
+            }
+        }));
+        let mut body = json!({ "model": "claude-opus-4-1[1m]", "input": "hi" });
+        let result = apply_codex_upstream_model(&provider, &mut body);
+        assert_eq!(result.as_deref(), Some("claude-opus-4-1[1m]"));
+        assert_eq!(
+            body.get("model").and_then(|v| v.as_str()),
+            Some("claude-opus-4-1[1m]")
+        );
     }
 
     #[test]
