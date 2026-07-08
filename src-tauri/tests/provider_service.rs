@@ -2108,6 +2108,268 @@ fn switch_claude_syncs_deletions_from_live_into_common_config() {
     );
 }
 
+/// Codex 版切换自动回写：live 里新增的共享键被捕获进通用配置片段并传递给
+/// 下一个供应商；供应商专属字段、密钥与 cc-switch 注入产物绝不进片段；
+/// 回填后旧供应商的存储配置不残留片段内容（autosync 先于 strip，值必然匹配）。
+#[test]
+fn switch_codex_syncs_shared_keys_from_live_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // A 激活状态下的 live：A 专属路由 + 已共享的 [tui] + 用户刚加的
+    // disable_response_storage + cc-switch 注入产物 + MCP 同步投影
+    // + 顶层 wire_api（无 model_provider 时的 fallback 写法，属 A 的路由语义）
+    // + 历史错误格式 [mcp.servers]（sync_all_enabled 清不掉的孤儿形态）
+    let live_config = r#"model = "gpt-5.5"
+model_provider = "aprov"
+wire_api = "chat"
+experimental_bearer_token = "sk-a-live-secret"
+model_catalog_json = "cc-switch-model-catalog.json"
+web_search = "disabled"
+disable_response_storage = true
+
+[tui]
+notifications = true
+
+[model_providers.aprov]
+name = "A Prov"
+base_url = "https://a.example/v1"
+wire_api = "responses"
+
+[mcp_servers.echo]
+type = "stdio"
+command = "echo"
+
+[mcp.servers.ghost-legacy]
+command = "ghost-cmd"
+"#;
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
+        .expect("seed codex live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "a".to_string();
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-a" },
+                "config": "model = \"gpt-5.5\"\nmodel_provider = \"aprov\"\n\n[model_providers.aprov]\nname = \"A Prov\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("a".to_string(), provider_a);
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-b" },
+                "config": "model = \"gpt-5.5\"\nmodel_provider = \"bprov\"\n\n[model_providers.bprov]\nname = \"B Prov\"\nbase_url = \"https://b.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("b".to_string(), provider_b);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Codex.as_str(),
+            Some("[tui]\nnotifications = true\n".to_string()),
+        )
+        .expect("seed codex common config snippet");
+
+    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
+
+    // 片段：捕获新增共享键、保留既有共享键；专属字段/密钥/注入产物一律不进
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Codex.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    assert!(
+        snippet.contains("disable_response_storage = true"),
+        "newly added shared key should be captured, got: {snippet}"
+    );
+    assert!(
+        snippet.contains("notifications = true"),
+        "previously shared key should be preserved, got: {snippet}"
+    );
+    for forbidden in [
+        "experimental_bearer_token",
+        "sk-a-live-secret",
+        "model_catalog_json",
+        "web_search",
+        "mcp_servers",
+        "model_providers",
+        "model_provider",
+        "wire_api",
+        "ghost-legacy",
+    ] {
+        assert!(
+            !snippet.contains(forbidden),
+            "'{forbidden}' must never enter the shared snippet, got: {snippet}"
+        );
+    }
+
+    // B 的 live：共享键传递到位，A 的密钥/投影不得跟过来
+    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live_after.contains("disable_response_storage = true"),
+        "shared key should propagate to the next provider's live, got: {live_after}"
+    );
+    assert!(
+        live_after.contains("model_provider = \"bprov\""),
+        "live should be provider B's own config, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("sk-a-live-secret"),
+        "provider A's bearer token must not leak into B's live, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("mcp_servers"),
+        "no DB-enabled MCP servers, so live must not resurrect stale entries, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("ghost-legacy"),
+        "the legacy [mcp.servers] orphan must not propagate to B's live, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("wire_api = \"chat\""),
+        "provider A's top-level wire_api must not rewrite B's protocol, got: {live_after}"
+    );
+
+    // A 的存储配置：回填后不残留片段内容 / MCP 投影 / 注入产物
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    let stored_a = providers.get("a").expect("provider a exists");
+    let stored_a_config = stored_a
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        stored_a_config.contains("model_provider = \"aprov\""),
+        "provider-owned routing must survive backfill, got: {stored_a_config}"
+    );
+    // 顶层 wire_api 是 A 自己的路由语义：不进片段，但回填时留在 A 的快照里
+    assert!(
+        stored_a_config.contains("wire_api = \"chat\""),
+        "provider-owned top-level wire_api must survive backfill, got: {stored_a_config}"
+    );
+    for forbidden in [
+        "disable_response_storage",
+        "notifications",
+        "mcp_servers",
+        "experimental_bearer_token",
+        "ghost-legacy",
+    ] {
+        assert!(
+            !stored_a_config.contains(forbidden),
+            "'{forbidden}' must be stripped from the stored provider config on backfill, got: {stored_a_config}"
+        );
+    }
+}
+
+/// Codex 版删除同步：用户在 live 里删掉一个已共享的键后，切换应把删除
+/// 同步进通用配置，且不会在切到下一个供应商时被重新注入（否则"删不掉"）。
+#[test]
+fn switch_codex_syncs_deletions_from_live_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // 片段里有两个共享键，但用户已在 live 里删掉 disable_response_storage
+    let live_config = r#"model_provider = "aprov"
+
+[tui]
+notifications = true
+
+[model_providers.aprov]
+name = "A Prov"
+base_url = "https://a.example/v1"
+wire_api = "responses"
+"#;
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
+        .expect("seed codex live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "a".to_string();
+        for (id, name, prov_key) in [("a", "A", "aprov"), ("b", "B", "bprov")] {
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                name.to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": format!("sk-{id}") },
+                    "config": format!("model_provider = \"{prov_key}\"\n\n[model_providers.{prov_key}]\nname = \"{name} Prov\"\nbase_url = \"https://{id}.example/v1\"\nwire_api = \"responses\"\n")
+                }),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                common_config_enabled: Some(true),
+                ..Default::default()
+            });
+            manager.providers.insert(id.to_string(), provider);
+        }
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Codex.as_str(),
+            Some("disable_response_storage = true\n\n[tui]\nnotifications = true\n".to_string()),
+        )
+        .expect("seed codex common config snippet");
+
+    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
+
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Codex.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    assert!(
+        !snippet.contains("disable_response_storage"),
+        "deleted shared key must be removed from the snippet, got: {snippet}"
+    );
+    assert!(
+        snippet.contains("notifications = true"),
+        "kept shared key should remain in the snippet, got: {snippet}"
+    );
+
+    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        !live_after.contains("disable_response_storage"),
+        "deleted shared key must not be re-injected into the next provider, got: {live_after}"
+    );
+    assert!(
+        live_after.contains("notifications = true"),
+        "kept shared key should propagate to the next provider, got: {live_after}"
+    );
+}
+
 /// 未勾选"写入通用配置"的供应商，其 live 改动不应自动污染通用配置片段。
 #[test]
 fn switch_claude_does_not_sync_common_config_for_opted_out_provider() {

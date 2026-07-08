@@ -2656,9 +2656,12 @@ impl ProviderService {
     /// 读到的 live 一定是"片段 + 本地改动"的超集，重提取只会丢掉用户真正删掉的键，
     /// 不会误删其它供应商共享的内容。
     ///
-    /// **作用域**：仅 Claude。Codex 的 live 是 TOML 且端点藏在 `[model_providers]`
-    /// 表里（现有提取器不剥），自动同步会泄漏端点并与 modelCatalog / 统一会话桶 /
-    /// auth 还原逻辑冲突；Gemini 暂未纳入。两者如需支持应各自单独验证后再加。
+    /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
+    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
+    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
+    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
+    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
+    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
@@ -2670,8 +2673,8 @@ impl ProviderService {
         live_config: &Value,
         result: &mut SwitchResult,
     ) {
-        // 作用域限定 Claude（见函数文档）。
-        if !matches!(app_type, AppType::Claude) {
+        // 作用域限定 Claude + Codex（见函数文档）。
+        if !matches!(app_type, AppType::Claude | AppType::Codex) {
             return;
         }
 
