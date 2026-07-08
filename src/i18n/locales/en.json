@@ -115,7 +115,7 @@
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
     "deleteProvider": "Delete Provider",
     "addNewProvider": "Add New Provider",
-    "addFooterHint": "💡 After choosing a preset, fill in the fields below (e.g. API Key)",
+    "addFooterHint": "💡 Fill in the basic information and API settings, then add the provider",
     "addClaudeProvider": "Add Claude Code Provider",
     "addCodexProvider": "Add Codex Provider",
     "addGeminiProvider": "Add Gemini Provider",
@@ -872,8 +872,7 @@
     "saveFailedGeneric": "Save failed, please try again"
   },
   "apps": {
-    "claude": "Claude",
-    "claudeCode": "Claude Code",
+    "claude": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
@@ -1368,7 +1367,11 @@
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK Options",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "category": "Provider Category",
+    "categoryCustom": "Custom",
+    "categoryOmo": "Oh My OpenCode",
+    "categoryOmoSlim": "Oh My OpenCode Slim"
   },
   "providerPreset": {
     "label": "Provider Preset",

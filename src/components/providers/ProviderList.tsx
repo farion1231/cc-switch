@@ -6,13 +6,14 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import {
+  memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -42,7 +43,6 @@ import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
-import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
@@ -69,7 +69,7 @@ interface ProviderListProps {
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
 }
 
-export function ProviderList({
+export const ProviderList = memo(function ProviderList({
   providers,
   currentProviderId,
   appId,
@@ -189,7 +189,6 @@ export function ProviderList({
   );
 
   const [searchTerm, setSearchTerm] = useState("");
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
@@ -250,32 +249,27 @@ export function ProviderList({
 
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
-        // 正在输入框/可编辑区域中时不抢占 Ctrl+F（例如添加供应商表单里
-        // ProviderPresetSelector 的搜索框），避免与其同名快捷键冲突。
+        // 正在输入框/可编辑区域中时不抢占 Ctrl+F（例如添加供应商表单里的搜索框），
+        // 避免与其同名快捷键冲突。
         if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
-        setIsSearchOpen(true);
+        requestAnimationFrame(() => {
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+        });
         return;
       }
 
       if (key === "escape") {
-        setIsSearchOpen(false);
+        if (document.activeElement === searchInputRef.current) {
+          setSearchTerm("");
+        }
       }
     };
 
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, []);
-
-  useEffect(() => {
-    if (isSearchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [isSearchOpen]);
 
   const filteredProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -287,6 +281,15 @@ export function ProviderList({
       );
     });
   }, [searchTerm, sortedProviders]);
+
+  const searchSummary = searchTerm.trim()
+    ? t("provider.searchResultsSummary", {
+        defaultValue: "找到 {{count}} 个供应商",
+        count: filteredProviders.length,
+      })
+    : t("provider.searchScopeHint", {
+        defaultValue: "按名称、备注或官网搜索，然后直接启用供应商。",
+      });
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -351,7 +354,7 @@ export function ProviderList({
         {[0, 1, 2].map((index) => (
           <div
             key={index}
-            className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
+            className="apple-skeleton w-full rounded-xl h-24"
           />
         ))}
       </div>
@@ -421,9 +424,7 @@ export function ProviderList({
                 isAutoFailoverEnabled={isFailoverModeActive}
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
-                onToggleFailover={(enabled) =>
-                  handleToggleFailover(provider.id, enabled)
-                }
+                onToggleFailover={handleToggleFailover}
                 activeProviderId={activeProviderId}
                 // OpenClaw: default model / Hermes: model.provider === provider.id
                 isDefaultModel={
@@ -431,9 +432,7 @@ export function ProviderList({
                     ? isHermesCurrent
                     : isProviderDefaultModel(provider.id)
                 }
-                onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
-                }
+                onSetAsDefault={onSetAsDefault}
               />
             );
           })}
@@ -443,9 +442,9 @@ export function ProviderList({
   );
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-4">
       {claudeDesktopStatusMessages.length > 0 && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+        <div className="rounded-xl border border-amber-200/60 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
           <div className="flex items-center gap-2 font-medium">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             {t("claudeDesktop.statusTitle", {
@@ -459,72 +458,50 @@ export function ProviderList({
           </ul>
         </div>
       )}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
-                  >
-                    {t("common.clear", { defaultValue: "Clear" })}
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className="rounded-[1.35rem] border border-border/70 bg-card/88 px-4 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.06)] backdrop-blur-sm dark:bg-card/84 dark:shadow-[0_18px_44px_rgba(0,0,0,0.22)]">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <p className="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {t("provider.searchAriaLabel", {
+                defaultValue: "搜索供应商",
+              })}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">{searchSummary}</p>
+          </div>
+          <div className="relative w-full md:max-w-[30rem]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder={t("provider.searchPlaceholder", {
+                defaultValue: "按名称/备注/网址搜索供应商...",
+              })}
+              aria-label={t("provider.searchAriaLabel", {
+                defaultValue: "搜索供应商",
+              })}
+              className="h-11 rounded-2xl border-border/80 bg-background/80 pl-10 pr-12 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]"
+            />
+            {searchTerm && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-1.5 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full text-muted-foreground"
+                onClick={() => {
+                  setSearchTerm("");
+                  requestAnimationFrame(() => searchInputRef.current?.focus());
+                }}
+                aria-label={t("common.clear", { defaultValue: "清空" })}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
 
       {filteredProviders.length === 0 ? (
-        <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+        <div className="rounded-xl border border-border/60 bg-muted/30 px-6 py-8 text-sm text-center text-muted-foreground">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
           })}
@@ -534,7 +511,9 @@ export function ProviderList({
       )}
     </div>
   );
-}
+});
+
+ProviderList.displayName = "ProviderList";
 
 interface SortableProviderCardProps {
   provider: Provider;
@@ -560,14 +539,14 @@ interface SortableProviderCardProps {
   isAutoFailoverEnabled: boolean;
   failoverPriority?: number;
   isInFailoverQueue: boolean;
-  onToggleFailover: (enabled: boolean) => void;
+  onToggleFailover: (providerId: string, enabled: boolean) => void;
   activeProviderId?: string;
   // OpenClaw: default model
   isDefaultModel?: boolean;
-  onSetAsDefault?: () => void;
+  onSetAsDefault?: (provider: Provider) => void;
 }
 
-function SortableProviderCard({
+const SortableProviderCard = memo(function SortableProviderCard({
   provider,
   isCurrent,
   appId,
@@ -609,6 +588,15 @@ function SortableProviderCard({
     transform: CSS.Transform.toString(transform),
     transition,
   };
+  const handleProviderFailoverToggle = useCallback(
+    (enabled: boolean) => {
+      onToggleFailover(provider.id, enabled);
+    },
+    [onToggleFailover, provider.id],
+  );
+  const handleSetProviderAsDefault = useCallback(() => {
+    onSetAsDefault?.(provider);
+  }, [onSetAsDefault, provider]);
 
   return (
     <div ref={setNodeRef} style={style}>
@@ -626,9 +614,7 @@ function SortableProviderCard({
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
-        onConfigureUsage={
-          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-        }
+        onConfigureUsage={onConfigureUsage}
         onOpenWebsite={onOpenWebsite}
         onOpenTerminal={onOpenTerminal}
         onTest={onTest}
@@ -643,12 +629,14 @@ function SortableProviderCard({
         isAutoFailoverEnabled={isAutoFailoverEnabled}
         failoverPriority={failoverPriority}
         isInFailoverQueue={isInFailoverQueue}
-        onToggleFailover={onToggleFailover}
+        onToggleFailover={handleProviderFailoverToggle}
         activeProviderId={activeProviderId}
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
-        onSetAsDefault={onSetAsDefault}
+        onSetAsDefault={onSetAsDefault ? handleSetProviderAsDefault : undefined}
       />
     </div>
   );
-}
+});
+
+SortableProviderCard.displayName = "SortableProviderCard";

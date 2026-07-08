@@ -157,9 +157,7 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    const placeholders = container.querySelectorAll(
-      ".border-dashed.border-muted-foreground\\/40",
-    );
+    const placeholders = container.querySelectorAll(".apple-skeleton");
     expect(placeholders).toHaveLength(3);
   });
 
@@ -287,10 +285,9 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    fireEvent.keyDown(window, { key: "f", metaKey: true });
-    const searchInput = screen.getByPlaceholderText(
-      "Search name, notes, or URL...",
-    );
+    const searchInput = screen.getByRole("textbox", {
+      name: /搜索供应商|Search providers/i,
+    });
     // Initially both providers are rendered
     expect(screen.getByTestId("provider-card-alpha")).toBeInTheDocument();
     expect(screen.getByTestId("provider-card-beta")).toBeInTheDocument();
@@ -303,7 +300,7 @@ describe("ProviderList Component", () => {
     expect(screen.queryByTestId("provider-card-alpha")).not.toBeInTheDocument();
     expect(screen.queryByTestId("provider-card-beta")).not.toBeInTheDocument();
     expect(
-      screen.getByText("No providers match your search."),
+      screen.getByText(/没有符合搜索条件的供应商|No providers match your search\./i),
     ).toBeInTheDocument();
   });
 });

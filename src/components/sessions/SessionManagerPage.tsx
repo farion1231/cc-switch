@@ -789,15 +789,15 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   return (
     <TooltipProvider>
       <div
-        className="mx-auto px-4 sm:px-6 flex flex-col h-full min-h-0"
+        className="mx-auto flex h-full min-h-0 max-w-[1480px] flex-col px-5 sm:px-6"
         onWheel={(e) => e.stopPropagation()}
       >
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
           {/* 主内容区域 - 左右分栏 */}
           <div className="flex-1 overflow-hidden grid gap-4 md:grid-cols-[320px_1fr]">
             {/* 左侧会话列表 */}
-            <Card className="flex flex-col flex-1 min-h-0 overflow-hidden">
-              <CardHeader className="py-2 px-3 border-b">
+            <Card className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.45rem]">
+              <CardHeader className="border-b border-white/40 px-3 py-3 dark:border-white/8">
                 {isSearchOpen ? (
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
@@ -1136,7 +1136,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       </div>
                     </div>
                     {selectionMode && (
-                      <div className="grid gap-3 rounded-md border bg-muted/40 px-3 py-2.5">
+                      <div className="toolbar-cluster grid gap-3 rounded-lg px-3 py-2.5">
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Badge variant="outline" className="text-xs">
                             {t("sessionManager.selectedCount", {
@@ -1210,11 +1210,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                 <ScrollArea className="h-full">
                   <div className="p-2">
                     {isLoading ? (
-                      <div className="flex items-center justify-center py-12">
+                      <div className="flex items-center justify-center rounded-[1rem] py-12">
                         <RefreshCw className="size-5 animate-spin text-muted-foreground" />
                       </div>
                     ) : filteredSessions.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-12 text-center">
                         <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
                         <p className="text-sm text-muted-foreground">
                           {t("sessionManager.noSessions")}
@@ -1242,7 +1242,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 toggleProviderGroup(providerGroup.providerId)
                               }
                             >
-                              <div className="flex w-full items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-2 transition-colors hover:bg-muted">
+                              <div className="toolbar-cluster flex w-full items-center gap-2 rounded-lg px-2.5 py-2 transition-colors hover:bg-white/50 dark:hover:bg-white/[0.06]">
                                 {renderProviderGroupCheckbox(
                                   providerGroup,
                                   providerLabel,
@@ -1306,7 +1306,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                           )
                                         }
                                       >
-                                        <div className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                                        <div className="flex w-full items-center gap-2 rounded-[0.9rem] px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-white/40 hover:text-foreground dark:hover:bg-white/[0.05]">
                                           {renderDirectoryGroupCheckbox(
                                             directoryGroup,
                                             directorySelectionState,
@@ -1390,18 +1390,18 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
             {/* 右侧会话详情 */}
             <Card
-              className="flex flex-col overflow-hidden min-h-0"
+              className="flex min-h-0 flex-col overflow-hidden rounded-[1.45rem]"
               ref={detailRef}
             >
               {!selectedSession ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-8">
+                <div className="flex flex-1 flex-col items-center justify-center p-8 text-muted-foreground">
                   <MessageSquare className="size-12 mb-3 opacity-30" />
                   <p className="text-sm">{t("sessionManager.selectSession")}</p>
                 </div>
               ) : (
                 <>
                   {/* 详情头部 */}
-                  <CardHeader className="py-3 px-4 border-b shrink-0">
+                  <CardHeader className="shrink-0 border-b border-white/40 px-4 py-3 dark:border-white/8">
                     <div className="flex items-start justify-between gap-4">
                       {/* 左侧：会话信息 */}
                       <div className="min-w-0 flex-1">
@@ -1572,7 +1572,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     {/* 恢复命令预览 */}
                     {selectedSession.resumeCommand && (
                       <div className="mt-3 flex items-center gap-2">
-                        <div className="flex-1 rounded-md bg-muted/60 px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
+                        <div className="toolbar-cluster flex-1 rounded-lg px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
                           {selectedSession.resumeCommand}
                         </div>
                         <Tooltip>
@@ -1624,11 +1624,11 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           className="flex-1 overflow-y-auto px-4 pb-4 min-w-0"
                         >
                           {isLoadingMessages ? (
-                            <div className="flex items-center justify-center py-12">
+                            <div className="flex items-center justify-center rounded-[1rem] py-12">
                               <RefreshCw className="size-5 animate-spin text-muted-foreground" />
                             </div>
                           ) : messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-12 text-center">
+                            <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-12 text-center">
                               <MessageSquare className="size-8 text-muted-foreground/50 mb-2" />
                               <p className="text-sm text-muted-foreground">
                                 {t("sessionManager.emptySession")}

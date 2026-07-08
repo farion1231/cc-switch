@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { FileCode2, KeyRound, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Form, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -24,40 +25,11 @@ import type {
   CodexChatReasoning,
   ClaudeApiKeyField,
 } from "@/types";
-import {
-  providerPresets,
-  type ProviderPreset,
-} from "@/config/claudeProviderPresets";
-import {
-  codexProviderPresets,
-  type CodexProviderPreset,
-} from "@/config/codexProviderPresets";
-import {
-  geminiProviderPresets,
-  type GeminiProviderPreset,
-} from "@/config/geminiProviderPresets";
-import {
-  opencodeProviderPresets,
-  type OpenCodeProviderPreset,
-} from "@/config/opencodeProviderPresets";
-import {
-  openclawProviderPresets,
-  rebaseOpenClawSuggestedDefaults,
-  type OpenClawProviderPreset,
-  type OpenClawSuggestedDefaults,
-} from "@/config/openclawProviderPresets";
-import {
-  hermesProviderPresets,
-  type HermesProviderPreset,
-} from "@/config/hermesProviderPresets";
+import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
-import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
-import {
-  applyTemplateValues,
-  hasApiKeyField,
-} from "@/utils/providerConfigUtils";
+import { hasApiKeyField } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   extractCodexWireApi,
@@ -71,7 +43,6 @@ import { CommonConfigEditor } from "./CommonConfigEditor";
 import GeminiConfigEditor from "./GeminiConfigEditor";
 import JsonEditor from "@/components/JsonEditor";
 import { Label } from "@/components/ui/label";
-import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
@@ -119,17 +90,6 @@ import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
-
-type PresetEntry = {
-  id: string;
-  preset:
-    | ProviderPreset
-    | CodexProviderPreset
-    | GeminiProviderPreset
-    | OpenCodeProviderPreset
-    | OpenClawProviderPreset
-    | HermesProviderPreset;
-};
 
 const codexApiFormatFromWireApi = (
   wireApi: string | undefined,
@@ -239,8 +199,6 @@ export interface ProviderFormProps {
   submitLabel: string;
   onSubmit: (values: ProviderFormValues) => Promise<void> | void;
   onCancel: () => void;
-  onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
-  onManageUniversalProviders?: () => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   initialData?: {
     name?: string;
@@ -270,8 +228,6 @@ function ProviderFormFull({
   submitLabel,
   onSubmit,
   onCancel,
-  onUniversalPresetSelect,
-  onManageUniversalProviders,
   onSubmittingChange,
   initialData,
   showButtons = true,
@@ -304,13 +260,6 @@ function ProviderFormFull({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
     initialData ? null : "custom",
   );
-  const [activePreset, setActivePreset] = useState<{
-    id: string;
-    category?: ProviderCategory;
-    isPartner?: boolean;
-    partnerPromotionKey?: string;
-    suggestedDefaults?: OpenClawSuggestedDefaults;
-  } | null>(null);
   const [isEndpointModalOpen, setIsEndpointModalOpen] = useState(false);
   const [isCodexEndpointModalOpen, setIsCodexEndpointModalOpen] =
     useState(false);
@@ -347,8 +296,7 @@ function ProviderFormFull({
     ),
   }));
 
-  const { category } = useProviderCategory({
-    appId,
+  const { category, setCategory } = useProviderCategory({
     selectedPresetId,
     isEditMode,
     initialCategory: initialData?.category,
@@ -359,8 +307,6 @@ function ProviderFormFull({
 
   useEffect(() => {
     setSelectedPresetId(initialData ? null : "custom");
-    setActivePreset(null);
-
     if (!initialData) {
       setDraftCustomEndpoints([]);
     }
@@ -634,59 +580,7 @@ function ProviderFormFull({
     form.reset(defaultValues);
   }, [defaultValues, form]);
 
-  const presetCategoryLabels: Record<string, string> = useMemo(
-    () => ({
-      official: t("providerForm.categoryOfficial", {
-        defaultValue: "官方",
-      }),
-      cn_official: t("providerForm.categoryCnOfficial", {
-        defaultValue: "国内官方",
-      }),
-      aggregator: t("providerForm.categoryAggregation", {
-        defaultValue: "聚合服务",
-      }),
-      third_party: t("providerForm.categoryThirdParty", {
-        defaultValue: "第三方",
-      }),
-      omo: "OMO",
-    }),
-    [t],
-  );
-
-  const presetEntries = useMemo(() => {
-    if (appId === "codex") {
-      return codexProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `codex-${index}`,
-        preset,
-      }));
-    } else if (appId === "gemini") {
-      return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `gemini-${index}`,
-        preset,
-      }));
-    } else if (appId === "opencode") {
-      return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `opencode-${index}`,
-        preset,
-      }));
-    } else if (appId === "openclaw") {
-      return openclawProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `openclaw-${index}`,
-        preset,
-      }));
-    } else if (appId === "hermes") {
-      return hermesProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `hermes-${index}`,
-        preset,
-      }));
-    }
-    return providerPresets
-      .filter((p) => !p.hidden)
-      .map<PresetEntry>((preset, index) => ({
-        id: `claude-${index}`,
-        preset,
-      }));
-  }, [appId]);
+  const presetEntries = useMemo(() => [], []);
 
   const {
     templateValues,
@@ -750,7 +644,6 @@ function ProviderFormFull({
     handleGeminiModelChange: originalHandleGeminiModelChange,
     handleGeminiEnvChange,
     handleGeminiConfigChange,
-    resetGeminiConfig,
     envStringToObj,
     envObjToString,
   } = useGeminiConfigState({
@@ -1367,26 +1260,6 @@ function ProviderFormFull({
       payload.presetCategory = category;
     }
 
-    if (activePreset) {
-      payload.presetId = activePreset.id;
-      if (activePreset.category) {
-        payload.presetCategory = activePreset.category;
-      }
-      if (activePreset.isPartner) {
-        payload.isPartner = activePreset.isPartner;
-      }
-      // OpenClaw: align preset model refs with the actual submitted provider key.
-      if (activePreset.suggestedDefaults) {
-        payload.suggestedDefaults =
-          appId === "openclaw" && payload.providerKey
-            ? rebaseOpenClawSuggestedDefaults(
-                activePreset.suggestedDefaults,
-                payload.providerKey,
-              )
-            : activePreset.suggestedDefaults;
-      }
-    }
-
     if (!isEditMode && draftCustomEndpoints.length > 0) {
       const customEndpointsToSave: Record<
         string,
@@ -1409,20 +1282,6 @@ function ProviderFormFull({
       let mergedMeta = needsClearEndpoints
         ? mergeProviderMeta(initialData?.meta, {})
         : mergeProviderMeta(initialData?.meta, customEndpointsToSave);
-
-      if (activePreset?.isPartner) {
-        mergedMeta = {
-          ...(mergedMeta ?? {}),
-          isPartner: true,
-        };
-      }
-
-      if (activePreset?.partnerPromotionKey) {
-        mergedMeta = {
-          ...(mergedMeta ?? {}),
-          partnerPromotionKey: activePreset.partnerPromotionKey,
-        };
-      }
 
       if (mergedMeta !== undefined) {
         payload.meta = mergedMeta;
@@ -1610,186 +1469,6 @@ function ProviderFormFull({
     initialData,
   });
 
-  const handlePresetChange = (value: string) => {
-    setSelectedPresetId(value);
-    if (value === "custom") {
-      setActivePreset(null);
-      form.reset(defaultValues);
-
-      if (appId === "codex") {
-        const template = getCodexCustomTemplate();
-        resetCodexConfig(template.auth, template.config);
-        setCodexChatReasoning({});
-        setLocalCodexApiFormat(
-          codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
-            "openai_responses",
-        );
-      }
-      if (appId === "gemini") {
-        resetGeminiConfig({}, {});
-      }
-      if (appId === "opencode") {
-        opencodeForm.resetOpencodeState();
-        omoDraft.resetOmoDraftState();
-      }
-      // OpenClaw 自定义模式：重置为空配置
-      if (appId === "openclaw") {
-        openclawForm.resetOpenclawState();
-      }
-      if (appId === "hermes") {
-        hermesForm.resetHermesState();
-      }
-      return;
-    }
-
-    const entry = presetEntries.find((item) => item.id === value);
-    if (!entry) {
-      return;
-    }
-
-    setActivePreset({
-      id: value,
-      category: entry.preset.category,
-      isPartner: entry.preset.isPartner,
-      partnerPromotionKey: entry.preset.partnerPromotionKey,
-    });
-
-    if (appId === "codex") {
-      const preset = entry.preset as CodexProviderPreset;
-      const auth = preset.auth ?? {};
-      const config = preset.config ?? "";
-
-      resetCodexConfig(auth, config, preset.modelCatalog ?? []);
-      setCodexChatReasoning(preset.codexChatReasoning ?? {});
-      setLocalCodexApiFormat(
-        preset.apiFormat ??
-          codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
-          "openai_responses",
-      );
-
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify({ auth, config }, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      return;
-    }
-
-    if (appId === "gemini") {
-      const preset = entry.preset as GeminiProviderPreset;
-      const env = (preset.settingsConfig as any)?.env ?? {};
-      const config = (preset.settingsConfig as any)?.config ?? {};
-
-      resetGeminiConfig(env, config);
-
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      return;
-    }
-
-    if (appId === "opencode") {
-      const preset = entry.preset as OpenCodeProviderPreset;
-      const config = preset.settingsConfig;
-
-      if (preset.category === "omo" || preset.category === "omo-slim") {
-        omoDraft.resetOmoDraftState();
-        form.reset({
-          name: preset.category === "omo" ? "OMO" : "OMO Slim",
-          websiteUrl: preset.websiteUrl ?? "",
-          settingsConfig: JSON.stringify({}, null, 2),
-          icon: preset.icon ?? "",
-          iconColor: preset.iconColor ?? "",
-        });
-        return;
-      }
-
-      opencodeForm.resetOpencodeState(config);
-
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify(config, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      return;
-    }
-
-    // OpenClaw preset handling
-    if (appId === "openclaw") {
-      const preset = entry.preset as OpenClawProviderPreset;
-      const config = preset.settingsConfig;
-
-      // Update activePreset with suggestedDefaults for OpenClaw
-      setActivePreset({
-        id: value,
-        category: preset.category,
-        isPartner: preset.isPartner,
-        partnerPromotionKey: preset.partnerPromotionKey,
-        suggestedDefaults: preset.suggestedDefaults,
-      });
-
-      openclawForm.resetOpenclawState(config);
-
-      // Update form fields
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify(config, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      return;
-    }
-
-    // Hermes preset handling
-    if (appId === "hermes") {
-      const preset = entry.preset as HermesProviderPreset;
-      const config = preset.settingsConfig;
-
-      hermesForm.resetHermesState(config);
-
-      form.reset({
-        name: preset.nameKey ? t(preset.nameKey) : preset.name,
-        websiteUrl: preset.websiteUrl ?? "",
-        settingsConfig: JSON.stringify(config, null, 2),
-        icon: preset.icon ?? "",
-        iconColor: preset.iconColor ?? "",
-      });
-      return;
-    }
-
-    const preset = entry.preset as ProviderPreset;
-    const config = applyTemplateValues(
-      preset.settingsConfig,
-      preset.templateValues,
-    );
-
-    if (preset.apiFormat) {
-      setLocalApiFormat(preset.apiFormat);
-    } else {
-      setLocalApiFormat("anthropic");
-    }
-
-    setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
-    setLocalIsFullUrl(false);
-
-    form.reset({
-      name: preset.nameKey ? t(preset.nameKey) : preset.name,
-      websiteUrl: preset.websiteUrl ?? "",
-      settingsConfig: JSON.stringify(config, null, 2),
-      icon: preset.icon ?? "",
-      iconColor: preset.iconColor ?? "",
-    });
-  };
-
   const settingsConfigErrorField = (
     <FormField
       control={form.control}
@@ -1808,24 +1487,37 @@ function ProviderFormFull({
         <form
           id="provider-form"
           onSubmit={form.handleSubmit(handleSubmit)}
-          className="space-y-6 glass rounded-xl p-6 border border-white/10"
+          className="provider-form-shell provider-form-shell-single"
         >
-          {!initialData && (
-            <ProviderPresetSelector
-              selectedPresetId={selectedPresetId}
-              presetEntries={presetEntries}
-              presetCategoryLabels={presetCategoryLabels}
-              onPresetChange={handlePresetChange}
-              onUniversalPresetSelect={onUniversalPresetSelect}
-              onManageUniversalProviders={onManageUniversalProviders}
-              category={category}
-            />
-          )}
-
-          <BasicFormFields
-            form={form}
-            beforeNameSlot={
-              appId === "opencode" && !isAnyOmoCategory ? (
+          <div className="provider-form-workbench provider-form-workbench-single">
+            <div className="provider-form-main">
+              <BasicFormFields
+                form={form}
+                beforeNameSlot={
+              appId === "opencode" ? (
+                <div className="space-y-4">
+                  {!isEditMode && (
+                    <div className="space-y-2">
+                      <Label htmlFor="opencode-category">
+                        {t("opencode.category")}
+                      </Label>
+                      <select
+                        id="opencode-category"
+                        value={category ?? "custom"}
+                        onChange={(e) =>
+                          setCategory(e.target.value as ProviderCategory)
+                        }
+                        className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground shadow-[inset_0_1px_2px_hsl(var(--shadow-tint)/0.04)] transition-[border-color,box-shadow,background-color] duration-200 hover:border-input/80 hover:bg-card focus-visible:outline-none focus-visible:bg-card focus-visible:border-primary/55 focus-visible:shadow-[inset_0_1px_2px_hsl(var(--shadow-tint)/0.03),0_0_0_3px_hsl(var(--primary)/0.12)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="custom">{t("opencode.categoryCustom")}</option>
+                        <option value="omo">{t("opencode.categoryOmo")}</option>
+                        <option value="omo-slim">
+                          {t("opencode.categoryOmoSlim")}
+                        </option>
+                      </select>
+                    </div>
+                  )}
+                  {!isAnyOmoCategory && (
                 <div className="space-y-2">
                   <Label htmlFor="opencode-key">
                     {t("opencode.providerKey")}
@@ -1890,6 +1582,8 @@ function ProviderFormFull({
                           : t("opencode.providerKeyHint")}
                       </p>
                     )}
+                </div>
+                  )}
                 </div>
               ) : appId === "openclaw" ? (
                 <div className="space-y-2">
@@ -2031,8 +1725,18 @@ function ProviderFormFull({
                     )}
                 </div>
               ) : undefined
-            }
-          />
+                }
+              />
+
+              <section className="provider-form-section">
+                <div className="provider-form-section-header">
+                  <KeyRound className="h-4 w-4 text-primary" />
+                  <span>
+                    {t("providerForm.connectionSection", {
+                      defaultValue: "连接凭证",
+                    })}
+                  </span>
+                </div>
 
           {appId === "claude" && (
             <ClaudeFormFields
@@ -2268,9 +1972,20 @@ function ProviderFormFull({
               }
             />
           )}
+              </section>
 
-          {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {appId === "codex" ? (
+              <section className="provider-form-section">
+                <div className="provider-form-section-header">
+                  <FileCode2 className="h-4 w-4 text-primary" />
+                  <span>
+                    {t("providerForm.configSection", {
+                      defaultValue: "配置预览",
+                    })}
+                  </span>
+                </div>
+
+                {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
+                {appId === "codex" ? (
             <>
               <CodexConfigEditor
                 authValue={codexAuth}
@@ -2414,22 +2129,33 @@ function ProviderFormFull({
               />
               {settingsConfigErrorField}
             </>
-          )}
+                )}
+              </section>
 
-          {!isAnyOmoCategory &&
+              {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
             appId !== "hermes" && (
-              <ProviderAdvancedConfig
-                testConfig={testConfig}
-                pricingConfig={pricingConfig}
-                onTestConfigChange={setTestConfig}
-                onPricingConfigChange={setPricingConfig}
-              />
+              <section className="provider-form-section">
+                <div className="provider-form-section-header">
+                  <SlidersHorizontal className="h-4 w-4 text-primary" />
+                  <span>
+                    {t("providerForm.runtimeSection", {
+                      defaultValue: "运行策略",
+                    })}
+                  </span>
+                </div>
+                <ProviderAdvancedConfig
+                  testConfig={testConfig}
+                  pricingConfig={pricingConfig}
+                  onTestConfigChange={setTestConfig}
+                  onPricingConfigChange={setPricingConfig}
+                />
+              </section>
             )}
 
-          {showButtons && (
-            <div className="flex justify-end gap-2">
+              {showButtons && (
+            <div className="provider-form-actions">
               <Button variant="outline" type="button" onClick={onCancel}>
                 {t("common.cancel")}
               </Button>
@@ -2440,7 +2166,9 @@ function ProviderFormFull({
                 {submitLabel}
               </Button>
             </div>
-          )}
+              )}
+            </div>
+          </div>
         </form>
       </Form>
 
@@ -2507,7 +2235,6 @@ function ProviderFormFull({
 }
 
 export type ProviderFormValues = ProviderFormData & {
-  presetId?: string;
   presetCategory?: ProviderCategory;
   isPartner?: boolean;
   meta?: ProviderMeta;

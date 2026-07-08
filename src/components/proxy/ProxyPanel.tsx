@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import {
   Activity,
+  AlertTriangle,
   Clock,
+  Copy,
   TrendingUp,
   Server,
   ListOrdered,
@@ -14,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { toast } from "sonner";
@@ -24,12 +27,31 @@ import {
   useProxyTakeoverStatus,
   useSetProxyTakeoverForApp,
   useGlobalProxyConfig,
+  useProxyRemoteAccessInfo,
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { copyText } from "@/lib/clipboard";
+
+function isRemoteExposureAddress(address: string): boolean {
+  const normalized = address.trim().toLowerCase();
+  if (!normalized || normalized === "localhost") {
+    return false;
+  }
+
+  if (normalized.includes(":")) {
+    return normalized !== "::1" && normalized !== "0:0:0:0:0:0:0:1";
+  }
+
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(normalized)) {
+    return !normalized.startsWith("127.");
+  }
+
+  return true;
+}
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -53,6 +75,7 @@ export function ProxyPanel({
 
   // 获取全局代理配置
   const { data: globalConfig } = useGlobalProxyConfig();
+  const { data: remoteAccessInfo } = useProxyRemoteAccessInfo();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
 
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
@@ -190,6 +213,15 @@ export function ProxyPanel({
         t("proxy.settings.configSaved", { defaultValue: "代理配置已保存" }),
         { closeButton: true },
       );
+      if (isRemoteExposureAddress(normalizedAddress)) {
+        toast.warning(
+          t("proxy.settings.remoteExposureSaved", {
+            defaultValue:
+              "当前监听地址会暴露到局域网或公网，请仅在确认需要远程访问且已妥善保管 token 时使用。",
+          }),
+          { closeButton: true, duration: 6000 },
+        );
+      }
     } catch (error) {
       toast.error(
         t("proxy.settings.configSaveFailed", { defaultValue: "保存配置失败" }),
@@ -217,6 +249,12 @@ export function ProxyPanel({
     const host = isIPv6 ? `[${address}]` : address;
     return `http://${host}:${port}`;
   };
+
+  const draftExposesRemoteAccess = isRemoteExposureAddress(listenAddress);
+  const runningExposesRemoteAccess = status?.running
+    ? isRemoteExposureAddress(status.address)
+    : (remoteAccessInfo?.exposesRemoteAccess ?? false);
+  const remoteAccessToken = remoteAccessInfo?.token ?? null;
 
   return (
     <>
@@ -326,8 +364,8 @@ export function ProxyPanel({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => {
-                      navigator.clipboard.writeText(
+                    onClick={async () => {
+                      await copyText(
                         formatAddressForUrl(status.address, status.port),
                       );
                       toast.success(
@@ -347,6 +385,64 @@ export function ProxyPanel({
                   })}
                 </p>
               </div>
+
+              {runningExposesRemoteAccess && (
+                <div className="space-y-3 pt-3 border-t border-border">
+                  <Alert className="border-amber-500/30 bg-amber-500/5">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>
+                      {t("proxy.remoteAccess.title", {
+                        defaultValue: "远程访问已暴露",
+                      })}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {t("proxy.remoteAccess.description", {
+                        defaultValue:
+                          "当前监听地址不是回环地址，局域网或公网中的其他设备可能访问该代理。现在所有远程请求都必须携带 Bearer token。",
+                      })}
+                    </AlertDescription>
+                  </Alert>
+
+                  {remoteAccessToken && (
+                    <div className="rounded-md border border-border bg-background/60 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium">
+                            {t("proxy.remoteAccess.tokenLabel", {
+                              defaultValue: "远程访问 Token",
+                            })}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {t("proxy.remoteAccess.tokenHint", {
+                              defaultValue:
+                                "远程客户端需携带 Authorization: Bearer <token> 才能访问代理。",
+                            })}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            await copyText(remoteAccessToken);
+                            toast.success(
+                              t("proxy.remoteAccess.tokenCopied", {
+                                defaultValue: "远程访问 token 已复制",
+                              }),
+                              { closeButton: true },
+                            );
+                          }}
+                        >
+                          <Copy className="mr-2 h-4 w-4" />
+                          {t("common.copy", { defaultValue: "复制" })}
+                        </Button>
+                      </div>
+                      <code className="block break-all rounded border border-border/60 bg-muted px-3 py-2 text-xs">
+                        {remoteAccessToken}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="pt-3 border-t border-border space-y-2">
                 <p className="text-xs text-muted-foreground">
@@ -564,6 +660,23 @@ export function ProxyPanel({
                   </p>
                 </div>
               </div>
+
+              {draftExposesRemoteAccess && (
+                <Alert className="border-amber-500/30 bg-amber-500/5">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>
+                    {t("proxy.settings.remoteExposureDraftTitle", {
+                      defaultValue: "此监听地址会暴露远程访问",
+                    })}
+                  </AlertTitle>
+                  <AlertDescription>
+                    {t("proxy.settings.remoteExposureDraftDescription", {
+                      defaultValue:
+                        "保存后代理会对局域网或公网开放。后端会强制要求 Bearer token，但你仍应优先使用 127.0.0.1 或 ::1，除非确实需要跨设备访问。",
+                    })}
+                  </AlertDescription>
+                </Alert>
+              )}
 
               <div className="flex justify-end">
                 <Button

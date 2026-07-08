@@ -42,7 +42,6 @@ import { CopilotAuthSection } from "./CopilotAuthSection";
 import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
-import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
@@ -54,8 +53,6 @@ import type {
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import {
   CLAUDE_DESKTOP_ROLE_ROUTE_IDS,
-  claudeDesktopProviderPresets,
-  type ClaudeDesktopProviderPreset,
   type ClaudeDesktopRoleId,
 } from "@/config/claudeDesktopProviderPresets";
 import {
@@ -80,11 +77,6 @@ export type ClaudeDesktopProviderFormValues = ProviderFormData & {
 };
 
 type ApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
-
-type PresetEntry = {
-  id: string;
-  preset: ClaudeDesktopProviderPreset;
-};
 
 export interface ClaudeDesktopProviderFormProps {
   submitLabel: string;
@@ -269,7 +261,7 @@ export function ClaudeDesktopProviderForm({
     envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
       envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY"),
   );
-  const [apiKeyField, setApiKeyField] = useState<ApiKeyField>(() =>
+  const [apiKeyField] = useState<ApiKeyField>(() =>
     envString(initialData?.settingsConfig, "ANTHROPIC_API_KEY")
       ? "ANTHROPIC_API_KEY"
       : "ANTHROPIC_AUTH_TOKEN",
@@ -283,17 +275,7 @@ export function ClaudeDesktopProviderForm({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(
-    "custom",
-  );
-  const [activePreset, setActivePreset] = useState<{
-    id: string;
-    category?: ProviderCategory;
-    isPartner?: boolean;
-    partnerPromotionKey?: string;
-    providerType?: string;
-    requiresOAuth?: boolean;
-  } | null>(null);
+  const selectedPresetId = initialData ? null : "custom";
   const [routes, setRoutes] = useState<RouteRow[]>(() => {
     const rows = initialRouteRows(initialData?.meta?.claudeDesktopModelRoutes);
     // proxy 模式归一化成固定三档；但初始无任何 route 时保持空数组，交给 seed
@@ -351,42 +333,16 @@ export function ClaudeDesktopProviderForm({
     onSubmittingChange?.(form.formState.isSubmitting || isFetchingModels);
   }, [form.formState.isSubmitting, isFetchingModels, onSubmittingChange]);
 
-  const presetEntries = useMemo<PresetEntry[]>(
-    () =>
-      claudeDesktopProviderPresets.map((preset, index) => ({
-        id: `claude-desktop-${index}`,
-        preset,
-      })),
-    [],
-  );
+  const presetEntries = useMemo(() => [], []);
 
-  const presetCategoryLabels: Record<string, string> = useMemo(
-    () => ({
-      official: t("providerForm.categoryOfficial", { defaultValue: "官方" }),
-      cn_official: t("providerForm.categoryCnOfficial", {
-        defaultValue: "国内官方",
-      }),
-      aggregator: t("providerForm.categoryAggregation", {
-        defaultValue: "聚合服务",
-      }),
-      third_party: t("providerForm.categoryThirdParty", {
-        defaultValue: "第三方",
-      }),
-    }),
-    [t],
-  );
-  const activeProviderType =
-    activePreset?.providerType ?? initialData?.meta?.providerType;
-  const isOfficial =
-    initialData?.category === "official" ||
-    activePreset?.category === "official";
+  const activeProviderType = initialData?.meta?.providerType;
+  const isOfficial = initialData?.category === "official";
   const usesManagedOAuth =
-    activePreset?.requiresOAuth === true ||
     activeProviderType === "github_copilot" ||
     activeProviderType === "codex_oauth";
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
-  const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
+  const apiKeyLinkCategory = initialData?.category;
   const {
     shouldShowApiKeyLink,
     websiteUrl: apiKeyLinkWebsiteUrl,
@@ -399,68 +355,6 @@ export function ClaudeDesktopProviderForm({
     presetEntries,
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
-
-  const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
-    form.setValue("name", preset.nameKey ? t(preset.nameKey) : preset.name);
-    form.setValue("websiteUrl", preset.websiteUrl);
-    form.setValue("notes", "");
-    form.setValue("icon", preset.icon ?? "");
-    form.setValue("iconColor", preset.iconColor ?? "");
-
-    setBaseUrl(preset.baseUrl);
-    setApiKey("");
-    setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
-    setApiFormat(preset.apiFormat ?? "anthropic");
-
-    didSeedDefaultRoutes.current = true;
-    setMode(preset.mode);
-    if (preset.mode === "proxy" && preset.modelRoutes) {
-      setRoutes(
-        normalizeProxyRows(
-          preset.modelRoutes.map((r) =>
-            createRouteRow({
-              route: r.routeId,
-              model: r.upstreamModel,
-              labelOverride: r.labelOverride ?? "",
-              supports1m: r.supports1m,
-            }),
-          ),
-        ),
-      );
-    } else {
-      setRoutes([]);
-    }
-  };
-
-  const handlePresetChange = (value: string) => {
-    setSelectedPresetId(value);
-
-    if (value === "custom") {
-      setActivePreset(null);
-      form.reset(defaultValues);
-      setBaseUrl("");
-      setApiKey("");
-      setApiKeyField("ANTHROPIC_AUTH_TOKEN");
-      setApiFormat("anthropic");
-      didSeedDefaultRoutes.current = false;
-      setMode("direct");
-      setRoutes([]);
-      return;
-    }
-
-    const entry = presetEntries.find((item) => item.id === value);
-    if (!entry) return;
-
-    setActivePreset({
-      id: value,
-      category: entry.preset.category,
-      isPartner: entry.preset.isPartner,
-      partnerPromotionKey: entry.preset.partnerPromotionKey,
-      providerType: entry.preset.providerType,
-      requiresOAuth: entry.preset.requiresOAuth,
-    });
-    applyDesktopPreset(entry.preset);
-  };
 
   const updateRoute = (index: number, patch: Partial<RouteRowValues>) => {
     setRoutes((current) =>
@@ -563,7 +457,6 @@ export function ClaudeDesktopProviderForm({
         notes: values.notes?.trim() ?? "",
         settingsConfig: JSON.stringify(settingsConfig, null, 2),
         meta,
-        presetId: activePreset?.id,
         presetCategory: "official",
       });
       return;
@@ -697,10 +590,6 @@ export function ClaudeDesktopProviderForm({
       notes: values.notes?.trim() ?? "",
       settingsConfig: JSON.stringify(settingsConfig, null, 2),
       meta,
-      presetId: activePreset?.id,
-      presetCategory: activePreset?.category,
-      isPartner: activePreset?.isPartner,
-      partnerPromotionKey: activePreset?.partnerPromotionKey,
     });
   };
 
@@ -743,16 +632,6 @@ export function ClaudeDesktopProviderForm({
         onSubmit={form.handleSubmit(handleSubmit)}
         className="space-y-6"
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={selectedPresetId}
-            presetEntries={presetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={handlePresetChange}
-            category={activePreset?.category}
-          />
-        )}
-
         <BasicFormFields form={form} />
 
         {isOfficial && (

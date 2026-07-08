@@ -82,7 +82,8 @@ export function ProviderActions({
   onSetAsDefault,
 }: ProviderActionsProps) {
   const { t } = useTranslation();
-  const iconButtonClass = "h-8 w-8 p-1";
+  const iconButtonClass =
+    "h-8 w-8 p-1 rounded-[0.9rem] text-muted-foreground/72 hover:text-foreground hover:bg-accent/80";
 
   // 累加模式应用（OpenCode 非 OMO / OpenClaw / Hermes）
   const isAdditiveMode =
@@ -126,7 +127,7 @@ export function ProviderActions({
           disabled: false,
           variant: "secondary" as const,
           className:
-            "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+            "bg-black/[0.06] text-muted-foreground hover:bg-black/[0.06] hover:text-muted-foreground dark:bg-white/[0.08] dark:hover:bg-white/[0.08]",
           icon: <Check className="h-4 w-4" />,
           text: t("provider.inUse"),
         };
@@ -147,7 +148,7 @@ export function ProviderActions({
           disabled: isDefaultModel === true,
           variant: "secondary" as const,
           className: cn(
-            "bg-orange-100 text-orange-600 hover:bg-orange-200 dark:bg-orange-900/50 dark:text-orange-400 dark:hover:bg-orange-900/70",
+            "border-orange-300/60 bg-orange-100/85 text-orange-700 hover:bg-orange-100/85 dark:border-orange-400/15 dark:bg-orange-500/12 dark:text-orange-300 dark:hover:bg-orange-500/12",
             isDefaultModel && "opacity-40 cursor-not-allowed",
           ),
           icon: <Minus className="h-4 w-4" />,
@@ -158,7 +159,7 @@ export function ProviderActions({
         disabled: false,
         variant: "default" as const,
         className:
-          "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+          "border-emerald-300/40 bg-emerald-500/90 hover:bg-emerald-500 dark:border-emerald-400/15 dark:bg-emerald-500/85",
         icon: <Plus className="h-4 w-4" />,
         text: t("provider.addToConfig", { defaultValue: "添加" }),
       };
@@ -170,7 +171,7 @@ export function ProviderActions({
           disabled: false,
           variant: "secondary" as const,
           className:
-            "bg-blue-100 text-blue-600 hover:bg-blue-200 dark:bg-blue-900/50 dark:text-blue-400 dark:hover:bg-blue-900/70",
+            "border-sky-300/60 bg-sky-100/85 text-sky-700 hover:bg-sky-100/85 dark:border-sky-400/15 dark:bg-sky-500/12 dark:text-sky-300 dark:hover:bg-sky-500/12",
           icon: <Check className="h-4 w-4" />,
           text: t("failover.inQueue", { defaultValue: "已加入" }),
         };
@@ -179,7 +180,7 @@ export function ProviderActions({
         disabled: false,
         variant: "default" as const,
         className:
-          "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+          "border-sky-300/40 bg-sky-500/90 hover:bg-sky-500 dark:border-sky-400/15 dark:bg-sky-500/85",
         icon: <Plus className="h-4 w-4" />,
         text: t("failover.addQueue", { defaultValue: "加入" }),
       };
@@ -190,7 +191,7 @@ export function ProviderActions({
         disabled: true,
         variant: "secondary" as const,
         className:
-          "bg-gray-200 text-muted-foreground hover:bg-gray-200 hover:text-muted-foreground dark:bg-gray-700 dark:hover:bg-gray-700",
+          "bg-black/[0.06] text-muted-foreground hover:bg-black/[0.06] hover:text-muted-foreground dark:bg-white/[0.08] dark:hover:bg-white/[0.08]",
         icon: <Check className="h-4 w-4" />,
         text: t("provider.inUse"),
       };
@@ -211,7 +212,7 @@ export function ProviderActions({
       disabled: false,
       variant: "default" as const,
       className: isProxyTakeover
-        ? "bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+        ? "border-emerald-300/40 bg-emerald-500/90 hover:bg-emerald-500 dark:border-emerald-400/15 dark:bg-emerald-500/85"
         : "",
       icon: <Play className="h-4 w-4" />,
       text: t("provider.enable"),
@@ -247,10 +248,10 @@ export function ProviderActions({
               onClick={isDefaultModel ? undefined : onSetAsDefault}
               disabled={isDefaultModel}
               className={cn(
-                "w-fit px-2.5",
+                "w-fit min-w-[4.75rem] rounded-xl px-2.5 shadow-sm",
                 isDefaultModel
-                  ? "bg-gray-200 text-muted-foreground dark:bg-gray-700 opacity-60 cursor-not-allowed"
-                  : "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+                  ? "bg-black/[0.06] text-muted-foreground dark:bg-white/[0.08] opacity-60 cursor-not-allowed"
+                  : "border-sky-300/40 bg-sky-500/90 hover:bg-sky-500 dark:border-sky-400/15 dark:bg-sky-500/85",
               )}
             >
               <Zap className="h-4 w-4" />
@@ -273,14 +274,17 @@ export function ProviderActions({
           variant={buttonState.variant}
           onClick={handleMainButtonClick}
           disabled={buttonState.disabled}
-          className={cn("w-[4.5rem] px-2.5", buttonState.className)}
+          className={cn(
+            "min-w-[4.85rem] rounded-xl px-2.5 shadow-sm",
+            buttonState.className,
+          )}
         >
           {buttonState.icon}
           {buttonState.text}
         </Button>
       </span>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 opacity-70 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
         <Button
           size="icon"
           variant="ghost"

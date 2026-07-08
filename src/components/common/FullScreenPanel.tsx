@@ -26,12 +26,12 @@ interface FullScreenPanelProps {
 }
 
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
-const HEADER_HEIGHT = 64; // px - match App.tsx
+const HEADER_HEIGHT = 72; // px - match App.tsx
 
 /**
  * Reusable full-screen panel component
  * Handles portal rendering, header with back button, and footer
- * Uses solid theme colors without transparency
+ * Uses the shared low-cost liquid glass language from the main shell
  */
 export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   isOpen,
@@ -91,8 +91,8 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-[60] flex flex-col"
-          style={{ backgroundColor: "hsl(var(--background))" }}
+          className="fixed inset-0 z-[60] flex flex-col bg-[radial-gradient(circle_at_top,rgba(10,132,255,0.08),transparent_28%),linear-gradient(180deg,hsl(var(--background))/0.94_0%,hsl(var(--background))/0.98_100%)] backdrop-blur-md"
+          style={{ backgroundColor: "transparent" }}
         >
           {/* Drag region - match App.tsx. Linux 上 DRAG_BAR_HEIGHT=0，
               直接跳过整个元素；macOS 保留 28px 拖拽占位。 */}
@@ -110,52 +110,57 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
 
           {/* Header - match App.tsx */}
           <div
-            className="flex-shrink-0 flex items-center"
+            className="flex flex-shrink-0 items-center"
             {...DRAG_REGION_ATTR}
             style={
               {
                 ...DRAG_REGION_STYLE,
-                backgroundColor: "hsl(var(--background))",
                 height: HEADER_HEIGHT,
               } as React.CSSProperties
             }
           >
             <div
-              className="px-6 w-full flex items-center gap-4"
+              className="mx-4 my-2 flex h-[calc(100%-16px)] w-full items-center"
               {...DRAG_REGION_ATTR}
               style={{ ...DRAG_REGION_STYLE } as React.CSSProperties}
             >
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                onClick={onClose}
-                className="rounded-lg select-none"
-                style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </Button>
-              <h2 className="text-lg font-semibold text-foreground select-none">
-                {title}
-              </h2>
+              <div className="toolbar-cluster flex h-full w-full items-center gap-4 rounded-[1rem] border-border/70 bg-card/80 px-5 shadow-[0_14px_34px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={onClose}
+                  className="select-none border-border/60 bg-background/75 hover:bg-accent"
+                  style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <h2 className="select-none truncate text-lg font-semibold tracking-[-0.03em] text-foreground">
+                  {title}
+                </h2>
+              </div>
             </div>
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
-            <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
+          <div className="mx-auto flex w-full max-w-[1480px] flex-1 overflow-y-auto scroll-overlay px-5 md:px-6">
+            <div
+              className={cn(
+                "w-full space-y-6 px-1 py-4 md:py-6",
+                contentClassName,
+              )}
+            >
               {children}
             </div>
           </div>
 
           {/* Footer */}
           {footer && (
-            <div
-              className="flex-shrink-0 py-4 border-t border-border-default"
-              style={{ backgroundColor: "hsl(var(--background))" }}
-            >
-              <div className="px-6 flex items-center justify-end gap-3">
-                {footer}
+            <div className="flex-shrink-0">
+              <div className="mx-4 my-2">
+                <div className="toolbar-cluster flex items-center justify-end gap-3 rounded-[1rem] border-border/70 bg-card/82 px-5 py-3 shadow-[0_14px_34px_rgba(15,23,42,0.07)] backdrop-blur-xl">
+                  {footer}
+                </div>
               </div>
             </div>
           )}

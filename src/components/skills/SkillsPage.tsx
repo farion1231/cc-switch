@@ -15,13 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  RefreshCw,
-  Search,
-  Loader2,
-  Settings,
-  type LucideIcon,
-} from "lucide-react";
+import { Search, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { SkillCard } from "./SkillCard";
 import { RepoManagerPanel } from "./RepoManagerPanel";
@@ -42,47 +36,18 @@ import type {
 } from "@/lib/api/skills";
 import { formatSkillError } from "@/lib/errors/skillErrorParser";
 
-export type SkillsPageSource = "repos" | "skillssh";
+import type {
+  SkillsPageSource,
+  SkillsPageHandle,
+} from "./skillsPageHeaderActions";
+
+export { getSkillsPageHeaderActions } from "./skillsPageHeaderActions";
+export type { SkillsPageSource, SkillsPageHandle };
 
 interface SkillsPageProps {
   initialApp?: AppId;
   onSourceChange?: (source: SkillsPageSource) => void;
 }
-
-export interface SkillsPageHandle {
-  refresh: () => void;
-  openRepoManager: () => void;
-}
-
-type SkillsPageHeaderAction = {
-  key: string;
-  sources: readonly SkillsPageSource[];
-  labelKey: string;
-  Icon: LucideIcon;
-  execute: (page: SkillsPageHandle | null) => void;
-};
-
-const SKILLS_PAGE_HEADER_ACTIONS: readonly SkillsPageHeaderAction[] = [
-  {
-    key: "refresh-repos",
-    sources: ["repos"],
-    labelKey: "skills.refresh",
-    Icon: RefreshCw,
-    execute: (page) => page?.refresh(),
-  },
-  {
-    key: "manage-repos",
-    sources: ["repos", "skillssh"],
-    labelKey: "skills.repoManager",
-    Icon: Settings,
-    execute: (page) => page?.openRepoManager(),
-  },
-];
-
-export const getSkillsPageHeaderActions = (source: SkillsPageSource) =>
-  SKILLS_PAGE_HEADER_ACTIONS.filter((action) =>
-    action.sources.includes(source),
-  );
 
 const SKILLSSH_PAGE_SIZE = 20;
 

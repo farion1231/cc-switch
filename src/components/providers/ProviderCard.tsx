@@ -46,7 +46,7 @@ interface ProviderCardProps {
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
@@ -290,30 +290,35 @@ export function ProviderCard({
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
+  const pillClass =
+    "apple-pill inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase";
 
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
-        "bg-card text-card-foreground group",
+        "apple-card relative overflow-hidden rounded-xl border p-4 transition-all duration-200",
+        "text-card-foreground group",
         isAutoFailoverEnabled || isProxyTakeover
-          ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
-        shouldUseGreen &&
-          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
+          ? "hover:border-emerald-400/30 dark:hover:border-emerald-400/20"
+          : "hover:border-border",
+        shouldUseGreen && "apple-card-active-green",
+        shouldUseBlue && "apple-card-active",
         !(isActiveProvider || hasPersistentConfigHighlight) &&
-          "hover:shadow-sm",
+          "hover:-translate-y-0.5",
         dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+          "cursor-grabbing border-primary shadow-lg scale-[1.015] z-10",
       )}
     >
       <div
         className={cn(
-          "absolute inset-0 bg-gradient-to-r to-transparent transition-opacity duration-500 pointer-events-none",
-          shouldUseGreen && "from-emerald-500/10",
-          shouldUseBlue && "from-blue-500/10",
-          !shouldUseGreen && !shouldUseBlue && "from-primary/10",
+          "absolute inset-0 transition-opacity duration-300 pointer-events-none rounded-xl",
+          shouldUseGreen &&
+            "bg-gradient-to-r from-emerald-500/[0.06] to-transparent",
+          shouldUseBlue &&
+            "bg-gradient-to-r from-primary/[0.07] to-transparent",
+          !shouldUseGreen &&
+            !shouldUseBlue &&
+            "bg-gradient-to-r from-muted/40 to-transparent",
           isActiveProvider || hasPersistentConfigHighlight
             ? "opacity-100"
             : "opacity-0",
@@ -324,8 +329,8 @@ export function ProviderCard({
           <button
             type="button"
             className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5 rounded-full",
+              "text-muted-foreground/55 hover:text-foreground hover:bg-white/55 dark:hover:bg-white/[0.08] transition-colors",
               dragHandleProps?.isDragging && "cursor-grabbing",
             )}
             aria-label={t("provider.dragHandle")}
@@ -335,29 +340,39 @@ export function ProviderCard({
             <GripVertical className="h-4 w-4" />
           </button>
 
-          <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+          <div className="provider-icon-shell h-10 w-10 flex-shrink-0 rounded-[1rem] flex items-center justify-center group-hover:scale-[1.04] transition-transform duration-200">
             <ProviderIcon
               icon={provider.icon}
               name={provider.name}
               color={provider.iconColor}
-              size={20}
+              size={22}
             />
           </div>
 
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex flex-wrap items-center gap-2 min-h-7">
-              <h3 className="text-base font-semibold leading-none">
+              <h3 className="font-display text-[1.02rem] font-semibold leading-none tracking-[-0.02em]">
                 {provider.name}
               </h3>
 
               {isOmo && (
-                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                <span
+                  className={cn(
+                    pillClass,
+                    "apple-pill-violet",
+                  )}
+                >
                   OMO
                 </span>
               )}
 
               {isOmoSlim && (
-                <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                <span
+                  className={cn(
+                    pillClass,
+                    "apple-pill-blue",
+                  )}
+                >
                   Slim
                 </span>
               )}
@@ -365,7 +380,12 @@ export function ProviderCard({
               {appId === "claude-desktop" &&
                 provider.category !== "official" &&
                 provider.meta?.claudeDesktopMode === "proxy" && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  <span
+                    className={cn(
+                      pillClass,
+                      "apple-pill-blue",
+                    )}
+                  >
                     {t("claudeDesktop.modeProxy", {
                       defaultValue: "需要路由",
                     })}
@@ -376,7 +396,12 @@ export function ProviderCard({
                 provider.category !== "official" &&
                 provider.meta?.apiFormat &&
                 provider.meta.apiFormat !== "anthropic" && (
-                  <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  <span
+                    className={cn(
+                      pillClass,
+                      "apple-pill-blue",
+                    )}
+                  >
                     {t("claudeCode.needsRouting", {
                       defaultValue: "需要路由",
                     })}
@@ -384,7 +409,12 @@ export function ProviderCard({
                 )}
 
               {codexNeedsRouting && (
-                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                <span
+                  className={cn(
+                    pillClass,
+                    "apple-pill-blue",
+                  )}
+                >
                   {t("codex.needsRouting", {
                     defaultValue: "需要路由",
                   })}
@@ -392,7 +422,12 @@ export function ProviderCard({
               )}
 
               {appId === "claude" && provider.category === "official" && (
-                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                <span
+                  className={cn(
+                    pillClass,
+                    "apple-pill-slate",
+                  )}
+                >
                   {t("claudeCode.noRoutingSupport", {
                     defaultValue: "不支持路由",
                   })}
@@ -400,7 +435,12 @@ export function ProviderCard({
               )}
 
               {appId === "codex" && provider.category === "official" && (
-                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                <span
+                  className={cn(
+                    pillClass,
+                    "apple-pill-slate",
+                  )}
+                >
                   {t("codex.noRoutingSupport", {
                     defaultValue: "不支持路由",
                   })}
@@ -434,7 +474,10 @@ export function ProviderCard({
 
               {isHermesReadOnly && (
                 <span
-                  className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                  className={cn(
+                    pillClass,
+                    "apple-pill-slate",
+                  )}
                   title={t("provider.managedByHermesHint", {
                     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
                   })}
@@ -451,10 +494,10 @@ export function ProviderCard({
                 type="button"
                 onClick={handleOpenWebsite}
                 className={cn(
-                  "inline-flex max-w-full items-center overflow-hidden text-left text-sm",
+                  "inline-flex max-w-full items-center overflow-hidden text-left font-mono text-xs leading-5 tracking-tight",
                   isClickableUrl
-                    ? "text-blue-500 transition-colors hover:underline dark:text-blue-400 cursor-pointer"
-                    : "text-muted-foreground cursor-default",
+                    ? "text-primary/80 transition-colors hover:text-primary hover:underline cursor-pointer"
+                    : "text-muted-foreground/80 cursor-default",
                 )}
                 title={displayUrl}
                 disabled={!isClickableUrl}
@@ -492,7 +535,7 @@ export function ProviderCard({
                   />
                 ) : null
               ) : hasMultiplePlans ? (
-                <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-medium">
                     {t("usage.multiplePlans", {
                       count: usage?.data?.length || 0,
@@ -517,7 +560,7 @@ export function ProviderCard({
                     e.stopPropagation();
                     setIsExpanded(!isExpanded);
                   }}
-                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
+                  className="p-1 rounded-full hover:bg-white/60 dark:hover:bg-white/[0.08] transition-colors text-muted-foreground flex-shrink-0"
                   title={
                     isExpanded
                       ? t("usage.collapse", { defaultValue: "收起" })
@@ -534,7 +577,7 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          <div className="toolbar-cluster rounded-[1rem] border-border/70 bg-card/78 p-1 flex items-center gap-1.5 flex-shrink-0 opacity-100 pointer-events-auto shadow-[0_10px_24px_rgba(15,23,42,0.06)] backdrop-blur-sm">
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}
@@ -558,6 +601,7 @@ export function ProviderCard({
                   : undefined
               }
               onConfigureUsage={
+                !onConfigureUsage ||
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
                 isCodexOauth
@@ -586,7 +630,7 @@ export function ProviderCard({
       </div>
 
       {isExpanded && hasMultiplePlans && (
-        <div className="mt-4 pt-4 border-t border-border-default">
+        <div className="mt-3 pt-3 border-t border-border/60">
           <UsageFooter
             provider={provider}
             providerId={provider.id}

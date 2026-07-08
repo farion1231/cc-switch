@@ -50,14 +50,13 @@ export function BasicFormFields({
   };
 
   return (
-    <>
-      {/* 图标选择区域 - 顶部居中，可选 */}
-      <div className="flex justify-center mb-6">
+    <div className="provider-identity-panel">
+      <div className="provider-identity-preview">
         <Dialog open={iconDialogOpen} onOpenChange={setIconDialogOpen}>
           <DialogTrigger asChild>
             <button
               type="button"
-              className="w-20 h-20 p-3 rounded-xl border-2 border-muted hover:border-primary transition-colors cursor-pointer bg-muted/30 hover:bg-muted/50 flex items-center justify-center"
+              className="provider-identity-icon-button"
               title={
                 currentIcon
                   ? t("providerIcon.clickToChange", {
@@ -72,7 +71,7 @@ export function BasicFormFields({
                 icon={currentIcon}
                 name={providerName}
                 color={effectiveIconColor}
-                size={48}
+                size={56}
               />
             </button>
           </DialogTrigger>
@@ -116,37 +115,67 @@ export function BasicFormFields({
             </div>
           </DialogContent>
         </Dialog>
+        <div className="min-w-0 text-center md:text-left">
+          <p className="truncate text-base font-semibold text-foreground">
+            {providerName}
+          </p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {form.watch("websiteUrl") || t("provider.websiteUrl")}
+          </p>
+        </div>
       </div>
 
-      {/* Slot for additional fields between icon and name */}
-      {beforeNameSlot}
+      <div className="provider-identity-fields">
+        {/* Slot for additional fields between icon and name */}
+        {beforeNameSlot}
 
-      {/* 基础信息 - 网格布局 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* 基础信息 - 网格布局 */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <FormField
+            control={form.control}
+            name="name"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t("provider.name")}</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder={t("provider.namePlaceholder")}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="notes"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t("provider.notes")}</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder={t("provider.notesPlaceholder")}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
         <FormField
           control={form.control}
-          name="name"
+          name="websiteUrl"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t("provider.name")}</FormLabel>
-              <FormControl>
-                <Input {...field} placeholder={t("provider.namePlaceholder")} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={form.control}
-          name="notes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t("provider.notes")}</FormLabel>
+              <FormLabel>{t("provider.websiteUrl")}</FormLabel>
               <FormControl>
                 <Input
                   {...field}
-                  placeholder={t("provider.notesPlaceholder")}
+                  placeholder={t("providerForm.websiteUrlPlaceholder")}
                 />
               </FormControl>
               <FormMessage />
@@ -154,23 +183,6 @@ export function BasicFormFields({
           )}
         />
       </div>
-
-      <FormField
-        control={form.control}
-        name="websiteUrl"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>{t("provider.websiteUrl")}</FormLabel>
-            <FormControl>
-              <Input
-                {...field}
-                placeholder={t("providerForm.websiteUrlPlaceholder")}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-    </>
+    </div>
   );
 }

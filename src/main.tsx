@@ -1,5 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "@fontsource-variable/bricolage-grotesque";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
 import App from "./App";
 import { DatabaseUpgrade } from "./components/DatabaseUpgrade";
 import { UpdateProvider } from "./contexts/UpdateContext";
@@ -14,14 +18,18 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { message } from "@tauri-apps/plugin-dialog";
 import { exit } from "@tauri-apps/plugin-process";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 
 // 根据平台添加 body class，便于平台特定样式
 try {
-  const ua = navigator.userAgent || "";
-  const plat = (navigator.platform || "").toLowerCase();
-  const isMac = /mac/i.test(ua) || plat.includes("mac");
-  if (isMac) {
+  if (isMac()) {
     document.body.classList.add("is-mac");
+  }
+  if (isWindows()) {
+    document.body.classList.add("is-windows");
+  }
+  if (isLinux()) {
+    document.body.classList.add("is-linux");
   }
 } catch {
   // 忽略平台检测失败

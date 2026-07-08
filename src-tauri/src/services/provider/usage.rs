@@ -91,21 +91,25 @@ fn resolve_script_credentials(
     provider: &crate::provider::Provider,
     api_key: Option<&str>,
     base_url: Option<&str>,
+    template_type: Option<&str>,
 ) -> (String, String) {
     let (provider_base_url, provider_api_key) = provider.resolve_usage_credentials(app_type);
+    let allow_provider_fallback = template_type != Some("custom");
 
     let api_key = api_key
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
-        .unwrap_or(provider_api_key);
+        .or_else(|| allow_provider_fallback.then_some(provider_api_key))
+        .unwrap_or_default();
 
     let base_url = base_url
         .map(str::trim)
         .filter(|value| !value.is_empty())
         // Trim like the provider path so `{{baseUrl}}/path` never doubles the slash.
         .map(|value| value.trim_end_matches('/').to_owned())
-        .unwrap_or(provider_base_url);
+        .or_else(|| allow_provider_fallback.then_some(provider_base_url))
+        .unwrap_or_default();
 
     (api_key, base_url)
 }
@@ -151,6 +155,7 @@ pub async fn query_usage(
             provider,
             usage_script.api_key.as_deref(),
             usage_script.base_url.as_deref(),
+            usage_script.template_type.as_deref(),
         );
 
         (
@@ -201,7 +206,8 @@ pub async fn test_usage_script(
 
     // Resolve like the real query so testing matches what a saved script does:
     // explicit values win, empty ones fall back to the provider config.
-    let (api_key, base_url) = resolve_script_credentials(&app_type, provider, api_key, base_url);
+    let (api_key, base_url) =
+        resolve_script_credentials(&app_type, provider, api_key, base_url, template_type);
 
     execute_and_format_usage_result(
         script_code,
@@ -263,6 +269,7 @@ mod tests {
             &provider,
             Some(" script-key "),
             Some(" https://script.example.com/ "),
+            None,
         );
         assert_eq!(api_key, "script-key");
         assert_eq!(base_url, "https://script.example.com");
@@ -278,7 +285,7 @@ mod tests {
         }));
 
         let (api_key, base_url) =
-            resolve_script_credentials(&AppType::Claude, &provider, Some(""), None);
+            resolve_script_credentials(&AppType::Claude, &provider, Some(""), None, None);
         assert_eq!(api_key, "provider-key");
         assert_eq!(base_url, "https://provider.example.com");
     }
@@ -300,8 +307,23 @@ base_url = "https://other.example.com/v1"
         }));
 
         let (api_key, base_url) =
-            resolve_script_credentials(&AppType::Codex, &provider, None, None);
+            resolve_script_credentials(&AppType::Codex, &provider, None, None, None);
         assert_eq!(api_key, "openai-key");
         assert_eq!(base_url, "https://azure.example.com/v1");
+    }
+
+    #[test]
+    fn custom_template_requires_explicit_credentials() {
+        let provider = provider_with_settings(json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "provider-key",
+                "ANTHROPIC_BASE_URL": "https://provider.example.com/"
+            }
+        }));
+
+        let (api_key, base_url) =
+            resolve_script_credentials(&AppType::Claude, &provider, None, None, Some("custom"));
+        assert_eq!(api_key, "");
+        assert_eq!(base_url, "");
     }
 }

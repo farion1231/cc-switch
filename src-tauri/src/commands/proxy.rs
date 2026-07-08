@@ -3,6 +3,9 @@
 //! 提供前端调用的 API 接口
 
 use crate::error::AppError;
+use crate::proxy::server::{
+    get_or_create_remote_access_token, listen_address_exposes_remote_access,
+};
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
@@ -64,6 +67,29 @@ pub async fn set_proxy_takeover_for_app(
 #[tauri::command]
 pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<ProxyStatus, String> {
     state.proxy_service.get_status().await
+}
+
+/// 获取代理远程访问暴露信息
+#[tauri::command]
+pub async fn get_proxy_remote_access_info(
+    state: tauri::State<'_, AppState>,
+) -> Result<ProxyRemoteAccessInfo, String> {
+    let listen_address = if state.proxy_service.is_running().await {
+        state.proxy_service.get_status().await?.address
+    } else {
+        state.proxy_service.get_config().await?.listen_address
+    };
+    let exposes_remote_access = listen_address_exposes_remote_access(&listen_address);
+    let token = if exposes_remote_access {
+        Some(get_or_create_remote_access_token(state.db.as_ref()).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    Ok(ProxyRemoteAccessInfo {
+        exposes_remote_access,
+        token,
+    })
 }
 
 /// 获取代理配置

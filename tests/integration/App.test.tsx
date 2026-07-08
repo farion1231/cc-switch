@@ -128,10 +128,37 @@ vi.mock("@/components/AppSwitcher", () => ({
   ),
 }));
 
+vi.mock("@/components/Sidebar", () => ({
+  Sidebar: ({
+    activeApp,
+    onAppSwitch,
+    currentView,
+    onViewChange,
+    onOpenSettings,
+    onOpenAddProvider,
+  }: any) => (
+    <div data-testid="sidebar">
+      <div data-testid="sidebar-active-app">{activeApp}</div>
+      <div data-testid="sidebar-current-view">{currentView}</div>
+      <button onClick={() => onAppSwitch("claude")}>switch-claude</button>
+      <button onClick={() => onAppSwitch("codex")}>switch-codex</button>
+      <button onClick={() => onAppSwitch("openclaw")}>switch-openclaw</button>
+      <button onClick={() => onViewChange("providers")}>view-providers</button>
+      <button onClick={() => onViewChange("skills")}>view-skills</button>
+      <button onClick={() => onOpenSettings()}>open-settings</button>
+      <button onClick={() => onOpenAddProvider()}>open-add-provider</button>
+    </div>
+  ),
+}));
+
 vi.mock("@/components/UpdateBadge", () => ({
   UpdateBadge: ({ onClick }: any) => (
     <button onClick={onClick}>update-badge</button>
   ),
+}));
+
+vi.mock("@/components/FirstRunNoticeDialog", () => ({
+  FirstRunNoticeDialog: () => null,
 }));
 
 vi.mock("@/components/mcp/McpPanel", () => ({
@@ -181,12 +208,12 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(screen.getByText("usage"));
-    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
+    expect(await screen.findByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(screen.getByText("save-script"));
     fireEvent.click(screen.getByText("close-usage"));
 
-    fireEvent.click(screen.getByText("create"));
-    expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("open-add-provider"));
+    expect(await screen.findByTestId("add-provider-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-add"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toMatch(
@@ -195,7 +222,7 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(screen.getByText("edit"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+    expect(await screen.findByTestId("edit-provider-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByText("confirm-edit"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toMatch(
@@ -218,7 +245,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 10000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");

@@ -107,6 +107,16 @@ pub struct ProxyServerInfo {
     pub started_at: String,
 }
 
+/// 远程访问暴露信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyRemoteAccessInfo {
+    /// 当前监听地址是否暴露到非回环网络
+    pub exposes_remote_access: bool,
+    /// 远程访问 Bearer token；仅在暴露时返回
+    pub token: Option<String>,
+}
+
 /// 各应用的接管状态（是否改写该应用的 Live 配置指向本地代理）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyTakeoverStatus {

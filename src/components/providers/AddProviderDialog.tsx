@@ -14,10 +14,6 @@ import {
 } from "@/components/providers/forms/ProviderForm";
 import { UniversalProviderFormModal } from "@/components/universal/UniversalProviderFormModal";
 import { UniversalProviderPanel } from "@/components/universal";
-import { providerPresets } from "@/config/claudeProviderPresets";
-import { codexProviderPresets } from "@/config/codexProviderPresets";
-import { geminiProviderPresets } from "@/config/geminiProviderPresets";
-import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
@@ -111,16 +107,6 @@ export function AddProviderDialog({
         ...(values.meta ? { meta: values.meta } : {}),
       };
 
-      if (appId === "claude-desktop" && values.presetId) {
-        const presetIndex = parseInt(
-          values.presetId.replace("claude-desktop-", ""),
-        );
-        const preset = claudeDesktopProviderPresets[presetIndex];
-        providerData.ensureClaudeDesktopOfficialSeed =
-          values.presetCategory === "official" &&
-          preset?.category === "official";
-      }
-
       // OpenCode/OpenClaw: pass providerKey for ID generation
       if (
         (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
@@ -142,69 +128,6 @@ export function AddProviderDialog({
             urlSet.add(url);
           }
         };
-
-        if (values.presetId) {
-          if (appId === "claude") {
-            const presets = providerPresets;
-            const presetIndex = parseInt(
-              values.presetId.replace("claude-", ""),
-            );
-            if (
-              !isNaN(presetIndex) &&
-              presetIndex >= 0 &&
-              presetIndex < presets.length
-            ) {
-              const preset = presets[presetIndex];
-              if (preset?.endpointCandidates) {
-                preset.endpointCandidates.forEach(addUrl);
-              }
-            }
-          } else if (appId === "codex") {
-            const presets = codexProviderPresets;
-            const presetIndex = parseInt(values.presetId.replace("codex-", ""));
-            if (
-              !isNaN(presetIndex) &&
-              presetIndex >= 0 &&
-              presetIndex < presets.length
-            ) {
-              const preset = presets[presetIndex];
-              if (Array.isArray(preset.endpointCandidates)) {
-                preset.endpointCandidates.forEach(addUrl);
-              }
-            }
-          } else if (appId === "gemini") {
-            const presets = geminiProviderPresets;
-            const presetIndex = parseInt(
-              values.presetId.replace("gemini-", ""),
-            );
-            if (
-              !isNaN(presetIndex) &&
-              presetIndex >= 0 &&
-              presetIndex < presets.length
-            ) {
-              const preset = presets[presetIndex];
-              if (Array.isArray(preset.endpointCandidates)) {
-                preset.endpointCandidates.forEach(addUrl);
-              }
-            }
-          } else if (appId === "claude-desktop") {
-            const presets = claudeDesktopProviderPresets;
-            const presetIndex = parseInt(
-              values.presetId.replace("claude-desktop-", ""),
-            );
-            if (
-              !isNaN(presetIndex) &&
-              presetIndex >= 0 &&
-              presetIndex < presets.length
-            ) {
-              const preset = presets[presetIndex];
-              if (Array.isArray(preset.endpointCandidates)) {
-                preset.endpointCandidates.forEach(addUrl);
-              }
-              addUrl(preset.baseUrl);
-            }
-          }
-        }
 
         if (appId === "claude") {
           const env = parsedConfig.env as Record<string, any> | undefined;
@@ -286,7 +209,7 @@ export function AddProviderDialog({
         <Button
           variant="outline"
           onClick={() => onOpenChange(false)}
-          className="border-border/20 hover:bg-accent hover:text-accent-foreground"
+          className="border-border/60 bg-background/70 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
         </Button>
@@ -294,7 +217,7 @@ export function AddProviderDialog({
           type="submit"
           form="provider-form"
           disabled={isFormSubmitting}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          className="min-w-[124px] bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90"
         >
           <Plus className="h-4 w-4 mr-2" />
           {t("common.add")}
@@ -305,13 +228,13 @@ export function AddProviderDialog({
         <Button
           variant="outline"
           onClick={() => onOpenChange(false)}
-          className="border-border/20 hover:bg-accent hover:text-accent-foreground"
+          className="border-border/60 bg-background/70 hover:bg-accent hover:text-accent-foreground"
         >
           {t("common.cancel")}
         </Button>
         <Button
           onClick={() => setUniversalFormOpen(true)}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
+          className="min-w-[124px] bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90"
         >
           <Plus className="h-4 w-4 mr-2" />
           {t("universalProvider.add")}
@@ -325,14 +248,14 @@ export function AddProviderDialog({
       title={t("provider.addNewProvider")}
       onClose={() => onOpenChange(false)}
       footer={footer}
-      contentClassName="pt-3"
+      contentClassName="provider-dialog-content pt-4"
     >
       {showUniversalTab ? (
         <Tabs
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as "app-specific" | "universal")}
         >
-          <TabsList className="grid w-full grid-cols-2 mb-6">
+          <TabsList className="mb-6 grid w-full grid-cols-2">
             <TabsTrigger value="app-specific">
               {t(`apps.${appId}`)} {t("provider.tabProvider")}
             </TabsTrigger>

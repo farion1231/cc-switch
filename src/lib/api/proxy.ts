@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ProxyConfig,
+  ProxyRemoteAccessInfo,
   ProxyStatus,
   ProxyServerInfo,
   ProxyTakeoverStatus,
@@ -24,6 +25,11 @@ export const proxyApi = {
   // 获取代理服务器状态
   async getProxyStatus(): Promise<ProxyStatus> {
     return invoke("get_proxy_status");
+  },
+
+  // 获取代理远程访问暴露信息
+  async getProxyRemoteAccessInfo(): Promise<ProxyRemoteAccessInfo> {
+    return invoke("get_proxy_remote_access_info");
   },
 
   // 检查代理服务器是否正在运行

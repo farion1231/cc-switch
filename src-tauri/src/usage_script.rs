@@ -24,7 +24,7 @@ pub async fn execute_usage_script(
         build_script_with_vars(script_code, api_key, base_url, access_token, user_id);
 
     // 2. 验证 base_url 的安全性（仅当提供了 base_url 时）
-    // 自定义模板模式下，用户可能不使用模板变量，而是直接在脚本中写完整 URL
+    // 自定义模板也要满足 HTTPS/loopback 约束，只是不强制同源。
     if should_validate_base_url(base_url, is_custom_template) {
         validate_base_url(base_url)?;
     }
@@ -471,7 +471,8 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
 }
 
 fn should_validate_base_url(base_url: &str, is_custom_template: bool) -> bool {
-    !base_url.is_empty() && !is_custom_template
+    let _ = is_custom_template;
+    !base_url.is_empty()
 }
 
 /// 验证请求 URL 是否安全（HTTPS 强制 + 同源检查）
@@ -491,9 +492,8 @@ fn validate_request_url(
 
     let is_request_loopback = is_loopback_host(&parsed_request);
 
-    // 必须使用 HTTPS（允许 localhost 用于开发）
-    // 自定义模板模式下，允许用户自行决定是否使用 HTTP（用户需自行承担安全风险）
-    if !is_custom_template && parsed_request.scheme() != "https" && !is_request_loopback {
+    // 必须使用 HTTPS（允许 localhost / loopback 用于开发）
+    if parsed_request.scheme() != "https" && !is_request_loopback {
         return Err(AppError::localized(
             "usage_script.request_https_required",
             "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
@@ -585,20 +585,30 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_template_allows_http_lan_request_with_different_base_url() {
+    fn test_custom_template_requires_https_for_non_loopback_requests() {
         assert!(
-            !should_validate_base_url("http://10.37.192.156:8090/anthropic", true),
-            "Custom scripts should not validate an unused provider base_url fallback"
+            should_validate_base_url("https://api.example.com", true),
+            "Custom scripts should still validate explicit base_url values"
         );
 
-        let result = validate_request_url(
-            "http://10.37.192.156:18344/user/balance",
-            "http://10.37.192.156:8090/anthropic",
+        let https_result = validate_request_url(
+            "https://quota.example.com/user/balance",
+            "https://provider.example.com/anthropic",
             true,
         );
         assert!(
-            result.is_ok(),
-            "Custom usage scripts should be able to call an explicit HTTP quota endpoint"
+            https_result.is_ok(),
+            "Custom usage scripts should still allow cross-origin HTTPS requests"
+        );
+
+        let http_result = validate_request_url(
+            "http://10.37.192.156:18344/user/balance",
+            "https://provider.example.com/anthropic",
+            true,
+        );
+        assert!(
+            http_result.is_err(),
+            "Custom usage scripts must not allow non-loopback HTTP requests"
         );
     }
 

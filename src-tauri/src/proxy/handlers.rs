@@ -30,7 +30,7 @@ use super::{
         strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
         usage_logging_enabled, SseUsageCollector,
     },
-    server::ProxyState,
+    server::{get_or_create_remote_access_token, ProxyState},
     sse::{strip_sse_field, take_sse_block},
     types::*,
     usage::parser::TokenUsage,
@@ -38,14 +38,55 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Request, State},
+    http::StatusCode,
+    middleware::Next,
+    response::{IntoResponse, Response},
+    Json,
+};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
 // ============================================================================
+
+pub async fn require_remote_access_auth(
+    State(state): State<ProxyState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ProxyError> {
+    let remote_addr = request.extensions().get::<SocketAddr>().copied();
+    if remote_addr.is_some_and(|addr| addr.ip().is_loopback()) {
+        return Ok(next.run(request).await);
+    }
+
+    let expected = get_or_create_remote_access_token(state.db.as_ref())
+        .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+    let Some(value) = request.headers().get(axum::http::header::AUTHORIZATION) else {
+        return Err(ProxyError::AuthError(
+            "远程访问代理缺少 Authorization 头".to_string(),
+        ));
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| ProxyError::AuthError("Authorization 头格式无效".to_string()))?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .unwrap_or("")
+        .trim();
+    if token != expected {
+        return Err(ProxyError::AuthError(
+            "远程访问代理 token 无效".to_string(),
+        ));
+    }
+
+    Ok(next.run(request).await)
+}
 
 /// 健康检查
 pub async fn health_check() -> (StatusCode, Json<Value>) {
@@ -2045,10 +2086,55 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        require_remote_access_auth, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+    };
+    use crate::database::Database;
+    use crate::proxy::{
+        failover_switch::FailoverSwitchManager,
+        provider_router::ProviderRouter,
+        providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+        server::{get_or_create_remote_access_token, ProxyState},
+        types::{ProxyConfig, ProxyStatus},
     };
     use crate::proxy::ProxyError;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+        Router,
+    };
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use tower::util::ServiceExt;
+
+    fn test_proxy_state() -> ProxyState {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        ProxyState {
+            db: db.clone(),
+            config: Arc::new(RwLock::new(ProxyConfig::default())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            app_handle: None,
+            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+        }
+    }
+
+    fn auth_test_router(state: ProxyState) -> Router {
+        Router::new()
+            .route("/status", get(|| async { StatusCode::OK }))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                require_remote_access_auth,
+            ))
+            .with_state(state)
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
@@ -2722,5 +2808,56 @@ data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\"}}\n
         assert_eq!(body["error"]["provider"], "HCAI");
         assert_eq!(body["error"]["model"], "gpt-5.5");
         assert_eq!(body["error"]["endpoint"], "/responses");
+    }
+
+    #[tokio::test]
+    async fn remote_access_auth_allows_loopback_without_token() {
+        let app = auth_test_router(test_proxy_state());
+        let mut request = Request::builder()
+            .uri("/status")
+            .body(Body::empty())
+            .expect("request");
+        request.extensions_mut().insert(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            12345,
+        ));
+
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn remote_access_auth_rejects_non_loopback_without_token() {
+        let app = auth_test_router(test_proxy_state());
+        let mut request = Request::builder()
+            .uri("/status")
+            .body(Body::empty())
+            .expect("request");
+        request.extensions_mut().insert(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 22)),
+            23456,
+        ));
+
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn remote_access_auth_accepts_valid_bearer_token() {
+        let state = test_proxy_state();
+        let expected = get_or_create_remote_access_token(state.db.as_ref()).expect("token");
+        let app = auth_test_router(state);
+        let mut request = Request::builder()
+            .uri("/status")
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {expected}"))
+            .body(Body::empty())
+            .expect("request");
+        request.extensions_mut().insert(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)),
+            34567,
+        ));
+
+        let response = app.oneshot(request).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

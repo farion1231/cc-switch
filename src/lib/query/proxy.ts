@@ -18,6 +18,16 @@ export function useProxyStatus() {
 }
 
 /**
+ * 获取代理远程访问暴露信息
+ */
+export function useProxyRemoteAccessInfo() {
+  return useQuery({
+    queryKey: ["proxyRemoteAccessInfo"],
+    queryFn: () => proxyApi.getProxyRemoteAccessInfo(),
+  });
+}
+
+/**
  * 检查代理服务器是否运行
  */
 export function useIsProxyRunning() {
@@ -62,6 +72,7 @@ export function useStartProxyServer() {
     mutationFn: () => proxyApi.startProxyServer(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyRemoteAccessInfo"] });
       queryClient.invalidateQueries({ queryKey: ["proxyRunning"] });
       queryClient.invalidateQueries({ queryKey: ["liveTakeoverActive"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
@@ -79,6 +90,7 @@ export function useStopProxyServer() {
     mutationFn: () => proxyApi.stopProxyWithRestore(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyRemoteAccessInfo"] });
       queryClient.invalidateQueries({ queryKey: ["proxyRunning"] });
       queryClient.invalidateQueries({ queryKey: ["liveTakeoverActive"] });
       queryClient.invalidateQueries({ queryKey: ["proxyTakeoverStatus"] });
@@ -190,6 +202,7 @@ export function useUpdateGlobalProxyConfig() {
     onSuccess: () => {
       toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
       queryClient.invalidateQueries({ queryKey: ["globalProxyConfig"] });
+      queryClient.invalidateQueries({ queryKey: ["proxyRemoteAccessInfo"] });
       queryClient.invalidateQueries({ queryKey: ["proxyConfig"] });
       queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
     },

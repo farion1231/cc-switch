@@ -703,8 +703,16 @@ export function DeepLinkImportDialog() {
                   )}
 
                   {/* Warning */}
-                  <div className="rounded-lg bg-yellow-50 dark:bg-yellow-900/20 p-3 text-sm text-yellow-800 dark:text-yellow-200">
-                    {t("deeplink.warning")}
+                  <div className="rounded-lg bg-yellow-50 dark:bg-yellow-900/20 p-3 text-sm text-yellow-800 dark:text-yellow-200 space-y-1">
+                    <p>{t("deeplink.warning")}</p>
+                    {request.usageScript && (
+                      <p>
+                        {t("deeplink.usageScriptImportWarning", {
+                          defaultValue:
+                            "此链接包含自定义用量脚本。导入后会默认保持关闭，只有在你手动启用后才会执行。",
+                        })}
+                      </p>
+                    )}
                   </div>
                 </>
               )}

@@ -20,14 +20,37 @@ use super::{
 use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{any, get, post},
     Router,
 };
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
+
+const REMOTE_ACCESS_TOKEN_SETTING_KEY: &str = "proxy_remote_access_token";
+
+pub fn listen_address_exposes_remote_access(listen_address: &str) -> bool {
+    match listen_address.trim().parse::<IpAddr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => !listen_address.trim().eq_ignore_ascii_case("localhost"),
+    }
+}
+
+pub fn get_or_create_remote_access_token(db: &Database) -> Result<String, crate::error::AppError> {
+    if let Some(token) = db.get_setting(REMOTE_ACCESS_TOKEN_SETTING_KEY)? {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+
+    let token = format!("ccs-remote-{}", uuid::Uuid::new_v4().simple());
+    db.set_setting(REMOTE_ACCESS_TOKEN_SETTING_KEY, &token)?;
+    Ok(token)
+}
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -143,7 +166,7 @@ impl ProxyServer {
             loop {
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -178,12 +201,14 @@ impl ProxyServer {
                             let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut router = app.clone();
                                 let cases = original_cases.clone();
+                                let remote_addr = remote_addr;
                                 async move {
                                     // 将 hyper::body::Incoming 转为 axum::body::Body，保留 extensions
                                     let (mut parts, body) = req.into_parts();
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+                                    parts.extensions.insert(remote_addr);
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -354,6 +379,10 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
+            .layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                handlers::require_remote_access_auth,
+            ))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .with_state(self.state.clone())
@@ -391,5 +420,37 @@ impl ProxyServer {
             .provider_router
             .reset_provider_breaker(provider_id, app_type)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_or_create_remote_access_token, listen_address_exposes_remote_access};
+    use crate::database::Database;
+
+    #[test]
+    fn loopback_addresses_do_not_expose_remote_access() {
+        assert!(!listen_address_exposes_remote_access("127.0.0.1"));
+        assert!(!listen_address_exposes_remote_access("localhost"));
+        assert!(!listen_address_exposes_remote_access("::1"));
+    }
+
+    #[test]
+    fn non_loopback_addresses_expose_remote_access() {
+        assert!(listen_address_exposes_remote_access("0.0.0.0"));
+        assert!(listen_address_exposes_remote_access("192.168.1.10"));
+        assert!(listen_address_exposes_remote_access("2001:db8::1"));
+        assert!(listen_address_exposes_remote_access("my-host"));
+    }
+
+    #[test]
+    fn remote_access_token_is_generated_once_and_reused() {
+        let db = Database::memory().expect("memory db");
+
+        let first = get_or_create_remote_access_token(&db).expect("create token");
+        let second = get_or_create_remote_access_token(&db).expect("reuse token");
+
+        assert_eq!(first, second);
+        assert!(first.starts_with("ccs-remote-"));
     }
 }

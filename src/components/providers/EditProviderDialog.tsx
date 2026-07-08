@@ -226,16 +226,27 @@ export function EditProviderDialog({
       isOpen={open}
       title={t("provider.editProvider")}
       onClose={() => onOpenChange(false)}
+      contentClassName="provider-dialog-content"
       footer={
-        <Button
-          type="submit"
-          form="provider-form"
-          disabled={isFormSubmitting}
-          className="bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Save className="h-4 w-4 mr-2" />
-          {t("common.save")}
-        </Button>
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            className="border-border/60 bg-background/70 hover:bg-accent"
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="submit"
+            form="provider-form"
+            disabled={isFormSubmitting}
+            className="min-w-[124px] bg-primary text-primary-foreground shadow-lg shadow-primary/20 hover:bg-primary/90"
+          >
+            <Save className="h-4 w-4 mr-2" />
+            {t("common.save")}
+          </Button>
+        </>
       }
     >
       <ProviderForm

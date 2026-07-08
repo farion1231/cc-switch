@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
+use crate::secure_store::{self, SecretKey};
 use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
@@ -99,6 +101,83 @@ fn default_remote_root() -> String {
 }
 fn default_profile() -> String {
     "default".to_string()
+}
+
+const WEB_DAV_PASSWORD_PLACEHOLDER: &str = "__CC_SWITCH_SECURE_WEB_DAV_PASSWORD__";
+const S3_SECRET_ACCESS_KEY_PLACEHOLDER: &str = "__CC_SWITCH_SECURE_S3_SECRET_ACCESS_KEY__";
+
+fn secret_is_placeholder(value: &str, placeholder: &str) -> bool {
+    value.trim() == placeholder
+}
+
+fn protect_webdav_secret(sync: &mut WebDavSyncSettings) -> Result<(), AppError> {
+    if sync.password.trim().is_empty() {
+        secure_store::delete_secret(SecretKey::WebDavPassword)?;
+        sync.password.clear();
+    } else {
+        secure_store::set_secret(SecretKey::WebDavPassword, &sync.password)?;
+        sync.password = WEB_DAV_PASSWORD_PLACEHOLDER.to_string();
+    }
+    Ok(())
+}
+
+fn restore_webdav_secret(sync: &mut WebDavSyncSettings) -> Result<(), AppError> {
+    if sync.password.trim().is_empty() || secret_is_placeholder(&sync.password, WEB_DAV_PASSWORD_PLACEHOLDER)
+    {
+        sync.password = secure_store::get_secret(SecretKey::WebDavPassword)?.unwrap_or_default();
+    }
+    Ok(())
+}
+
+fn protect_s3_secret(sync: &mut S3SyncSettings) -> Result<(), AppError> {
+    if sync.secret_access_key.trim().is_empty() {
+        secure_store::delete_secret(SecretKey::S3SecretAccessKey)?;
+        sync.secret_access_key.clear();
+    } else {
+        secure_store::set_secret(SecretKey::S3SecretAccessKey, &sync.secret_access_key)?;
+        sync.secret_access_key = S3_SECRET_ACCESS_KEY_PLACEHOLDER.to_string();
+    }
+    Ok(())
+}
+
+fn restore_s3_secret(sync: &mut S3SyncSettings) -> Result<(), AppError> {
+    if sync.secret_access_key.trim().is_empty()
+        || secret_is_placeholder(&sync.secret_access_key, S3_SECRET_ACCESS_KEY_PLACEHOLDER)
+    {
+        sync.secret_access_key =
+            secure_store::get_secret(SecretKey::S3SecretAccessKey)?.unwrap_or_default();
+    }
+    Ok(())
+}
+
+fn protect_sync_secrets(settings: &mut AppSettings) -> Result<(), AppError> {
+    if let Some(sync) = settings.webdav_sync.as_mut() {
+        protect_webdav_secret(sync)?;
+    }
+    if let Some(sync) = settings.s3_sync.as_mut() {
+        protect_s3_secret(sync)?;
+    }
+    Ok(())
+}
+
+fn restore_sync_secrets(settings: &mut AppSettings) -> Result<(), AppError> {
+    if let Some(sync) = settings.webdav_sync.as_mut() {
+        restore_webdav_secret(sync)?;
+    }
+    if let Some(sync) = settings.s3_sync.as_mut() {
+        restore_s3_secret(sync)?;
+    }
+    Ok(())
+}
+
+fn sync_secrets_need_migration(settings: &AppSettings) -> bool {
+    settings.webdav_sync.as_ref().is_some_and(|sync| {
+        let password = sync.password.trim();
+        !password.is_empty() && !secret_is_placeholder(password, WEB_DAV_PASSWORD_PLACEHOLDER)
+    }) || settings.s3_sync.as_ref().is_some_and(|sync| {
+        let secret = sync.secret_access_key.trim();
+        !secret.is_empty() && !secret_is_placeholder(secret, S3_SECRET_ACCESS_KEY_PLACEHOLDER)
+    })
 }
 
 /// WebDAV 同步设置
@@ -620,6 +699,15 @@ impl AppSettings {
             match serde_json::from_str::<AppSettings>(&content) {
                 Ok(mut settings) => {
                     settings.normalize_paths();
+                    let needs_migration = sync_secrets_need_migration(&settings);
+                    if let Err(error) = restore_sync_secrets(&mut settings) {
+                        log::warn!("恢复安全存储中的同步凭据失败: {error}");
+                    }
+                    if needs_migration {
+                        if let Err(error) = save_settings_file(&settings) {
+                            log::warn!("迁移同步凭据到系统安全存储失败: {error}");
+                        }
+                    }
                     settings
                 }
                 Err(err) => {
@@ -640,6 +728,7 @@ impl AppSettings {
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     let mut normalized = settings.clone();
     normalized.normalize_paths();
+    protect_sync_secrets(&mut normalized)?;
     let Some(path) = AppSettings::settings_path() else {
         return Err(AppError::Config("无法获取用户主目录".to_string()));
     };
@@ -723,6 +812,7 @@ pub fn get_settings_for_frontend() -> AppSettings {
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     save_settings_file(&new_settings)?;
+    restore_sync_secrets(&mut new_settings)?;
 
     let mut guard = settings_store().write().unwrap_or_else(|e| {
         log::warn!("设置锁已毒化，使用恢复值: {e}");
@@ -744,6 +834,7 @@ where
     mutator(&mut next);
     next.normalize_paths();
     save_settings_file(&next)?;
+    restore_sync_secrets(&mut next)?;
     *guard = next;
     Ok(())
 }
@@ -1112,6 +1203,20 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+    use crate::secure_store;
+    use serial_test::serial;
+
+    fn test_settings_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
+    fn reset_test_home(path: &std::path::Path) {
+        let _ = std::fs::remove_dir_all(path);
+        std::fs::create_dir_all(path).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", path);
+        secure_store::clear_all_test_secrets().expect("clear test secrets");
+        update_settings(AppSettings::default()).expect("reset settings");
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
@@ -1142,5 +1247,128 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    #[serial]
+    fn sync_credentials_are_redacted_from_settings_file() {
+        let test_home = test_settings_path("cc-switch-settings-secure-store-redaction");
+        reset_test_home(&test_home);
+
+        let mut settings = AppSettings::default();
+        settings.webdav_sync = Some(WebDavSyncSettings {
+            enabled: true,
+            base_url: "https://dav.example.com/dav/".to_string(),
+            username: "alice".to_string(),
+            password: "secret-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+        settings.s3_sync = Some(S3SyncSettings {
+            enabled: true,
+            region: "us-east-1".to_string(),
+            bucket: "bucket".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "super-secret".to_string(),
+            ..S3SyncSettings::default()
+        });
+
+        update_settings(settings).expect("save secure settings");
+
+        let saved = std::fs::read_to_string(
+            AppSettings::settings_path().expect("settings path should be available"),
+        )
+        .expect("read settings file");
+
+        assert!(
+            !saved.contains("secret-pass"),
+            "webdav password must not be written in plaintext"
+        );
+        assert!(
+            !saved.contains("super-secret"),
+            "s3 secret must not be written in plaintext"
+        );
+        assert!(saved.contains(WEB_DAV_PASSWORD_PLACEHOLDER));
+        assert!(saved.contains(S3_SECRET_ACCESS_KEY_PLACEHOLDER));
+
+        let stored = get_settings();
+        assert_eq!(
+            stored
+                .webdav_sync
+                .as_ref()
+                .map(|sync| sync.password.as_str()),
+            Some("secret-pass")
+        );
+        assert_eq!(
+            stored
+                .s3_sync
+                .as_ref()
+                .map(|sync| sync.secret_access_key.as_str()),
+            Some("super-secret")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn plaintext_sync_credentials_are_migrated_on_load() {
+        let test_home = test_settings_path("cc-switch-settings-secure-store-migration");
+        reset_test_home(&test_home);
+
+        let path = AppSettings::settings_path().expect("settings path");
+        let parent = path.parent().expect("settings dir");
+        std::fs::create_dir_all(parent).expect("create settings dir");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "webdavSync": {
+                    "enabled": true,
+                    "baseUrl": "https://dav.example.com/dav/",
+                    "username": "alice",
+                    "password": "legacy-pass",
+                    "remoteRoot": "cc-switch-sync",
+                    "profile": "default"
+                },
+                "s3Sync": {
+                    "enabled": true,
+                    "region": "us-east-1",
+                    "bucket": "bucket",
+                    "accessKeyId": "AKID",
+                    "secretAccessKey": "legacy-secret",
+                    "remoteRoot": "cc-switch-sync",
+                    "profile": "default"
+                }
+            }))
+            .expect("serialize settings"),
+        )
+        .expect("write legacy settings");
+
+        let mut loaded = AppSettings::load_from_file();
+        restore_sync_secrets(&mut loaded).expect("restore sync secrets");
+
+        assert_eq!(
+            loaded
+                .webdav_sync
+                .as_ref()
+                .map(|sync| sync.password.as_str()),
+            Some("legacy-pass")
+        );
+        assert_eq!(
+            loaded
+                .s3_sync
+                .as_ref()
+                .map(|sync| sync.secret_access_key.as_str()),
+            Some("legacy-secret")
+        );
+
+        let migrated = std::fs::read_to_string(&path).expect("read migrated settings");
+        assert!(
+            !migrated.contains("legacy-pass"),
+            "legacy webdav password should be removed from disk"
+        );
+        assert!(
+            !migrated.contains("legacy-secret"),
+            "legacy s3 secret should be removed from disk"
+        );
+        assert!(migrated.contains(WEB_DAV_PASSWORD_PLACEHOLDER));
+        assert!(migrated.contains(S3_SECRET_ACCESS_KEY_PLACEHOLDER));
     }
 }

@@ -1069,6 +1069,7 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+#[cfg(unix)]
 fn fallback_user_shell() -> &'static str {
     if cfg!(target_os = "macos") {
         "/bin/zsh"
@@ -1077,6 +1078,7 @@ fn fallback_user_shell() -> &'static str {
     }
 }
 
+#[cfg(unix)]
 fn valid_user_shell_path(shell: &str) -> bool {
     if shell.is_empty()
         || !shell.starts_with('/')
@@ -1099,12 +1101,8 @@ fn is_executable_file(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(unix))]
-fn is_executable_file(path: &std::path::Path) -> bool {
-    path.is_file()
-}
-
 /// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
+#[cfg(unix)]
 fn get_user_shell() -> String {
     std::env::var("SHELL")
         .ok()
@@ -1113,6 +1111,7 @@ fn get_user_shell() -> String {
 }
 
 /// 构建 exec 行：引号保护 shell 路径，交还用户 shell 让其按默认规则加载 rc 配置。
+#[cfg(unix)]
 fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
     let quoted_shell = shell_single_quote(shell);
 
@@ -1132,6 +1131,7 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 }
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+#[cfg(unix)]
 fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
     let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
     let command = cwd
@@ -1152,6 +1152,7 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
     )
 }
 
+#[cfg(unix)]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
@@ -1160,6 +1161,7 @@ fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+#[cfg(unix)]
 fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
     if matches!(shell.rsplit('/').next().unwrap_or(shell), "zsh") {
         return String::new();
@@ -3252,6 +3254,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg(unix)]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -3532,6 +3535,7 @@ mod tests {
             .expect("fixture permissions should be set");
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_build_exec_line() {
         assert_eq!(build_exec_line("/bin/zsh", None), "exec '/bin/zsh' -l");
@@ -3551,6 +3555,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_build_provider_command_line_uses_user_shell_environment() {
         assert_eq!(
@@ -3575,6 +3580,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_build_final_shell_cd_command() {
         assert_eq!(build_final_shell_cd_command("/bin/zsh", None), "");

@@ -29,6 +29,7 @@ mod provider_defaults;
 mod proxy;
 mod services;
 mod session_manager;
+mod secure_store;
 mod settings;
 mod store;
 
@@ -1350,6 +1351,7 @@ pub fn run() {
             commands::get_proxy_takeover_status,
             commands::set_proxy_takeover_for_app,
             commands::get_proxy_status,
+            commands::get_proxy_remote_access_info,
             commands::get_proxy_config,
             commands::update_proxy_config,
             // Global & Per-App Config

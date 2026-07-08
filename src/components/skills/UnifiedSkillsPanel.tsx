@@ -346,14 +346,14 @@ const UnifiedSkillsPanel = React.forwardRef<
   }));
 
   return (
-    <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto flex min-h-0 flex-1 w-full max-w-[1480px] flex-col overflow-hidden px-5 md:px-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <AppCountBar
           totalLabel={t("skills.installed", { count: skills?.length || 0 })}
           counts={enabledCounts}
           appIds={SKILLS_APP_IDS}
         />
-        <div className="flex items-center gap-1.5">
+        <div className="toolbar-cluster flex items-center gap-1.5 rounded-lg p-1">
           <div
             className="transition-all duration-300 ease-out overflow-hidden"
             style={{
@@ -366,7 +366,7 @@ const UnifiedSkillsPanel = React.forwardRef<
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 text-xs gap-1 whitespace-nowrap"
+              className="h-8 gap-1 whitespace-nowrap text-xs"
               onClick={handleUpdateAll}
               disabled={isUpdatingAll || updateSkillMutation.isPending}
             >
@@ -384,7 +384,7 @@ const UnifiedSkillsPanel = React.forwardRef<
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1"
+            className="h-8 gap-1 text-xs"
             onClick={handleCheckUpdates}
             disabled={isCheckingUpdates || !skills || skills.length === 0}
           >
@@ -402,15 +402,15 @@ const UnifiedSkillsPanel = React.forwardRef<
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">
+          <div className="rounded-2xl border border-border bg-card py-12 text-center text-muted-foreground">
             {t("skills.loading")}
           </div>
         ) : !skills || skills.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+          <div className="rounded-2xl border border-border bg-card py-12 text-center">
+            <div className="provider-icon-shell mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[1.2rem]">
               <Sparkles size={24} className="text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-medium text-foreground mb-2">
+            <h3 className="mb-2 text-lg font-medium text-foreground">
               {t("skills.noInstalled")}
             </h3>
             <p className="text-muted-foreground text-sm">
@@ -419,7 +419,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
+            <div className="overflow-hidden rounded-2xl border border-border bg-card">
               {skills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
@@ -526,7 +526,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             <button
               type="button"
               onClick={openDocs}
-              className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+              className="flex-shrink-0 text-muted-foreground/60 hover:text-foreground"
             >
               <ExternalLink size={12} />
             </button>
@@ -545,7 +545,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
         </div>
         {skill.description && (
           <p
-            className="text-xs text-muted-foreground truncate"
+            className="truncate text-xs text-muted-foreground"
             title={skill.description}
           >
             {skill.description}
@@ -560,7 +560,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
       />
 
       <div
-        className="flex-shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="toolbar-cluster flex flex-shrink-0 items-center gap-0.5 rounded-lg p-1 opacity-0 transition-opacity group-hover:opacity-100"
         style={hasUpdate ? { opacity: 1 } : undefined}
       >
         {hasUpdate && onUpdate && (
@@ -568,7 +568,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             type="button"
             variant="ghost"
             size="icon"
-            className="h-7 w-7 hover:text-blue-500 hover:bg-blue-100 dark:hover:text-blue-400 dark:hover:bg-blue-500/10"
+            className="h-7 w-7 hover:bg-sky-100/80 hover:text-sky-600 dark:hover:bg-sky-500/10 dark:hover:text-sky-300"
             onClick={onUpdate}
             disabled={isUpdating}
             title={t("skills.update")}
@@ -584,7 +584,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
+          className="h-7 w-7 hover:bg-red-100/80 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-400"
           onClick={onUninstall}
           title={t("skills.uninstall")}
         >

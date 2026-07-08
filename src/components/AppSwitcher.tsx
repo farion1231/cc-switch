@@ -67,7 +67,7 @@ export function AppSwitcher({
   });
 
   return (
-    <div className="inline-flex bg-muted rounded-xl p-1 gap-1">
+    <div className="liquid-switcher inline-flex rounded-[1.1rem] p-1 gap-1">
       {appsToShow.map((app) => {
         const badgeConfig = APP_BADGE_ICON[app];
         const BadgeIcon = badgeConfig?.icon;
@@ -78,10 +78,10 @@ export function AppSwitcher({
             type="button"
             onClick={() => handleSwitch(app)}
             className={cn(
-              "group inline-flex items-center px-3 h-8 rounded-md text-sm font-medium transition-all duration-200",
+              "group inline-flex items-center px-3 h-8 rounded-[0.9rem] text-sm font-medium transition-all duration-200",
               isActive
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-background/50",
+                ? "bg-white/80 text-foreground shadow-[0_12px_20px_-16px_rgba(15,23,42,0.7),inset_0_1px_0_rgba(255,255,255,0.85)] dark:bg-white/[0.11] dark:text-white"
+                : "text-muted-foreground hover:bg-white/45 hover:text-foreground dark:hover:bg-white/[0.07] dark:hover:text-white",
             )}
           >
             <span className="relative inline-flex shrink-0">
@@ -95,8 +95,8 @@ export function AppSwitcher({
                   className={cn(
                     "absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-[3px] border h-[11px] w-[11px]",
                     isActive
-                      ? "bg-background border-border text-foreground"
-                      : "bg-muted border-background text-muted-foreground group-hover:bg-background group-hover:text-foreground",
+                      ? "bg-white/90 border-white/70 text-foreground dark:bg-slate-900 dark:border-white/10"
+                      : "bg-white/50 border-white/70 text-muted-foreground group-hover:bg-white/80 group-hover:text-foreground dark:bg-slate-900/60 dark:border-white/5 dark:group-hover:bg-slate-900",
                   )}
                   aria-hidden="true"
                 >

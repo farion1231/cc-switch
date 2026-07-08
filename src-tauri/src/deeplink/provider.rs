@@ -250,8 +250,10 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         String::new()
     };
 
-    // Determine enabled state: explicit param > has code > false
-    let enabled = request.usage_enabled.unwrap_or(!code.is_empty());
+    // Deep link imported scripts stay disabled by default until the user
+    // explicitly enables them in the UI. This avoids "import immediately starts
+    // executing remote-authored JS" surprises.
+    let enabled = request.usage_enabled.unwrap_or(false);
 
     let usage_script = UsageScript {
         enabled,
@@ -262,7 +264,7 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         base_url: usage_base_url_override(request),
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
-        template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)
+        template_type: Some("custom".to_string()),
         auto_query_interval: request.usage_auto_interval,
         coding_plan_provider: None,
         access_key_id: None,

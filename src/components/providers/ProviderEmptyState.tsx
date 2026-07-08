@@ -19,20 +19,26 @@ export function ProviderEmptyState({
     appId === "claude" || appId === "codex" || appId === "gemini";
 
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border p-10 text-center">
-      <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+    <div className="relative mx-auto flex w-full max-w-3xl flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-card/60 px-8 py-12 text-center">
+      <div
+        className="pointer-events-none absolute -top-24 left-1/2 h-48 w-72 -translate-x-1/2 rounded-full bg-primary/[0.07] blur-3xl"
+        aria-hidden="true"
+      />
+      <div className="provider-icon-shell relative mb-4 flex h-16 w-16 items-center justify-center rounded-[1.15rem]">
         <Users className="h-7 w-7 text-muted-foreground" />
       </div>
-      <h3 className="text-lg font-semibold">{t("provider.noProviders")}</h3>
-      <p className="mt-2 max-w-lg text-sm text-muted-foreground">
+      <h3 className="font-display text-xl font-semibold tracking-[-0.02em]">
+        {t("provider.noProviders")}
+      </h3>
+      <p className="mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
         {t("provider.noProvidersDescription")}
       </p>
       {showSnippetHint && (
-        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+        <p className="mt-1 max-w-lg text-sm leading-6 text-muted-foreground">
           {t("provider.noProvidersDescriptionSnippet")}
         </p>
       )}
-      <div className="mt-6 flex flex-col gap-2">
+      <div className="mt-6 flex flex-col gap-2 sm:flex-row">
         {onImport && (
           <Button onClick={onImport}>
             <Download className="mr-2 h-4 w-4" />

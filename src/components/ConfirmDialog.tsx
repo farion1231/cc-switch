@@ -53,7 +53,9 @@ export function ConfirmDialog({
 
   const IconComponent = variant === "info" ? Info : AlertTriangle;
   const iconClass =
-    variant === "info" ? "h-5 w-5 text-blue-500" : "h-5 w-5 text-destructive";
+    variant === "info"
+      ? "h-5 w-5 text-sky-500 dark:text-sky-300"
+      : "h-5 w-5 text-destructive";
 
   return (
     <Dialog
@@ -75,7 +77,7 @@ export function ConfirmDialog({
           </DialogDescription>
         </DialogHeader>
         {checkboxLabel ? (
-          <label className="flex cursor-pointer select-none items-start gap-2 px-6 pt-3">
+          <label className="mx-6 flex cursor-pointer select-none items-start gap-2 rounded-[1rem] border border-white/40 bg-white/25 px-4 py-3 backdrop-blur-sm dark:border-white/8 dark:bg-white/[0.03]">
             <Checkbox
               checked={checkboxChecked}
               onCheckedChange={(value) => setCheckboxChecked(value === true)}

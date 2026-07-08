@@ -115,7 +115,7 @@
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
     "addNewProvider": "添加新供应商",
-    "addFooterHint": "💡 选择预设后，请在下方填写 API Key 等字段",
+    "addFooterHint": "💡 填写基础信息和接口配置后，即可添加供应商",
     "addClaudeProvider": "添加 Claude Code 供应商",
     "addCodexProvider": "添加 Codex 供应商",
     "addGeminiProvider": "添加 Gemini 供应商",
@@ -872,8 +872,7 @@
     "saveFailedGeneric": "保存失败，请重试"
   },
   "apps": {
-    "claude": "Claude",
-    "claudeCode": "Claude Code",
+    "claude": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
@@ -1368,7 +1367,11 @@
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK 选项",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "category": "供应商类别",
+    "categoryCustom": "自定义",
+    "categoryOmo": "OMO",
+    "categoryOmoSlim": "OMO Slim"
   },
   "providerPreset": {
     "label": "预设供应商",

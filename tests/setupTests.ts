@@ -26,6 +26,7 @@ afterEach(() => {
   cleanup();
   resetProviderState();
   server.resetHandlers();
+  globalThis.localStorage?.clear?.();
   vi.clearAllMocks();
 });
 

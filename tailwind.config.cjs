@@ -38,6 +38,16 @@ module.exports = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        success: "hsl(var(--success))",
+        warning: "hsl(var(--warning))",
+        sidebar: {
+          DEFAULT: "hsl(var(--sidebar))",
+          hover: "hsl(var(--sidebar-hover))",
+          active: "hsl(var(--sidebar-active))",
+          "active-foreground": "hsl(var(--sidebar-active-foreground))",
+          foreground: "hsl(var(--sidebar-foreground))",
+          muted: "hsl(var(--sidebar-muted))",
+        },
         blue: {
           400: "#409CFF",
           500: "#0A84FF",
@@ -70,9 +80,10 @@ module.exports = {
         },
       },
       boxShadow: {
-        sm: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
-        md: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
-        lg: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        sm: "0 1px 2px 0 rgb(0 0 0 / 0.04)",
+        md: "0 2px 4px -1px rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)",
+        lg: "0 4px 12px -2px rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.04)",
+        xl: "0 8px 24px -4px rgb(0 0 0 / 0.1), 0 4px 8px -2px rgb(0 0 0 / 0.04)",
       },
       borderRadius: {
         sm: "0.375rem",
@@ -81,89 +92,72 @@ module.exports = {
         xl: "0.875rem",
       },
       fontFamily: {
-        // 使用与之前版本保持一致的系统字体栈
         sans: [
           "-apple-system",
-          "BlinkMacSystemFont",
+          '"SF Pro Text"',
+          '"Segoe UI Variable Text"',
           '"Segoe UI"',
-          "Roboto",
+          '"PingFang SC"',
+          '"Microsoft YaHei UI"',
           '"Helvetica Neue"',
-          "Arial",
+          "sans-serif",
+        ],
+        display: [
+          '"Bricolage Grotesque Variable"',
+          '"Bricolage Grotesque"',
+          '"PingFang SC"',
+          '"Microsoft YaHei UI"',
+          '"Helvetica Neue"',
           "sans-serif",
         ],
         mono: [
+          '"IBM Plex Mono"',
           "ui-monospace",
-          "SFMono-Regular",
           '"SF Mono"',
           "Consolas",
-          '"Liberation Mono"',
-          "Menlo",
+          '"PingFang SC"',
+          '"Microsoft YaHei UI"',
           "monospace",
         ],
       },
       animation: {
-        "fade-in": "fadeIn 0.5s ease-out",
-        "slide-up": "slideUp 0.5s ease-out",
-        "slide-down": "slideDown 0.3s ease-out",
-        "slide-in-right": "slideInRight 0.3s ease-out",
+        "fade-in": "fadeIn 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)",
+        "slide-up": "slideUp 0.3s cubic-bezier(0.25, 0.1, 0.25, 1)",
+        "slide-down": "slideDown 0.2s cubic-bezier(0.25, 0.1, 0.25, 1)",
+        "slide-in-right": "slideInRight 0.25s cubic-bezier(0.25, 0.1, 0.25, 1)",
+        "scale-in": "scaleIn 0.2s cubic-bezier(0.25, 0.1, 0.25, 1)",
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
       },
       keyframes: {
         fadeIn: {
-          "0%": {
-            opacity: "0",
-          },
-          "100%": {
-            opacity: "1",
-          },
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
         },
         slideUp: {
-          "0%": {
-            transform: "translateY(20px)",
-            opacity: "0",
-          },
-          "100%": {
-            transform: "translateY(0)",
-            opacity: "1",
-          },
+          "0%": { transform: "translateY(12px)", opacity: "0" },
+          "100%": { transform: "translateY(0)", opacity: "1" },
         },
         slideDown: {
-          "0%": {
-            transform: "translateY(-100%)",
-            opacity: "0",
-          },
-          "100%": {
-            transform: "translateY(0)",
-            opacity: "1",
-          },
+          "0%": { transform: "translateY(-8px)", opacity: "0" },
+          "100%": { transform: "translateY(0)", opacity: "1" },
         },
         slideInRight: {
-          "0%": {
-            transform: "translateX(100%)",
-            opacity: "0",
-          },
-          "100%": {
-            transform: "translateX(0)",
-            opacity: "1",
-          },
+          "0%": { transform: "translateX(16px)", opacity: "0" },
+          "100%": { transform: "translateX(0)", opacity: "1" },
+        },
+        scaleIn: {
+          "0%": { transform: "scale(0.96)", opacity: "0" },
+          "100%": { transform: "scale(1)", opacity: "1" },
         },
         "accordion-down": {
-          from: {
-            height: "0",
-          },
-          to: {
-            height: "var(--radix-accordion-content-height)",
-          },
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
         },
         "accordion-up": {
-          from: {
-            height: "var(--radix-accordion-content-height)",
-          },
-          to: {
-            height: "0",
-          },
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
         },
       },
     },

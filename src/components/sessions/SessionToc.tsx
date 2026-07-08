@@ -31,8 +31,8 @@ export function SessionTocSidebar({
   if (items.length <= 2) return null;
 
   return (
-    <div className="w-64 border-l shrink-0 hidden xl:block">
-      <div className="p-3 border-b">
+    <div className="hidden w-64 shrink-0 overflow-hidden rounded-2xl border border-border bg-card xl:block">
+      <div className="border-b border-white/40 p-3 dark:border-white/8">
         <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
           <List className="size-3.5" />
           <span>{t("sessionManager.tocTitle")}</span>
@@ -46,8 +46,8 @@ export function SessionTocSidebar({
               type="button"
               onClick={() => onItemClick(item.index)}
               className={cn(
-                "w-full text-left px-2 py-1.5 rounded text-xs transition-colors",
-                "hover:bg-muted/80 text-muted-foreground hover:text-foreground",
+                "w-full rounded-[0.9rem] px-2 py-1.5 text-left text-xs transition-colors",
+                "text-muted-foreground hover:bg-white/40 hover:text-foreground dark:hover:bg-white/[0.05]",
                 "flex items-start gap-2",
               )}
             >
@@ -84,24 +84,24 @@ export function SessionTocDialog({
       <DialogTrigger asChild>
         <Button
           size="icon"
-          className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
+          className="fixed bottom-20 right-4 z-30 size-10 rounded-full border border-cyan-200/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.88),rgba(109,228,255,0.74))] text-slate-900 shadow-[0_20px_36px_-22px_rgba(14,165,233,0.7),inset_0_1px_0_rgba(255,255,255,0.92)] xl:hidden dark:border-cyan-300/15 dark:bg-[linear-gradient(145deg,rgba(34,211,238,0.28),rgba(14,116,144,0.28))] dark:text-cyan-50"
         >
           <List className="size-4" />
         </Button>
       </DialogTrigger>
       <DialogContent
-        className="max-w-md max-h-[70vh] flex flex-col p-0 gap-0"
+        className="max-h-[70vh] max-w-md flex flex-col gap-0 p-0"
         zIndex="alert"
         onInteractOutside={() => onOpenChange(false)}
         onEscapeKeyDown={() => onOpenChange(false)}
       >
-        <DialogHeader className="px-4 py-3 relative border-b">
+        <DialogHeader className="relative border-b border-white/40 px-4 py-3 dark:border-white/8">
           <DialogTitle className="flex items-center gap-2 text-base font-semibold">
             <List className="size-4 text-primary" />
             {t("sessionManager.tocTitle")}
           </DialogTitle>
           <DialogClose
-            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 hover:bg-muted transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 transition-colors hover:bg-white/50 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:hover:bg-white/[0.08]"
             aria-label={t("common.close")}
           >
             <X className="size-4 text-muted-foreground" />
@@ -115,8 +115,8 @@ export function SessionTocDialog({
                 type="button"
                 onClick={() => onItemClick(item.index)}
                 className={cn(
-                  "w-full text-left px-3 py-2.5 rounded-lg text-sm transition-all",
-                  "hover:bg-primary/10 text-foreground",
+                  "w-full rounded-[1rem] px-3 py-2.5 text-left text-sm text-foreground transition-all",
+                  "hover:bg-white/50 dark:hover:bg-white/[0.06]",
                   "flex items-start gap-3",
                   "focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset",
                 )}

@@ -115,7 +115,7 @@
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
     "addNewProvider": "新しいプロバイダーを追加",
-    "addFooterHint": "💡 プリセットを選んだら、下のフィールド（API Key など）を入力してください",
+    "addFooterHint": "💡 基本情報と API 設定を入力して、プロバイダーを追加してください",
     "addClaudeProvider": "Claude Code プロバイダーを追加",
     "addCodexProvider": "Codex プロバイダーを追加",
     "addGeminiProvider": "Gemini プロバイダーを追加",
@@ -872,8 +872,7 @@
     "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
   },
   "apps": {
-    "claude": "Claude",
-    "claudeCode": "Claude Code",
+    "claude": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
@@ -1368,7 +1367,11 @@
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK オプション",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "category": "プロバイダーカテゴリ",
+    "categoryCustom": "カスタム",
+    "categoryOmo": "Oh My OpenCode",
+    "categoryOmoSlim": "Oh My OpenCode Slim"
   },
   "providerPreset": {
     "label": "プロバイダータイプ",

@@ -213,9 +213,9 @@ export function SettingsPage({
   const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden px-6">
+    <div className="flex h-full flex-col overflow-hidden px-1">
       {isBusy ? (
-        <div className="flex flex-1 items-center justify-center">
+        <div className="rounded-2xl border border-border bg-card flex flex-1 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : (
@@ -224,7 +224,7 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
+          <TabsList className="mb-6 grid w-full grid-cols-6">
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
@@ -239,12 +239,12 @@ export function SettingsPage({
             <TabsTrigger value="about">{t("common.about")}</TabsTrigger>
           </TabsList>
 
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="rounded-2xl border border-border bg-card flex min-h-0 flex-1 flex-col px-4 py-4 md:px-5">
             <div
               ref={tabScrollContainerRef}
               className="flex-1 overflow-y-auto overflow-x-hidden pr-2"
             >
-              <TabsContent value="general" className="space-y-6 mt-0">
+              <TabsContent value="general" className="mt-0 space-y-6">
                 {settings ? (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -292,7 +292,7 @@ export function SettingsPage({
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="proxy" className="space-y-6 mt-0 pb-4">
+              <TabsContent value="proxy" className="mt-0 space-y-6 pb-4">
                 {settings ? (
                   <ProxyTabContent
                     settings={settings}
@@ -301,7 +301,7 @@ export function SettingsPage({
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="auth" className="space-y-6 mt-0 pb-4">
+              <TabsContent value="auth" className="mt-0 space-y-6 pb-4">
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -312,7 +312,7 @@ export function SettingsPage({
                 </motion.div>
               </TabsContent>
 
-              <TabsContent value="advanced" className="space-y-6 mt-0 pb-4">
+              <TabsContent value="advanced" className="mt-0 space-y-6 pb-4">
                 {settings ? (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -327,9 +327,9 @@ export function SettingsPage({
                     >
                       <AccordionItem
                         value="directory"
-                        className="rounded-xl glass-card overflow-hidden"
+                        className="rounded-[1.3rem]"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger>
                           <div className="flex items-center gap-3">
                             <FolderSearch className="h-5 w-5 text-primary" />
                             <div className="text-left">
@@ -342,7 +342,7 @@ export function SettingsPage({
                             </div>
                           </div>
                         </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <AccordionContent>
                           <DirectorySettings
                             appConfigDir={appConfigDir}
                             resolvedDirs={resolvedDirs}
@@ -364,9 +364,9 @@ export function SettingsPage({
 
                       <AccordionItem
                         value="data"
-                        className="rounded-xl glass-card overflow-hidden"
+                        className="rounded-[1.3rem]"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger>
                           <div className="flex items-center gap-3">
                             <Database className="h-5 w-5 text-blue-500" />
                             <div className="text-left">
@@ -379,7 +379,7 @@ export function SettingsPage({
                             </div>
                           </div>
                         </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <AccordionContent>
                           <ImportExportSection
                             status={importStatus}
                             selectedFile={selectedFile}
@@ -396,9 +396,9 @@ export function SettingsPage({
 
                       <AccordionItem
                         value="backup"
-                        className="rounded-xl glass-card overflow-hidden"
+                        className="rounded-[1.3rem]"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger>
                           <div className="flex items-center gap-3">
                             <HardDriveDownload className="h-5 w-5 text-amber-500" />
                             <div className="text-left">
@@ -416,7 +416,7 @@ export function SettingsPage({
                             </div>
                           </div>
                         </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <AccordionContent>
                           <BackupListSection
                             backupIntervalHours={settings.backupIntervalHours}
                             backupRetainCount={settings.backupRetainCount}
@@ -429,9 +429,9 @@ export function SettingsPage({
 
                       <AccordionItem
                         value="cloudSync"
-                        className="rounded-xl glass-card overflow-hidden"
+                        className="rounded-[1.3rem]"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger>
                           <div className="flex items-center gap-3">
                             <Cloud className="h-5 w-5 text-blue-500" />
                             <div className="text-left">
@@ -444,7 +444,7 @@ export function SettingsPage({
                             </div>
                           </div>
                         </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <AccordionContent>
                           <WebdavSyncSection
                             config={settings?.webdavSync}
                             s3Config={settings?.s3Sync}
@@ -456,9 +456,9 @@ export function SettingsPage({
 
                       <AccordionItem
                         value="test"
-                        className="rounded-xl glass-card overflow-hidden"
+                        className="rounded-[1.3rem]"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger>
                           <div className="flex items-center gap-3">
                             <FlaskConical className="h-5 w-5 text-emerald-500" />
                             <div className="text-left">
@@ -471,16 +471,16 @@ export function SettingsPage({
                             </div>
                           </div>
                         </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <AccordionContent>
                           <ModelTestConfigPanel />
                         </AccordionContent>
                       </AccordionItem>
 
                       <AccordionItem
                         value="logConfig"
-                        className="rounded-xl glass-card overflow-hidden"
+                        className="rounded-[1.3rem]"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger>
                           <div className="flex items-center gap-3">
                             <ScrollText className="h-5 w-5 text-cyan-500" />
                             <div className="text-left">
@@ -493,7 +493,7 @@ export function SettingsPage({
                             </div>
                           </div>
                         </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                        <AccordionContent>
                           <LogConfigPanel />
                         </AccordionContent>
                       </AccordionItem>
@@ -512,11 +512,8 @@ export function SettingsPage({
             </div>
 
             {activeTab === "advanced" && settings && (
-              <div
-                className="flex-shrink-0 pt-4 border-t border-border-default"
-                style={{ backgroundColor: "hsl(var(--background))" }}
-              >
-                <div className="px-6 flex items-center justify-end gap-3">
+              <div className="flex-shrink-0 border-t border-white/40 pt-4 dark:border-white/8">
+                <div className="flex items-center justify-end gap-3 px-1">
                   <Button onClick={handleSave} disabled={isSaving}>
                     {isSaving ? (
                       <span className="inline-flex items-center gap-2">
@@ -541,7 +538,7 @@ export function SettingsPage({
         open={showRestartPrompt}
         onOpenChange={(open) => !open && handleRestartLater()}
       >
-        <DialogContent zIndex="alert" className="max-w-md glass border-border">
+        <DialogContent zIndex="alert" className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t("settings.restartRequired")}</DialogTitle>
           </DialogHeader>

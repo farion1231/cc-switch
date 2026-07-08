@@ -843,8 +843,7 @@
     "saveFailedGeneric": "儲存失敗，請重試"
   },
   "apps": {
-    "claude": "Claude",
-    "claudeCode": "Claude Code",
+    "claude": "Claude Code",
     "claudeDesktop": "Claude Desktop",
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
@@ -1340,7 +1339,11 @@
     "modelExtraFieldKeyPlaceholder": "variants",
     "sdkOptions": "SDK 選項",
     "modelOptionKeyPlaceholder": "provider",
-    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}"
+    "modelOptionValuePlaceholder": "{\"order\": [\"baseten\"]}",
+    "category": "供應商類別",
+    "categoryCustom": "自定義",
+    "categoryOmo": "OMO",
+    "categoryOmoSlim": "OMO Slim"
   },
   "providerPreset": {
     "label": "預設供應商",

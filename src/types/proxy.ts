@@ -29,6 +29,11 @@ export interface ProxyStatus {
   active_targets?: ActiveTarget[];
 }
 
+export interface ProxyRemoteAccessInfo {
+  exposesRemoteAccess: boolean;
+  token: string | null;
+}
+
 export interface ActiveTarget {
   app_type: string;
   provider_name: string;

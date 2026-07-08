@@ -47,10 +47,10 @@ export function SessionItem({
   return (
     <div
       className={cn(
-        "flex items-start gap-2 rounded-lg px-3 py-2.5 transition-all group",
+        "group flex items-start gap-2 rounded-[1rem] px-3 py-2.5 transition-all",
         isSelected
-          ? "bg-primary/10 border border-primary/30"
-          : "hover:bg-muted/60 border border-transparent",
+          ? "border border-sky-300/60 bg-[linear-gradient(145deg,rgba(255,255,255,0.82),rgba(224,242,254,0.78))] shadow-[0_18px_34px_-26px_rgba(14,165,233,0.55)] dark:border-sky-400/20 dark:bg-[linear-gradient(145deg,rgba(14,116,144,0.2),rgba(8,47,73,0.18))]"
+          : "border border-transparent hover:bg-white/35 dark:hover:bg-white/[0.04]",
       )}
     >
       {selectionMode && (
@@ -90,7 +90,7 @@ export function SessionItem({
           </span>
           <ChevronRight
             className={cn(
-              "size-4 text-muted-foreground/50 shrink-0 transition-transform",
+              "size-4 shrink-0 text-muted-foreground/50 transition-transform",
               isSelected && "text-primary rotate-90",
             )}
           />

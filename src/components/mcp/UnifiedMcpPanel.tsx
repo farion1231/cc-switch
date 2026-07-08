@@ -140,7 +140,7 @@ const UnifiedMcpPanel = React.forwardRef<
   };
 
   return (
-    <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
+    <div className="mx-auto flex min-h-0 flex-1 w-full max-w-[1480px] flex-col overflow-hidden px-5 md:px-6">
       <AppCountBar
         totalLabel={t("mcp.serverCount", { count: serverEntries.length })}
         counts={enabledCounts}
@@ -149,15 +149,15 @@ const UnifiedMcpPanel = React.forwardRef<
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">
+          <div className="rounded-2xl border border-border bg-card py-12 text-center text-muted-foreground">
             {t("mcp.loading")}
           </div>
         ) : serverEntries.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+          <div className="rounded-2xl border border-border bg-card py-12 text-center">
+            <div className="provider-icon-shell mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[1.2rem]">
               <Server size={24} className="text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-medium text-foreground mb-2">
+            <h3 className="mb-2 text-lg font-medium text-foreground">
               {t("mcp.unifiedPanel.noServers")}
             </h3>
             <p className="text-muted-foreground text-sm">
@@ -166,7 +166,7 @@ const UnifiedMcpPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
+            <div className="overflow-hidden rounded-2xl border border-border bg-card">
               {serverEntries.map(([id, server], index) => (
                 <UnifiedMcpListItem
                   key={id}

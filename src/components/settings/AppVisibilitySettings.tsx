@@ -16,7 +16,7 @@ const APP_CONFIG: Array<{
   icon: string;
   nameKey: string;
 }> = [
-  { id: "claude", icon: "claude", nameKey: "apps.claudeCode" },
+  { id: "claude", icon: "claude", nameKey: "apps.claude" },
   {
     id: "claude-desktop",
     icon: "claude",
