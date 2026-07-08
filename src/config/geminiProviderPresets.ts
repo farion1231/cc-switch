@@ -133,7 +133,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
