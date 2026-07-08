@@ -1044,7 +1044,8 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    // 切换路径仍走 sync_all_enabled（会碰 claude），所以先切换、后破坏。
+    // 先切换建立"当前=官方"的前置状态，再破坏 claude 文件，
+    // 让损坏只作用于被测的 reapply 路径。
     ProviderService::switch(&state, AppType::Codex, "official-provider")
         .expect("switch to official provider");
 
@@ -1075,6 +1076,146 @@ fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
     assert_eq!(
         claude_after, "{ not valid json",
         "codex-only projection must not touch claude's live file"
+    );
+}
+
+/// 切换供应商与 reapply 是同一类场景：live 整体重写后只需重投影本应用
+/// 的 MCP。历史实现走全量 sync_all_enabled + `?`，损坏的 ~/.claude.json
+/// 会让"切 Codex"直接报切换失败——而此时 DB is_current 与 live 都已
+/// 落盘，切换事实上成功，报错只制造分裂假象。
+#[test]
+fn switch_codex_projects_mcp_despite_broken_claude_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-old" }), Some(""))
+        .expect("seed codex live");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "p".to_string(),
+            Provider::with_id(
+                "p".to_string(),
+                "P".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-p" },
+                    "config": "model = \"gpt-5.5\"\n"
+                }),
+                None,
+            ),
+        );
+    }
+    let servers = config.mcp.servers.get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // 坏 JSON 能通过 should_sync_claude_mcp 门控（文件存在即过），
+    // 但 read_mcp_servers_map 解析必然报错；codex-only 服务器也会
+    // 触发 claude 的 remove 分支去读这个文件。
+    let claude_json = cc_switch_lib::get_claude_mcp_path();
+    std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
+
+    ProviderService::switch(&state, AppType::Codex, "p")
+        .expect("broken ~/.claude.json must not fail an unrelated codex switch");
+
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "switch must re-project codex MCP after the full live rewrite, got: {live}"
+    );
+
+    let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
+    assert_eq!(
+        claude_after, "{ not valid json",
+        "codex-only projection must not touch claude's live file"
+    );
+}
+
+/// sync_all_enabled 的全量语义（配置导入 / 云同步恢复）：单个应用的
+/// live 损坏不阻断其余应用的投影，但失败必须聚合上报——调用方需要
+/// 知道结果不完整。历史实现按 AppType::all() 顺序 `?` 短路，Claude
+/// 排在 Codex 前面，一份坏 ~/.claude.json 会让所有后续应用的 MCP
+/// 状态永远陈旧。
+#[test]
+fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk" }), Some("")).expect("seed codex live");
+
+    let mut config = MultiAppConfig::default();
+    let servers = config.mcp.servers.get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let claude_json = cc_switch_lib::get_claude_mcp_path();
+    std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
+
+    let err = cc_switch_lib::McpService::sync_all_enabled(&state)
+        .expect_err("broken claude live must surface as an aggregated error");
+    let message = err.to_string();
+    assert!(
+        message.contains("claude"),
+        "aggregated error should name the failing app, got: {message}"
+    );
+
+    // Claude 的失败不能阻断 Codex：best-effort 必须继续投影其余应用。
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after sync_all_enabled");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "codex projection must proceed despite the broken claude file, got: {live}"
     );
 }
 

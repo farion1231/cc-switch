@@ -948,7 +948,10 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
+    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
+    // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
+    McpService::sync_enabled_for_app(state, app_type)?;
 
     Ok(())
 }
@@ -1016,8 +1019,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    // MCP sync
-    McpService::sync_all_enabled(state)?;
+    // MCP sync（best-effort 逐应用投影，内部已聚合失败）。错误暂存到
+    // Skill 同步之后再返回：MCP 的失败不该跳过 Skill 同步，但调用方
+    //（配置导入 / 云同步恢复）需要知道结果不完整。
+    let mcp_result = McpService::sync_all_enabled(state);
 
     // Skill sync
     for app_type in AppType::all() {
@@ -1027,7 +1032,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    Ok(())
+    mcp_result
 }
 
 /// Read current live settings for an app type
