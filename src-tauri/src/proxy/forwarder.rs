@@ -1988,7 +1988,10 @@ impl RequestForwarder {
             } else {
                 send.await
             };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
+            let reqwest_resp = match send_result {
+                Ok(resp) => resp,
+                Err(e) => return Err((map_reqwest_send_error(e), outbound_model.clone())),
+            };
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
