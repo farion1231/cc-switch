@@ -6,6 +6,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
+mod codex_state_db;
 mod commands;
 mod config;
 mod database;
@@ -41,7 +42,7 @@ pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_l
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
-pub use database::Database;
+pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
@@ -50,8 +51,10 @@ pub use mcp::{
     sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
     sync_single_server_to_codex, sync_single_server_to_gemini,
 };
+pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    profile::{ProfilePayload, ProfileScope, ProfileService},
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -669,32 +672,33 @@ pub fn run() {
 
             // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
             //
-            // additive 模式（OpenCode / OpenClaw）的 import 函数本身按 id 幂等，
-            // 已有的 provider 会被跳过，所以每次启动都跑是安全的——既保证新装
-            // 用户开箱可见 live 中的供应商，也让外部修改的 live 文件能在重启
-            // 后同步到数据库（与之前依赖前端"导入当前配置"按钮手动触发不同）。
+            // additive 模式（OpenCode / OpenClaw）的 import 函数按 id 幂等——
+            // 新 id 执行导入，已有 id 则更新 settings 和 display name，所以每次
+            // 启动都跑是安全的：既保证新装用户开箱可见 live 中的供应商，也让外部
+            // 修改的 live 文件能在重启后同步到数据库（与之前依赖前端"导入当前配置"
+            // 按钮手动触发不同）。
             //
             // 底层 read_*_config 在文件不存在时返回默认空配置，因此新装且无
             // live 文件的用户走 Ok(0) 路径，不会产生错误日志噪音。
             match crate::services::provider::import_opencode_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
+                    log::info!("✓ Synced {count} OpenCode provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new OpenCode providers to import"),
+                Ok(_) => log::debug!("○ No OpenCode provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
             }
             match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                    log::info!("✓ Synced {count} OpenClaw provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
+                Ok(_) => log::debug!("○ No OpenClaw provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
             match crate::services::provider::import_hermes_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                    log::info!("✓ Synced {count} Hermes provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
 
@@ -1269,6 +1273,13 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            // Profile management (项目配置方案)
+            commands::list_profiles,
+            commands::create_profile,
+            commands::update_profile,
+            commands::delete_profile,
+            commands::clear_current_profile,
+            commands::apply_profile,
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
             // ours: endpoint speed test + custom endpoint management

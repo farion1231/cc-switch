@@ -2610,7 +2610,7 @@ web_search = "disabled"
         for (model, host) in [
             ("mimo-v2.5-pro", "https://api.xiaomimimo.com/v1"),
             ("mimo-v2.5", "https://token-plan-cn.xiaomimimo.com/v1"),
-            ("LongCat-2.0-Preview", "https://api.longcat.chat/openai/v1"),
+            ("LongCat-2.0", "https://api.longcat.chat/openai/v1"),
             ("MiniMax-M3", "https://api.minimax.io/v1"),
             ("MiniMax-M3", "https://api.minimaxi.com/v1"),
         ] {

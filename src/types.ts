@@ -645,6 +645,9 @@ export interface OpenClawModel {
   };
   contextWindow?: number;
   maxTokens?: number; // 最大输出 token 数
+  compat?: {
+    maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
+  };
 }
 
 // OpenClaw 默认模型配置（agents.defaults.model）

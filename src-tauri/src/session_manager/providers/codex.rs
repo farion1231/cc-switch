@@ -1,12 +1,17 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use regex::Regex;
+use rusqlite::Connection;
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::codex_config::get_codex_config_dir;
+use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
+use crate::codex_state_db::codex_state_db_paths;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
@@ -15,6 +20,7 @@ use super::utils::{
 };
 
 const PROVIDER_ID: &str = "codex";
+const CODEX_SESSION_INDEX_FILENAME: &str = "session_index.jsonl";
 const VSCODE_CONTEXT_PREFIX: &str = "# Context from my IDE setup:";
 const CODEX_REQUEST_MARKER: &str = "my request for codex";
 
@@ -22,6 +28,12 @@ static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
         .unwrap()
 });
+
+#[derive(Deserialize)]
+struct SessionIndexEntry {
+    id: String,
+    thread_name: String,
+}
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let roots = session_roots();
@@ -37,6 +49,14 @@ pub fn session_roots() -> Vec<PathBuf> {
 }
 
 fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
+    let thread_titles = load_thread_titles();
+    scan_sessions_in_roots_with_titles(roots, &thread_titles)
+}
+
+fn scan_sessions_in_roots_with_titles(
+    roots: &[PathBuf],
+    thread_titles: &HashMap<String, String>,
+) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     for root in roots {
         collect_jsonl_files(root, &mut files);
@@ -44,12 +64,141 @@ fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
 
     let mut sessions = Vec::new();
     for path in files {
-        if let Some(meta) = parse_session(&path) {
+        if let Some(meta) = parse_session_with_titles(&path, thread_titles) {
             sessions.push(meta);
         }
     }
 
     sessions
+}
+
+fn load_thread_titles() -> HashMap<String, String> {
+    let config_dir = get_codex_config_dir();
+    let config_text = read_codex_config_text().unwrap_or_default();
+    let db_paths = codex_state_db_paths(&config_dir, &config_text);
+    load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
+}
+
+fn load_thread_titles_from_paths(
+    session_index_path: &Path,
+    db_paths: &[PathBuf],
+) -> HashMap<String, String> {
+    let mut titles = load_thread_titles_from_session_index(session_index_path);
+    for db_path in db_paths {
+        titles.extend(load_thread_titles_from_db(db_path));
+    }
+    titles
+}
+
+fn load_thread_titles_from_session_index(index_path: &Path) -> HashMap<String, String> {
+    if !index_path.exists() {
+        return HashMap::new();
+    }
+
+    let file = match File::open(index_path) {
+        Ok(file) => file,
+        Err(err) => {
+            log::warn!(
+                "Failed to open Codex session index {}: {err}",
+                index_path.display()
+            );
+            return HashMap::new();
+        }
+    };
+
+    let reader = BufReader::new(file);
+    let mut titles = HashMap::new();
+    for line in reader.lines() {
+        let line = match line {
+            Ok(line) => line,
+            Err(_) => continue,
+        };
+        let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(line.trim()) else {
+            continue;
+        };
+        let id = entry.id.trim();
+        let title = entry.thread_name.trim();
+        if !id.is_empty() && !title.is_empty() {
+            titles.insert(id.to_string(), title.to_string());
+        }
+    }
+
+    titles
+}
+
+fn load_thread_titles_from_db(db_path: &Path) -> HashMap<String, String> {
+    if !db_path.exists() {
+        return HashMap::new();
+    }
+
+    let conn = match Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(conn) => conn,
+        Err(err) => {
+            log::warn!(
+                "Failed to open Codex state database {}: {err}",
+                db_path.display()
+            );
+            return HashMap::new();
+        }
+    };
+    // Codex keeps this DB open and write-locked while running; without a busy
+    // timeout a read during a write fails immediately and titles silently drop.
+    if let Err(err) = conn.busy_timeout(Duration::from_secs(2)) {
+        log::warn!(
+            "Failed to set Codex state database busy timeout for {}: {err}",
+            db_path.display()
+        );
+        return HashMap::new();
+    }
+
+    // Mirror Codex's own `distinct_thread_metadata_title`: keep a title only
+    // when it differs from the first user message. Push the comparison into SQL
+    // (NULL-safe) so we never SELECT the unbounded `first_user_message` blob —
+    // it can grow large enough to OOM (openai/codex#29007).
+    let mut stmt = match conn.prepare(
+        "SELECT id, title FROM threads \
+         WHERE title <> '' \
+         AND (first_user_message IS NULL OR TRIM(title) <> TRIM(first_user_message))",
+    ) {
+        Ok(stmt) => stmt,
+        Err(err) => {
+            log::warn!(
+                "Failed to prepare Codex thread title query for {}: {err}",
+                db_path.display()
+            );
+            return HashMap::new();
+        }
+    };
+
+    let rows = match stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let title: String = row.get(1)?;
+        Ok((id, title))
+    }) {
+        Ok(rows) => rows,
+        Err(err) => {
+            log::warn!(
+                "Failed to query Codex thread titles from {}: {err}",
+                db_path.display()
+            );
+            return HashMap::new();
+        }
+    };
+
+    rows.flatten()
+        .filter_map(|(id, title)| {
+            let id = id.trim();
+            let title = title.trim();
+            if id.is_empty() || title.is_empty() {
+                None
+            } else {
+                Some((id.to_string(), title.to_string()))
+            }
+        })
+        .collect()
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -141,6 +290,13 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
+    parse_session_with_titles(path, &HashMap::new())
+}
+
+fn parse_session_with_titles(
+    path: &Path,
+    thread_titles: &HashMap<String, String>,
+) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
 
     let mut session_id: Option<String> = None;
@@ -233,8 +389,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
 
-    let title = first_user_message
-        .map(|t| truncate_summary(&t, TITLE_MAX_CHARS))
+    let title = thread_titles
+        .get(&session_id)
+        .map(|t| truncate_summary(t, TITLE_MAX_CHARS))
+        .or_else(|| first_user_message.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
         .or_else(|| {
             project_dir
                 .as_deref()
@@ -366,6 +524,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
     use tempfile::tempdir;
 
     fn write_codex_session(path: &Path, session_id: &str, message: &str) {
@@ -441,6 +600,166 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
+    }
+
+    #[test]
+    fn parse_session_prefers_thread_title() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"How do I deploy?\"}}\n"
+            ),
+        )
+        .expect("write");
+
+        let mut thread_titles = HashMap::new();
+        thread_titles.insert(
+            "test-id".to_string(),
+            "Renamed deployment thread".to_string(),
+        );
+
+        let meta = parse_session_with_titles(&path, &thread_titles).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Renamed deployment thread"));
+    }
+
+    #[test]
+    fn load_thread_titles_from_state_db_trims_and_filters_titles() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, first_user_message TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-1", "  Renamed Codex thread  ", "First prompt"),
+        )
+        .expect("insert renamed thread");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-2", "   ", "First prompt"),
+        )
+        .expect("insert blank thread");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-3", "  First prompt  ", "First prompt"),
+        )
+        .expect("insert first-message title");
+        drop(conn);
+
+        let titles = load_thread_titles_from_db(&db_path);
+
+        assert_eq!(
+            titles.get("thread-1").map(String::as_str),
+            Some("Renamed Codex thread")
+        );
+        assert!(!titles.contains_key("thread-2"));
+        assert!(!titles.contains_key("thread-3"));
+    }
+
+    #[test]
+    fn load_thread_titles_from_state_db_keeps_title_when_first_user_message_null() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        // Codex stores first_user_message as a nullable column (Option<String>);
+        // a renamed thread can have a title before any first message is synced.
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, first_user_message TEXT)",
+            [],
+        )
+        .expect("create threads table");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, NULL)",
+            ("thread-1", "Renamed thread"),
+        )
+        .expect("insert renamed thread without first message");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-2", "First prompt", "First prompt"),
+        )
+        .expect("insert first-message title");
+        drop(conn);
+
+        let titles = load_thread_titles_from_db(&db_path);
+
+        // Kept: title present and no first message to compare against.
+        assert_eq!(
+            titles.get("thread-1").map(String::as_str),
+            Some("Renamed thread")
+        );
+        // Filtered: title equals the first user message.
+        assert!(!titles.contains_key("thread-2"));
+    }
+
+    #[test]
+    fn load_thread_titles_from_session_index_uses_latest_name() {
+        let temp = tempdir().expect("tempdir");
+        let index_path = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
+        std::fs::write(
+            &index_path,
+            concat!(
+                "{\"id\":\"thread-1\",\"thread_name\":\"Old name\",\"updated_at\":\"2026-07-01T00:00:00Z\"}\n",
+                "{\"id\":\"thread-2\",\"thread_name\":\"   \",\"updated_at\":\"2026-07-01T00:00:00Z\"}\n",
+                "not json\n",
+                "{\"id\":\"thread-1\",\"thread_name\":\"  New name  \",\"updated_at\":\"2026-07-02T00:00:00Z\"}\n"
+            ),
+        )
+        .expect("write session index");
+
+        let titles = load_thread_titles_from_session_index(&index_path);
+
+        assert_eq!(titles.get("thread-1").map(String::as_str), Some("New name"));
+        assert!(!titles.contains_key("thread-2"));
+    }
+
+    #[test]
+    fn load_thread_titles_prefers_state_db_explicit_title_over_session_index() {
+        let temp = tempdir().expect("tempdir");
+        let index_path = temp.path().join(CODEX_SESSION_INDEX_FILENAME);
+        std::fs::write(
+            &index_path,
+            concat!(
+                "{\"id\":\"thread-1\",\"thread_name\":\"Legacy name\",\"updated_at\":\"2026-07-01T00:00:00Z\"}\n",
+                "{\"id\":\"thread-2\",\"thread_name\":\"Legacy fallback\",\"updated_at\":\"2026-07-01T00:00:00Z\"}\n"
+            ),
+        )
+        .expect("write session index");
+
+        let db_path = temp.path().join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL, first_user_message TEXT NOT NULL)",
+            [],
+        )
+        .expect("create threads table");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-1", "SQLite name", "First prompt"),
+        )
+        .expect("insert sqlite title");
+        conn.execute(
+            "INSERT INTO threads (id, title, first_user_message) VALUES (?1, ?2, ?3)",
+            ("thread-2", "First prompt", "First prompt"),
+        )
+        .expect("insert first-message sqlite title");
+        drop(conn);
+
+        let titles = load_thread_titles_from_paths(&index_path, &[db_path]);
+
+        assert_eq!(
+            titles.get("thread-1").map(String::as_str),
+            Some("SQLite name")
+        );
+        assert_eq!(
+            titles.get("thread-2").map(String::as_str),
+            Some("Legacy fallback")
+        );
     }
 
     #[test]

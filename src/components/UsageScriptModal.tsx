@@ -8,6 +8,7 @@ import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   extractCodexBaseUrl,
@@ -663,8 +664,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         );
       }
     } catch (error: any) {
+      // 后端命令 Err(String) 时 invoke 以裸字符串 reject（如瞬时网络失败），
+      // 直接读 .message 会得到 undefined。
       toast.error(
-        `${t("usageScript.testFailed")}: ${error?.message || t("common.unknown")}`,
+        `${t("usageScript.testFailed")}: ${extractErrorMessage(error) || t("common.unknown")}`,
         {
           duration: 5000,
         },

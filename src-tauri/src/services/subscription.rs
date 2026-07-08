@@ -312,6 +312,12 @@ pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
 /// 映射到 `subscription.monthly`。
 pub const TIER_MONTHLY: &str = "monthly";
 
+/// Codex 免费方案的 30 天（月）滚动窗口 tier 名。付费方案的次要窗口是 7 天
+/// (`seven_day`)，免费方案则是 30 天。由 `window_seconds_to_tier_name` 产出、
+/// tray 的月分组渲染、前端 `TIER_I18N_KEYS` 映射到 `subscription.thirtyDay`
+/// 三处共用同一标识。见 #3651。
+pub const TIER_THIRTY_DAY: &str = "30_day";
+
 /// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
 pub const TIER_GEMINI_PRO: &str = "gemini_pro";
 pub const TIER_GEMINI_FLASH: &str = "gemini_flash";
@@ -325,7 +331,11 @@ const KNOWN_TIERS: &[&str] = &[
 ];
 
 /// 查询 Claude 官方订阅额度
-async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
+///
+/// 瞬时传输失败（网络/超时/读体中断）返回 `Err`（前端 reject → retry + 保留上次
+/// 成功值）；确定性失败（鉴权/非 2xx/响应体非法 JSON）返回 `Ok(success:false)`。
+/// codex/gemini 两个查询函数遵守同一约定。
+async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -339,42 +349,42 @@ async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => {
-            return SubscriptionQuota::error(
-                "claude",
-                CredentialStatus::Valid,
-                format!("Network error: {e}"),
-            );
-        }
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             "claude",
             CredentialStatus::Expired,
             format!("Authentication failed (HTTP {status}). Please re-login with Claude CLI."),
-        );
+        ));
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             "claude",
             CredentialStatus::Valid,
             format!("API error (HTTP {status}): {body}"),
-        );
+        ));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read API response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
         Err(e) => {
-            return SubscriptionQuota::error(
+            return Ok(SubscriptionQuota::error(
                 "claude",
                 CredentialStatus::Valid,
                 format!("Failed to parse API response: {e}"),
-            );
+            ));
         }
     };
 
@@ -429,7 +439,7 @@ async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
             })
     });
 
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "claude".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -438,7 +448,7 @@ async fn query_claude_quota(access_token: &str) -> SubscriptionQuota {
         extra_usage,
         error: None,
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── Codex 凭据读取 ──────────────────────────────────────
@@ -632,8 +642,12 @@ struct CodexUsageResponse {
 /// 根据窗口秒数映射到 tier 名称（与 Claude 的命名兼容以复用前端 i18n）
 fn window_seconds_to_tier_name(secs: i64) -> String {
     match secs {
-        18000 => "five_hour".to_string(),
-        604800 => "seven_day".to_string(),
+        18000 => TIER_FIVE_HOUR.to_string(),
+        604800 => TIER_SEVEN_DAY.to_string(),
+        // Codex 免费方案的 30 天窗口。显式映射到常量，与 tray 月分组、前端
+        // TIER_I18N_KEYS 保持同一标识（否则动态回退虽也得到 "30_day"，但字符串
+        // 分散在多处、易和托盘/前端白名单脱节）。见 #3651。
+        2_592_000 => TIER_THIRTY_DAY.to_string(),
         s => {
             let hours = s / 3600;
             if hours >= 24 {
@@ -660,7 +674,7 @@ pub(crate) async fn query_codex_quota(
     account_id: Option<&str>,
     tool_label: &str,
     expired_message: &str,
-) -> SubscriptionQuota {
+) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     let mut req = client
@@ -675,42 +689,40 @@ pub(crate) async fn query_codex_quota(
 
     let resp = match req.timeout(std::time::Duration::from_secs(15)).send().await {
         Ok(r) => r,
-        Err(e) => {
-            return SubscriptionQuota::error(
-                tool_label,
-                CredentialStatus::Valid,
-                format!("Network error: {e}"),
-            );
-        }
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             tool_label,
             CredentialStatus::Expired,
             format!("{expired_message} (HTTP {status})"),
-        );
+        ));
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             tool_label,
             CredentialStatus::Valid,
             format!("API error (HTTP {status}): {body}"),
-        );
+        ));
     }
 
-    let body: CodexUsageResponse = match resp.json().await {
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read API response: {e}")),
+    };
+    let body: CodexUsageResponse = match serde_json::from_slice(&raw) {
         Ok(v) => v,
         Err(e) => {
-            return SubscriptionQuota::error(
+            return Ok(SubscriptionQuota::error(
                 tool_label,
                 CredentialStatus::Valid,
                 format!("Failed to parse API response: {e}"),
-            );
+            ));
         }
     };
 
@@ -736,7 +748,7 @@ pub(crate) async fn query_codex_quota(
         }
     }
 
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: tool_label.to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -745,7 +757,7 @@ pub(crate) async fn query_codex_quota(
         extra_usage: None,
         error: None,
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── Gemini 凭据读取 ──────────────────────────────────────
@@ -1039,7 +1051,7 @@ fn classify_gemini_model(model_id: &str) -> &str {
 /// 两步 API 调用：
 /// 1. loadCodeAssist → 获取 cloudaicompanionProject
 /// 2. retrieveUserQuota → 获取按模型分桶的配额数据
-async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
+async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     // ── Step 1: loadCodeAssist 获取项目 ID ──
@@ -1059,42 +1071,40 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
 
     let load_resp = match load_resp {
         Ok(r) => r,
-        Err(e) => {
-            return SubscriptionQuota::error(
-                "gemini",
-                CredentialStatus::Valid,
-                format!("Network error (loadCodeAssist): {e}"),
-            );
-        }
+        Err(e) => return Err(format!("Network error (loadCodeAssist): {e}")),
     };
 
     let load_status = load_resp.status();
     if load_status == reqwest::StatusCode::UNAUTHORIZED
         || load_status == reqwest::StatusCode::FORBIDDEN
     {
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             "gemini",
             CredentialStatus::Expired,
             format!("Authentication failed (HTTP {load_status}). Please re-login with Gemini CLI."),
-        );
+        ));
     }
     if !load_status.is_success() {
         let body = load_resp.text().await.unwrap_or_default();
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             "gemini",
             CredentialStatus::Valid,
             format!("loadCodeAssist failed (HTTP {load_status}): {body}"),
-        );
+        ));
     }
 
-    let load_body: GeminiLoadCodeAssistResponse = match load_resp.json().await {
+    let load_raw = match load_resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read loadCodeAssist response: {e}")),
+    };
+    let load_body: GeminiLoadCodeAssistResponse = match serde_json::from_slice(&load_raw) {
         Ok(v) => v,
         Err(e) => {
-            return SubscriptionQuota::error(
+            return Ok(SubscriptionQuota::error(
                 "gemini",
                 CredentialStatus::Valid,
                 format!("Failed to parse loadCodeAssist response: {e}"),
-            );
+            ));
         }
     };
 
@@ -1120,42 +1130,40 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
 
     let quota_resp = match quota_resp {
         Ok(r) => r,
-        Err(e) => {
-            return SubscriptionQuota::error(
-                "gemini",
-                CredentialStatus::Valid,
-                format!("Network error (retrieveUserQuota): {e}"),
-            );
-        }
+        Err(e) => return Err(format!("Network error (retrieveUserQuota): {e}")),
     };
 
     let quota_status = quota_resp.status();
     if quota_status == reqwest::StatusCode::UNAUTHORIZED
         || quota_status == reqwest::StatusCode::FORBIDDEN
     {
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             "gemini",
             CredentialStatus::Expired,
             format!("Authentication failed (HTTP {quota_status})."),
-        );
+        ));
     }
     if !quota_status.is_success() {
         let body = quota_resp.text().await.unwrap_or_default();
-        return SubscriptionQuota::error(
+        return Ok(SubscriptionQuota::error(
             "gemini",
             CredentialStatus::Valid,
             format!("retrieveUserQuota failed (HTTP {quota_status}): {body}"),
-        );
+        ));
     }
 
-    let quota_data: GeminiQuotaResponse = match quota_resp.json().await {
+    let quota_raw = match quota_resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read quota response: {e}")),
+    };
+    let quota_data: GeminiQuotaResponse = match serde_json::from_slice(&quota_raw) {
         Ok(v) => v,
         Err(e) => {
-            return SubscriptionQuota::error(
+            return Ok(SubscriptionQuota::error(
                 "gemini",
                 CredentialStatus::Valid,
                 format!("Failed to parse quota response: {e}"),
-            );
+            ));
         }
     };
 
@@ -1203,7 +1211,7 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
 
     tiers.sort_by_key(|t| sort_order(&t.name));
 
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "gemini".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -1212,12 +1220,16 @@ async fn query_gemini_quota(access_token: &str) -> SubscriptionQuota {
         extra_usage: None,
         error: None,
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── 入口函数 ──────────────────────────────────────────────
 
 /// 查询指定 CLI 工具的官方订阅额度
+///
+/// 瞬时传输失败以 `Err` 传播（前端 reject → retry + 保留上次成功值）。Expired
+/// 分支的"过期也试一把"重试同样用 `?` 传播瞬时错误——不能折叠成"已过期"，
+/// 否则一次网络抖动会被误报成确定性的凭据过期。
 pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
     match tool {
         "claude" => {
@@ -1233,7 +1245,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 CredentialStatus::Expired => {
                     // 即使过期也尝试调用 API（token 可能实际上仍有效）
                     if let Some(token) = token {
-                        let result = query_claude_quota(&token).await;
+                        let result = query_claude_quota(&token).await?;
                         if result.success {
                             return Ok(result);
                         }
@@ -1246,7 +1258,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
                 CredentialStatus::Valid => {
                     let token = token.expect("token must be Some when status is Valid");
-                    Ok(query_claude_quota(&token).await)
+                    query_claude_quota(&token).await
                 }
             }
         }
@@ -1269,7 +1281,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                             "codex",
                             "Authentication failed. Please re-login with Codex CLI.",
                         )
-                        .await;
+                        .await?;
                         if result.success {
                             return Ok(result);
                         }
@@ -1282,13 +1294,13 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
                 CredentialStatus::Valid => {
                     let token = token.expect("token must be Some when status is Valid");
-                    Ok(query_codex_quota(
+                    query_codex_quota(
                         &token,
                         account_id.as_deref(),
                         "codex",
                         "Authentication failed. Please re-login with Codex CLI.",
                     )
-                    .await)
+                    .await
                 }
             }
         }
@@ -1306,12 +1318,12 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     // Gemini access_token 仅 ~1h 有效，尝试用 refresh_token 刷新
                     if let Some(ref rt) = refresh_token {
                         if let Some(new_token) = refresh_gemini_token(rt).await {
-                            return Ok(query_gemini_quota(&new_token).await);
+                            return query_gemini_quota(&new_token).await;
                         }
                     }
                     // 刷新失败，尝试用旧 token
                     if let Some(ref token) = token {
-                        let result = query_gemini_quota(token).await;
+                        let result = query_gemini_quota(token).await?;
                         if result.success {
                             return Ok(result);
                         }
@@ -1324,7 +1336,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
                 CredentialStatus::Valid => {
                     let token = token.expect("token must be Some when status is Valid");
-                    Ok(query_gemini_quota(&token).await)
+                    query_gemini_quota(&token).await
                 }
             }
         }
@@ -1339,4 +1351,22 @@ fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_seconds_map_to_expected_tier_names() {
+        // 官方特例窗口
+        assert_eq!(window_seconds_to_tier_name(18000), TIER_FIVE_HOUR);
+        assert_eq!(window_seconds_to_tier_name(604800), TIER_SEVEN_DAY);
+        // Codex 免费方案的次要窗口是 30 天（30 * 24 * 3600 = 2_592_000 秒）。
+        // 前端 TIER_I18N_KEYS 与 tray 月分组都需要认得 "30_day"，见 #3651。
+        assert_eq!(window_seconds_to_tier_name(2_592_000), TIER_THIRTY_DAY);
+        // 其他窗口按小时/天回退命名
+        assert_eq!(window_seconds_to_tier_name(3600), "1_hour");
+        assert_eq!(window_seconds_to_tier_name(86400), "1_day");
+    }
 }
