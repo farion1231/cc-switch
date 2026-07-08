@@ -1420,6 +1420,7 @@ pub fn run() {
             commands::get_opencode_live_provider_ids,
             // Pi Agent specific
             commands::list_pi_providers,
+            commands::read_pi_models_meta,
             commands::preview_pi_provider_patch,
             commands::apply_pi_provider_patch,
             commands::delete_pi_provider,

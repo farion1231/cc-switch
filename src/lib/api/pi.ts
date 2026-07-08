@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   PiConnectivityResult,
+  PiModelsMeta,
   PiProviderApplyResult,
   PiProviderDraft,
   PiProviderPatchPreview,
@@ -10,6 +11,11 @@ import type {
 export const piApi = {
   async listProviders(): Promise<PiProvidersMap> {
     return await invoke("list_pi_providers");
+  },
+
+  /** Read the current models.json file hash (for optimistic locking a delete). */
+  async readModelsMeta(): Promise<PiModelsMeta> {
+    return await invoke("read_pi_models_meta");
   },
 
   async previewProviderPatch(

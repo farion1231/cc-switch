@@ -88,6 +88,11 @@ export interface PiProviderApplyResult {
   backupPath: string;
 }
 
+/** Read-only metadata for Pi models.json (current file hash for optimistic locking). */
+export interface PiModelsMeta {
+  fileHash: string;
+}
+
 export interface PiConnectivityResult {
   reachable: boolean;
   statusCode?: number;

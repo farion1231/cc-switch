@@ -12,6 +12,12 @@ pub struct PiProviderApplyResult {
     pub backup_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiModelsMeta {
+    pub file_hash: String,
+}
+
 #[tauri::command]
 pub fn list_pi_providers() -> Result<Value, String> {
     let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
@@ -20,6 +26,17 @@ pub fn list_pi_providers() -> Result<Value, String> {
         .get("providers")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({})))
+}
+
+/// Read-only metadata for Pi `models.json`. Returns the current file hash so the
+/// frontend can optimistically lock a delete without running the upsert
+/// validation path (which would reject the empty draft a delete uses).
+#[tauri::command]
+pub fn read_pi_models_meta() -> Result<PiModelsMeta, String> {
+    let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
+    Ok(PiModelsMeta {
+        file_hash: loaded.file_hash,
+    })
 }
 
 #[tauri::command]

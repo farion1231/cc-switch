@@ -102,15 +102,12 @@ export const PiAgentPanel = forwardRef<PiAgentPanelHandle>((_props, ref) => {
     if (!deleteTarget) return;
     setIsSaving(true);
     try {
-      const tempDraft: PiProviderDraft = {
-        ...emptyPiProviderDraft,
-        providerId: deleteTarget,
-      };
-      const preview = await piApi.previewProviderPatch(tempDraft);
-      const result = await piApi.deleteProvider(
-        deleteTarget,
-        preview.currentFileHash,
-      );
+      // Delete only needs the current file hash for optimistic locking; it must
+      // NOT go through previewProviderPatch, which validates the draft as a
+      // custom upsert and would reject the empty delete draft ("baseUrl is
+      // required for custom providers") before deleteProvider ever runs.
+      const meta = await piApi.readModelsMeta();
+      const result = await piApi.deleteProvider(deleteTarget, meta.fileHash);
       toast.success(t("pi.toast.deleted"), {
         description: t("pi.toast.savedDesc", { path: result.backupPath }),
       });

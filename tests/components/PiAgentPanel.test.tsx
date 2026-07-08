@@ -18,6 +18,7 @@ vi.mock("@/components/ProviderIcon", () => ({
 vi.mock("@/lib/api", () => ({
   piApi: {
     listProviders: vi.fn(),
+    readModelsMeta: vi.fn(),
     previewProviderPatch: vi.fn(),
     applyProviderPatch: vi.fn(),
     deleteProvider: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 const mockedListProviders = vi.mocked(piApi.listProviders);
+const mockedReadMeta = vi.mocked(piApi.readModelsMeta);
 const mockedPreview = vi.mocked(piApi.previewProviderPatch);
 const mockedApply = vi.mocked(piApi.applyProviderPatch);
 const mockedDelete = vi.mocked(piApi.deleteProvider);
@@ -163,11 +165,7 @@ describe("PiAgentPanel", () => {
       },
     };
     mockedListProviders.mockResolvedValueOnce(providers);
-    mockedPreview.mockResolvedValueOnce({
-      currentFileHash: "hash-1",
-      nextModelsJson: { providers: {} },
-      summary: ["Delete Pi provider todelete"],
-    });
+    mockedReadMeta.mockResolvedValueOnce({ fileHash: "hash-1" });
     mockedDelete.mockResolvedValueOnce({
       fileHash: "hash-2",
       modelsJson: { providers: {} },
@@ -193,7 +191,7 @@ describe("PiAgentPanel", () => {
     });
 
     await waitFor(() => {
-      expect(mockedPreview).toHaveBeenCalled();
+      expect(mockedReadMeta).toHaveBeenCalled();
       expect(mockedDelete).toHaveBeenCalledWith("todelete", "hash-1");
     });
   });
