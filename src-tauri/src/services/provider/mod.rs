@@ -1461,10 +1461,13 @@ base_url = "http://localhost:8080"
                 saved.settings_config["base_url"],
                 json!("https://api.hermes.example/v1")
             );
+            // models are denormalized from YAML dict to UI-friendly array by
+            // get_providers(), so access by index rather than dict key
             assert_eq!(
-                saved.settings_config["models"]["gpt-4o"]["name"],
+                saved.settings_config["models"][0]["name"],
                 json!("GPT-4o Updated")
             );
+            assert_eq!(saved.settings_config["models"][0]["id"], json!("gpt-4o"));
         });
     }
 
