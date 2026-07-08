@@ -367,7 +367,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig("code0", "https://code0.ai/v1", "gpt-5.5"),
@@ -723,7 +723,7 @@ requires_openai_auth = true`,
     config: generateThirdPartyConfig(
       "longcat",
       "https://api.longcat.chat/openai/v1",
-      "LongCat-2.0-Preview",
+      "LongCat-2.0",
     ),
     endpointCandidates: ["https://api.longcat.chat/openai/v1"],
     // 美团 LongCat 官方 Codex 文档用 wire_api=responses 对自家 base_url，原生 Responses，无需路由接管转换
@@ -732,8 +732,8 @@ requires_openai_auth = true`,
     // 注：LongCat 的 /responses 工具类型契约文档化程度最低，建议真机冒烟一次
     modelCatalog: modelCatalog([
       {
-        model: "LongCat-2.0-Preview",
-        displayName: "LongCat 2.0 Preview",
+        model: "LongCat-2.0",
+        displayName: "LongCat 2.0",
         contextWindow: 1048576,
       },
     ]),
