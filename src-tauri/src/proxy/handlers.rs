@@ -203,7 +203,13 @@ async fn handle_messages_for_app(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error, None);
+            log_forward_error(
+                &state,
+                &ctx,
+                is_stream,
+                &err.error,
+                err.outbound_model.as_deref(),
+            );
             return Err(err.error);
         }
     };
@@ -662,7 +668,13 @@ pub async fn handle_chat_completions(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error, None);
+            log_forward_error(
+                &state,
+                &ctx,
+                is_stream,
+                &err.error,
+                err.outbound_model.as_deref(),
+            );
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -729,7 +741,13 @@ pub async fn handle_responses(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error, None);
+            log_forward_error(
+                &state,
+                &ctx,
+                is_stream,
+                &err.error,
+                err.outbound_model.as_deref(),
+            );
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -808,7 +826,13 @@ pub async fn handle_responses_compact(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error, None);
+            log_forward_error(
+                &state,
+                &ctx,
+                is_stream,
+                &err.error,
+                err.outbound_model.as_deref(),
+            );
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
@@ -1384,7 +1408,13 @@ pub async fn handle_gemini(
             if let Some(provider) = err.provider.take() {
                 ctx.provider = provider;
             }
-            log_forward_error(&state, &ctx, is_stream, &err.error, None);
+            log_forward_error(
+                &state,
+                &ctx,
+                is_stream,
+                &err.error,
+                err.outbound_model.as_deref(),
+            );
             return Err(err.error);
         }
     };

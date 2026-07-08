@@ -60,6 +60,13 @@ pub struct ForwardError {
     pub outbound_model: Option<String>,
 }
 
+/// `forward()` 在模型映射计算前失败时，outbound_model 不可用，用 None 兜底。
+impl From<ProxyError> for (ProxyError, Option<String>) {
+    fn from(err: ProxyError) -> Self {
+        (err, None)
+    }
+}
+
 /// 活跃连接 RAII guard
 ///
 /// 构造时把 `ProxyStatus.active_connections` +1；Drop 时在 tokio runtime 上调度
@@ -395,6 +402,7 @@ impl RequestForwarder {
 
         let mut last_error = None;
         let mut last_provider = None;
+        let mut last_outbound_model: Option<String> = None;
         let mut attempted_providers = 0usize;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
@@ -530,7 +538,17 @@ impl RequestForwarder {
                         connection_guard: None,
                     });
                 }
-                Err(e) => {
+                Err((e, om)) => {
+                    // forward() 失败：om 携带了映射后的模型名（outbound_model），
+                    // 在模型映射计算前失败时为 None。
+                    last_outbound_model = om.or_else(|| {
+                        provider_body
+                            .get("model")
+                            .and_then(|m| m.as_str())
+                            .filter(|m| !m.is_empty())
+                            .map(|m| m.to_string())
+                    });
+
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -633,10 +651,13 @@ impl RequestForwarder {
                                         connection_guard: None,
                                     });
                                 }
-                                Err(retry_err) => {
+                                Err((retry_err, retry_outbound)) => {
                                     log::warn!(
                                         "[{app_type_str}] [Media] Unsupported-image retry still failed: {retry_err}"
                                     );
+                                    if retry_outbound.is_some() {
+                                        last_outbound_model = retry_outbound.clone();
+                                    }
                                     if let Some(err) = self
                                         .handle_rectifier_retry_failure(
                                             retry_err,
@@ -646,7 +667,7 @@ impl RequestForwarder {
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
-                                            None,
+                                            retry_outbound,
                                         )
                                         .await
                                     {
@@ -686,7 +707,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
-                                    outbound_model: None,
+                                    outbound_model: last_outbound_model.clone(),
                                 });
                             }
 
@@ -784,10 +805,13 @@ impl RequestForwarder {
                                             connection_guard: None,
                                         });
                                     }
-                                    Err(retry_err) => {
+                                    Err((retry_err, retry_outbound)) => {
                                         log::warn!(
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
+                                        if retry_outbound.is_some() {
+                                            last_outbound_model = retry_outbound.clone();
+                                        }
                                         if let Some(err) = self
                                             .handle_rectifier_retry_failure(
                                                 retry_err,
@@ -797,7 +821,7 @@ impl RequestForwarder {
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
-                                                None,
+                                                retry_outbound,
                                             )
                                             .await
                                         {
@@ -840,7 +864,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
-                                    outbound_model: None,
+                                    outbound_model: last_outbound_model.clone(),
                                 });
                             }
 
@@ -867,7 +891,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
-                                    outbound_model: None,
+                                    outbound_model: last_outbound_model.clone(),
                                 });
                             }
 
@@ -947,10 +971,13 @@ impl RequestForwarder {
                                         connection_guard: None,
                                     });
                                 }
-                                Err(retry_err) => {
+                                Err((retry_err, retry_outbound)) => {
                                     log::warn!(
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
+                                    if retry_outbound.is_some() {
+                                        last_outbound_model = retry_outbound.clone();
+                                    }
                                     if let Some(err) = self
                                         .handle_rectifier_retry_failure(
                                             retry_err,
@@ -960,7 +987,7 @@ impl RequestForwarder {
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
-                                            None,
+                                            retry_outbound,
                                         )
                                         .await
                                     {
@@ -991,7 +1018,7 @@ impl RequestForwarder {
                         return Err(ForwardError {
                             error: e,
                             provider: Some(provider.clone()),
-                            outbound_model: None,
+                            outbound_model: last_outbound_model.clone(),
                         });
                     }
 
@@ -1055,7 +1082,7 @@ impl RequestForwarder {
                             return Err(ForwardError {
                                 error: e,
                                 provider: Some(provider.clone()),
-                                outbound_model: None,
+                                outbound_model: last_outbound_model.clone(),
                             });
                         }
                     }
@@ -1101,7 +1128,7 @@ impl RequestForwarder {
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
-            outbound_model: None,
+            outbound_model: last_outbound_model,
         })
     }
 
@@ -1120,7 +1147,7 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), (ProxyError, Option<String>)> {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1483,15 +1510,19 @@ impl RequestForwarder {
                                 "[Copilot] 获取 Copilot token 失败 (account={}): {e}",
                                 account_id.as_deref().unwrap_or("default")
                             );
-                            return Err(ProxyError::AuthError(format!(
-                                "GitHub Copilot 认证失败: {e}"
-                            )));
+                            return Err((
+                                ProxyError::AuthError(format!("GitHub Copilot 认证失败: {e}")),
+                                outbound_model.clone(),
+                            ));
                         }
                     }
                 } else {
                     log::error!("[Copilot] AppHandle 不可用");
-                    return Err(ProxyError::AuthError(
-                        "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
+                    return Err((
+                        ProxyError::AuthError(
+                            "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
+                        ),
+                        outbound_model.clone(),
                     ));
                 }
             }
@@ -1536,15 +1567,17 @@ impl RequestForwarder {
                         }
                         Err(e) => {
                             log::error!("[CodexOAuth] 获取 access_token 失败: {e}");
-                            return Err(ProxyError::AuthError(format!(
-                                "Codex OAuth 认证失败: {e}"
-                            )));
+                            return Err((
+                                ProxyError::AuthError(format!("Codex OAuth 认证失败: {e}")),
+                                outbound_model.clone(),
+                            ));
                         }
                     }
                 } else {
                     log::error!("[CodexOAuth] AppHandle 不可用");
-                    return Err(ProxyError::AuthError(
-                        "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
+                    return Err((
+                        ProxyError::AuthError("Codex OAuth 认证不可用（无 AppHandle）".to_string()),
+                        outbound_model.clone(),
                     ));
                 }
             }
@@ -1852,7 +1885,10 @@ impl RequestForwarder {
             Vec::new()
         } else {
             serde_json::to_vec(&filtered_body).map_err(|e| {
-                ProxyError::Internal(format!("Failed to serialize request body: {e}"))
+                (
+                    ProxyError::Internal(format!("Failed to serialize request body: {e}")),
+                    outbound_model.clone(),
+                )
             })?
         };
 
@@ -1957,9 +1993,12 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url
-                .parse()
-                .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+            let uri: http::Uri = url.parse().map_err(|e| {
+                (
+                    ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")),
+                    outbound_model.clone(),
+                )
+            })?;
             super::hyper_client::send_request(
                 uri,
                 method.clone(),
@@ -1997,10 +2036,13 @@ impl RequestForwarder {
             };
             let body_text = String::from_utf8(decoded).ok();
 
-            Err(ProxyError::UpstreamError {
-                status: status_code,
-                body: body_text,
-            })
+            Err((
+                ProxyError::UpstreamError {
+                    status: status_code,
+                    body: body_text,
+                },
+                outbound_model,
+            ))
         }
     }
 
