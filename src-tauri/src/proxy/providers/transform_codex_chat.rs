@@ -43,6 +43,198 @@ const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 
+/// Rewrite a JSON schema so that Moonshot/Kimi accepts it in `tools.function.parameters`.
+///
+/// Moonshot's validator requires:
+/// - `type` at the top level of `parameters` to be `"object"`.
+/// - all `$ref` values to start with `#/$defs/`.
+///
+/// Codex apps frequently violate these constraints:
+/// - Relative references such as `"#/properties/bodyParts/items"`.
+/// - Top-level `oneOf`/`anyOf`/`allOf` without an explicit `type: "object"`.
+///
+/// This function:
+/// 1. Collects every subschema path in the original document.
+/// 2. Rewrites any `$ref` that does not already start with `#/$defs/` into a local
+///    `#/$defs/` reference and inlines the target.
+/// 3. Renames the legacy top-level `definitions` key to `$defs`.
+/// 4. Injects `type: "object"` at the top level when it is missing and the schema
+///    looks like an object discriminator (has `oneOf`/`anyOf`/`allOf`/`properties`).
+pub(crate) fn moonshot_compatible_schema(schema: Value) -> Value {
+    match schema {
+        Value::Object(mut obj) => {
+            // Build a map of every subschema path in the original document. We do this
+            // before renaming definitions -> $defs so that $refs using either naming
+            // convention can still be resolved.
+            let mut targets: HashMap<String, Value> = HashMap::new();
+            collect_schema_paths("", &Value::Object(obj.clone()), &mut targets);
+
+            // Normalize definitions -> $defs first.
+            if let Some(defs) = obj.remove("definitions") {
+                obj.entry("$defs".to_string()).or_insert(defs);
+            }
+
+            let mut defs = obj.remove("$defs").unwrap_or_else(|| json!({}));
+
+            // Rewrite $refs and inline the referenced subschemas into $defs.
+            {
+                let mut schema_value = Value::Object(obj);
+                rewrite_refs_and_inline_defs(&mut schema_value, "", &targets, &mut defs);
+                obj = schema_value.as_object().cloned().unwrap_or_default();
+            }
+
+            if let Some(defs_obj) = defs.as_object() {
+                if !defs_obj.is_empty() {
+                    obj.insert("$defs".to_string(), defs);
+                }
+            }
+
+            // Moonshot requires parameters.type to be "object". Inject it when the
+            // schema describes an object-like structure but omits the type.
+            if obj.get("type").is_none()
+                && (obj.contains_key("oneOf")
+                    || obj.contains_key("anyOf")
+                    || obj.contains_key("allOf")
+                    || obj.contains_key("properties"))
+            {
+                obj.insert("type".to_string(), json!("object"));
+            }
+
+            Value::Object(obj)
+        }
+        other => other,
+    }
+}
+
+/// Recursively collect JSON pointer paths and the subschema at each path.
+fn collect_schema_paths(prefix: &str, value: &Value, out: &mut HashMap<String, Value>) {
+    match value {
+        Value::Object(obj) => {
+            out.insert(prefix.to_string(), value.clone());
+            for (key, val) in obj {
+                // Skip refs themselves; they are not schema targets.
+                if key == "$ref" {
+                    continue;
+                }
+                let next = format!("{}/{}", prefix, escape_json_pointer(key));
+                collect_schema_paths(&next, val, out);
+            }
+        }
+        Value::Array(arr) => {
+            out.insert(prefix.to_string(), value.clone());
+            for (idx, val) in arr.iter().enumerate() {
+                let next = format!("{}/{}", prefix, idx);
+                collect_schema_paths(&next, val, out);
+            }
+        }
+        _ => {
+            out.insert(prefix.to_string(), value.clone());
+        }
+    }
+}
+
+fn escape_json_pointer(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
+fn rewrite_refs_and_inline_defs(
+    value: &mut Value,
+    current_path: &str,
+    targets: &HashMap<String, Value>,
+    defs: &mut Value,
+) {
+    match value {
+        Value::Object(obj) => {
+            if let Some(Value::String(r)) = obj.get("$ref") {
+                if !r.starts_with("#/$defs/") {
+                    let pointer = resolve_ref_pointer(r, targets);
+                    let target = targets
+                        .get(&pointer)
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
+                    let def_name = stable_def_name(&pointer);
+                    if let Some(defs_obj) = defs.as_object_mut() {
+                        defs_obj.entry(def_name.clone()).or_insert(target);
+                    }
+                    obj.insert("$ref".to_string(), json!(format!("#/$defs/{}", def_name)));
+                }
+            }
+            for (key, val) in obj.iter_mut() {
+                if key == "$ref" {
+                    continue;
+                }
+                let next = format!(
+                    "{}/{}",
+                    current_path,
+                    escape_json_pointer(key)
+                );
+                rewrite_refs_and_inline_defs(val, &next, targets, defs);
+            }
+        }
+        Value::Array(arr) => {
+            for (idx, val) in arr.iter_mut().enumerate() {
+                let next = format!("{}/{}", current_path, idx);
+                rewrite_refs_and_inline_defs(val, &next, targets, defs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Convert a `$ref` string into a JSON pointer path key compatible with those produced
+/// by `collect_schema_paths`. Handles both `#/properties/...` and legacy
+/// `#/definitions/...` references.
+fn resolve_ref_pointer(r: &str, targets: &HashMap<String, Value>) -> String {
+    // First try the literal pointer (keys are already escaped in the $ref).
+    if let Some(stripped) = r.strip_prefix("#/") {
+        let ptr = "/".to_string() + stripped;
+        if targets.contains_key(&ptr) {
+            return ptr;
+        }
+    }
+
+    // Legacy fallback: definitions -> $defs.
+    if r.starts_with("#/definitions/") {
+        let ptr = r.replacen("#/definitions/", "/$defs/", 1);
+        if targets.contains_key(&ptr) {
+            return ptr;
+        }
+    }
+
+    // If neither resolved, return a sanitized pointer derived from the ref.
+    if let Some(stripped) = r.strip_prefix("#/") {
+        "/".to_string() + stripped
+    } else {
+        r.to_string()
+    }
+}
+
+fn stable_def_name(pointer: &str) -> String {
+    // Produce a deterministic, identifier-safe name from the pointer.
+    // For refs into a schema definition block (definitions or $defs), drop the
+    // block prefix so the generated name matches the original definition name.
+    let body = pointer
+        .trim_start_matches('/')
+        .replace("~1", "/")
+        .replace("~0", "~");
+    let normalized = if let Some(rest) = body
+        .strip_prefix("definitions/")
+        .or_else(|| body.strip_prefix("$defs/"))
+    {
+        rest.to_string()
+    } else {
+        body
+    };
+    let sanitized = normalized
+        .replace('/', "_")
+        .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+    if sanitized.is_empty() {
+        "ref".to_string()
+    } else {
+        sanitized
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
     Function,
@@ -1110,6 +1302,13 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             if let Some(strict) = tool.get("strict").cloned() {
                 obj.entry("strict".to_string()).or_insert(strict);
             }
+            // Moonshot/Kimi requires all $ref values in function.parameters to point
+            // into #/$defs/. Codex apps sometimes emit relative refs such as
+            // "#/properties/bodyParts/items", which Moonshot rejects with:
+            //   "tools.function.parameters is not a valid moonshot flavored json schema"
+            if let Some(parameters) = obj.get_mut("parameters") {
+                *parameters = moonshot_compatible_schema(parameters.clone());
+            }
         }
         return Some(chat_tool);
     }
@@ -1121,6 +1320,9 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
+    }
+    if let Some(parameters) = function.get_mut("parameters") {
+        *parameters = moonshot_compatible_schema(parameters.clone());
     }
 
     Some(json!({
@@ -3294,5 +3496,177 @@ mod tests {
             "tools should be present from tool_search_output"
         );
         assert_eq!(result["tools"][0]["function"]["name"], "search_docs");
+    }
+
+    #[test]
+    fn moonshot_compatible_schema_rewrites_relative_ref_to_defs() {
+        let input = json!({
+            "type": "object",
+            "properties": {
+                "bodyParts": {
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["Face", "Nose"] }
+                },
+                "excludedBodyParts": {
+                    "type": "array",
+                    "items": { "$ref": "#/properties/bodyParts/items" }
+                }
+            }
+        });
+
+        let normalized = moonshot_compatible_schema(input);
+        let items_ref = normalized["properties"]["excludedBodyParts"]["items"]["$ref"]
+            .as_str()
+            .unwrap();
+        assert_eq!(items_ref, "#/$defs/properties_bodyParts_items");
+
+        let def = &normalized["$defs"]["properties_bodyParts_items"];
+        assert_eq!(def["type"], "string");
+        assert_eq!(def["enum"], json!(["Face", "Nose"]));
+    }
+
+    #[test]
+    fn moonshot_compatible_schema_rewrites_definitions_to_defs() {
+        let input = json!({
+            "type": "object",
+            "definitions": {
+                "bodyPart": { "type": "string", "enum": ["Face", "Nose"] }
+            },
+            "properties": {
+                "bodyParts": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/bodyPart" }
+                }
+            }
+        });
+
+        let normalized = moonshot_compatible_schema(input);
+        let items_ref = normalized["properties"]["bodyParts"]["items"]["$ref"]
+            .as_str()
+            .unwrap();
+        assert_eq!(items_ref, "#/$defs/bodyPart");
+        assert!(normalized.get("definitions").is_none());
+        assert_eq!(normalized["$defs"]["bodyPart"]["type"], "string");
+    }
+
+    #[test]
+    fn moonshot_compatible_schema_keeps_existing_defs_refs() {
+        let input = json!({
+            "type": "object",
+            "$defs": {
+                "bodyPart": { "type": "string" }
+            },
+            "properties": {
+                "part": { "$ref": "#/$defs/bodyPart" }
+            }
+        });
+
+        let normalized = moonshot_compatible_schema(input);
+        assert_eq!(
+            normalized["properties"]["part"]["$ref"].as_str().unwrap(),
+            "#/$defs/bodyPart"
+        );
+        assert_eq!(normalized["$defs"]["bodyPart"]["type"], "string");
+    }
+
+    #[test]
+    fn moonshot_compatible_schema_injects_object_type_for_oneof() {
+        let input = json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "mode": { "type": "string", "enum": ["view"] },
+                        "id": { "type": "string" }
+                    },
+                    "required": ["mode", "id"]
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "mode": { "type": "string", "enum": ["delete"] },
+                        "id": { "type": "string" }
+                    },
+                    "required": ["mode", "id"]
+                }
+            ],
+            "$defs": {
+                "id": { "type": "string" }
+            }
+        });
+
+        let normalized = moonshot_compatible_schema(input);
+        assert_eq!(normalized["type"], "object");
+        assert!(normalized["oneOf"].as_array().unwrap().len() == 2);
+    }
+
+    #[test]
+    fn responses_request_to_chat_normalizes_moonshot_refs() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "tools": [{
+                "type": "function",
+                "name": "select_subject",
+                "description": "Select subject.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "bodyParts": {
+                            "type": "array",
+                            "items": { "type": "string", "enum": ["Face", "Nose"] }
+                        },
+                        "excludedBodyParts": {
+                            "type": "array",
+                            "items": { "$ref": "#/properties/bodyParts/items" }
+                        }
+                    }
+                }
+            }],
+            "input": [{"role": "user", "content": "select face"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let params = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(
+            params["properties"]["excludedBodyParts"]["items"]["$ref"].as_str().unwrap(),
+            "#/$defs/properties_bodyParts_items"
+        );
+        assert_eq!(
+            params["$defs"]["properties_bodyParts_items"]["enum"],
+            json!(["Face", "Nose"])
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_injects_object_type_for_oneof_parameters() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "tools": [{
+                "type": "function",
+                "name": "automation_update",
+                "description": "Update automations.",
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "mode": { "type": "string", "enum": ["view"] },
+                                "id": { "$ref": "#/$defs/id" }
+                            },
+                            "required": ["mode", "id"]
+                        }
+                    ],
+                    "$defs": {
+                        "id": { "type": "string" }
+                    }
+                }
+            }],
+            "input": [{"role": "user", "content": "update automation"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let params = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert!(params["oneOf"].as_array().unwrap().len() == 1);
     }
 }
