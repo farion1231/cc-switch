@@ -561,14 +561,14 @@ fn update_sqlite_metadata(
             result.provider_rows += tx.execute(
                 "UPDATE threads SET model_provider = ?1 WHERE COALESCE(model_provider, '') <> ?1",
                 params![target_provider],
-            )? as usize;
+            )?;
         }
         if columns.contains("has_user_event") {
             let mut stmt = tx.prepare(
                 "UPDATE threads SET has_user_event = 1 WHERE id = ?1 AND COALESCE(has_user_event, 0) <> 1",
             )?;
             for thread_id in user_event_thread_ids {
-                result.user_event_rows += stmt.execute(params![thread_id])? as usize;
+                result.user_event_rows += stmt.execute(params![thread_id])?;
             }
             drop(stmt);
         }
@@ -577,7 +577,7 @@ fn update_sqlite_metadata(
                 .prepare("UPDATE threads SET cwd = ?1 WHERE id = ?2 AND COALESCE(cwd, '') <> ?1")?;
             for (thread_id, cwd) in thread_cwd_by_id {
                 if !cwd.trim().is_empty() {
-                    result.cwd_rows += stmt.execute(params![cwd, thread_id])? as usize;
+                    result.cwd_rows += stmt.execute(params![cwd, thread_id])?;
                 }
             }
             drop(stmt);
@@ -902,7 +902,7 @@ fn to_desktop_workspace_path(value: &str) -> String {
     }
     #[cfg(windows)]
     {
-        return value.replace('/', "\\");
+        value.replace('/', "\\")
     }
     #[cfg(not(windows))]
     {
