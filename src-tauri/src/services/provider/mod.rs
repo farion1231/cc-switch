@@ -979,6 +979,161 @@ base_url = "http://localhost:8080"
         );
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn update_current_codex_provider_syncs_live_when_proxy_takeover_detected_without_backup()
+    {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        crate::settings::update_settings(crate::settings::AppSettings::default())
+            .expect("reset settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            listen_port: 15721,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("codex")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("update app proxy config");
+        }
+
+        let mut original = Provider::with_id(
+            "rightcode".into(),
+            "RightCode".into(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "old-key"
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5-codex"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "https://old.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        original.category = Some("custom".into());
+        db.save_provider("codex", &original).expect("save provider");
+        db.set_current_provider("codex", "rightcode")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("rightcode"))
+            .expect("set local current provider");
+
+        crate::codex_config::write_codex_live_atomic(
+            &json!({
+                "OPENAI_API_KEY": "PROXY_MANAGED"
+            }),
+            Some(
+                r#"model_provider = "rightcode"
+model = "gpt-5-codex"
+
+[model_providers.rightcode]
+name = "RightCode"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+"#,
+            ),
+        )
+        .expect("seed taken-over Codex live config");
+
+        let mut updated = Provider::with_id(
+            "rightcode".into(),
+            "RightCode".into(),
+            json!({
+                "auth": {
+                    "OPENAI_API_KEY": "updated-key"
+                },
+                "config": r#"model_provider = "rightcode"
+model = "gpt-5.5"
+
+[model_providers.rightcode]
+name = "RightCode Updated"
+base_url = "https://updated.example/v1"
+wire_api = "responses"
+"#
+            }),
+            None,
+        );
+        updated.category = Some("custom".into());
+
+        ProviderService::update(&state, AppType::Codex, None, updated)
+            .expect("update current Codex provider");
+
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get live backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert!(
+            backup_value
+                .get("config")
+                .and_then(|v| v.as_str())
+                .is_some_and(|config| config.contains("https://updated.example/v1")),
+            "provider-derived restore backup should keep the real provider endpoint"
+        );
+
+        let live_auth: Value =
+            read_json_file(&crate::codex_config::get_codex_auth_path()).expect("read live auth");
+        assert_eq!(
+            live_auth
+                .get("OPENAI_API_KEY")
+                .and_then(|value| value.as_str()),
+            Some("PROXY_MANAGED"),
+            "takeover placeholder should stay intact in Codex auth"
+        );
+
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read live config");
+        let parsed_live: toml::Value = toml::from_str(&live_config).expect("parse live config");
+        assert_eq!(
+            parsed_live.get("model").and_then(|v| v.as_str()),
+            Some("gpt-5.5"),
+            "provider edits should propagate into Codex live config during takeover"
+        );
+        assert_eq!(
+            parsed_live
+                .get("model_providers")
+                .and_then(|v| v.get("rightcode"))
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str()),
+            Some("RightCode Updated"),
+            "provider metadata should update in the live Codex provider table"
+        );
+        assert_eq!(
+            parsed_live
+                .get("model_providers")
+                .and_then(|v| v.get("rightcode"))
+                .and_then(|v| v.get("base_url"))
+                .and_then(|v| v.as_str()),
+            Some("http://127.0.0.1:15721/v1"),
+            "taken-over Codex live config should stay pointed at the local proxy"
+        );
+        assert!(
+            state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "Codex live config should still be detected as taken over"
+        );
+    }
+
     #[cfg(any(target_os = "macos", windows))]
     #[tokio::test]
     #[serial]
@@ -1019,6 +1174,12 @@ base_url = "http://localhost:8080"
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("use ephemeral proxy port");
 
         // Claude Desktop keeps backup state from takeover startup; this sentinel only
         // marks takeover as active so provider updates rewrite the 3P profile.
@@ -1036,7 +1197,7 @@ base_url = "http://localhost:8080"
                 .expect("update app proxy config");
         }
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -1084,7 +1245,10 @@ base_url = "http://localhost:8080"
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(format!(
+                "http://127.0.0.1:{}/claude-desktop",
+                proxy_info.port
+            )),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -2071,6 +2235,13 @@ impl ProviderService {
                             .sync_claude_live_from_provider_while_proxy_active(&provider),
                     )
                     .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                } else if live_taken_over && matches!(app_type, AppType::Codex) {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .sync_codex_live_from_provider_while_proxy_active(&provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
