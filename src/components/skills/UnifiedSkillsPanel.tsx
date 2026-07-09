@@ -122,11 +122,12 @@ const UnifiedSkillsPanel = React.forwardRef<
       opencode: 0,
       openclaw: 0,
       hermes: 0,
+      codefree: 0,
     };
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of SKILLS_APP_IDS) {
-        if (skill.apps[app]) counts[app]++;
+        if (skill.apps[app]) counts[app as keyof typeof counts]++;
       }
     });
     return counts;

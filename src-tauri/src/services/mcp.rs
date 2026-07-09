@@ -43,6 +43,9 @@ impl McpService {
         if prev_apps.hermes && !server.apps.hermes {
             Self::remove_server_from_app(state, &server.id, &AppType::Hermes)?;
         }
+        if prev_apps.codefree && !server.apps.codefree {
+            Self::remove_server_from_app(state, &server.id, &AppType::Codefree)?;
+        }
 
         // 同步到各个启用的应用
         Self::sync_server_to_apps(state, &server)?;
@@ -137,6 +140,13 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Codefree => {
+                mcp::sync_single_server_to_codefree(
+                    &Default::default(),
+                    &server.id,
+                    &server.server,
+                )?;
+            }
         }
         Ok(())
     }
@@ -171,6 +181,9 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::Codefree => {
+                mcp::remove_server_from_codefree(id)?;
             }
         }
         Ok(())
@@ -462,6 +475,36 @@ impl McpService {
 
                     // 导入是读取已有配置，不应反向写回任何应用的 live 配置。
                     // 显式编辑、启用/禁用或手动同步时再执行写回。
+                }
+            }
+        }
+
+        Ok(new_count)
+    }
+
+    /// 从 CodeFree 导入 MCP
+    pub fn import_from_codefree(state: &AppState) -> Result<usize, AppError> {
+        let mut temp_config = crate::app_config::MultiAppConfig::default();
+
+        let count = crate::mcp::import_from_codefree(&mut temp_config)?;
+
+        let mut new_count = 0;
+
+        if count > 0 {
+            if let Some(servers) = &temp_config.mcp.servers {
+                let mut existing = state.db.get_all_mcp_servers()?;
+                for server in servers.values() {
+                    let to_save = if let Some(existing_server) = existing.get(&server.id) {
+                        let mut merged = existing_server.clone();
+                        merged.apps.codefree = true;
+                        merged
+                    } else {
+                        new_count += 1;
+                        server.clone()
+                    };
+
+                    state.db.save_mcp_server(&to_save)?;
+                    existing.insert(to_save.id.clone(), to_save.clone());
                 }
             }
         }

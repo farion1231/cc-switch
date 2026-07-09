@@ -87,7 +87,8 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
-  | "hermes";
+  | "hermes"
+  | "codefree";
 
 type SessionListViewMode = "flat" | "grouped";
 
@@ -1115,6 +1116,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Gemini CLI</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="codefree">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="codefree"
+                                  name="CodeFree"
+                                  size={14}
+                                />
+                                <span>CodeFree</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

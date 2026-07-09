@@ -840,7 +840,10 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "codefreeConfigDir": "CodeFree 設定目錄",
+    "codefreeConfigDirDescription": "覆寫 CodeFree 設定目錄。",
+    "browsePlaceholderCodefree": "例如：C:\\\\Users\\\\<您的帳號>\\\\.codefree-o"
   },
   "apps": {
     "claude": "Claude",
@@ -851,11 +854,12 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "codefree": "CodeFree"
   },
   "sessionManager": {
     "title": "工作階段管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 與 Gemini CLI 工作階段紀錄",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes、CodeFree 與 Gemini CLI 工作階段紀錄",
     "searchPlaceholder": "搜尋對話內容、目錄或 ID",
     "searchSessions": "搜尋工作階段",
     "providerFilterAll": "全部",
@@ -1409,7 +1413,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "codefree": "CodeFree"
     },
     "rawInputLabel": "原始",
     "dataSources": "資料來源",
@@ -1419,7 +1424,8 @@
       "codex_db": "Codex 資料庫",
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌"
+      "opencode_session": "OpenCode 工作階段日誌",
+      "codefree_session": "CodeFree 工作階段日誌"
     },
     "sessionSync": {
       "trigger": "同步工作階段日誌",
@@ -1671,7 +1677,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "codefree": "CodeFree"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",
@@ -2279,7 +2286,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codefree": "CodeFree"
     },
     "installFromZip": {
       "button": "從 ZIP 安裝",

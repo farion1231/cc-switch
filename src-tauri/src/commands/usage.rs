@@ -320,6 +320,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 CodeFree 使用数据
+    match crate::services::session_usage_codefree::sync_codefree_usage(&state.db) {
+        Ok(codefree_result) => {
+            result.imported += codefree_result.imported;
+            result.skipped += codefree_result.skipped;
+            result.files_scanned += codefree_result.files_scanned;
+            result.errors.extend(codefree_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("CodeFree 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 

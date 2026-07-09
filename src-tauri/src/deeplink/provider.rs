@@ -148,6 +148,13 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Codefree => {
+            return Err(AppError::localized(
+                "codefree.deeplink.unsupported",
+                "CodeFree-O 不支持 deeplink 导入",
+                "CodeFree-O does not support deeplink import",
+            ));
+        }
     };
 
     // Build usage script configuration if provided

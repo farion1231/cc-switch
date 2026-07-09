@@ -197,6 +197,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    codefree: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -207,6 +208,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.codefree) return "codefree";
     return "claude"; // fallback
   };
 
@@ -225,9 +227,17 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "codefree"
     ) {
       setCurrentView("providers");
+    }
+  }, [sharedFeatureApp, currentView]);
+
+  // Fallback from providers view when switching to codefree (no provider support)
+  useEffect(() => {
+    if (currentView === "providers" && sharedFeatureApp === "codefree") {
+      setCurrentView("sessions");
     }
   }, [sharedFeatureApp, currentView]);
 
@@ -264,7 +274,7 @@ function App() {
     takeoverStatus,
     status: proxyStatus,
   } = useProxyStatus();
-  const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
+  const isCurrentAppTakeoverActive = (takeoverStatus as unknown as Record<string, boolean | undefined>)?.[activeApp] || false;
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
       (t) => t.app_type === activeApp,
@@ -294,7 +304,9 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "codefree";
+  const hasProviderSupport = sharedFeatureApp !== "codefree";
 
   const {
     addProvider,
@@ -1147,7 +1159,7 @@ function App() {
             className="flex items-center gap-1"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView !== "providers" ? (
+            {currentView !== "providers" && !(currentView === "sessions" && sharedFeatureApp === "codefree") ? (
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -1185,6 +1197,42 @@ function App() {
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
                 </h1>
+              </div>
+            ) : currentView === "sessions" && sharedFeatureApp === "codefree" ? (
+              <div className="flex items-center gap-2">
+                <div className="relative inline-flex items-center">
+                  <a
+                    href="https://ccswitch.io"
+                    target="_blank"
+                    rel="noreferrer"
+                    className={cn(
+                      "text-xl font-semibold transition-colors",
+                      isProxyRunning && isCurrentAppTakeoverActive
+                        ? "text-emerald-500 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300"
+                        : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
+                    )}
+                  >
+                    CC Switch
+                  </a>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    setSettingsDefaultTab("general");
+                    setCurrentView("settings");
+                  }}
+                  title={t("common.settings")}
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <Settings className="w-4 h-4" />
+                </Button>
+                <UpdateBadge
+                  onClick={() => {
+                    setSettingsDefaultTab("about");
+                    setCurrentView("settings");
+                  }}
+                />
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -1245,7 +1293,8 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "codefree" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1387,7 +1436,7 @@ function App() {
                     )}
                   </>
                 )}
-                {currentView === "providers" && (
+            {(currentView === "providers" && activeApp !== "codefree") || (currentView === "sessions" && sharedFeatureApp === "codefree") ? (
                   <>
                     <AppSwitcher
                       activeApp={activeApp}
@@ -1404,7 +1453,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "codefree"
+                                  ? "codefree"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1412,7 +1463,28 @@ function App() {
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.15 }}
                         >
-                          {activeApp === "hermes" ? (
+                          {activeApp === "codefree" ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("skills")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("skills.manage")}
+                              >
+                                <Wrench className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("sessions")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("sessionManager.title")}
+                              >
+                                <History className="w-4 h-4" />
+                              </Button>
+                            </>
+                          ) : activeApp === "hermes" ? (
                             <>
                               <Button
                                 variant="ghost"
@@ -1555,15 +1627,17 @@ function App() {
                       </AnimatePresence>
                     </div>
 
-                    <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
-                    >
-                      <Plus className="w-5 h-5" />
-                    </Button>
+                    {hasProviderSupport && (
+                      <Button
+                        onClick={() => setIsAddOpen(true)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
                   </>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

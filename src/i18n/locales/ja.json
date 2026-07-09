@@ -869,7 +869,10 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "codefreeConfigDir": "CodeFree 設定ディレクトリ",
+    "codefreeConfigDirDescription": "CodeFree の設定ディレクトリを上書きします。",
+    "browsePlaceholderCodefree": "例: C:\\\\Users\\\\<your-username>\\\\.codefree-o"
   },
   "apps": {
     "claude": "Claude",
@@ -880,11 +883,12 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "codefree": "CodeFree"
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Hermes / Gemini CLI のセッションを管理",
+    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Hermes / CodeFree / Gemini CLI のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
@@ -1437,7 +1441,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "codefree": "CodeFree"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1447,7 +1452,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション"
+      "opencode_session": "OpenCode セッション",
+      "codefree_session": "CodeFree セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
@@ -1699,7 +1705,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "codefree": "CodeFree"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",
@@ -2307,7 +2314,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codefree": "CodeFree"
     },
     "installFromZip": {
       "button": "ZIP からインストール",

@@ -869,7 +869,10 @@
       "defaultCostMultiplierRequired": "默认倍率不能为空",
       "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     },
-    "saveFailedGeneric": "保存失败，请重试"
+    "saveFailedGeneric": "保存失败，请重试",
+    "codefreeConfigDir": "CodeFree 配置目录",
+    "codefreeConfigDirDescription": "覆盖 CodeFree 配置目录。",
+    "browsePlaceholderCodefree": "例如：C:\\\\Users\\\\<你的用户名>\\\\.codefree-o"
   },
   "apps": {
     "claude": "Claude",
@@ -880,11 +883,12 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "codefree": "CodeFree"
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 与 Gemini CLI 会话记录",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes、CodeFree 与 Gemini CLI 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -1437,7 +1441,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "codefree": "CodeFree"
     },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
@@ -1447,7 +1452,8 @@
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
+      "opencode_session": "OpenCode 会话日志",
+      "codefree_session": "CodeFree 会话日志"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
@@ -1699,7 +1705,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "codefree": "CodeFree"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -2307,7 +2314,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codefree": "CodeFree"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",

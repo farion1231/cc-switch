@@ -66,7 +66,8 @@ impl Database {
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codefree BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -95,6 +96,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codefree BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -477,6 +479,16 @@ impl Database {
                         log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（CodeFree-O 支持：添加 enabled_codefree 列）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
+                    }
+                    13 => {
+                        log::info!("迁移数据库从 v13 到 v14（Skills 表添加 enabled_codefree 列）");
+                        Self::migrate_v13_to_v14(conn)?;
+                        Self::set_user_version(conn, 14)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1319,6 +1331,41 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：添加 CodeFree-O 支持
+    ///
+    /// 为 mcp_servers 表添加 enabled_codefree 列。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_codefree",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_codefree",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        log::info!("v12 -> v13 迁移完成：已添加 CodeFree-O 支持");
+        Ok(())
+    }
+
+    /// v13 -> v14 迁移：为 skills 表添加 enabled_codefree 列
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_codefree",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        log::info!("v13 -> v14 迁移完成：skills 表已添加 enabled_codefree 列");
         Ok(())
     }
 
