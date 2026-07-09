@@ -1184,11 +1184,9 @@ async fn query_volcengine(
 // API Key 在 `ANTHROPIC_AUTH_TOKEN` 或 `OPENAI_API_KEY` 中传入，Bearer 认证。
 // 套餐额度以 5 小时 / 周 / 月为窗口，按请求次数计费。
 
-async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
+async fn query_iflytek(api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
-    // iFlyTek's MaaS platform exposes usage at the same host as the coding plan API.
-    // Try the OpenAI-compatible usage endpoint.
     let url = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2/usage";
 
     let resp = client
@@ -1201,12 +1199,12 @@ async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota {
+        return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
             credential_status: CredentialStatus::Expired,
             credential_message: Some("Invalid API key".to_string()),
@@ -1215,17 +1213,21 @@ async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
             extra_usage: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
-        };
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     // Parse usage tiers from response
@@ -1289,7 +1291,7 @@ async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
     }
 
     let tiers_empty = tiers.is_empty();
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -1302,7 +1304,7 @@ async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
             None
         },
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── 商汤日日新 SenseNova Token Plan ─────────────────────────
@@ -1310,10 +1312,9 @@ async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
 // API Key 在 `ANTHROPIC_AUTH_TOKEN` 或 `OPENAI_API_KEY` 中传入，Bearer 认证。
 // 套餐：每模型独立计数，5 小时滚动窗口（Free 公测版 1500 次/5h，DeepSeek 150 次/5h）。
 
-async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
+async fn query_sensenova(api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
-    // SenseNova Token Plan 的用量查询端点
     let url = "https://token.sensenova.cn/v1/usage";
 
     let resp = client
@@ -1326,12 +1327,12 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota {
+        return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
             credential_status: CredentialStatus::Expired,
             credential_message: Some("Invalid API key".to_string()),
@@ -1340,17 +1341,21 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
             extra_usage: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
-        };
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     // Parse usage tiers
@@ -1360,9 +1365,7 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
     if let Some(usages) = body.get("usage").and_then(|v| v.as_array()) {
         for item in usages {
             let usage_pct = item.get("usage_percent").and_then(parse_f64).unwrap_or(0.0);
-            let resets_at = item
-                .get("reset_time")
-                .and_then(extract_reset_time);
+            let resets_at = item.get("reset_time").and_then(extract_reset_time);
 
             tiers.push(QuotaTier {
                 name: TIER_FIVE_HOUR.to_string(),
@@ -1389,7 +1392,7 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
     }
 
     let tiers_empty = tiers.is_empty();
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -1402,7 +1405,7 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
             None
         },
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
