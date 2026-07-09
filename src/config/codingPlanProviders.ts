@@ -58,7 +58,7 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // maas-coding-api.cn-huabei-1.xf-yun.com（OpenAI /v2、Anthropic /anthropic、Responses /v1/responses）
     id: "iflytek",
     label: "讯飞星火 (iFlytek)",
-    pattern: /xf-yun\.com|maas-coding-api/i,
+    pattern: /maas-coding-api\.xf-yun\.com/i,
   },
   {
     // 商汤日日新 SenseNova Token Plan。base_url 形如 token.sensenova.cn/v1

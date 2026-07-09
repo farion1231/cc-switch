@@ -46,7 +46,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
         // /api/compatible，没有套餐额度，不在此命中。
         Some(CodingPlanProvider::Volcengine)
-    } else if url.contains("xf-yun.com") || url.contains("maas-coding-api") {
+    } else if url.contains("maas-coding-api.xf-yun.com") {
         Some(CodingPlanProvider::IFlyTek)
     } else if url.contains("sensenova.cn") || url.contains("token.sensenova") {
         Some(CodingPlanProvider::SenseTime)
@@ -1288,14 +1288,15 @@ async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
         }
     }
 
+    let tiers_empty = tiers.is_empty();
     SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
-        success: !tiers.is_empty(),
+        success: !tiers_empty,
         tiers,
         extra_usage: None,
-        error: if tiers.is_empty() {
+        error: if tiers_empty {
             Some("No usage data found in iFlyTek response".to_string())
         } else {
             None
@@ -1387,14 +1388,15 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
         }
     }
 
+    let tiers_empty = tiers.is_empty();
     SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
-        success: !tiers.is_empty(),
+        success: !tiers_empty,
         tiers,
         extra_usage: None,
-        error: if tiers.is_empty() {
+        error: if tiers_empty {
             Some("No usage data found in SenseNova response".to_string())
         } else {
             None
