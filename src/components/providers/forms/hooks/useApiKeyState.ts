@@ -60,15 +60,13 @@ export function useApiKeyState({
         initialConfig || "{}",
         key.trim(),
         {
-          // 最佳实践：仅在"新增模式"且"非官方类别"时补齐缺失字段
-          // - 新增模式：selectedPresetId !== null
-          // - 非官方类别：category !== undefined && category !== "official"
-          // - 官方类别：不创建字段（UI 也会禁用输入框）
-          // - 未传入 category：不创建字段（避免意外行为）
+          // 仅在"非官方/非云服务商类别"时补齐缺失字段
+          // - official：走 OAuth/订阅登录，不创建字段（UI 也会禁用输入框）
+          // - cloud_provider：走顶层 apiKey 或 IAM，不创建 env 字段
+          // - undefined（导入/旧版本数据未分类）：视为自定义，允许创建，
+          //   否则编辑模式下输入的 API Key 不会写入配置（#5041）
           createIfMissing:
-            selectedPresetId !== null &&
-            category !== undefined &&
-            category !== "official",
+            category !== "official" && category !== "cloud_provider",
           appType,
           apiKeyField,
         },
@@ -88,12 +86,17 @@ export function useApiKeyState({
 
   const showApiKey = useCallback(
     (config: string, isEditMode: boolean) => {
-      return (
-        selectedPresetId !== null ||
-        (isEditMode && hasApiKeyField(config, appType))
-      );
+      if (selectedPresetId !== null) return true;
+      if (!isEditMode) return false;
+      // 编辑模式：非官方/非云服务商类别（含 undefined 的导入/旧版本数据）
+      // 始终显示输入框，便于补填缺失的 API Key（#5041）；
+      // official / cloud_provider 仅在配置已有对应字段时显示
+      if (category !== "official" && category !== "cloud_provider") {
+        return true;
+      }
+      return hasApiKeyField(config, appType);
     },
-    [selectedPresetId, appType],
+    [selectedPresetId, category, appType],
   );
 
   return {
