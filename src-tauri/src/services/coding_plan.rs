@@ -1358,10 +1358,6 @@ async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
     // Try common response shapes for SenseNova
     if let Some(usages) = body.get("usage").and_then(|v| v.as_array()) {
         for item in usages {
-            let model_name = item
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
             let usage_pct = item.get("usage_percent").and_then(parse_f64).unwrap_or(0.0);
             let resets_at = item
                 .get("reset_time")
