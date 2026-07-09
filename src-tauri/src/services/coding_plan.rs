@@ -20,6 +20,12 @@ enum CodingPlanProvider {
     /// 火山方舟 Agent Plan / Coding Plan（base_url 形如
     /// `https://ark.cn-beijing.volces.com/api/coding[/v3]`）。
     Volcengine,
+    /// 讯飞星火 Astron Coding Plan（base_url 形如
+    /// `https://maas-coding-api.cn-huabei-1.xf-yun.com/v2`）。
+    IFlyTek,
+    /// 商汤日日新 SenseNova Token Plan（base_url 形如
+    /// `https://token.sensenova.cn/v1`）。
+    SenseTime,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -40,6 +46,10 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
         // /api/compatible，没有套餐额度，不在此命中。
         Some(CodingPlanProvider::Volcengine)
+    } else if url.contains("xf-yun.com") || url.contains("maas-coding-api") {
+        Some(CodingPlanProvider::IFlyTek)
+    } else if url.contains("sensenova.cn") || url.contains("token.sensenova") {
+        Some(CodingPlanProvider::SenseTime)
     } else {
         None
     }
@@ -1169,6 +1179,234 @@ async fn query_volcengine(
     }
 }
 
+// ── 讯飞星火 Astron Coding Plan ─────────────────────────────
+//
+// API Key 在 `ANTHROPIC_AUTH_TOKEN` 或 `OPENAI_API_KEY` 中传入，Bearer 认证。
+// 套餐额度以 5 小时 / 周 / 月为窗口，按请求次数计费。
+
+async fn query_iflytek(api_key: &str) -> SubscriptionQuota {
+    let client = crate::proxy::http_client::get();
+
+    // iFlyTek's MaaS platform exposes usage at the same host as the coding plan API.
+    // Try the OpenAI-compatible usage endpoint.
+    let url = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2/usage";
+
+    let resp = client
+        .get(url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return make_error(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        };
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return make_error(format!("API error (HTTP {status}): {body}"));
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+    };
+
+    // Parse usage tiers from response
+    let mut tiers = Vec::new();
+
+    // Try common response shapes
+    if let Some(limits) = body.get("limits").and_then(|v| v.as_array()) {
+        for limit_item in limits {
+            let name = limit_item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .or_else(|| limit_item.get("level").and_then(|v| v.as_str()))
+                .or_else(|| limit_item.get("window").and_then(|v| v.as_str()))
+                .unwrap_or("");
+            let tier_name = match name.to_lowercase().as_str() {
+                "fivehour" | "five_hour" | "5h" | "session" => Some(TIER_FIVE_HOUR),
+                "weekly" | "week" | "7d" => Some(TIER_WEEKLY_LIMIT),
+                "monthly" | "month" => Some(TIER_MONTHLY),
+                _ => None,
+            };
+            let Some(tier_name) = tier_name else { continue };
+
+            let used = limit_item.get("used").and_then(parse_f64).unwrap_or(0.0);
+            let limit_val = limit_item.get("limit").and_then(parse_f64).unwrap_or(1.0);
+            let utilization = if limit_val > 0.0 {
+                (used / limit_val) * 100.0
+            } else {
+                0.0
+            };
+            let resets_at = limit_item.get("reset_time").and_then(extract_reset_time);
+
+            tiers.push(QuotaTier {
+                name: tier_name.to_string(),
+                utilization,
+                resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+
+    // Alternative: flat `usage_percent` field per window
+    if tiers.is_empty() {
+        for (key, name) in [
+            ("five_hour_usage_percent", TIER_FIVE_HOUR),
+            ("weekly_usage_percent", TIER_WEEKLY_LIMIT),
+            ("monthly_usage_percent", TIER_MONTHLY),
+        ] {
+            if let Some(pct) = body.get(key).and_then(parse_f64) {
+                let reset_key = format!("{key}_reset_time");
+                let resets_at = body.get(&reset_key).and_then(extract_reset_time);
+                tiers.push(QuotaTier {
+                    name: name.to_string(),
+                    utilization: pct,
+                    resets_at,
+                    used_value_usd: None,
+                    max_value_usd: None,
+                });
+            }
+        }
+    }
+
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: !tiers.is_empty(),
+        tiers,
+        extra_usage: None,
+        error: if tiers.is_empty() {
+            Some("No usage data found in iFlyTek response".to_string())
+        } else {
+            None
+        },
+        queried_at: Some(now_millis()),
+    }
+}
+
+// ── 商汤日日新 SenseNova Token Plan ─────────────────────────
+//
+// API Key 在 `ANTHROPIC_AUTH_TOKEN` 或 `OPENAI_API_KEY` 中传入，Bearer 认证。
+// 套餐：每模型独立计数，5 小时滚动窗口（Free 公测版 1500 次/5h，DeepSeek 150 次/5h）。
+
+async fn query_sensenova(api_key: &str) -> SubscriptionQuota {
+    let client = crate::proxy::http_client::get();
+
+    // SenseNova Token Plan 的用量查询端点
+    let url = "https://token.sensenova.cn/v1/usage";
+
+    let resp = client
+        .get(url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return make_error(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        };
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return make_error(format!("API error (HTTP {status}): {body}"));
+    }
+
+    let body: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+    };
+
+    // Parse usage tiers
+    let mut tiers = Vec::new();
+
+    // Try common response shapes for SenseNova
+    if let Some(usages) = body.get("usage").and_then(|v| v.as_array()) {
+        for item in usages {
+            let model_name = item
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let usage_pct = item.get("usage_percent").and_then(parse_f64).unwrap_or(0.0);
+            let resets_at = item
+                .get("reset_time")
+                .and_then(extract_reset_time);
+
+            tiers.push(QuotaTier {
+                name: TIER_FIVE_HOUR.to_string(),
+                utilization: usage_pct,
+                resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+
+    // Alternative: flat fields
+    if tiers.is_empty() {
+        if let Some(pct) = body.get("usage_percent").and_then(parse_f64) {
+            let resets_at = body.get("reset_time").and_then(extract_reset_time);
+            tiers.push(QuotaTier {
+                name: TIER_FIVE_HOUR.to_string(),
+                utilization: pct,
+                resets_at,
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
+    }
+
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: !tiers.is_empty(),
+        tiers,
+        extra_usage: None,
+        error: if tiers.is_empty() {
+            Some("No usage data found in SenseNova response".to_string())
+        } else {
+            None
+        },
+        queried_at: Some(now_millis()),
+    }
+}
+
 // ── 公开入口 ────────────────────────────────────────────────
 
 /// 构造"凭据缺失 / 域名未命中"的失败结果（NotFound 状态 + 明确错误文案）。
@@ -1327,6 +1565,8 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
+        CodingPlanProvider::IFlyTek => query_iflytek(api_key).await,
+        CodingPlanProvider::SenseTime => query_sensenova(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
