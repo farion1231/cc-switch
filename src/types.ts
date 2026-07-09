@@ -64,6 +64,8 @@ export interface UsageScript {
   userId?: string; // 用户ID（NewAPI 模板使用）
   accessKeyId?: string; // 火山方舟 AccessKey ID（用量查询签名用，与推理 Key 分离）
   secretAccessKey?: string; // 火山方舟 SecretAccessKey
+  teamOrganizationId?: string; // 智谱团队套餐组织 ID（请求头 bigmodel-organization）
+  teamProjectId?: string; // 智谱团队套餐项目 ID（请求头 bigmodel-project）
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
@@ -359,6 +361,7 @@ export interface Settings {
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
+  usageDashboardRefreshIntervalMs?: number;
   // User has confirmed the stream check first-run notice
   streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page

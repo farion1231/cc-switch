@@ -306,6 +306,40 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+/// 前端表单勾选/取消"使用通用配置"时，对编辑器里的 config.toml 文本做
+/// 结构化合并/剥离。必须在后端用 toml_edit 做：前端 smol-toml 只能
+/// parse → merge → 整文档重序列化，注释全丢、键序重排，还会生成多余的
+/// 空父表头（如 `[model_providers]`）。
+pub fn update_toml_common_config_snippet(
+    config_toml: &str,
+    snippet_toml: &str,
+    enabled: bool,
+) -> Result<String, AppError> {
+    let trimmed = snippet_toml.trim();
+    if trimmed.is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut target_doc = if config_toml.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        config_toml
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?
+    };
+    let source_doc = trimmed
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+
+    if enabled {
+        merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    } else {
+        remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    }
+
+    Ok(target_doc.to_string())
+}
+
 fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
@@ -592,6 +626,15 @@ fn restore_live_settings_for_provider_backfill(
     ) {
         log::warn!(
             "Failed to restore Codex settings while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
+    // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
+    // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
+    if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {
+        log::warn!(
+            "Failed to strip mcp_servers while backfilling '{}': {err}",
             provider.id
         );
     }
@@ -939,7 +982,10 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
+    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
+    // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
+    McpService::sync_enabled_for_app(state, app_type)?;
 
     Ok(())
 }
@@ -1007,8 +1053,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    // MCP sync
-    McpService::sync_all_enabled(state)?;
+    // MCP sync（best-effort 逐应用投影，内部已聚合失败）。错误暂存到
+    // Skill 同步之后再返回：MCP 的失败不该跳过 Skill 同步，但调用方
+    //（配置导入 / 云同步恢复）需要知道结果不完整。
+    let mcp_result = McpService::sync_all_enabled(state);
 
     // Skill sync
     for app_type in AppType::all() {
@@ -1018,7 +1066,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    Ok(())
+    mcp_result
 }
 
 /// Read current live settings for an app type
@@ -1664,6 +1712,71 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。
+    /// smol-toml 的 parse→merge→stringify 整文档重序列化会丢注释、
+    /// 按字母序重排键、并为 dotted 表生成多余的空父表头。
+    #[test]
+    fn update_toml_common_config_snippet_preserves_comments_and_key_order() {
+        // 刻意非字母序的键序 + 注释，模拟用户手写格式
+        let config = r#"# my precious comment
+model = "gpt-5.5"
+model_provider = "aprov"
+disable_response_storage = true
+
+[model_providers.aprov]
+# provider comment
+name = "A Prov"
+base_url = "https://a.example/v1"
+"#;
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged = update_toml_common_config_snippet(config, snippet, true).unwrap();
+        assert!(merged.contains("# my precious comment"));
+        assert!(merged.contains("# provider comment"));
+        let model_pos = merged.find("model = ").unwrap();
+        let provider_pos = merged.find("model_provider = ").unwrap();
+        let disable_pos = merged.find("disable_response_storage").unwrap();
+        assert!(
+            model_pos < provider_pos && provider_pos < disable_pos,
+            "merge must not reorder user keys, got: {merged}"
+        );
+        assert!(merged.contains("[tui]"));
+        assert!(merged.contains("notifications = true"));
+        assert!(
+            !merged.contains("[model_providers]\n"),
+            "merge must not synthesize an empty parent table header, got: {merged}"
+        );
+
+        let removed = update_toml_common_config_snippet(&merged, snippet, false).unwrap();
+        assert!(!removed.contains("[tui]"), "snippet keys must be stripped");
+        assert!(removed.contains("# my precious comment"));
+        assert!(removed.contains("disable_response_storage = true"));
+    }
+
+    /// 合并时标量=片段覆盖供应商值（与 Claude 侧 deepMerge 一致）；
+    /// 剥离按值匹配：用户改过的值不删（与 strip 路径的
+    /// toml_value_is_subset 语义一致）。
+    #[test]
+    fn update_toml_common_config_snippet_scalar_override_and_value_matched_removal() {
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, true)
+                .unwrap();
+        assert!(
+            merged.contains("notifications = true"),
+            "snippet scalar should override provider value, got: {merged}"
+        );
+
+        let removed =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, false)
+                .unwrap();
+        assert!(
+            removed.contains("notifications = false"),
+            "user-modified value must survive removal, got: {removed}"
+        );
+    }
+
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
         let settings = json!({
@@ -1858,6 +1971,42 @@ mod tests {
             result.get("modelCatalog"),
             live_settings.get("modelCatalog"),
             "backfill must keep the Live-reconstructed catalog when the DB has none"
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_strips_synced_mcp_servers() {
+        // Live 里的 [mcp_servers] 是 MCP 同步的投影（SSOT 在 DB 表），
+        // 回填进供应商存储配置会让已删除的服务器随快照复活。
+        let provider = Provider::with_id(
+            "prov".to_string(),
+            "Prov".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model = \"gpt-5.5\"\n"
+            }),
+            None,
+        );
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": "model = \"gpt-5.5\"\n\n[mcp_servers.echo]\ntype = \"stdio\"\ncommand = \"echo\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        let config_text = result
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(
+            !config_text.contains("mcp_servers"),
+            "backfill must strip synced [mcp_servers] from the stored provider config, got: {config_text}"
+        );
+        assert!(
+            config_text.contains("model = \"gpt-5.5\""),
+            "non-MCP content must survive the strip"
         );
     }
 }

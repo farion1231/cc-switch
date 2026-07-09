@@ -882,6 +882,344 @@ requires_openai_auth = true
 }
 
 #[test]
+fn reapply_codex_official_live_resyncs_mcp_servers() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        let mut official = Provider::with_id(
+            "official-provider".to_string(),
+            "Official".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+                },
+                "config": ""
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official);
+    }
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("switch to official provider");
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "switch should sync enabled MCP servers into live"
+    );
+
+    // 统一会话开关变更触发的 reapply 会整体重写 live config.toml（有意设计），
+    // 写完必须重新投影 DB 里启用的 MCP，否则用户的 MCP 会静默失效。
+    let reapplied =
+        cc_switch_lib::reapply_current_codex_official_live(&state).expect("reapply official live");
+    assert!(
+        reapplied,
+        "current provider is official, reapply should run"
+    );
+
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after reapply");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "reapply must re-project enabled MCP servers after the full live rewrite, got: {live}"
+    );
+}
+
+/// reapply 走到 MCP 投影时 live 已按新开关状态落盘、开关事实上已生效：
+/// ① 投影失败若上抛，save_settings 会回滚开关设置，制造"设置=旧值、
+/// live=新桶"的会话分裂——必须降级为警告而不是失败；
+/// ② 投影必须只针对 Codex：sync_all_enabled 按 AppType::all() 顺序短路，
+/// Claude 排在 Codex 前面，损坏的 ~/.claude.json 会在轮到 Codex 之前
+/// 报错——若吞错了事，刚被整体重写清掉的 [mcp_servers] 就无人补回，
+/// Codex MCP 静默消失。这里用坏 JSON 的 ~/.claude.json 复现该场景。
+#[test]
+fn reapply_codex_official_live_projects_mcp_despite_broken_claude_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let live_auth = json!({
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": null,
+        "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+    });
+    write_codex_live_atomic(&live_auth, Some("")).expect("seed official live auth");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        let mut official = Provider::with_id(
+            "official-provider".to_string(),
+            "Official".to_string(),
+            json!({
+                "auth": {
+                    "auth_mode": "chatgpt",
+                    "OPENAI_API_KEY": null,
+                    "tokens": { "access_token": "official-oauth-token", "account_id": "acct" }
+                },
+                "config": ""
+            }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        manager
+            .providers
+            .insert("official-provider".to_string(), official);
+    }
+    let servers = initial_config
+        .mcp
+        .servers
+        .get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    // 先切换建立"当前=官方"的前置状态，再破坏 claude 文件，
+    // 让损坏只作用于被测的 reapply 路径。
+    ProviderService::switch(&state, AppType::Codex, "official-provider")
+        .expect("switch to official provider");
+
+    // 破坏 ~/.claude.json：坏 JSON 能通过 should_sync_claude_mcp 门控
+    // （文件存在即过），但 read_mcp_servers_map 解析必然报错。
+    // 注意 codex-only 的服务器也会触发 claude 的 remove 分支读该文件。
+    let claude_json = cc_switch_lib::get_claude_mcp_path();
+    std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
+
+    let reapplied = cc_switch_lib::reapply_current_codex_official_live(&state)
+        .expect("MCP projection failure must degrade to a warning, not fail the toggle");
+    assert!(
+        reapplied,
+        "current provider is official, reapply should run"
+    );
+
+    // 定向投影不碰 claude：Codex 的 MCP 投影必须完成，不能被
+    // 无关应用的损坏文件阻断后静默丢失。
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after reapply");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "codex MCP projection must not be blocked by a broken ~/.claude.json, got: {live}"
+    );
+
+    // 顺带锁定：定向投影不应把手改坏的 ~/.claude.json 触碰或"修复"。
+    let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
+    assert_eq!(
+        claude_after, "{ not valid json",
+        "codex-only projection must not touch claude's live file"
+    );
+}
+
+/// 切换供应商与 reapply 是同一类场景：live 整体重写后只需重投影本应用
+/// 的 MCP。历史实现走全量 sync_all_enabled + `?`，损坏的 ~/.claude.json
+/// 会让"切 Codex"直接报切换失败——而此时 DB is_current 与 live 都已
+/// 落盘，切换事实上成功，报错只制造分裂假象。
+#[test]
+fn switch_codex_projects_mcp_despite_broken_claude_json() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-old" }), Some(""))
+        .expect("seed codex live");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "p".to_string(),
+            Provider::with_id(
+                "p".to_string(),
+                "P".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-p" },
+                    "config": "model = \"gpt-5.5\"\n"
+                }),
+                None,
+            ),
+        );
+    }
+    let servers = config.mcp.servers.get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    // 坏 JSON 能通过 should_sync_claude_mcp 门控（文件存在即过），
+    // 但 read_mcp_servers_map 解析必然报错；codex-only 服务器也会
+    // 触发 claude 的 remove 分支去读这个文件。
+    let claude_json = cc_switch_lib::get_claude_mcp_path();
+    std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
+
+    ProviderService::switch(&state, AppType::Codex, "p")
+        .expect("broken ~/.claude.json must not fail an unrelated codex switch");
+
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "switch must re-project codex MCP after the full live rewrite, got: {live}"
+    );
+
+    let claude_after = std::fs::read_to_string(&claude_json).expect("read claude json");
+    assert_eq!(
+        claude_after, "{ not valid json",
+        "codex-only projection must not touch claude's live file"
+    );
+}
+
+/// sync_all_enabled 的全量语义（配置导入 / 云同步恢复）：单个应用的
+/// live 损坏不阻断其余应用的投影，但失败必须聚合上报——调用方需要
+/// 知道结果不完整。历史实现按 AppType::all() 顺序 `?` 短路，Claude
+/// 排在 Codex 前面，一份坏 ~/.claude.json 会让所有后续应用的 MCP
+/// 状态永远陈旧。
+#[test]
+fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk" }), Some("")).expect("seed codex live");
+
+    let mut config = MultiAppConfig::default();
+    let servers = config.mcp.servers.get_or_insert_with(Default::default);
+    servers.insert(
+        "echo-server".into(),
+        McpServer {
+            id: "echo-server".into(),
+            name: "Echo Server".into(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: false,
+                codex: true,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let claude_json = cc_switch_lib::get_claude_mcp_path();
+    std::fs::write(&claude_json, "{ not valid json").expect("seed broken claude json");
+
+    let err = cc_switch_lib::McpService::sync_all_enabled(&state)
+        .expect_err("broken claude live must surface as an aggregated error");
+    let message = err.to_string();
+    assert!(
+        message.contains("claude"),
+        "aggregated error should name the failing app, got: {message}"
+    );
+
+    // Claude 的失败不能阻断 Codex：best-effort 必须继续投影其余应用。
+    let live = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after sync_all_enabled");
+    assert!(
+        live.contains("mcp_servers.echo-server"),
+        "codex projection must proceed despite the broken claude file, got: {live}"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_official_accounts_write_auth_json() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -1908,6 +2246,268 @@ fn switch_claude_syncs_deletions_from_live_into_common_config() {
     assert!(
         live_after.get("enableAllProjectMcpServers").is_none(),
         "deleted shared key must not be re-injected into the next provider"
+    );
+}
+
+/// Codex 版切换自动回写：live 里新增的共享键被捕获进通用配置片段并传递给
+/// 下一个供应商；供应商专属字段、密钥与 cc-switch 注入产物绝不进片段；
+/// 回填后旧供应商的存储配置不残留片段内容（autosync 先于 strip，值必然匹配）。
+#[test]
+fn switch_codex_syncs_shared_keys_from_live_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // A 激活状态下的 live：A 专属路由 + 已共享的 [tui] + 用户刚加的
+    // disable_response_storage + cc-switch 注入产物 + MCP 同步投影
+    // + 顶层 wire_api（无 model_provider 时的 fallback 写法，属 A 的路由语义）
+    // + 历史错误格式 [mcp.servers]（sync_all_enabled 清不掉的孤儿形态）
+    let live_config = r#"model = "gpt-5.5"
+model_provider = "aprov"
+wire_api = "chat"
+experimental_bearer_token = "sk-a-live-secret"
+model_catalog_json = "cc-switch-model-catalog.json"
+web_search = "disabled"
+disable_response_storage = true
+
+[tui]
+notifications = true
+
+[model_providers.aprov]
+name = "A Prov"
+base_url = "https://a.example/v1"
+wire_api = "responses"
+
+[mcp_servers.echo]
+type = "stdio"
+command = "echo"
+
+[mcp.servers.ghost-legacy]
+command = "ghost-cmd"
+"#;
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
+        .expect("seed codex live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "a".to_string();
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-a" },
+                "config": "model = \"gpt-5.5\"\nmodel_provider = \"aprov\"\n\n[model_providers.aprov]\nname = \"A Prov\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("a".to_string(), provider_a);
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-b" },
+                "config": "model = \"gpt-5.5\"\nmodel_provider = \"bprov\"\n\n[model_providers.bprov]\nname = \"B Prov\"\nbase_url = \"https://b.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        manager.providers.insert("b".to_string(), provider_b);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Codex.as_str(),
+            Some("[tui]\nnotifications = true\n".to_string()),
+        )
+        .expect("seed codex common config snippet");
+
+    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
+
+    // 片段：捕获新增共享键、保留既有共享键；专属字段/密钥/注入产物一律不进
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Codex.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    assert!(
+        snippet.contains("disable_response_storage = true"),
+        "newly added shared key should be captured, got: {snippet}"
+    );
+    assert!(
+        snippet.contains("notifications = true"),
+        "previously shared key should be preserved, got: {snippet}"
+    );
+    for forbidden in [
+        "experimental_bearer_token",
+        "sk-a-live-secret",
+        "model_catalog_json",
+        "web_search",
+        "mcp_servers",
+        "model_providers",
+        "model_provider",
+        "wire_api",
+        "ghost-legacy",
+    ] {
+        assert!(
+            !snippet.contains(forbidden),
+            "'{forbidden}' must never enter the shared snippet, got: {snippet}"
+        );
+    }
+
+    // B 的 live：共享键传递到位，A 的密钥/投影不得跟过来
+    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        live_after.contains("disable_response_storage = true"),
+        "shared key should propagate to the next provider's live, got: {live_after}"
+    );
+    assert!(
+        live_after.contains("model_provider = \"bprov\""),
+        "live should be provider B's own config, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("sk-a-live-secret"),
+        "provider A's bearer token must not leak into B's live, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("mcp_servers"),
+        "no DB-enabled MCP servers, so live must not resurrect stale entries, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("ghost-legacy"),
+        "the legacy [mcp.servers] orphan must not propagate to B's live, got: {live_after}"
+    );
+    assert!(
+        !live_after.contains("wire_api = \"chat\""),
+        "provider A's top-level wire_api must not rewrite B's protocol, got: {live_after}"
+    );
+
+    // A 的存储配置：回填后不残留片段内容 / MCP 投影 / 注入产物
+    let providers = state
+        .db
+        .get_all_providers(AppType::Codex.as_str())
+        .expect("read providers after switch");
+    let stored_a = providers.get("a").expect("provider a exists");
+    let stored_a_config = stored_a
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        stored_a_config.contains("model_provider = \"aprov\""),
+        "provider-owned routing must survive backfill, got: {stored_a_config}"
+    );
+    // 顶层 wire_api 是 A 自己的路由语义：不进片段，但回填时留在 A 的快照里
+    assert!(
+        stored_a_config.contains("wire_api = \"chat\""),
+        "provider-owned top-level wire_api must survive backfill, got: {stored_a_config}"
+    );
+    for forbidden in [
+        "disable_response_storage",
+        "notifications",
+        "mcp_servers",
+        "experimental_bearer_token",
+        "ghost-legacy",
+    ] {
+        assert!(
+            !stored_a_config.contains(forbidden),
+            "'{forbidden}' must be stripped from the stored provider config on backfill, got: {stored_a_config}"
+        );
+    }
+}
+
+/// Codex 版删除同步：用户在 live 里删掉一个已共享的键后，切换应把删除
+/// 同步进通用配置，且不会在切到下一个供应商时被重新注入（否则"删不掉"）。
+#[test]
+fn switch_codex_syncs_deletions_from_live_into_common_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    // 片段里有两个共享键，但用户已在 live 里删掉 disable_response_storage
+    let live_config = r#"model_provider = "aprov"
+
+[tui]
+notifications = true
+
+[model_providers.aprov]
+name = "A Prov"
+base_url = "https://a.example/v1"
+wire_api = "responses"
+"#;
+    write_codex_live_atomic(&json!({ "OPENAI_API_KEY": "sk-a" }), Some(live_config))
+        .expect("seed codex live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "a".to_string();
+        for (id, name, prov_key) in [("a", "A", "aprov"), ("b", "B", "bprov")] {
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                name.to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": format!("sk-{id}") },
+                    "config": format!("model_provider = \"{prov_key}\"\n\n[model_providers.{prov_key}]\nname = \"{name} Prov\"\nbase_url = \"https://{id}.example/v1\"\nwire_api = \"responses\"\n")
+                }),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                common_config_enabled: Some(true),
+                ..Default::default()
+            });
+            manager.providers.insert(id.to_string(), provider);
+        }
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .set_config_snippet(
+            AppType::Codex.as_str(),
+            Some("disable_response_storage = true\n\n[tui]\nnotifications = true\n".to_string()),
+        )
+        .expect("seed codex common config snippet");
+
+    ProviderService::switch(&state, AppType::Codex, "b").expect("switch should succeed");
+
+    let snippet = state
+        .db
+        .get_config_snippet(AppType::Codex.as_str())
+        .expect("read snippet")
+        .expect("snippet present");
+    assert!(
+        !snippet.contains("disable_response_storage"),
+        "deleted shared key must be removed from the snippet, got: {snippet}"
+    );
+    assert!(
+        snippet.contains("notifications = true"),
+        "kept shared key should remain in the snippet, got: {snippet}"
+    );
+
+    let live_after = std::fs::read_to_string(cc_switch_lib::get_codex_config_path())
+        .expect("read config.toml after switch");
+    assert!(
+        !live_after.contains("disable_response_storage"),
+        "deleted shared key must not be re-injected into the next provider, got: {live_after}"
+    );
+    assert!(
+        live_after.contains("notifications = true"),
+        "kept shared key should propagate to the next provider, got: {live_after}"
     );
 }
 
