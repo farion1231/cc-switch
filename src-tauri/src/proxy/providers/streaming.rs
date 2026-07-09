@@ -218,12 +218,19 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                     // 兜底：消息已开始但从未收到有效 finish_reason 时，合成一个
                                     // message_delta，避免客户端收到没有 stop_reason 的消息流。
+                                    // 若流中曾出现 tool_calls，stop_reason 须为 tool_use，
+                                    // 否则客户端认为轮次结束而不执行工具。
                                     if pending_message_delta.is_none()
                                         && !has_emitted_message_delta
                                         && has_sent_message_start
                                     {
+                                        let fallback_reason = if tool_blocks_by_index.is_empty() {
+                                            "end_turn"
+                                        } else {
+                                            "tool_use"
+                                        };
                                         pending_message_delta =
-                                            Some((Some("end_turn".to_string()), latest_usage.clone()));
+                                            Some((Some(fallback_reason.to_string()), latest_usage.clone()));
                                     }
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
@@ -928,6 +935,38 @@ mod tests {
                 .pointer("/delta/stop_reason")
                 .and_then(|v| v.as_str()),
             Some("end_turn")
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    // 上游发送了 tool_calls 但从未给出有效 finish_reason 时，
+    // 合成的 message_delta 应使用 stop_reason: tool_use（而非 end_turn），
+    // 否则客户端不会执行工具。
+    #[tokio::test]
+    async fn test_streaming_synthesizes_tool_use_stop_reason_when_tools_present() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_t\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_0\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"BJ\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("tool_use"),
+            "synthesized stop_reason should be tool_use when tool blocks are present"
         );
 
         assert!(events
