@@ -173,8 +173,10 @@ impl StreamCheckService {
         let client = crate::proxy::http_client::get();
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
+        let custom_headers = Self::provider_custom_headers_for_reachability(provider);
 
-        let result = Self::probe_reachability(&client, &base_url, timeout, ua).await;
+        let result =
+            Self::probe_reachability(&client, &base_url, timeout, ua, &custom_headers).await;
         let response_time = start.elapsed().as_millis() as u64;
         Ok(Self::build_result(
             result,
@@ -221,6 +223,7 @@ impl StreamCheckService {
         base_url: &str,
         timeout: std::time::Duration,
         custom_ua: Option<HeaderValue>,
+        custom_headers: &[crate::provider::ParsedProviderCustomHeader],
     ) -> Result<u16, AppError> {
         let url = base_url.trim();
         if url.is_empty() {
@@ -237,7 +240,16 @@ impl StreamCheckService {
             req = req.header("user-agent", ua);
         }
 
-        match req.send().await {
+        let mut request = req
+            .build()
+            .map_err(|e| AppError::Message(format!("Failed to build request: {e}")))?;
+        crate::provider::apply_custom_headers_to_http_map(
+            request.headers_mut(),
+            custom_headers,
+            &[],
+        );
+
+        match client.execute(request).await {
             Ok(resp) => Ok(resp.status().as_u16()),
             Err(e) => Err(Self::map_request_error(e)),
         }
@@ -306,6 +318,26 @@ impl StreamCheckService {
             .meta
             .as_ref()
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+    }
+
+    fn provider_custom_headers(
+        provider: &Provider,
+    ) -> Vec<crate::provider::ParsedProviderCustomHeader> {
+        provider
+            .meta
+            .as_ref()
+            .map(|meta| meta.parsed_custom_headers())
+            .unwrap_or_default()
+    }
+
+    fn provider_custom_headers_for_reachability(
+        provider: &Provider,
+    ) -> Vec<crate::provider::ParsedProviderCustomHeader> {
+        if provider.is_github_copilot() {
+            Vec::new()
+        } else {
+            Self::provider_custom_headers(provider)
+        }
     }
 
     // ===== 各应用 base_url 提取（settings_config 结构互不相同）=====
@@ -514,6 +546,41 @@ mod tests {
         });
         let merged3 = StreamCheckService::merge_provider_config(&p3, &global);
         assert_eq!(merged3.timeout_secs, global.timeout_secs);
+    }
+
+    #[test]
+    fn test_provider_custom_headers_for_reachability_skips_copilot() {
+        use crate::provider::ProviderMeta;
+
+        let mut p = make_provider(serde_json::json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" }
+        }));
+        p.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            custom_headers: serde_json::from_value(serde_json::json!({
+                "User-Agent": "custom-agent/1.0",
+                "X-Custom-Header": "value"
+            }))
+            .unwrap(),
+            ..Default::default()
+        });
+
+        let headers = StreamCheckService::provider_custom_headers_for_reachability(&p);
+        assert!(headers.is_empty());
+
+        let mut p = make_provider(serde_json::json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://relay.example" }
+        }));
+        p.meta = Some(ProviderMeta {
+            custom_headers: serde_json::from_value(serde_json::json!({
+                "User-Agent": "custom-agent/1.0",
+                "X-Custom-Header": "value"
+            }))
+            .unwrap(),
+            ..Default::default()
+        });
+        let headers = StreamCheckService::provider_custom_headers_for_reachability(&p);
+        assert_eq!(headers.len(), 2);
     }
 
     #[test]

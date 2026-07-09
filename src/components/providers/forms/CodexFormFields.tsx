@@ -40,6 +40,7 @@ import type {
   CodexCatalogModel,
   CodexChatReasoning,
   ProviderCategory,
+  ProviderCustomHeaderEntry,
 } from "@/types";
 
 interface EndpointCandidate {
@@ -85,6 +86,7 @@ interface CodexFormFieldsProps {
 
   // Local proxy User-Agent override
   customUserAgent: string;
+  customHeaders: ProviderCustomHeaderEntry[];
   onCustomUserAgentChange: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
@@ -164,6 +166,7 @@ export function CodexFormFields({
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
+  customHeaders,
   onCustomUserAgentChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
@@ -278,6 +281,7 @@ export function CodexFormFields({
       isFullUrl,
       undefined,
       customUserAgent,
+      customHeaders,
     )
       .then((models) => {
         setFetchedModels(models);
@@ -294,7 +298,7 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
+  }, [codexBaseUrl, codexApiKey, isFullUrl, customHeaders, customUserAgent, t]);
 
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;

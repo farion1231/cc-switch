@@ -1552,16 +1552,16 @@ impl RequestForwarder {
                 Vec::new()
             };
 
-        // 自定义 User-Agent：与 stream_check / model_fetch 共用 parse_custom_user_agent，
-        // 运行时静默忽略非法值（前端在输入处给非阻断提示，不在保存时阻断）。
-        // Copilot 指纹 UA 不可覆盖。
-        let custom_user_agent = if is_copilot {
-            None
+        // Provider 级自定义 headers：运行时静默忽略非法项；空字符串表示删除该 header。
+        // Copilot 指纹头不允许被自定义项覆盖。
+        let custom_headers = if is_copilot {
+            Vec::new()
         } else {
             provider
                 .meta
                 .as_ref()
-                .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+                .map(|meta| meta.parsed_custom_headers())
+                .unwrap_or_default()
         };
 
         // --- Copilot 优化器：动态 header 注入 ---
@@ -1658,7 +1658,6 @@ impl RequestForwarder {
         let mut ordered_headers = http::HeaderMap::new();
         let mut saw_auth = false;
         let mut saw_accept_encoding = false;
-        let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
 
@@ -1739,15 +1738,12 @@ impl RequestForwarder {
                 continue;
             }
 
-            // --- user-agent: provider-level override for local proxy routing ---
-            if !is_copilot && key_str.eq_ignore_ascii_case("user-agent") {
-                if !saw_user_agent {
-                    saw_user_agent = true;
-                    if let Some(ref ua) = custom_user_agent {
-                        ordered_headers.append(http::header::USER_AGENT, ua.clone());
-                    } else {
-                        ordered_headers.append(key.clone(), value.clone());
-                    }
+            if let Some(custom_header) = custom_headers
+                .iter()
+                .find(|header| header.name.as_str().eq_ignore_ascii_case(key_str))
+            {
+                if let Some(ref value) = custom_header.value {
+                    ordered_headers.append(custom_header.name.clone(), value.clone());
                 }
                 continue;
             }
@@ -1801,12 +1797,6 @@ impl RequestForwarder {
             );
         }
 
-        if !saw_user_agent {
-            if let Some(ref ua) = custom_user_agent {
-                ordered_headers.append(http::header::USER_AGENT, ua.clone());
-            }
-        }
-
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
         if !saw_anthropic_beta {
             if let Some(ref beta_val) = anthropic_beta_value {
@@ -1855,6 +1845,11 @@ impl RequestForwarder {
                 .as_ref()
                 .and_then(|meta| meta.local_proxy_request_overrides.as_ref()),
             is_copilot,
+        );
+        crate::provider::apply_custom_headers_to_http_map(
+            &mut ordered_headers,
+            &custom_headers,
+            copilot_fingerprint_headers,
         );
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
@@ -3221,7 +3216,6 @@ mod tests {
             "authorization",
             HeaderValue::from_static("Bearer PROXY_MANAGED"),
         );
-
         let err = reject_proxy_placeholder_for_managed_account_upstream(
             "https://api.githubcopilot.com/chat/completions",
             &headers,

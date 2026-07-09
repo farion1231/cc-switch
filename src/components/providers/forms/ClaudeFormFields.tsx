@@ -53,6 +53,7 @@ import type {
   ProviderCategory,
   ClaudeApiFormat,
   ClaudeApiKeyField,
+  ProviderCustomHeaderEntry,
 } from "@/types";
 import {
   hasClaudeOneMMarker,
@@ -146,6 +147,7 @@ interface ClaudeFormFieldsProps {
 
   // Local proxy User-Agent override
   customUserAgent: string;
+  customHeaders: ProviderCustomHeaderEntry[];
   onCustomUserAgentChange: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
@@ -207,6 +209,7 @@ export function ClaudeFormFields({
   isFullUrl,
   onFullUrlChange,
   customUserAgent,
+  customHeaders,
   onCustomUserAgentChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
@@ -281,7 +284,14 @@ export function ClaudeFormFields({
     const modelsUrl = matchedPreset?.modelsUrl;
 
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey, isFullUrl, modelsUrl, customUserAgent)
+    fetchModelsForConfig(
+      baseUrl,
+      apiKey,
+      isFullUrl,
+      modelsUrl,
+      customUserAgent,
+      customHeaders,
+    )
       .then((models) => {
         setFetchedModels(models);
         showModelFetchResult(models.length);
@@ -291,7 +301,15 @@ export function ClaudeFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, isFullUrl, customUserAgent, showModelFetchResult, t]);
+  }, [
+    baseUrl,
+    apiKey,
+    isFullUrl,
+    customHeaders,
+    customUserAgent,
+    showModelFetchResult,
+    t,
+  ]);
 
   const handleFetchCopilotModels = useCallback(() => {
     if (!isCopilotAuthenticated) {
