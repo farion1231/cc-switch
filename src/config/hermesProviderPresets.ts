@@ -424,6 +424,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "UnoRouter",
+    websiteUrl: "https://unorouter.com",
+    apiKeyUrl: "https://unorouter.com/token",
+    settingsConfig: {
+      name: "unorouter",
+      base_url: "https://api.unorouter.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          context_length: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "unorouter",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "unorouter" },
+    },
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",

@@ -662,6 +662,34 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "UnoRouter",
+    websiteUrl: "https://unorouter.com",
+    apiKeyUrl: "https://unorouter.com/token",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "UnoRouter",
+      options: {
+        baseURL: "https://api.unorouter.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+        "claude-sonnet-5": { name: "Claude Sonnet 5" },
+      },
+    },
+    category: "aggregator",
+    icon: "unorouter",
+    iconColor: "#FF2A0C",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",

@@ -331,6 +331,40 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "UnoRouter",
+    websiteUrl: "https://unorouter.com",
+    apiKeyUrl: "https://unorouter.com/token",
+    settingsConfig: {
+      baseUrl: "https://api.unorouter.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "unorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "unorouter/gpt-5.5",
+      },
+      modelCatalog: {
+        "unorouter/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
     name: "Qiniu",
     nameKey: "providerForm.presets.qiniu",
     websiteUrl: "https://s.qiniu.com/nMvAvy",
