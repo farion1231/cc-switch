@@ -83,7 +83,9 @@ interface CodexFormFieldsProps {
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
-  // Local proxy User-Agent override
+  // Local proxy request behavior
+  stripCodexImageGenerationTools: boolean;
+  onStripCodexImageGenerationToolsChange: (value: boolean) => void;
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
   localProxyHeadersOverride: string;
@@ -163,6 +165,8 @@ export function CodexFormFields({
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
+  stripCodexImageGenerationTools,
+  onStripCodexImageGenerationToolsChange,
   customUserAgent,
   onCustomUserAgentChange,
   localProxyHeadersOverride,
@@ -185,13 +189,15 @@ export function CodexFormFields({
   const supportsEffort = codexChatReasoning.supportsEffort === true;
 
   // 高级区在有任何可见配置时自动展开（仅折叠→展开，不会自动折叠）：自定义 UA /
-  // 请求覆盖 / 已填模型映射 / 原生 Responses（需维护 catalog）/ 已配置思考能力。
+  // 请求覆盖 / 已填模型映射 / 原生 Responses（需维护 catalog）/ 已配置思考能力 /
+  // 手动关闭 Codex 生图工具过滤。
   const hasRequestOverrides = Boolean(
     localProxyHeadersOverride.trim() || localProxyBodyOverride.trim(),
   );
   const hasAnyAdvancedValue =
     !!customUserAgent ||
     hasRequestOverrides ||
+    !stripCodexImageGenerationTools ||
     catalogModels.length > 0 ||
     apiFormat === "openai_responses" ||
     supportsThinking ||
@@ -694,6 +700,28 @@ export function CodexFormFields({
                 value={customUserAgent}
                 onChange={onCustomUserAgentChange}
               />
+              <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+                <div className="space-y-1">
+                  <FormLabel>
+                    {t("codexConfig.stripImageGenerationToolsToggle", {
+                      defaultValue: "过滤生图工具声明",
+                    })}
+                  </FormLabel>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("codexConfig.stripImageGenerationToolsHint", {
+                      defaultValue:
+                        "开启后，Codex Responses 请求发往上游前会移除 image_generation 相关工具声明，避免部分中转站因生图权限检查直接返回 403。",
+                    })}
+                  </p>
+                </div>
+                <Switch
+                  checked={stripCodexImageGenerationTools}
+                  onCheckedChange={onStripCodexImageGenerationToolsChange}
+                  aria-label={t("codexConfig.stripImageGenerationToolsToggle", {
+                    defaultValue: "过滤生图工具声明",
+                  })}
+                />
+              </div>
               <div className="border-t border-border-default pt-3">
                 <LocalProxyRequestOverridesField
                   headersJson={localProxyHeadersOverride}

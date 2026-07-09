@@ -486,6 +486,12 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Codex Responses request sanitizer: strip image-generation tool declarations before upstream.
+    #[serde(
+        rename = "stripCodexImageGenerationTools",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub strip_codex_image_generation_tools: Option<bool>,
     /// Custom User-Agent for local proxy routing.
     #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
     pub custom_user_agent: Option<String>,
@@ -1018,6 +1024,22 @@ mod tests {
         let overrides = decoded.local_proxy_request_overrides.unwrap();
         assert_eq!(overrides.headers.get("X-Test"), Some(&"yes".to_string()));
         assert_eq!(overrides.body.unwrap()["temperature"], 0.2);
+    }
+
+    #[test]
+    fn provider_meta_roundtrips_strip_codex_image_generation_tools() {
+        let meta = ProviderMeta {
+            strip_codex_image_generation_tools: Some(false),
+            ..ProviderMeta::default()
+        };
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+        assert_eq!(value["stripCodexImageGenerationTools"], false);
+        assert!(value.get("strip_codex_image_generation_tools").is_none());
+
+        let decoded: ProviderMeta =
+            serde_json::from_value(value).expect("deserialize ProviderMeta");
+        assert_eq!(decoded.strip_codex_image_generation_tools, Some(false));
     }
 
     #[test]

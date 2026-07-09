@@ -1313,6 +1313,8 @@
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、Codex の reasoning.effort を上流の Chat パラメータに変換します。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
+    "stripImageGenerationToolsToggle": "画像生成ツール宣言を除去",
+    "stripImageGenerationToolsHint": "有効にすると、Codex Responses リクエストを上流へ送る前に image_generation 関連のツール宣言を除去し、画像生成権限チェックによる一部リレーの 403 エラーを回避します。",
     "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。"
   },
   "geminiConfig": {

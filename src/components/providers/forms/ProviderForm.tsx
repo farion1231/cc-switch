@@ -379,6 +379,9 @@ function ProviderFormFull({
       ),
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
+    setStripCodexImageGenerationTools(
+      initialData?.meta?.stripCodexImageGenerationTools ?? true,
+    );
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
@@ -550,6 +553,10 @@ function ProviderFormFull({
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
+    );
+  const [stripCodexImageGenerationTools, setStripCodexImageGenerationTools] =
+    useState<boolean>(
+      () => initialData?.meta?.stripCodexImageGenerationTools ?? true,
     );
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
@@ -1476,6 +1483,10 @@ function ProviderFormFull({
         localCodexApiFormat === "openai_chat"
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
           : undefined,
+      stripCodexImageGenerationTools:
+        appId === "codex" && !stripCodexImageGenerationTools
+          ? false
+          : undefined,
       customUserAgent:
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
@@ -2147,6 +2158,10 @@ function ProviderFormFull({
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}
+              stripCodexImageGenerationTools={stripCodexImageGenerationTools}
+              onStripCodexImageGenerationToolsChange={
+                setStripCodexImageGenerationTools
+              }
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
               localProxyHeadersOverride={localProxyHeadersOverride}

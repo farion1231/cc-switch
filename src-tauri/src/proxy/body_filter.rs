@@ -18,6 +18,12 @@
 use serde_json::Value;
 use std::collections::HashSet;
 
+const IMAGE_GENERATION_TOOL_TYPES: &[&str] = &[
+    "image_generation",
+    "image_generation_call",
+    "image_generation_preview",
+];
+
 /// 过滤私有参数（以 `_` 开头的字段）
 ///
 /// 递归遍历 JSON 结构，移除所有以下划线开头的字段。
@@ -70,6 +76,17 @@ pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -
     filter_recursive_with_whitelist(body, &mut Vec::new(), &mut Vec::new(), &whitelist_set)
 }
 
+/// 移除 Codex Responses 请求中会触发部分上游生图权限校验的工具声明。
+///
+/// - 移除 `type` 为 `image_generation` / `image_generation_call` /
+///   `image_generation_preview` 的对象
+/// - 移除 `name` 中包含 `image_generation`（大小写不敏感）的对象
+pub fn strip_image_generation_tools(body: Value) -> (Value, usize) {
+    let mut removed = 0;
+    let filtered = strip_image_generation_recursive(body, &mut removed);
+    (filtered, removed)
+}
+
 /// 递归过滤实现（支持白名单）
 fn filter_recursive_with_whitelist(
     value: Value,
@@ -115,6 +132,58 @@ fn filter_recursive_with_whitelist(
         ),
         other => other,
     }
+}
+
+fn strip_image_generation_recursive(value: Value, removed: &mut usize) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .filter_map(|item| {
+                    if is_image_generation_tool_object(&item) {
+                        *removed += 1;
+                        None
+                    } else {
+                        Some(strip_image_generation_recursive(item, removed))
+                    }
+                })
+                .collect(),
+        ),
+        Value::Object(map) => {
+            let filtered: serde_json::Map<String, Value> = map
+                .into_iter()
+                .filter_map(|(key, child)| {
+                    if is_image_generation_tool_object(&child) {
+                        *removed += 1;
+                        None
+                    } else {
+                        Some((key, strip_image_generation_recursive(child, removed)))
+                    }
+                })
+                .collect();
+            Value::Object(filtered)
+        }
+        other => other,
+    }
+}
+
+fn is_image_generation_tool_object(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+
+    if object
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|value_type| IMAGE_GENERATION_TOOL_TYPES.contains(&value_type))
+    {
+        return true;
+    }
+
+    object
+        .get("name")
+        .and_then(Value::as_str)
+        .is_some_and(|name| name.to_ascii_lowercase().contains("image_generation"))
 }
 
 fn matches_schema_name_map(key: &str) -> bool {
@@ -335,5 +404,59 @@ mod tests {
         let output2 = filter_private_params_with_whitelist(input, &[]);
 
         assert_eq!(output1, output2);
+    }
+
+    #[test]
+    fn test_strip_image_generation_tools_removes_codex_proxy_tool_types() {
+        let input = json!({
+            "model": "gpt-5-codex",
+            "tools": [
+                {"type": "function", "name": "shell"},
+                {"type": "image_generation"},
+                {"type": "image_generation_call"},
+                {"type": "image_generation_preview"}
+            ],
+            "tool_choice": {"type": "image_generation"}
+        });
+
+        let (output, removed) = strip_image_generation_tools(input);
+
+        assert_eq!(removed, 4);
+        assert_eq!(
+            output["tools"],
+            json!([{"type": "function", "name": "shell"}])
+        );
+        assert!(output.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn test_strip_image_generation_tools_removes_nested_name_matches() {
+        let input = json!({
+            "metadata": {
+                "keep": true,
+                "nested": {
+                    "name": "preview_image_generation_tool",
+                    "description": "drop me"
+                }
+            },
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hello"},
+                        {"name": "IMAGE_GENERATION_helper", "enabled": true}
+                    ]
+                }
+            ]
+        });
+
+        let (output, removed) = strip_image_generation_tools(input);
+
+        assert_eq!(removed, 2);
+        assert_eq!(output["metadata"], json!({"keep": true}));
+        assert_eq!(
+            output["input"][0]["content"],
+            json!([{"type": "input_text", "text": "hello"}])
+        );
     }
 }
