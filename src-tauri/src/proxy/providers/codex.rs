@@ -427,6 +427,7 @@ fn codex_provider_default_max_output_tokens(provider: &Provider) -> Option<u64> 
         .settings_config
         .get("max_output_tokens")
         .and_then(|v| v.as_u64())
+        .filter(|&n| n > 0)
         .or_else(|| {
             provider
                 .settings_config
@@ -1112,6 +1113,23 @@ wire_api = "responses"
     fn test_default_max_output_tokens_skipped_when_not_configured() {
         let provider = create_provider(json!({
             "base_url": "https://api.example.com/v1/chat/completions"
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(!injected);
+        assert!(body.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_skipped_when_zero() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 0
         }));
         let mut body = json!({
             "model": "glm-4.6",
