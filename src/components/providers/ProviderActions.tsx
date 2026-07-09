@@ -36,7 +36,8 @@ interface ProviderActionsProps {
   isAutoFailoverEnabled?: boolean;
   isInFailoverQueue?: boolean;
   onToggleFailover?: (enabled: boolean) => void;
-  isOfficialBlockedByProxy?: boolean;
+  // 路由接管切换进行中：禁用主切换按钮，防止重复点击重复触发 takeover 切换。
+  isRoutingSwitchPending?: boolean;
   // Hermes v12+ providers: dict overlay — edit/delete must go through Web UI
   isReadOnly?: boolean;
   // OpenClaw: default model
@@ -75,7 +76,7 @@ export function ProviderActions({
   isAutoFailoverEnabled = false,
   isInFailoverQueue = false,
   onToggleFailover,
-  isOfficialBlockedByProxy = false,
+  isRoutingSwitchPending = false,
   isReadOnly = false,
   // OpenClaw: default model
   isDefaultModel = false,
@@ -196,17 +197,6 @@ export function ProviderActions({
       };
     }
 
-    if (isOfficialBlockedByProxy) {
-      return {
-        disabled: true,
-        variant: "default" as const,
-        className: "",
-        icon: <Play className="h-4 w-4" />,
-        text: t("provider.enable"),
-        title: t("provider.blockedByProxyHint"),
-      };
-    }
-
     return {
       disabled: false,
       variant: "default" as const,
@@ -272,7 +262,7 @@ export function ProviderActions({
           size="sm"
           variant={buttonState.variant}
           onClick={handleMainButtonClick}
-          disabled={buttonState.disabled}
+          disabled={buttonState.disabled || isRoutingSwitchPending}
           className={cn("w-[4.5rem] px-2.5", buttonState.className)}
         >
           {buttonState.icon}

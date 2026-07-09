@@ -45,13 +45,22 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { settingsApi } from "@/lib/api/settings";
+import { useSetProxyTakeoverForApp } from "@/lib/query/proxy";
+import { useSettingsQuery } from "@/lib/query/queries";
+import { getProxyRequirement } from "@/utils/providerRouting";
+import { decideSwitchAction } from "@/utils/switchDecision";
 import { isTextEditableTarget } from "@/utils/domUtils";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
   currentProviderId: string;
   appId: AppId;
-  onSwitch: (provider: Provider) => void;
+  onSwitch: (
+    provider: Provider,
+    opts?: { fromRoutingGuard?: boolean },
+  ) => void | Promise<boolean>;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
@@ -191,6 +200,19 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // 路由自动开关 guard 状态
+  const [showRoutingConfirm, setShowRoutingConfirm] = useState<
+    "enable" | "disable" | null
+  >(null);
+  const [pendingSwitchProvider, setPendingSwitchProvider] =
+    useState<Provider | null>(null);
+  // 覆盖整个 toggleTakeoverThenSwitch 流程的「进行中」标记。不能只看
+  // setProxyTakeover.isPending——「先切后开」时切换在途、接管 mutation 还没开始的
+  // 窗口里它仍为 false，会被重复触发。
+  const [routingSwitchInFlight, setRoutingSwitchInFlight] = useState(false);
+  const setProxyTakeover = useSetProxyTakeoverForApp();
+  // 路由 guard 需读取 autoEnable/autoDisable 偏好，并在「记住选择」时写回。
+  const { data: settings } = useSettingsQuery();
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -205,6 +227,178 @@ export function ProviderList({
     },
     [checkProvider],
   );
+
+  // 写入「记住选择」到对应设置位（点确认即写，独立于后续 takeover 成败）。
+  const persistRoutingPreference = async (direction: "enable" | "disable") => {
+    if (!settings) return;
+    const { webdavSync: _webdavSync, ...rest } = settings;
+    await settingsApi.save({
+      ...rest,
+      ...(direction === "enable"
+        ? { autoEnableForNeedsRouting: true }
+        : { autoDisableForNoRouting: true }),
+    });
+    await queryClient.invalidateQueries({ queryKey: ["settings"] });
+  };
+
+  // 接管开关 + 切换。两个方向顺序相反，都是为了「官方流量绝不在接管下」：
+  // - enable（切到需路由 provider）：先切后开——仅当切换成功才开接管，开接管时
+  //   current 已非官方，无「官方被接管」窗口；切换失败绝不开接管（防封号）。开接管
+  //   失败则 provider 已切但未接管（不工作，非封号）→ 提示手动开路由。
+  // - disable（切到官方 provider）：先关后切——先关接管再切，任何时刻官方都不在
+  //   接管下；关接管失败则中止不切。
+  // onSwitch(p, { fromRoutingGuard: true })：guard 已处理路由意图，让 switchProvider
+  // 跳过基于闭包（可能滞后一帧）的需路由提示与官方硬阻断；返回值表示切换是否成功。
+  const toggleTakeoverThenSwitch = async (
+    provider: Provider,
+    enabled: boolean,
+  ): Promise<void> => {
+    // 标记整个流程进行中（含切换在途窗口），防重入；finally 必清。
+    setRoutingSwitchInFlight(true);
+    try {
+      if (enabled) {
+        // 仅当切换**明确**返回 true 才开接管：非 true（含 false / void 实现的
+        // undefined）一律中止，绝不在切换未确认下开接管（防封号）。切换失败的 toast
+        // 由 switchProvider 自身弹出。
+        const switched = await onSwitch(provider, { fromRoutingGuard: true });
+        if (switched !== true) return;
+        try {
+          await setProxyTakeover.mutateAsync({ appType: appId, enabled: true });
+        } catch {
+          toast.error(
+            t("notifications.routingEnableFailed", {
+              name: provider.name,
+              defaultValue:
+                "已切换到 {{name}}，但开启本地路由失败，请在代理面板手动开启",
+            }),
+          );
+          return;
+        }
+        toast.success(
+          appId === "codex"
+            ? t("notifications.routingAutoEnabledRestart", {
+                name: provider.name,
+                defaultValue:
+                  "已切换到 {{name}} 并自动开启本地路由，请重启客户端以生效",
+              })
+            : t("notifications.routingAutoEnabled", {
+                name: provider.name,
+                defaultValue: "已切换到 {{name}} 并自动开启本地路由",
+              }),
+          { closeButton: true, duration: 5000 },
+        );
+        await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+        return;
+      }
+
+      // disable：先关接管（失败则中止不切换），再切到官方。
+      try {
+        await setProxyTakeover.mutateAsync({ appType: appId, enabled: false });
+      } catch {
+        toast.error(
+          t("notifications.routingDisableFailed", {
+            defaultValue: "关闭本地路由失败，已取消切换",
+          }),
+        );
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      // await：保持 in-flight 直到切换完成，否则 finally 会在切换在途时提前清标记 →
+      // 按钮重新可点，用户可重复触发。
+      const switched = await onSwitch(provider, { fromRoutingGuard: true });
+      if (switched !== true) {
+        // 路由已关但切换失败 — 当前 provider 需要路由却已失去路由，告知用户恢复
+        toast.error(
+          t("notifications.routingDisabledButSwitchFailed", {
+            defaultValue:
+              "本地路由已关闭，但切换失败。当前供应商需要本地路由才能使用，请手动开启路由或重试切换",
+          }),
+          { id: "switch-provider-error", duration: 6000 },
+        );
+        return;
+      }
+      toast.success(
+        appId === "codex"
+          ? t("notifications.routingAutoDisabledRestart", {
+              defaultValue: "当前应用本地路由已自动关闭，请重启客户端以生效",
+            })
+          : t("notifications.routingAutoDisabled", {
+              defaultValue: "当前应用本地路由已自动关闭",
+            }),
+        { closeButton: true, duration: 5000 },
+      );
+    } finally {
+      setRoutingSwitchInFlight(false);
+    }
+  };
+
+  // 切换 guard：decideSwitchAction 分流为直接切 / 弹确认 / 静默切。claude-desktop
+  // 排除：其 proxy 模式依赖代理服务运行，非 per-app takeover（后端仅 claude/codex/
+  // gemini）；其徽章与 switchProvider 既有 toast 不依赖 takeover，不受此排除影响。
+  const handleSwitchWithGuard = async (provider: Provider) => {
+    if (routingSwitchInFlight || setProxyTakeover.isPending) return;
+
+    if (appId === "claude-desktop") {
+      onSwitch(provider);
+      return;
+    }
+
+    const requirement = getProxyRequirement(provider, appId);
+    // 官方判定只认显式 category === "official"，不用空字段启发式：base_url/key 缺失
+    // 区分不了「官方直连」和「自定义但还没填完」，封号保护这类高代价决策不能建立在
+    // 这种脆弱信号上（与执行层 useProviderActions 的硬阻断判定保持一致）。
+    const action = decideSwitchAction({
+      needsRouting: requirement.required,
+      isProxyTakeover,
+      isOfficial: provider.category === "official",
+      autoEnable: settings?.autoEnableForNeedsRouting ?? false,
+      autoDisable: settings?.autoDisableForNoRouting ?? false,
+    });
+
+    switch (action) {
+      case "confirmEnable":
+        setPendingSwitchProvider(provider);
+        setShowRoutingConfirm("enable");
+        return;
+      case "confirmDisable":
+        setPendingSwitchProvider(provider);
+        setShowRoutingConfirm("disable");
+        return;
+      case "directEnable":
+        await toggleTakeoverThenSwitch(provider, true);
+        return;
+      case "directDisable":
+        await toggleTakeoverThenSwitch(provider, false);
+        return;
+      case "direct":
+        onSwitch(provider);
+    }
+  };
+
+  // ConfirmDialog 通过 onConfirm 回传 checkbox 勾选值（rememberRouting）；不再
+  // 维护单独的本地受控状态——避免 dialog 与父级各持一份导致漂移。
+  const handleRoutingConfirm = async (rememberRouting: boolean) => {
+    const direction = showRoutingConfirm;
+    const provider = pendingSwitchProvider;
+    setShowRoutingConfirm(null);
+    setPendingSwitchProvider(null);
+    if (!direction || !provider) return;
+
+    if (rememberRouting) {
+      try {
+        await persistRoutingPreference(direction);
+      } catch (error) {
+        console.error("Failed to persist routing preference:", error);
+      }
+    }
+
+    await toggleTakeoverThenSwitch(provider, direction === "enable");
+  };
+
+  const handleRoutingCancel = () => {
+    setShowRoutingConfirm(null);
+    setPendingSwitchProvider(null);
+  };
 
   // Import current live config as default provider
   const queryClient = useQueryClient();
@@ -404,7 +598,7 @@ export function ProviderList({
                 isInConfig={isProviderInConfig(provider.id)}
                 isOmo={isOmo}
                 isOmoSlim={isOmoSlim}
-                onSwitch={onSwitch}
+                onSwitch={handleSwitchWithGuard}
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onRemoveFromConfig={onRemoveFromConfig}
@@ -418,6 +612,9 @@ export function ProviderList({
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
+                isRoutingSwitchPending={
+                  routingSwitchInFlight || setProxyTakeover.isPending
+                }
                 isAutoFailoverEnabled={isFailoverModeActive}
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
@@ -532,6 +729,51 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
+
+      <ConfirmDialog
+        isOpen={showRoutingConfirm !== null}
+        variant={showRoutingConfirm === "disable" ? "destructive" : "info"}
+        title={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routingDisable.title", {
+                defaultValue: "关闭本地路由并切换？",
+              })
+            : t("confirm.routingEnable.title", {
+                defaultValue: "开启本地路由并启用？",
+              })
+        }
+        message={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routingDisable.message", {
+                defaultValue:
+                  "该供应商为官方直连，不能在本地路由接管下使用（可能导致账号被封禁）。\n将关闭当前应用的本地路由，然后切换到该供应商。",
+              })
+            : t("confirm.routingEnable.message", {
+                defaultValue:
+                  "该供应商需要本地路由才能正常工作。\n将开启当前应用的本地路由，然后启用该供应商。",
+              })
+        }
+        confirmText={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routingDisable.confirm", {
+                defaultValue: "关闭路由并切换",
+              })
+            : t("confirm.routingEnable.confirm", {
+                defaultValue: "开启路由并启用",
+              })
+        }
+        checkboxLabel={
+          showRoutingConfirm === "disable"
+            ? t("confirm.routing.rememberDisable", {
+                defaultValue: "以后都自动关闭本地路由，不再询问",
+              })
+            : t("confirm.routing.rememberEnable", {
+                defaultValue: "以后都自动开启本地路由，不再询问",
+              })
+        }
+        onConfirm={(remember) => void handleRoutingConfirm(remember)}
+        onCancel={handleRoutingCancel}
+      />
     </div>
   );
 }
@@ -557,6 +799,7 @@ interface SortableProviderCardProps {
   isTesting: boolean;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
+  isRoutingSwitchPending: boolean;
   isAutoFailoverEnabled: boolean;
   failoverPriority?: number;
   isInFailoverQueue: boolean;
@@ -588,6 +831,7 @@ function SortableProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover,
+  isRoutingSwitchPending,
   isAutoFailoverEnabled,
   failoverPriority,
   isInFailoverQueue,
@@ -635,6 +879,7 @@ function SortableProviderCard({
         isTesting={isTesting}
         isProxyRunning={isProxyRunning}
         isProxyTakeover={isProxyTakeover}
+        isRoutingSwitchPending={isRoutingSwitchPending}
         dragHandleProps={{
           attributes,
           listeners,

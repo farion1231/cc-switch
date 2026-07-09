@@ -149,9 +149,17 @@ export function useProviderActions(
     [updateProviderMutation],
   );
 
-  // 切换供应商
+  // 切换供应商。返回是否切换成功，供路由 guard 决定是否开接管（切换失败绝不开，
+  // 否则仍停留的官方 provider 走代理会被封号）。
+  // opts.fromRoutingGuard: guard 已显式处理路由意图（弹窗确认 + await per-app
+  // set_takeover_for_app），故跳过此处基于闭包内 isProxyTakeover/isProxyRunning 的
+  // 需路由提示与官方硬阻断——闭包值可能滞后一帧，guard 路径用它们会误触发。其它
+  // 调用方不传该参数，硬阻断兜底不变。
   const switchProvider = useCallback(
-    async (provider: Provider) => {
+    async (
+      provider: Provider,
+      opts?: { fromRoutingGuard?: boolean },
+    ): Promise<boolean> => {
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
@@ -168,7 +176,11 @@ export function useProviderActions(
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
-      if (!isProxyRunning && provider.category !== "official") {
+      if (
+        !opts?.fromRoutingGuard &&
+        !isProxyRunning &&
+        provider.category !== "official"
+      ) {
         if (isCopilotProvider) {
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
@@ -218,8 +230,15 @@ export function useProviderActions(
         );
       }
 
-      // Block official providers when proxy takeover is active
-      if (isProxyTakeover && provider.category === "official") {
+      // Block official providers when proxy takeover is active.
+      // Skipped on the routing-guard path: it has already disabled takeover for
+      // this app and obtained explicit confirmation, so this backstop (reading a
+      // possibly-stale closure value) would otherwise false-trigger.
+      if (
+        !opts?.fromRoutingGuard &&
+        isProxyTakeover &&
+        provider.category === "official"
+      ) {
         toast.error(
           t("notifications.officialBlockedByProxy", {
             defaultValue:
@@ -227,7 +246,7 @@ export function useProviderActions(
           }),
           { duration: 6000 },
         );
-        return;
+        return false;
       }
 
       try {
@@ -245,8 +264,8 @@ export function useProviderActions(
           );
         }
 
-        // 若已弹过 proxyRequired 警告则不再弹 success
-        if (!proxyRequiredReason) {
+        // guard 路径由调用方统一弹合并 toast；proxyRequired 警告已弹过也不再重复
+        if (!opts?.fromRoutingGuard && !proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
           if (activeApp === "codex") {
@@ -269,8 +288,9 @@ export function useProviderActions(
             closeButton: true,
           });
         }
+        return true;
       } catch {
-        // 错误提示由 mutation 处理
+        return false;
       }
     },
     [

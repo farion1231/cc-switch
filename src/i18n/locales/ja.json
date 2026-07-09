@@ -110,7 +110,6 @@
     "currentlyUsing": "現在使用中",
     "enable": "有効化",
     "inUse": "使用中",
-    "blockedByProxyHint": "プロキシ引き継ぎモードでは公式プロバイダーに切り替えできません",
     "editProvider": "プロバイダーを編集",
     "editProviderHint": "保存すると現在のプロバイダーにすぐ反映されます。",
     "deleteProvider": "プロバイダーを削除",
@@ -173,21 +172,19 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
-    }
+    },
+    "needsRouting": "ルーティングが必要"
   },
   "claudeCode": {
-    "needsRouting": "ルーティングが必要",
     "noRoutingSupport": "ルーティング非対応"
   },
   "codex": {
-    "needsRouting": "ルーティングが必要",
     "noRoutingSupport": "ルーティング非対応"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop の公式プロバイダーは内蔵の 1P サインインを使用します。API キーやエンドポイントの設定は不要です。",
     "mode": "モデル処理方式",
     "modeDirect": "直結",
-    "modeProxy": "ルーティング必要",
     "modelMappingToggle": "モデルマッピングが必要",
     "modelMappingOffHint": "プロバイダーが Claude Desktop の三つの役割 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）を受け付ける場合のみ直結できます。それ以外のモデル名（claude-3-5-sonnet-… などの旧式 ID を含む）はこのスイッチを有効にしてマッピングを使ってください。",
     "modelMappingOnHint": "Claude Desktop は claude-sonnet-* / claude-opus-* / claude-haiku-* の三つの役割 ID のみ受け付けます。有効にすると CC Switch がこの三役割をプロバイダーの実モデルにマッピングし、使用中はローカルルーティングを起動したままにします。",
@@ -265,7 +262,15 @@
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "routingEnableFailed": "{{name}} に切り替えましたが、ローカルルーティングの有効化に失敗しました。プロキシパネルから手動で有効にしてください",
+    "routingDisableFailed": "ローカルルーティングの無効化に失敗しました。切り替えをキャンセルしました",
+    "proxyReasonGeminiNative": "Gemini Native インターフェース形式を使用",
+    "routingAutoEnabled": "{{name}} に切り替え、ローカルルーティングを自動で有効にしました",
+    "routingAutoEnabledRestart": "{{name}} に切り替え、ローカルルーティングを自動で有効にしました。クライアントを再起動してください",
+    "routingAutoDisabled": "現在のアプリのローカルルーティングが自動で無効になりました",
+    "routingAutoDisabledRestart": "現在のアプリのローカルルーティングが自動で無効になりました。クライアントを再起動してください",
+    "routingDisabledButSwitchFailed": "ローカルルーティングは無効になりましたが、切り替えに失敗しました。現在のプロバイダーはローカルルーティングが必要です。手動でルーティングを有効にするか、切り替えを再試行してください"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -313,6 +318,20 @@
       "title": "共通設定について",
       "message": "「共通設定スニペット」を使うと、プラグインや環境変数などの設定を異なるプロバイダー間で共有でき、切り替え時に失われることがありません。\n\n使い方：\n① プロバイダーを編集 →「共通設定を編集」→「編集内容から抽出」\n② 新規プロバイダー作成時に「共通設定を適用」をチェック（デフォルトでオン）\n\n新しいプラグインや Hook をインストールした場合は、共通設定を再抽出してください。",
       "confirm": "わかりました"
+    },
+    "routingEnable": {
+      "title": "ローカルルーティングを有効にして切り替えますか？",
+      "message": "このプロバイダーはローカルルーティングが必要です。\n現在のアプリのローカルルーティングを有効にしてから、このプロバイダーに切り替えます。",
+      "confirm": "ルーティングを有効にして切り替え"
+    },
+    "routingDisable": {
+      "title": "ローカルルーティングを無効にして切り替えますか？",
+      "message": "これは公式の直接接続プロバイダーで、ローカルルーティング中は使用できません（アカウントが停止される可能性があります）。\n現在のアプリのローカルルーティングを無効にしてから、このプロバイダーに切り替えます。",
+      "confirm": "ルーティングを無効にして切り替え"
+    },
+    "routing": {
+      "rememberEnable": "今後はルーティングを自動で有効にする",
+      "rememberDisable": "今後はルーティングを自動で無効にする"
     }
   },
   "settings": {
@@ -342,7 +361,11 @@
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
         "running": "実行中",
-        "stopped": "停止中"
+        "stopped": "停止中",
+        "autoEnableForNeedsRouting": "ルーティングが必要なプロバイダーへの切り替え時に自動でルーティングを有効化",
+        "autoEnableForNeedsRoutingDescription": "「ルーティングが必要」なプロバイダーを有効にする際、ローカルルーティングを自動的にオンにして切り替え、毎回の確認を省略します。",
+        "autoDisableForNoRouting": "公式プロバイダーへの切り替え時に自動でルーティングを無効化",
+        "autoDisableForNoRoutingDescription": "有効にすると、ルーティングが有効な状態で公式プロバイダーへ切り替えるとき、確認ダイアログなしで自動的にローカルルーティングを無効化してから切り替えます。"
       },
       "modelTest": {
         "title": "モデルテスト設定",

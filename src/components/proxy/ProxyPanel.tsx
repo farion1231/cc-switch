@@ -9,6 +9,8 @@ import {
   Loader2,
   Zap,
   Power,
+  Route,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -34,6 +36,10 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
   onEnableLocalProxyChange: (checked: boolean) => void;
+  autoEnableForNeedsRouting: boolean;
+  onAutoEnableForNeedsRoutingChange: (checked: boolean) => void;
+  autoDisableForNoRouting: boolean;
+  onAutoDisableForNoRoutingChange: (checked: boolean) => void;
   onToggleProxy: (checked: boolean) => Promise<void>;
   isProxyPending: boolean;
 }
@@ -41,6 +47,10 @@ interface ProxyPanelProps {
 export function ProxyPanel({
   enableLocalProxy,
   onEnableLocalProxyChange,
+  autoEnableForNeedsRouting,
+  onAutoEnableForNeedsRoutingChange,
+  autoDisableForNoRouting,
+  onAutoDisableForNoRoutingChange,
   onToggleProxy,
   isProxyPending,
 }: ProxyPanelProps) {
@@ -228,6 +238,40 @@ export function ProxyPanel({
           description={t("settings.advanced.proxy.enableFeatureDescription")}
           checked={enableLocalProxy}
           onCheckedChange={onEnableLocalProxyChange}
+        />
+
+        {/* [1a] Auto-enable routing when switching to a routing-required provider */}
+        <ToggleRow
+          icon={<Route className="h-4 w-4 text-sky-500" />}
+          title={t("settings.advanced.proxy.autoEnableForNeedsRouting", {
+            defaultValue: "切换到需路由供应商时自动开启路由",
+          })}
+          description={t(
+            "settings.advanced.proxy.autoEnableForNeedsRoutingDescription",
+            {
+              defaultValue:
+                "启用「需要路由」的供应商时，自动开启本地路由并切换，不再每次弹窗确认。",
+            },
+          )}
+          checked={autoEnableForNeedsRouting}
+          onCheckedChange={onAutoEnableForNeedsRoutingChange}
+        />
+
+        {/* [1b] Auto-disable routing when switching to an official provider */}
+        <ToggleRow
+          icon={<ShieldAlert className="h-4 w-4 text-amber-500" />}
+          title={t("settings.advanced.proxy.autoDisableForNoRouting", {
+            defaultValue: "切换到官方供应商时自动关闭路由",
+          })}
+          description={t(
+            "settings.advanced.proxy.autoDisableForNoRoutingDescription",
+            {
+              defaultValue:
+                "开启后，路由模式下切换到官方供应商时自动关闭本地路由再切换，不再弹窗确认。",
+            },
+          )}
+          checked={autoDisableForNoRouting}
+          onCheckedChange={onAutoDisableForNoRoutingChange}
         />
 
         {/* [2] Proxy service toggle — always visible */}

@@ -110,7 +110,6 @@
     "currentlyUsing": "当前使用",
     "enable": "启用",
     "inUse": "使用中",
-    "blockedByProxyHint": "代理接管模式下不可切换到官方供应商",
     "editProvider": "编辑供应商",
     "editProviderHint": "更新配置后将立即应用到当前供应商。",
     "deleteProvider": "删除供应商",
@@ -173,21 +172,19 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
-    }
+    },
+    "needsRouting": "需要路由"
   },
   "claudeCode": {
-    "needsRouting": "需要路由",
     "noRoutingSupport": "不支持路由"
   },
   "codex": {
-    "needsRouting": "需要路由",
     "noRoutingSupport": "不支持路由"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
     "mode": "模型处理方式",
     "modeDirect": "直连",
-    "modeProxy": "需要路由",
     "modelMappingToggle": "需要模型映射",
     "modelMappingOffHint": "仅当供应商直接接受 Claude Desktop 可识别的三档角色 ID（claude-sonnet-* / claude-opus-* / claude-haiku-*）时才适用直连；其他模型名（含 claude-3-5-sonnet-… 等旧式 ID）请打开此开关走映射。",
     "modelMappingOnHint": "Claude Desktop 只接受 claude-sonnet-* / claude-opus-* / claude-haiku-* 三档角色 ID。开启后 CC Switch 会把这三档映射到供应商的实际模型，并在使用期间保持本地路由开启。",
@@ -265,7 +262,15 @@
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "routingEnableFailed": "已切换到 {{name}}，但开启本地路由失败，请在代理面板手动开启",
+    "routingDisableFailed": "关闭本地路由失败，已取消切换",
+    "proxyReasonGeminiNative": "使用 Gemini Native 接口格式",
+    "routingAutoEnabled": "已切换到 {{name}} 并自动开启本地路由",
+    "routingAutoEnabledRestart": "已切换到 {{name}} 并自动开启本地路由，请重启客户端以生效",
+    "routingAutoDisabled": "当前应用本地路由已自动关闭",
+    "routingAutoDisabledRestart": "当前应用本地路由已自动关闭，请重启客户端以生效",
+    "routingDisabledButSwitchFailed": "本地路由已关闭，但切换失败。当前供应商需要本地路由才能使用，请手动开启路由或重试切换"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -313,6 +318,20 @@
       "title": "关于通用配置",
       "message": "「通用配置片段」可以在不同供应商之间共享插件、环境变量等配置，避免切换供应商时丢失这些设置。\n\n使用方法：\n① 编辑供应商时点击「编辑通用配置」→「从编辑内容提取」\n② 新建供应商时勾选「应用通用配置」（默认已勾选）\n\n如果您新安装了插件或 Hook，请重新提取一次通用配置。",
       "confirm": "我知道了"
+    },
+    "routingEnable": {
+      "title": "开启本地路由并启用？",
+      "message": "该供应商需要本地路由才能正常工作。\n将开启当前应用的本地路由，然后启用该供应商。",
+      "confirm": "开启路由并启用"
+    },
+    "routingDisable": {
+      "title": "关闭本地路由并切换？",
+      "message": "该供应商为官方直连，不能在本地路由接管下使用（可能导致账号被封禁）。\n将关闭当前应用的本地路由，然后切换到该供应商。",
+      "confirm": "关闭路由并切换"
+    },
+    "routing": {
+      "rememberEnable": "以后都自动开启本地路由，不再询问",
+      "rememberDisable": "以后都自动关闭本地路由，不再询问"
     }
   },
   "settings": {
@@ -342,7 +361,11 @@
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
         "running": "运行中",
-        "stopped": "已停止"
+        "stopped": "已停止",
+        "autoEnableForNeedsRouting": "切换到需路由供应商时自动开启路由",
+        "autoEnableForNeedsRoutingDescription": "启用「需要路由」的供应商时，自动开启本地路由并切换，不再每次弹窗确认。",
+        "autoDisableForNoRouting": "切换到官方供应商时自动关闭路由",
+        "autoDisableForNoRoutingDescription": "开启后，路由模式下切换到官方供应商时自动关闭本地路由再切换，不再弹窗确认。"
       },
       "modelTest": {
         "title": "模型测试配置",
