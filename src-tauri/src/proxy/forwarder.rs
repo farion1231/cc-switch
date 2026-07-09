@@ -1142,9 +1142,7 @@ impl RequestForwarder {
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), (ProxyError, Option<String>)> {
         // 使用适配器提取 base_url
-        let mut base_url = adapter
-            .extract_base_url(provider)
-            .map_err(|e| (e, None))?;
+        let mut base_url = adapter.extract_base_url(provider).map_err(|e| (e, None))?;
 
         let is_full_url = provider
             .meta
