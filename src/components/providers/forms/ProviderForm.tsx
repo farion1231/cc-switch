@@ -616,6 +616,16 @@ function ProviderFormFull({
   const [localCodexImpersonateClaudeCode, setLocalCodexImpersonateClaudeCode] =
     useState<boolean>(initialData?.meta?.impersonateClaudeCode === true);
 
+  // Codex → Anthropic output ceiling override (empty string = use the 8192 default).
+  // Kept as a string so the numeric input can be cleared; parsed on save.
+  const [localCodexMaxOutputTokens, setLocalCodexMaxOutputTokens] =
+    useState<string>(
+      typeof initialData?.meta?.maxOutputTokens === "number" &&
+        initialData.meta.maxOutputTokens > 0
+        ? String(initialData.meta.maxOutputTokens)
+        : "",
+    );
+
   const { configError: codexConfigError, debouncedValidate } =
     useCodexTomlValidation();
 
@@ -1533,6 +1543,15 @@ function ProviderFormFull({
         localCodexImpersonateClaudeCode
           ? true
           : undefined,
+      // Persist only for codex+anthropic when a positive value was entered
+      maxOutputTokens:
+        appId === "codex" &&
+        category !== "official" &&
+        localCodexApiFormat === "anthropic" &&
+        localCodexMaxOutputTokens.trim() !== "" &&
+        Number(localCodexMaxOutputTokens) > 0
+          ? Number(localCodexMaxOutputTokens)
+          : undefined,
       isFullUrl:
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
@@ -2175,6 +2194,8 @@ function ProviderFormFull({
               onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
               impersonateClaudeCode={localCodexImpersonateClaudeCode}
               onImpersonateClaudeCodeChange={setLocalCodexImpersonateClaudeCode}
+              maxOutputTokens={localCodexMaxOutputTokens}
+              onMaxOutputTokensChange={setLocalCodexMaxOutputTokens}
               codexChatReasoning={codexChatReasoning}
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}

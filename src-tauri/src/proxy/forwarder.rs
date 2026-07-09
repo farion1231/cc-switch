@@ -1403,6 +1403,22 @@ impl RequestForwarder {
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            // Per-provider output ceiling override. Codex does not forward its
+            // `model_max_output_tokens` in the request body, so honor the value
+            // configured on the provider here — it takes precedence over any
+            // request-supplied `max_output_tokens` and over the default below.
+            // Injecting it into the body (rather than overriding after transform)
+            // lets the thinking-budget clamp size its headroom against the real
+            // ceiling too. Kept per-provider to avoid a global large default that
+            // would 400 on low-output-ceiling gateways.
+            if let Some(max_out) = provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.max_output_tokens)
+                .filter(|v| *v > 0)
+            {
+                mapped_body["max_output_tokens"] = Value::from(max_out);
+            }
             // Anthropic requires max_tokens; fall back to this default only when the
             // Codex request omits max_output_tokens (rare — Codex normally sends it).
             // Kept conservative so a low-output-ceiling model or relay does not hard-400

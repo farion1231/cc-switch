@@ -80,6 +80,9 @@ interface CodexFormFieldsProps {
   // Anthropic path: whether to emulate the Claude Code client
   impersonateClaudeCode: boolean;
   onImpersonateClaudeCodeChange: (value: boolean) => void;
+  // Anthropic path: output ceiling override (empty string = use default). Digits only.
+  maxOutputTokens: string;
+  onMaxOutputTokensChange: (value: string) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
 
@@ -169,6 +172,8 @@ export function CodexFormFields({
   onAnthropicAuthFieldChange,
   impersonateClaudeCode,
   onImpersonateClaudeCodeChange,
+  maxOutputTokens,
+  onMaxOutputTokensChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
   catalogModels = [],
@@ -207,7 +212,8 @@ export function CodexFormFields({
     catalogModels.length > 0 ||
     apiFormat === "openai_responses" ||
     supportsThinking ||
-    supportsEffort;
+    supportsEffort ||
+    !!maxOutputTokens;
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -540,6 +546,37 @@ export function CodexFormFields({
                         defaultValue: "模拟 Claude Code 客户端",
                       })}
                     />
+                  </div>
+                )}
+
+                {isAnthropicFormat && (
+                  <div className="space-y-1.5 border-t border-border-default pt-3">
+                    <FormLabel htmlFor="codex-anthropic-max-output-tokens">
+                      {t("codexConfig.maxOutputTokensLabel", {
+                        defaultValue: "最大输出 tokens",
+                      })}
+                    </FormLabel>
+                    <Input
+                      id="codex-anthropic-max-output-tokens"
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={maxOutputTokens}
+                      onChange={(event) =>
+                        onMaxOutputTokensChange(
+                          event.target.value.replace(/[^\d]/g, ""),
+                        )
+                      }
+                      placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
+                        defaultValue: "留空则使用默认 8192",
+                      })}
+                    />
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.maxOutputTokensHint", {
+                        defaultValue:
+                          "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                      })}
+                    </p>
                   </div>
                 )}
               </div>
