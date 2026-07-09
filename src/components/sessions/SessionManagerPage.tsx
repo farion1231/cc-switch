@@ -1621,7 +1621,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                         </div>
                         <div
                           ref={scrollContainerRef}
-                          className="flex-1 overflow-y-auto px-4 pb-4 min-w-0"
+                          className="scrollbar-visible flex-1 overflow-y-auto px-4 pb-4 pr-2 min-w-0"
                         >
                           {isLoadingMessages ? (
                             <div className="flex items-center justify-center py-12">
