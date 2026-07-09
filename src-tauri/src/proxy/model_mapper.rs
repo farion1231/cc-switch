@@ -12,6 +12,7 @@ pub struct ModelMapping {
     pub sonnet_model: Option<String>,
     pub opus_model: Option<String>,
     pub fable_model: Option<String>,
+    pub subagent_model: Option<String>,
     pub default_model: Option<String>,
 }
 
@@ -41,6 +42,11 @@ impl ModelMapping {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(String::from),
+            subagent_model: env
+                .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from),
             default_model: env
                 .and_then(|e| e.get("ANTHROPIC_MODEL"))
                 .and_then(|v| v.as_str())
@@ -55,6 +61,7 @@ impl ModelMapping {
             || self.sonnet_model.is_some()
             || self.opus_model.is_some()
             || self.fable_model.is_some()
+            || self.subagent_model.is_some()
             || self.default_model.is_some()
     }
 
@@ -86,6 +93,13 @@ impl ModelMapping {
         if model_lower.contains("sonnet") {
             if let Some(ref m) = self.sonnet_model {
                 return m.clone();
+            }
+        }
+
+        if let Some(ref m) = self.subagent_model {
+            if strip_one_m_suffix_for_upstream(original_model) == strip_one_m_suffix_for_upstream(m)
+            {
+                return original_model.to_string();
             }
         }
 
@@ -325,6 +339,42 @@ mod tests {
         let (result, _, mapped) = apply_model_mapping(body, &provider);
         assert_eq!(result["model"], "default-model");
         assert_eq!(mapped, Some("default-model".to_string()));
+    }
+
+    #[test]
+    fn test_subagent_model_preserved_before_default_fallback() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "default-model",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini"
+            }
+        });
+
+        let body = json!({"model": "gpt-5.4-mini"});
+        let (result, original, mapped) = apply_model_mapping(body, &provider);
+
+        assert_eq!(result["model"], "gpt-5.4-mini");
+        assert_eq!(original, Some("gpt-5.4-mini".to_string()));
+        assert!(mapped.is_none());
+    }
+
+    #[test]
+    fn test_subagent_model_preserved_with_one_m_suffix_before_default_fallback() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "default-model",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini"
+            }
+        });
+
+        let body = json!({"model": "gpt-5.4-mini[1M]"});
+        let (result, original, mapped) = apply_model_mapping(body, &provider);
+
+        assert_eq!(result["model"], "gpt-5.4-mini[1M]");
+        assert_eq!(original, Some("gpt-5.4-mini[1M]".to_string()));
+        assert!(mapped.is_none());
     }
 
     #[test]

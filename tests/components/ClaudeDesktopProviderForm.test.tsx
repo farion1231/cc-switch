@@ -173,7 +173,7 @@ describe("ClaudeDesktopProviderForm", () => {
     // claude-old 迁移到 Sonnet；留空的 Opus / Fable / Haiku 回填为 Sonnet 的
     // 上游模型，保证落库四档齐全，子 agent 调用的各档始终可解析。
     expect(submitted.meta.claudeDesktopModelRoutes).toMatchObject({
-      "claude-sonnet-4-6": {
+      "claude-sonnet-5": {
         model: "upstream-old",
         labelOverride: "upstream-old",
       },
@@ -186,7 +186,7 @@ describe("ClaudeDesktopProviderForm", () => {
         "claude-fable-5",
         "claude-haiku-4-5",
         "claude-opus-4-8",
-        "claude-sonnet-4-6",
+        "claude-sonnet-5",
       ],
     );
   });
@@ -217,7 +217,7 @@ describe("ClaudeDesktopProviderForm", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const routes = onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes;
     // 留空的 Opus / Haiku 回填同一上游模型，1M 声明应与 Sonnet 一致。
-    expect(routes["claude-sonnet-4-6"]).toMatchObject({
+    expect(routes["claude-sonnet-5"]).toMatchObject({
       model: "deepseek-v4-pro",
       supports1m: true,
     });
@@ -259,8 +259,8 @@ describe("ClaudeDesktopProviderForm", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     const submitted = onSubmit.mock.calls[0][0];
     expect(submitted.meta.claudeDesktopModelRoutes).toMatchObject({
-      "claude-sonnet-4-6": {
-        model: "claude-sonnet-4-6",
+      "claude-sonnet-5": {
+        model: "claude-sonnet-5",
       },
     });
   });

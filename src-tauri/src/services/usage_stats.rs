@@ -2197,8 +2197,24 @@ fn strip_model_date_suffix(model_id: &str) -> Option<String> {
     }
 
     let (base, suffix) = model_id.rsplit_once('-')?;
-    (!base.is_empty() && suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_digit()))
-        .then(|| base.to_string())
+    if base.is_empty() || !suffix.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    // 8 位 YYYYMMDD（如 -20250615；OpenAI / Claude / 通义千问等）。
+    if suffix.len() == 8 {
+        return Some(base.to_string());
+    }
+    // 6 位 YYMMDD（如 -260628；火山方舟 doubao-seed-*、部分国产厂商）。
+    // 6 位比 8 位更易误伤非日期尾巴（如 -123456 的版本号），故额外校验
+    // 月 01-12、日 01-31 才剥离；剥不动时退回 None 由上层精确匹配兜底。
+    if suffix.len() == 6 {
+        let month: u32 = suffix[2..4].parse().unwrap_or(0);
+        let day: u32 = suffix[4..6].parse().unwrap_or(0);
+        if (1..=12).contains(&month) && (1..=31).contains(&day) {
+            return Some(base.to_string());
+        }
+    }
+    None
 }
 
 fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
@@ -3857,6 +3873,55 @@ mod tests {
             Some("模型")
         );
         assert_eq!(strip_model_date_suffix("abc🚀12345678"), None);
+    }
+
+    #[test]
+    fn test_strip_model_date_suffix_handles_six_digit_yymmdd() {
+        // 火山方舟 6 位 YYMMDD 后缀应被剥离（doubao 全系都用这种格式）。
+        assert_eq!(
+            strip_model_date_suffix("doubao-seed-2-1-pro-260628").as_deref(),
+            Some("doubao-seed-2-1-pro")
+        );
+        assert_eq!(
+            strip_model_date_suffix("doubao-seed-1-6-250615").as_deref(),
+            Some("doubao-seed-1-6")
+        );
+        // 8 位 YYYYMMDD 仍照旧剥离。
+        assert_eq!(
+            strip_model_date_suffix("claude-3-5-sonnet-20241022").as_deref(),
+            Some("claude-3-5-sonnet")
+        );
+        // 月/日非法的 6 位尾巴（版本号等）不剥离，避免误伤。
+        assert_eq!(strip_model_date_suffix("foo-bar-123456"), None); // 月=34
+        assert_eq!(strip_model_date_suffix("widget-209900"), None); // 月=99
+        assert_eq!(strip_model_date_suffix("gizmo-251200"), None); // 日=00
+    }
+
+    #[test]
+    fn test_pricing_resolves_volcengine_dated_model_to_bare_seed_row() -> Result<(), AppError> {
+        // 回归：火山真实用量带 6 位日期后缀（doubao-seed-2-1-pro-260628），
+        // 必须能归一化命中定价表里的裸名 seed 行（doubao-seed-2-1-pro），否则成本显示 $0。
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES ('doubao-seed-2-1-pro', 'Doubao Seed 2.1 Pro', '0.84', '4.2', '0.17', '0')",
+            [],
+        )?;
+
+        let row = find_model_pricing_row(&conn, "doubao-seed-2-1-pro-260628")?;
+        assert!(
+            row.is_some(),
+            "带日期的火山模型应通过 6 位日期剥离命中裸名定价行"
+        );
+        let (input, output, ..) = row.unwrap();
+        assert_eq!(input, "0.84");
+        assert_eq!(output, "4.2");
+
+        Ok(())
     }
 
     #[test]

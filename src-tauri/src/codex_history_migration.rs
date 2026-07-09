@@ -6,6 +6,7 @@
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
 };
+use crate::codex_state_db::codex_state_db_paths;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
 use crate::error::AppError;
@@ -28,7 +29,6 @@ const MIGRATION_NAME: &str = "codex-history-provider-migration-v1";
 const OFFICIAL_UNIFY_MIGRATION_NAME: &str = "codex-official-history-unify-v1";
 /// 还原操作自身的备份目录（与迁移备份分开，保持迁移账本目录纯净）。
 const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str = "codex-official-history-unify-restore-v1";
-const CODEX_STATE_DB_FILENAME: &str = "state_5.sqlite";
 /// SQLite 变量上限保守值，IN 列表按此分块。
 const STATE_DB_ID_CHUNK: usize = 500;
 
@@ -1116,55 +1116,6 @@ fn migrate_codex_state_dbs(
     Ok(migrated)
 }
 
-fn codex_state_db_paths(codex_dir: &Path, config_text: &str) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    push_unique_path(&mut paths, codex_dir.join(CODEX_STATE_DB_FILENAME));
-    // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
-    if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
-        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
-    } else if let Some(sqlite_home) = sqlite_home_from_env() {
-        push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
-    }
-    paths
-}
-
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.contains(&path) {
-        paths.push(path);
-    }
-}
-
-fn sqlite_home_from_codex_config(config_text: &str) -> Option<PathBuf> {
-    let doc = config_text.parse::<DocumentMut>().ok()?;
-    let raw = doc.get("sqlite_home")?.as_str()?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    Some(resolve_user_path(raw))
-}
-
-fn sqlite_home_from_env() -> Option<PathBuf> {
-    let raw = std::env::var("CODEX_SQLITE_HOME").ok()?;
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    Some(resolve_user_path(raw))
-}
-
-fn resolve_user_path(raw: &str) -> PathBuf {
-    if raw == "~" {
-        return crate::config::get_home_dir();
-    }
-    if let Some(rest) = raw.strip_prefix("~/") {
-        return crate::config::get_home_dir().join(rest);
-    }
-    if let Some(rest) = raw.strip_prefix("~\\") {
-        return crate::config::get_home_dir().join(rest);
-    }
-    PathBuf::from(raw)
-}
-
 fn migrate_codex_state_db_provider_bucket(
     db_path: &Path,
     codex_dir: &Path,
@@ -1329,6 +1280,7 @@ fn relative_backup_path(path: &Path, root: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
     use crate::provider::Provider;
     use serial_test::serial;
     use std::ffi::OsString;

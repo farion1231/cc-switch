@@ -40,9 +40,11 @@ import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { useApiKeyLink } from "./hooks/useApiKeyLink";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
   ClaudeApiFormat,
@@ -387,6 +389,21 @@ export function ClaudeDesktopProviderForm({
     activeProviderType === "github_copilot" ||
     activeProviderType === "codex_oauth" ||
     activeProviderType === "xai_oauth";
+
+  // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
+  const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
+  const {
+    shouldShowApiKeyLink,
+    websiteUrl: apiKeyLinkWebsiteUrl,
+    isPartner: apiKeyLinkIsPartner,
+    partnerPromotionKey: apiKeyLinkPromotionKey,
+  } = useApiKeyLink({
+    appId: "claude-desktop",
+    category: apiKeyLinkCategory,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
 
   const applyDesktopPreset = (preset: ClaudeDesktopProviderPreset) => {
     form.setValue("name", preset.nameKey ? t(preset.nameKey) : preset.name);
@@ -782,15 +799,15 @@ export function ClaudeDesktopProviderForm({
                 )}
               </div>
             ) : (
-              <div className="space-y-1">
-                <Label>{"API Key"}</Label>
-                <Input
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  type="password"
-                  placeholder="sk-..."
-                />
-              </div>
+              <ApiKeySection
+                value={apiKey}
+                onChange={setApiKey}
+                category={apiKeyLinkCategory}
+                shouldShowLink={shouldShowApiKeyLink}
+                websiteUrl={apiKeyLinkWebsiteUrl}
+                isPartner={apiKeyLinkIsPartner}
+                partnerPromotionKey={apiKeyLinkPromotionKey}
+              />
             )}
 
             <EndpointField
