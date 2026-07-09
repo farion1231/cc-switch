@@ -273,6 +273,8 @@ mod tests {
             coding_plan_provider: None,
             access_key_id: Some("ak-test".to_string()),
             secret_access_key: Some("sk-test".to_string()),
+            team_organization_id: None,
+            team_project_id: None,
         }
     }
 

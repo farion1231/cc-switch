@@ -364,18 +364,25 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
         Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
+    Ok(zhipu_quota_from_body(&body))
+}
+
+/// 解析智谱额度响应体（个人版与团队版共用同一 shape）。
+/// 仅在 HTTP 成功、body 已完整读取并解析为 JSON 后调用——本函数不做任何网络 IO，
+/// 故无瞬时失败通道，确定性失败直接落进 `Ok(success:false)`。
+fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
     // 检查业务级别错误
     if body.get("success").and_then(|v| v.as_bool()) == Some(false) {
         let msg = body
             .get("msg")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return Ok(make_error(format!("API error: {msg}")));
+        return make_error(format!("API error: {msg}"));
     }
 
     let data = match body.get("data") {
         Some(d) => d,
-        None => return Ok(make_error("Missing 'data' field in response".to_string())),
+        None => return make_error("Missing 'data' field in response".to_string()),
     };
 
     let tiers = parse_zhipu_token_tiers(data);
@@ -386,7 +393,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    Ok(SubscriptionQuota {
+    SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: level,
@@ -395,7 +402,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota,
         extra_usage: None,
         error: None,
         queried_at: Some(now_millis()),
-    })
+    }
 }
 
 // ── MiniMax ─────────────────────────────────────────────────
@@ -1178,15 +1185,115 @@ fn coding_plan_not_found(error: &str) -> SubscriptionQuota {
     }
 }
 
+// ── 智谱团队套餐（Team Plan）──────────────────────────────────
+//
+// 与个人版的差异仅在请求构造（参考 token-monitor/src/shared/zaiTeamLimits.js）：
+// - 固定走国内站 open.bigmodel.cn（团队版仅存在于国内站，z.ai 国际站无 team 档）
+// - 同一 quota 路径加 `?type=2`
+// - 额外请求头 bigmodel-organization / bigmodel-project（两者 + api_key 缺一不可）
+// 响应 shape 与个人版完全一致 → 复用 zhipu_quota_from_body / parse_zhipu_token_tiers。
+const ZHIPU_TEAM_QUOTA_URL: &str = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
+
+async fn query_zhipu_team(
+    api_key: &str,
+    organization_id: &str,
+    project_id: &str,
+) -> Result<SubscriptionQuota, String> {
+    query_zhipu_team_at(ZHIPU_TEAM_QUOTA_URL, api_key, organization_id, project_id).await
+}
+
+/// 团队版额度查询。`quota_url_base` 为不含 query 的 quota 端点；团队版与个人版同路径，
+/// 靠 `?type=2` 区分（在此拼上）。拆出 url 参数便于用本地 server 测试请求形状。
+async fn query_zhipu_team_at(
+    quota_url_base: &str,
+    api_key: &str,
+    organization_id: &str,
+    project_id: &str,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+    let url = format!("{quota_url_base}?type=2");
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", api_key) // 与个人版一致：智谱不加 Bearer 前缀
+        .header("bigmodel-organization", organization_id)
+        .header("bigmodel-project", project_id)
+        .header("Content-Type", "application/json")
+        .header("Accept-Language", "en-US,en")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        });
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    Ok(zhipu_quota_from_body(&body))
+}
+
 /// 查询编程套餐额度。瞬时传输失败（网络/超时/读体中断）返回 `Err`（前端 reject →
 /// retry + 保留上次成功值）；确定性失败（凭据缺失/未知域名/鉴权/非 2xx/业务错误）
 /// 返回 `Ok(success:false)` 立即透出文案。判定按 reqwest 错误种类在折叠点完成。
+///
+/// `coding_plan_provider` 显式标识用于无法靠 base_url 区分的供应商（当前为智谱团队版
+/// `zhipu_team`——其 base_url 与个人版智谱相同）；其余情况走 `detect_provider`。
 pub async fn get_coding_plan_quota(
     base_url: &str,
     api_key: &str,
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,
+    coding_plan_provider: Option<&str>,
+    team_organization_id: Option<&str>,
+    team_project_id: Option<&str>,
 ) -> Result<SubscriptionQuota, String> {
+    // 智谱团队版：base_url 与个人版智谱（open.bigmodel.cn）相同，detect_provider 无法
+    // 区分，必须靠显式 coding_plan_provider == "zhipu_team" 路由。需 api_key + 组织 ID
+    // + 项目 ID 三者齐全，缺任一返回 NotFound 引导补全。
+    if coding_plan_provider
+        .map(|p| p.eq_ignore_ascii_case("zhipu_team"))
+        .unwrap_or(false)
+    {
+        let organization_id = team_organization_id.unwrap_or("").trim();
+        let project_id = team_project_id.unwrap_or("").trim();
+        if api_key.trim().is_empty() || organization_id.is_empty() || project_id.is_empty() {
+            return Ok(coding_plan_not_found(
+                "Zhipu team plan needs the API key + organization ID + project ID",
+            ));
+        }
+        return query_zhipu_team(api_key, organization_id, project_id).await;
+    }
+
     let provider = match detect_provider(base_url) {
         Some(p) => p,
         // 域名未命中已知套餐供应商（如第三方中转站）：给出明确错误而非静默失败
@@ -1231,9 +1338,9 @@ pub async fn get_coding_plan_quota(
 mod tests {
     use super::{
         parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_quota_base, TIER_FIVE_HOUR, TIER_MONTHLY,
-        TIER_WEEKLY_LIMIT,
+        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
+        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1897,9 +2004,16 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
 
-        let result =
-            get_coding_plan_quota(&format!("http://127.0.0.1:{port}/zenmux"), "k", None, None)
-                .await;
+        let result = get_coding_plan_quota(
+            &format!("http://127.0.0.1:{port}/zenmux"),
+            "k",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
         let err = result.expect_err("send 失败必须走 Err 通道（瞬时，前端 reject 后重试）");
         assert!(err.contains("Network error"), "err={err}");
     }
@@ -1909,7 +2023,7 @@ mod tests {
         ensure_no_proxy_for_loopback();
         let (base_url, handle) = spawn_once_server(None);
 
-        let result = get_coding_plan_quota(&base_url, "k", None, None).await;
+        let result = get_coding_plan_quota(&base_url, "k", None, None, None, None, None).await;
         let err = result.expect_err("响应前连接中断必须走 Err 通道（瞬时）");
         assert!(err.contains("Network error"), "err={err}");
         handle.join().expect("server thread");
@@ -1926,7 +2040,7 @@ mod tests {
                 .to_string(),
         ));
 
-        let result = get_coding_plan_quota(&base_url, "k", None, None).await;
+        let result = get_coding_plan_quota(&base_url, "k", None, None, None, None, None).await;
         let err = result.expect_err("读体中断必须走 Err 通道（瞬时，前端 reject 后重试）");
         assert!(err.contains("Failed to read response"), "err={err}");
         handle.join().expect("server thread");
@@ -1937,7 +2051,7 @@ mod tests {
         ensure_no_proxy_for_loopback();
         let (base_url, handle) = spawn_once_server(Some(http_response("401 Unauthorized", "{}")));
 
-        let quota = get_coding_plan_quota(&base_url, "k", None, None)
+        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
             .await
             .expect("鉴权失败是确定性失败，必须保持 Ok(success:false) 展示文案");
         assert!(!quota.success);
@@ -1953,7 +2067,7 @@ mod tests {
         let (base_url, handle) =
             spawn_once_server(Some(http_response("429 Too Many Requests", "slow down")));
 
-        let quota = get_coding_plan_quota(&base_url, "k", None, None)
+        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
             .await
             .expect("非 2xx 保持 Ok(success:false)，状态码留在文案里交前端分类");
         assert!(!quota.success);
@@ -1970,12 +2084,154 @@ mod tests {
         // 完整读到响应体但不是 JSON → is_decode → 确定性解析失败
         let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", "not-json")));
 
-        let quota = get_coding_plan_quota(&base_url, "k", None, None)
+        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
             .await
             .expect("完整但非法的响应体是确定性失败，必须保持 Ok(success:false)");
         assert!(!quota.success);
         let err = quota.error.expect("应有错误文案");
         assert!(err.contains("Failed to parse response"), "err={err}");
         handle.join().expect("server thread");
+    }
+
+    // ── 智谱团队套餐（Team Plan）──
+
+    /// 起一个只服务一次连接的本地 HTTP server，捕获原始请求文本（请求行 + 头），
+    /// 用于断言 team 查询发出的 URL query 与组织/项目请求头。`response=None` 时只捕获不回包。
+    fn spawn_request_capturing_server(
+        response: Option<String>,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Option<String>>>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let captured_clone = captured.clone();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf: Vec<u8> = Vec::new();
+                let mut tmp = [0u8; 4096];
+                // GET 无 body，读到 header 末尾（\r\n\r\n）即可
+                while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut tmp) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&tmp[..n]);
+                            if buf.len() > 16 * 1024 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                *captured_clone.lock().unwrap() = Some(String::from_utf8_lossy(&buf).into_owned());
+                if let Some(resp) = response {
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}/team"), captured, handle)
+    }
+
+    #[tokio::test]
+    async fn zhipu_team_missing_creds_returns_not_found() {
+        // 团队版必需 api_key + 组织 ID + 项目 ID，缺任一在触网前返回 NotFound（不联网）。
+        let cases: [(&str, Option<&str>, Option<&str>); 3] = [
+            ("key", Some("org"), None),        // 缺 project
+            ("key", None, Some("proj")),       // 缺 organization
+            ("  ", Some("org"), Some("proj")), // 空 api_key
+        ];
+        for (api_key, org, project) in cases {
+            let q = get_coding_plan_quota(
+                "https://open.bigmodel.cn/api/coding",
+                api_key,
+                None,
+                None,
+                Some("zhipu_team"),
+                org,
+                project,
+            )
+            .await
+            .expect("凭据缺失是确定性失败，保持 Ok(success:false)");
+            assert!(!q.success, "应失败: api_key={api_key:?}");
+            assert!(
+                matches!(q.credential_status, CredentialStatus::NotFound),
+                "应为 NotFound: api_key={api_key:?}"
+            );
+        }
+
+        // 标识大小写不敏感（eq_ignore_ascii_case），大写仍命中 team 分支并返回引导文案。
+        let msg = get_coding_plan_quota(
+            "https://open.bigmodel.cn/api/coding",
+            "key",
+            None,
+            None,
+            Some("Zhipu_Team"),
+            None,
+            None,
+        )
+        .await
+        .expect("ok")
+        .error
+        .expect("应有错误文案");
+        assert!(
+            msg.contains("API key + organization ID + project ID"),
+            "err={msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn zhipu_team_request_carries_type2_and_org_project_headers() {
+        ensure_no_proxy_for_loopback();
+        // 响应 shape 与个人版一致：两条 TOKENS_LIMIT（unit 3/6）→ five_hour + weekly。
+        let body = serde_json::json!({
+            "success": true,
+            "data": {
+                "level": "max",
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 26.0 },
+                    { "type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 5.0 }
+                ]
+            }
+        });
+        let body_str = body.to_string();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body_str}",
+            body_str.len()
+        );
+        let (base, captured, handle) = spawn_request_capturing_server(Some(resp));
+
+        let quota = query_zhipu_team_at(&base, "team-key", "org-xxx", "proj_xxx")
+            .await
+            .expect("2xx + 合法 body 应成功");
+        handle.join().expect("server thread");
+
+        // 请求形状契约（与 token-monitor zaiTeamLimits 对齐）：
+        // 同路径加 ?type=2 + bigmodel-organization / bigmodel-project 头 + 鉴权头。
+        // reqwest/hyper 发头会小写化，故整体转小写做包含匹配。
+        let raw = captured.lock().unwrap().clone().expect("应捕获到请求");
+        let raw_lc = raw.to_lowercase();
+        assert!(raw_lc.contains("/team?type=2"), "缺 ?type=2: {raw}");
+        assert!(
+            raw_lc.contains("bigmodel-organization: org-xxx"),
+            "缺组织头: {raw}"
+        );
+        assert!(
+            raw_lc.contains("bigmodel-project: proj_xxx"),
+            "缺项目头: {raw}"
+        );
+        assert!(
+            raw_lc.contains("authorization: team-key"),
+            "缺鉴权头: {raw}"
+        );
+
+        // 解析复用个人版 zhipu_quota_from_body / parse_zhipu_token_tiers。
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 26.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 5.0);
     }
 }
