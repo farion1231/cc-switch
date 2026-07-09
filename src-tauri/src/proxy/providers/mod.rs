@@ -50,6 +50,7 @@ pub use codex::{
     apply_codex_chat_upstream_model, codex_provider_upstream_model,
     resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_chat,
 };
+pub use codex::apply_codex_chat_default_max_output_tokens;
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举
