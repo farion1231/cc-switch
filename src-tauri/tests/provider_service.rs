@@ -107,6 +107,9 @@ fn provider_service_switch_codex_updates_live_and_config() {
     let legacy_config = r#"[mcp_servers.legacy]
 type = "stdio"
 command = "echo"
+
+[hooks.state."/Users/me/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:trusted"
 "#;
     write_codex_live_atomic(&legacy_auth, Some(legacy_config))
         .expect("seed existing codex live config");
@@ -196,6 +199,10 @@ command = "say"
     assert!(
         config_text.contains("experimental_bearer_token"),
         "config.toml should carry the selected provider API key"
+    );
+    assert!(
+        config_text.contains("trusted_hash = \"sha256:trusted\""),
+        "Codex hook approval state should survive provider switching"
     );
 
     let current_id = state
