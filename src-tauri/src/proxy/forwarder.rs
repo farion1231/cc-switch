@@ -60,13 +60,6 @@ pub struct ForwardError {
     pub outbound_model: Option<String>,
 }
 
-/// `forward()` 在模型映射计算前失败时，outbound_model 不可用，用 None 兜底。
-impl From<ProxyError> for (ProxyError, Option<String>) {
-    fn from(err: ProxyError) -> Self {
-        (err, None)
-    }
-}
-
 /// 活跃连接 RAII guard
 ///
 /// 构造时把 `ProxyStatus.active_connections` +1；Drop 时在 tokio runtime 上调度
@@ -1149,7 +1142,9 @@ impl RequestForwarder {
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), (ProxyError, Option<String>)> {
         // 使用适配器提取 base_url
-        let mut base_url = adapter.extract_base_url(provider)?;
+        let mut base_url = adapter
+            .extract_base_url(provider)
+            .map_err(|e| (e, None))?;
 
         let is_full_url = provider
             .meta
@@ -1170,7 +1165,7 @@ impl RequestForwarder {
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+                .map_err(|e| (ProxyError::InvalidRequest(e.to_string()), None))?
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -1406,7 +1401,8 @@ impl RequestForwarder {
             super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
-            )?
+            )
+            .map_err(|e| (e, outbound_model.clone()))?
         } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
@@ -1419,9 +1415,12 @@ impl RequestForwarder {
                     self.session_client_provided
                         .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
-                )?
+                )
+                .map_err(|e| (e, outbound_model.clone()))?
             } else {
-                adapter.transform_request(mapped_body, provider)?
+                adapter
+                    .transform_request(mapped_body, provider)
+                    .map_err(|e| (e, outbound_model.clone()))?
             }
         } else {
             mapped_body
@@ -1582,7 +1581,9 @@ impl RequestForwarder {
                 }
             }
 
-            adapter.get_auth_headers(&auth)?
+            adapter
+                .get_auth_headers(&auth)
+                .map_err(|e| (e, outbound_model.clone()))?
         } else {
             Vec::new()
         };
@@ -1909,7 +1910,8 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
+        reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)
+            .map_err(|e| (e, outbound_model.clone()))?;
 
         // 输出请求信息日志
         let tag = adapter.name();
@@ -1980,10 +1982,13 @@ impl RequestForwarder {
                 tokio::time::timeout(header_timeout, send)
                     .await
                     .map_err(|_| {
-                        ProxyError::Timeout(format!(
-                            "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
-                        ))
+                        (
+                            ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_timeout.as_secs()
+                            )),
+                            outbound_model.clone(),
+                        )
                     })?
             } else {
                 send.await
@@ -2024,7 +2029,8 @@ impl RequestForwarder {
         if status.is_success() {
             let response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
-                .await?;
+                .await
+                .map_err(|e| (e, outbound_model.clone()))?;
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
@@ -2032,7 +2038,10 @@ impl RequestForwarder {
             // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
             // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
             let encoding = get_content_encoding(response.headers());
-            let raw = response.bytes().await?;
+            let raw = response
+                .bytes()
+                .await
+                .map_err(|e| (e, outbound_model.clone()))?;
             let decoded = match encoding {
                 Some(encoding) => match decompress_body(&encoding, &raw) {
                     Ok(Some(decompressed)) => decompressed,
