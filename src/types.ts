@@ -361,6 +361,7 @@ export interface Settings {
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
+  usageDashboardRefreshIntervalMs?: number;
   // User has confirmed the stream check first-run notice
   streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page
