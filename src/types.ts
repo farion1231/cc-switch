@@ -62,6 +62,10 @@ export interface UsageScript {
   baseUrl?: string; // 用量查询专用的 Base URL（通用和 NewAPI 模板使用）
   accessToken?: string; // 访问令牌（NewAPI 模板使用）
   userId?: string; // 用户ID（NewAPI 模板使用）
+  accessKeyId?: string; // 火山方舟 AccessKey ID（用量查询签名用，与推理 Key 分离）
+  secretAccessKey?: string; // 火山方舟 SecretAccessKey
+  teamOrganizationId?: string; // 智谱团队套餐组织 ID（请求头 bigmodel-organization）
+  teamProjectId?: string; // 智谱团队套餐项目 ID（请求头 bigmodel-project）
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
@@ -107,16 +111,12 @@ export interface UsageResult {
   error?: string;
 }
 
-// 供应商单独的模型测试配置
+// 供应商单独的连通检测配置（覆盖全局配置）
 export interface ProviderTestConfig {
   // 是否启用单独配置（false 时使用全局配置）
   enabled: boolean;
-  // 测试用的模型名称（覆盖全局配置）
-  testModel?: string;
   // 超时时间（秒）
   timeoutSecs?: number;
-  // 测试提示词
-  testPrompt?: string;
   // 降级阈值（毫秒）
   degradedThresholdMs?: number;
   // 最大重试次数
@@ -173,6 +173,11 @@ export interface CodexChatReasoning {
   outputFormat?: CodexChatReasoningOutputFormat;
 }
 
+export interface LocalProxyRequestOverrides {
+  headers?: Record<string, string>;
+  body?: Record<string, unknown>;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -219,6 +224,10 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Custom User-Agent for local proxy routing. Only applied by the local proxy.
+  customUserAgent?: string;
+  // Local proxy request overrides. Only applied by the local proxy after route transforms.
+  localProxyRequestOverrides?: LocalProxyRequestOverrides;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
@@ -251,6 +260,15 @@ export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
+  // Native Responses (direct) profile overrides for the generated
+  // model-catalogs.json. Ignored by the chat/proxy profile.
+  // e.g. MiniMax: supportsParallelToolCalls=true, inputModalities=["text","image"].
+  supportsParallelToolCalls?: boolean;
+  inputModalities?: string[];
+  // Vendor's OFFICIAL base_instructions (model identity / system preamble).
+  // Codex requires this field in every catalog entry; when omitted the backend
+  // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
+  baseInstructions?: string;
 }
 
 // Claude 认证字段类型
@@ -284,6 +302,20 @@ export interface WebDavSyncSettings {
   baseUrl?: string;
   username?: string;
   password?: string;
+  remoteRoot?: string;
+  profile?: string;
+  status?: WebDavSyncStatus;
+}
+
+// S3 同步配置
+export interface S3SyncSettings {
+  enabled?: boolean;
+  autoSync?: boolean;
+  region?: string;
+  bucket?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  endpoint?: string;
   remoteRoot?: string;
   profile?: string;
   status?: WebDavSyncStatus;
@@ -329,12 +361,18 @@ export interface Settings {
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
+  usageDashboardRefreshIntervalMs?: number;
   // User has confirmed the stream check first-run notice
   streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
   preserveCodexOfficialAuthOnSwitch?: boolean;
+  // Run official Codex under the shared "custom" provider id so future
+  // sessions share one resume-history bucket with third-party providers
+  unifyCodexSessionHistory?: boolean;
+  // User opted in (enable dialog checkbox) to migrate existing official sessions
+  unifyCodexMigrateExisting?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -381,6 +419,9 @@ export interface Settings {
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;
+
+  // ===== S3 同步设置 =====
+  s3Sync?: S3SyncSettings;
 
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)
@@ -607,6 +648,9 @@ export interface OpenClawModel {
   };
   contextWindow?: number;
   maxTokens?: number; // 最大输出 token 数
+  compat?: {
+    maxTokensField?: string; // 最大输出 token 请求字段名（如 "max_tokens"）
+  };
 }
 
 // OpenClaw 默认模型配置（agents.defaults.model）

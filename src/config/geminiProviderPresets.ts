@@ -23,6 +23,7 @@ export interface GeminiProviderPreset {
   description?: string;
   category?: ProviderCategory;
   isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
   partnerPromotionKey?: string;
   endpointCandidates?: string[];
   theme?: GeminiPresetTheme;
@@ -68,6 +69,84 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.unity2.ai",
+        GEMINI_MODEL: "gemini-3.1-pro",
+      },
+    },
+    baseURL: "https://api.unity2.ai",
+    model: "gemini-3.1-pro",
+    description: "Unity2.ai",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://subrouter.ai/v1beta",
+        GEMINI_MODEL: "gemini-3.5-flash",
+      },
+    },
+    baseURL: "https://subrouter.ai/v1beta",
+    model: "gemini-3.5-flash",
+    description: "SubRouter",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    endpointCandidates: ["https://subrouter.ai/v1beta"],
+    icon: "subrouter",
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.qnaigc.com/bypass/vertex",
+    model: "gemini-3.1-pro-preview",
+    description: "Qiniu",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/vertex",
+      "https://api.modelink.ai/bypass/vertex",
+    ],
+    icon: "qiniu",
+  },
+  {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://code0.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "Code0",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
   },
   {
     name: "PackyCode",
@@ -146,8 +225,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     model: "gemini-3.1-flash-lite",
     description: "SudoCode",
     category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
     endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
     icon: "sudocode",
   },
@@ -241,46 +318,46 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "SSSAiCode",
-    websiteUrl: "https://www.sssaicode.com",
-    apiKeyUrl: "https://www.sssaicode.com/register?ref=DCP0SM",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://node-hk.sssaicode.com/api",
+        GOOGLE_GEMINI_BASE_URL: "https://node-hk.sssaicodeapi.com/api",
         GEMINI_MODEL: "gemini-3.5-flash",
       },
     },
-    baseURL: "https://node-hk.sssaicode.com/api",
+    baseURL: "https://node-hk.sssaicodeapi.com/api",
     model: "gemini-3.5-flash",
     description: "SSSAiCode",
     category: "third_party",
     isPartner: true,
     partnerPromotionKey: "sssaicode",
     endpointCandidates: [
-      "https://node-hk.sssaicode.com/api",
-      "https://claude2.sssaicode.com/api",
-      "https://anti.sssaicode.com/api",
+      "https://node-hk.sssaicodeapi.com/api",
+      "https://node-hk.sssaiapi.com/api",
+      "https://node-cf.sssaicodeapi.com/api",
     ],
     icon: "sssaicode",
     iconColor: "#000000",
   },
   {
-    name: "CTok.ai",
-    websiteUrl: "https://ctok.ai",
-    apiKeyUrl: "https://ctok.ai",
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.ctok.ai/v1beta",
+        GOOGLE_GEMINI_BASE_URL: "https://api.etok.ai/v1beta",
         GEMINI_MODEL: "gemini-3.5-flash",
       },
     },
-    baseURL: "https://api.ctok.ai/v1beta",
+    baseURL: "https://api.etok.ai/v1beta",
     model: "gemini-3.5-flash",
-    description: "CTok",
+    description: "ETok",
     category: "third_party",
     isPartner: true,
-    partnerPromotionKey: "ctok",
-    endpointCandidates: ["https://api.ctok.ai/v1beta"],
-    icon: "ctok",
+    partnerPromotionKey: "etok",
+    endpointCandidates: ["https://api.etok.ai/v1beta"],
+    icon: "etok",
     iconColor: "#000000",
   },
   {
@@ -317,25 +394,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     endpointCandidates: ["https://e-flowcode.cc"],
     icon: "eflowcode",
     iconColor: "#000000",
-  },
-  {
-    name: "LemonData",
-    websiteUrl: "https://lemondata.cc",
-    apiKeyUrl: "https://lemondata.cc/r/FFX1ZDUP",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.lemondata.cc",
-        GEMINI_MODEL: "gemini-3.5-flash",
-      },
-    },
-    baseURL: "https://api.lemondata.cc",
-    model: "gemini-3.5-flash",
-    description: "LemonData",
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "lemondata",
-    endpointCandidates: ["https://api.lemondata.cc"],
-    icon: "lemondata",
   },
   {
     name: "CherryIN",

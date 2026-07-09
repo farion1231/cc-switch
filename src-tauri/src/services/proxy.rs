@@ -26,7 +26,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
 /// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
 /// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
-const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 9] = [
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 10] = [
     "ANTHROPIC_MODEL",
     "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -35,8 +35,8 @@ const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 9] = [
     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-    // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
-    "ANTHROPIC_SMALL_FAST_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL", // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
+    "CLAUDE_CODE_SUBAGENT_MODEL",
 ];
 
 const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
@@ -48,7 +48,7 @@ const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
     PreserveExistingOrAuthToken,
-    ManagedAccount,
+    ManagedAccount { keep_auth_token: bool },
 }
 
 #[derive(Clone)]
@@ -90,7 +90,12 @@ impl ProxyService {
         provider: &Provider,
     ) {
         let auth_policy = if provider.uses_managed_account_auth() {
-            ClaudeTakeoverAuthPolicy::ManagedAccount
+            // Codex 系（含仅凭 base_url 识别、无 provider_type meta 的）必须保留
+            // ANTHROPIC_AUTH_TOKEN 占位符：Claude Code 缺该键会弹登录提示（#3784）。
+            // Copilot 维持仅 API_KEY 占位，避免与 /login 管理的 key 冲突（#1049）。
+            ClaudeTakeoverAuthPolicy::ManagedAccount {
+                keep_auth_token: !provider.is_github_copilot(),
+            }
         } else {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
@@ -180,7 +185,7 @@ impl ProxyService {
                     );
                 }
             }
-            ClaudeTakeoverAuthPolicy::ManagedAccount => {
+            ClaudeTakeoverAuthPolicy::ManagedAccount { keep_auth_token } => {
                 for key in token_keys {
                     env.remove(key);
                 }
@@ -188,6 +193,14 @@ impl ProxyService {
                     "ANTHROPIC_API_KEY".to_string(),
                     json!(PROXY_TOKEN_PLACEHOLDER),
                 );
+                if keep_auth_token {
+                    // 无条件注入而非"已存在才保留"：热切换路径传入的是 provider
+                    // settings（预设不含该键），且旧版接管已把存量用户 live 中的键删光。
+                    env.insert(
+                        "ANTHROPIC_AUTH_TOKEN".to_string(),
+                        json!(PROXY_TOKEN_PLACEHOLDER),
+                    );
+                }
             }
         }
     }
@@ -209,7 +222,9 @@ impl ProxyService {
             .or(default_model)
             .or(small_fast_model);
 
-        let mut fields = Vec::with_capacity(6);
+        let subagent_model = Self::claude_env_string(env, "CLAUDE_CODE_SUBAGENT_MODEL");
+
+        let mut fields = Vec::with_capacity(7);
         Self::push_claude_takeover_role_fields(
             &mut fields,
             env,
@@ -237,6 +252,9 @@ impl ProxyService {
             true,
             opus_model,
         );
+        if let Some(subagent_model) = subagent_model {
+            fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.to_string()));
+        }
         fields
     }
 
@@ -438,12 +456,50 @@ impl ProxyService {
             .start()
             .await
             .map_err(|e| format!("启动代理服务器失败: {e}"))?;
+        if let Err(e) = self
+            .persist_ephemeral_listen_port_if_needed(&config, info.port)
+            .await
+        {
+            let _ = server.stop().await;
+            return Err(e);
+        }
 
         // 5. 保存服务器实例
         *self.server.write().await = Some(server);
 
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
         Ok(info)
+    }
+
+    async fn persist_ephemeral_listen_port_if_needed(
+        &self,
+        config: &ProxyConfig,
+        actual_port: u16,
+    ) -> Result<(), String> {
+        if config.listen_port != 0 {
+            return Ok(());
+        }
+
+        let mut resolved_config = config.clone();
+        resolved_config.listen_port = actual_port;
+        self.db
+            .update_proxy_config(resolved_config)
+            .await
+            .map_err(|e| format!("保存动态代理端口失败: {e}"))
+    }
+
+    async fn start_before_takeover_if_ephemeral_port(&self) -> Result<bool, String> {
+        let config = self
+            .db
+            .get_proxy_config()
+            .await
+            .map_err(|e| format!("获取代理配置失败: {e}"))?;
+        if config.listen_port != 0 || self.is_running().await {
+            return Ok(false);
+        }
+
+        self.start().await?;
+        Ok(true)
     }
 
     /// 启动代理服务器（带 Live 配置接管）
@@ -460,11 +516,26 @@ impl ProxyService {
             return Err(e);
         }
 
+        // 端口 0 需要先启动代理拿到 OS 分配的真实端口，否则接管 Live 配置会写出 :0。
+        let started_proxy_before_takeover =
+            match self.start_before_takeover_if_ephemeral_port().await {
+                Ok(started) => started,
+                Err(e) => {
+                    if let Err(clean_err) = self.db.delete_all_live_backups().await {
+                        log::warn!("清理 Live 备份失败: {clean_err}");
+                    }
+                    return Err(e);
+                }
+            };
+
         // 3. 在写入接管配置之前先落盘接管标志：
         //    这样即使在接管过程中断电/kill，下次启动也能检测到并自动恢复。
         if let Err(e) = self.db.set_live_takeover_active(true).await {
             if let Err(clean_err) = self.db.delete_all_live_backups().await {
                 log::warn!("清理 Live 备份失败: {clean_err}");
+            }
+            if started_proxy_before_takeover {
+                let _ = self.stop().await;
             }
             return Err(format!("设置接管状态失败: {e}"));
         }
@@ -481,6 +552,9 @@ impl ProxyService {
                 Err(restore_err) => {
                     log::error!("恢复原始配置失败，将保留备份以便下次启动恢复: {restore_err}");
                 }
+            }
+            if started_proxy_before_takeover {
+                let _ = self.stop().await;
             }
             return Err(e);
         }
@@ -499,6 +573,9 @@ impl ProxyService {
                     Err(restore_err) => {
                         log::error!("恢复原始配置失败，将保留备份以便下次启动恢复: {restore_err}");
                     }
+                }
+                if started_proxy_before_takeover {
+                    let _ = self.stop().await;
                 }
                 Err(e)
             }
@@ -718,6 +795,46 @@ impl ProxyService {
                 let _ = self.stop().await;
             }
         }
+
+        Ok(())
+    }
+
+    /// 同步关闭指定应用的 Live 接管（恢复配置并清标志，不停止代理服务）。
+    ///
+    /// 用于 `ProfileService::apply` 等 sync 路径：调用者所在线程可能没有 Tokio
+    /// runtime，无法执行 `set_takeover_for_app(false)` 里的停止服务/等待任务等
+    /// Tokio IO。这里只恢复 Live 文件、删除备份、清除 DB 接管标志，让后续
+    /// `ProviderService::switch` 能正常写入官方供应商配置。
+    ///
+    /// 代理服务本身保持运行；当最后一个应用也关闭接管后，下次用户手动关闭
+    /// 代理或程序退出时会自然停止。
+    pub fn disable_takeover_for_app_sync(&self, app_type: &AppType) -> Result<(), String> {
+        let app_type_str = app_type.as_str();
+
+        // 1) 恢复原始 Live 配置（备份 → SSOT → 清理占位符 三层兜底）
+        futures::executor::block_on(self.restore_live_config_for_app_with_fallback_inner(app_type))
+            .map_err(|e| format!("恢复 {app_type_str} Live 配置失败: {e}"))?;
+
+        // 2) 删除该 app 的备份
+        futures::executor::block_on(self.db.delete_live_backup(app_type_str))
+            .map_err(|e| format!("删除 {app_type_str} Live 备份失败: {e}"))?;
+
+        // 3) 设置 proxy_config.enabled = false
+        let mut config =
+            futures::executor::block_on(self.db.get_proxy_config_for_app(app_type_str))
+                .map_err(|e| format!("获取 {app_type_str} 配置失败: {e}"))?;
+        if config.enabled {
+            config.enabled = false;
+            futures::executor::block_on(self.db.update_proxy_config_for_app(config))
+                .map_err(|e| format!("清除 {app_type_str} enabled 状态失败: {e}"))?;
+        }
+
+        // 4) 清除该应用的健康状态
+        futures::executor::block_on(self.db.clear_provider_health_for_app(app_type_str))
+            .map_err(|e| format!("清除 {app_type_str} 健康状态失败: {e}"))?;
+
+        // 5) 清旧标志
+        let _ = futures::executor::block_on(self.db.set_live_takeover_active(false));
 
         Ok(())
     }
@@ -1086,32 +1203,48 @@ impl ProxyService {
     async fn backup_live_configs(&self) -> Result<(), String> {
         // Claude
         if let Ok(config) = self.read_claude_live() {
-            let json_str = serde_json::to_string(&config)
-                .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?;
-            self.db
-                .save_live_backup("claude", &json_str)
-                .await
-                .map_err(|e| format!("备份 Claude 配置失败: {e}"))?;
+            // 跳过已被代理接管的 Live：避免把代理占位符当作"原始 Live"存进备份槽。
+            // 否则下次 start_with_takeover 在异常历史状态下（Live 已是占位符）再次
+            // 调用本函数，会用代理配置覆盖一个原本正常的备份；之后 stop 恢复时
+            // 即便走到备份路径也会把代理占位符再写回 Live，永久卡在 127.0.0.1:15721。
+            if Self::live_has_proxy_placeholder_for_app(&AppType::Claude, &config) {
+                log::warn!("claude Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live");
+            } else {
+                let json_str = serde_json::to_string(&config)
+                    .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?;
+                self.db
+                    .save_live_backup("claude", &json_str)
+                    .await
+                    .map_err(|e| format!("备份 Claude 配置失败: {e}"))?;
+            }
         }
 
         // Codex
         if let Ok(config) = self.read_codex_live() {
-            let json_str = serde_json::to_string(&config)
-                .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
-            self.db
-                .save_live_backup("codex", &json_str)
-                .await
-                .map_err(|e| format!("备份 Codex 配置失败: {e}"))?;
+            if Self::live_has_proxy_placeholder_for_app(&AppType::Codex, &config) {
+                log::warn!("codex Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live");
+            } else {
+                let json_str = serde_json::to_string(&config)
+                    .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?;
+                self.db
+                    .save_live_backup("codex", &json_str)
+                    .await
+                    .map_err(|e| format!("备份 Codex 配置失败: {e}"))?;
+            }
         }
 
         // Gemini
         if let Ok(config) = self.read_gemini_live() {
-            let json_str = serde_json::to_string(&config)
-                .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?;
-            self.db
-                .save_live_backup("gemini", &json_str)
-                .await
-                .map_err(|e| format!("备份 Gemini 配置失败: {e}"))?;
+            if Self::live_has_proxy_placeholder_for_app(&AppType::Gemini, &config) {
+                log::warn!("gemini Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live");
+            } else {
+                let json_str = serde_json::to_string(&config)
+                    .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?;
+                self.db
+                    .save_live_backup("gemini", &json_str)
+                    .await
+                    .map_err(|e| format!("备份 Gemini 配置失败: {e}"))?;
+            }
         }
 
         log::info!("已备份所有应用的 Live 配置");
@@ -1126,6 +1259,15 @@ impl ProxyService {
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
             _ => return Err("该应用不支持代理功能".to_string()),
         };
+
+        // 跳过已被代理接管的 Live：避免把代理占位符当作"原始 Live"存进备份槽
+        // （见 backup_live_configs 中的注释）。
+        if Self::live_has_proxy_placeholder_for_app(app_type, &config) {
+            log::warn!(
+                "{app_type_str} Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live"
+            );
+            return Ok(());
+        }
 
         let json_str = serde_json::to_string(&config)
             .map_err(|e| format!("序列化 {app_type_str} 配置失败: {e}"))?;
@@ -1158,7 +1300,18 @@ impl ProxyService {
             connect_host
         };
 
-        let proxy_origin = format!("http://{}:{}", connect_host_for_url, config.listen_port);
+        let mut listen_port = config.listen_port;
+        if let Some(server) = self.server.read().await.as_ref() {
+            let status = server.get_status().await;
+            if status.running {
+                listen_port = status.port;
+            }
+        }
+        if listen_port == 0 {
+            return Err("代理监听端口为 0，但代理服务器尚未运行，无法生成接管地址".to_string());
+        }
+
+        let proxy_origin = format!("http://{}:{}", connect_host_for_url, listen_port);
         let proxy_url = proxy_origin.clone();
         let proxy_codex_base_url = format!("{}/v1", proxy_origin.trim_end_matches('/'));
 
@@ -1447,7 +1600,7 @@ impl ProxyService {
             .await
     }
 
-    async fn restore_live_config_for_app_with_fallback_inner(
+    pub(crate) async fn restore_live_config_for_app_with_fallback_inner(
         &self,
         app_type: &AppType,
     ) -> Result<(), String> {
@@ -1462,9 +1615,19 @@ impl ProxyService {
         if let Some(backup) = backup {
             let config: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| format!("解析 {app_type_str} 备份失败: {e}"))?;
-            self.write_live_config_for_app(app_type, &config)?;
-            log::info!("{app_type_str} Live 配置已从备份恢复");
-            return Ok(());
+
+            // 备份若是代理占位符（异常历史：上次 stop 失败导致 Live 留在了代理状态，
+            // 下次接管时又被错误地备份成"原始 Live"），不能直接用 — 否则 stop 后
+            // Live 永远卡在 127.0.0.1:15721。落到下面的 SSOT 兜底重建。
+            if Self::live_has_proxy_placeholder_for_app(app_type, &config) {
+                log::warn!(
+                    "{app_type_str} 备份本身已是代理占位符（异常历史状态），跳过备份，改走 SSOT 重建 Live"
+                );
+            } else {
+                self.write_live_config_for_app(app_type, &config)?;
+                log::info!("{app_type_str} Live 配置已从备份恢复");
+                return Ok(());
+            }
         }
 
         // 2) 兜底：备份缺失，但 Live 仍包含接管占位符（异常退出/历史 bug 场景）
@@ -1527,7 +1690,7 @@ impl ProxyService {
     ///
     /// 返回值：
     /// - Ok(true)：已成功写回
-    /// - Ok(false)：缺少当前供应商/供应商不存在，无法写回
+    /// - Ok(false)：缺少当前供应商/供应商不存在/供应商本身含占位符，无法写回
     fn restore_live_from_ssot_for_app(&self, app_type: &AppType) -> Result<bool, String> {
         let current_id = crate::settings::get_effective_current_provider(&self.db, app_type)
             .map_err(|e| format!("获取 {app_type:?} 当前供应商失败: {e}"))?;
@@ -1544,6 +1707,16 @@ impl ProxyService {
         let Some(provider) = providers.get(&current_id) else {
             return Ok(false);
         };
+
+        // 供应商配置本身含接管占位符时不可写回（历史异常：接管期间 Live 被
+        // 误导入成了供应商）。写回只会把占位符固化进 Live；返回 Ok(false)
+        // 让调用方落到"清理占位符"兜底。
+        if Self::live_has_proxy_placeholder_for_app(app_type, &provider.settings_config) {
+            log::warn!(
+                "{app_type:?} 当前供应商配置含代理接管占位符（疑似接管期间被导入的残留），跳过 SSOT 写回，改走占位符清理"
+            );
+            return Ok(false);
+        }
 
         write_live_with_common_config(self.db.as_ref(), app_type, provider)
             .map_err(|e| format!("写入 {app_type:?} Live 配置失败: {e}"))?;
@@ -1845,6 +2018,21 @@ impl ProxyService {
         env.get("GEMINI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
     }
 
+    /// 判断给定的 Live/备份配置是否已被代理接管（包含占位符）
+    ///
+    /// 用途：检测"备份里存的其实是代理配置"这种异常历史状态。
+    /// 如果发现，备份不可信，备份路径不能写入（否则会把代理配置固化进备份槽），
+    /// 恢复路径不能读取（否则会把代理占位符原样写回 Live，永久卡在代理地址）。
+    /// 两种情况下都应该走 SSOT 兜底重建 Live。
+    fn live_has_proxy_placeholder_for_app(app_type: &AppType, config: &Value) -> bool {
+        match app_type {
+            AppType::Claude => Self::is_claude_live_taken_over(config),
+            AppType::Codex => Self::codex_live_has_proxy_placeholder(config),
+            AppType::Gemini => Self::is_gemini_live_taken_over(config),
+            _ => false,
+        }
+    }
+
     /// 从供应商配置更新 Live 备份（用于代理模式下的热切换）
     ///
     /// 与 backup_live_configs() 不同，此方法从供应商的 settings_config 生成备份，
@@ -1890,6 +2078,14 @@ impl ProxyService {
                 )?;
                 Self::preserve_codex_oauth_auth_in_backup(&mut effective_settings, existing_value)?;
             }
+
+            // 统一会话开关：备份是接管释放时恢复 live 的来源，官方配置的
+            // 共享 custom 路由注入必须落在备份里，否则恢复后开关失效。
+            crate::codex_config::apply_codex_unified_session_bucket_to_settings(
+                provider.category.as_deref(),
+                &mut effective_settings,
+            )
+            .map_err(|e| format!("注入统一会话路由失败: {e}"))?;
         }
 
         let backup_json = match app_type_enum {
@@ -1994,12 +2190,16 @@ impl ProxyService {
                 .get("auth")
                 .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
             let config_str = effective_settings.get("config").and_then(|v| v.as_str());
+            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+            );
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &effective_settings,
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                profile,
             )
             .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
         }
@@ -2259,12 +2459,16 @@ impl ProxyService {
             .get("auth")
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
+        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+        );
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
             provider.category.as_deref(),
             auth,
             config_str,
+            profile,
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
     }
@@ -2284,9 +2488,12 @@ impl ProxyService {
                 .filter(|auth| Self::codex_auth_has_proxy_placeholder(auth))
             {
                 let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
+                let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                    provider.and_then(|p| p.meta.as_ref()?.api_format.as_deref()),
+                );
                 let prepared_config =
                     crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                        config, config_str,
+                        config, config_str, profile,
                     )
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 let live_config =
@@ -2320,10 +2527,18 @@ impl ProxyService {
         // living in the config's `experimental_bearer_token`). Computing it up here
         // keeps every config-writing branch — write-auth, delete-auth, no-auth —
         // consistent instead of letting the empty-auth path skip projection.
+        // Verbatim restore has no Provider in hand (we only have the stored
+        // backup config), so the catalog tool profile can't be recovered here.
+        // Default to ProxyChat: a restored native-direct backup keeps its inline
+        // modelCatalog but would not get apply_patch re-stripped until the next
+        // provider switch rewrites it via write_live_snapshot. Acceptable known
+        // limitation (restore-of-deleted-provider-backup only).
         let prepared_cfg = config_str
             .map(|cfg| {
                 crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
-                    config, cfg,
+                    config,
+                    cfg,
+                    crate::codex_config::CodexCatalogToolProfile::ProxyChat,
                 )
             })
             .transpose()
@@ -2438,11 +2653,18 @@ impl ProxyService {
             }
 
             let app_handle = self.app_handle.read().await.clone();
-            let new_server = ProxyServer::new(new_config, self.db.clone(), app_handle);
-            new_server
+            let new_server = ProxyServer::new(new_config.clone(), self.db.clone(), app_handle);
+            let info = new_server
                 .start()
                 .await
                 .map_err(|e| format!("重启代理服务器失败: {e}"))?;
+            if let Err(e) = self
+                .persist_ephemeral_listen_port_if_needed(&new_config, info.port)
+                .await
+            {
+                let _ = new_server.stop().await;
+                return Err(e);
+            }
 
             *server_guard = Some(new_server);
             log::info!("代理配置已更新，服务器已自动重启应用最新配置");
@@ -2597,6 +2819,19 @@ mod tests {
         assert_eq!(env.get(key).and_then(|value| value.as_str()), expected);
     }
 
+    async fn use_ephemeral_proxy_port(db: &Arc<Database>) {
+        let mut proxy_config = db.get_proxy_config().await.expect("get test proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set test proxy config to an ephemeral port");
+    }
+
+    async fn running_codex_base_url(service: &ProxyService) -> String {
+        let status = service.get_status().await.expect("get proxy status");
+        format!("http://127.0.0.1:{}/v1", status.port)
+    }
+
     fn seed_codex_model_template() {
         let codex_dir = crate::codex_config::get_codex_config_dir();
         std::fs::create_dir_all(&codex_dir).expect("create codex dir");
@@ -2667,7 +2902,8 @@ mod tests {
                     "ANTHROPIC_MODEL": "claude-sonnet-4.6",
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4.5",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4.6",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4.6"
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-sonnet-4.6",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-sonnet-4.6[1M]"
                 }
             }),
             None,
@@ -2687,7 +2923,8 @@ mod tests {
                 "ANTHROPIC_DEFAULT_SONNET_MODEL": "stale-sonnet",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL": "stale-opus",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Stale Opus"
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Stale Opus",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
             }
         });
         ProxyService::apply_claude_takeover_fields_for_provider(
@@ -2727,8 +2964,51 @@ mod tests {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             Some("claude-sonnet-4.6"),
         );
+        assert_env_str(
+            env,
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            Some("claude-sonnet-4.6[1M]"),
+        );
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_removes_stale_subagent_model_when_provider_omits_it() {
+        let mut provider = Provider::with_id(
+            "codex".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "provider-sonnet"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_API_KEY": "stale-key",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "CLAUDE_CODE_SUBAGENT_MODEL", None);
     }
 
     #[test]
@@ -2795,6 +3075,108 @@ mod tests {
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("gpt-5.4"));
         assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_codex_injects_auth_token_without_preexisting_key() {
+        let mut provider = Provider::with_id(
+            "codex".to_string(),
+            "Codex".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        // 全新安装/热切换形态：传入的 env 没有任何 token 键。
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_codex_by_base_url_keeps_auth_token() {
+        // 无 provider_type meta、仅凭 base_url 识别为受管 codex 的供应商，
+        // 也必须保留 AUTH_TOKEN 占位符（与策略选择共用同一判定族）。
+        let provider = Provider::with_id(
+            "codex-url-only".to_string(),
+            "Codex (URL only)".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(provider.uses_managed_account_auth());
+        assert!(!provider.is_codex_oauth());
+
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
+        assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", Some(PROXY_TOKEN_PLACEHOLDER));
+    }
+
+    #[test]
+    fn managed_account_claude_takeover_copilot_removes_stale_auth_token() {
+        let mut provider = Provider::with_id(
+            "copilot".to_string(),
+            "GitHub Copilot".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..Default::default()
+        });
+
+        let mut live_config = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://stale.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "stale-token"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+        assert_env_str(env, "ANTHROPIC_API_KEY", Some(PROXY_TOKEN_PLACEHOLDER));
         assert_env_str(env, "ANTHROPIC_AUTH_TOKEN", None);
     }
 
@@ -2823,6 +3205,72 @@ mod tests {
                 .is_none(),
             "non-managed providers should retain the legacy fallback behavior"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn start_with_takeover_ephemeral_port_writes_actual_live_url() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
+        let service = ProxyService::new(db.clone());
+
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "provider-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "live-key",
+                    "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+                }
+            }))
+            .expect("seed claude live config");
+
+        let info = service
+            .start_with_takeover()
+            .await
+            .expect("start proxy with takeover");
+        assert_ne!(info.port, 0, "OS should assign a concrete port");
+
+        let stored_config = db.get_proxy_config().await.expect("read proxy config");
+        assert_eq!(
+            stored_config.listen_port, info.port,
+            "resolved dynamic port should be persisted for DB-only proxy URL paths"
+        );
+
+        let live = service.read_claude_live().expect("read taken-over live");
+        let base_url = live
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|value| value.as_str())
+            .expect("taken-over base url");
+        assert_eq!(base_url, format!("http://127.0.0.1:{}", info.port));
+        assert!(
+            !base_url.contains(":0"),
+            "takeover must never write an unresolved :0 port"
+        );
+
+        service
+            .stop_with_restore()
+            .await
+            .expect("stop proxy and restore live config");
     }
 
     #[test]
@@ -3095,6 +3543,7 @@ wire_api = "responses"
         .expect("enable Codex official auth preservation");
 
         let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
         let service = ProxyService::new(db.clone());
         let oauth_auth = json!({
             "auth_mode": "chatgpt",
@@ -3174,6 +3623,7 @@ wire_api = "responses"
         .expect("enable Codex official auth preservation");
 
         let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
         let state = crate::store::AppState::new(db.clone());
         let oauth_auth = json!({
             "auth_mode": "chatgpt",
@@ -3394,6 +3844,7 @@ wire_api = "responses"
         .expect("enable Codex official auth preservation");
 
         let db = Arc::new(Database::memory().expect("init db"));
+        use_ephemeral_proxy_port(&db).await;
         let service = ProxyService::new(db.clone());
         let oauth_auth = json!({
             "auth_mode": "chatgpt",
@@ -3482,8 +3933,9 @@ wire_api = "responses"
 
         let live_config = std::fs::read_to_string(crate::codex_config::get_codex_config_path())
             .expect("read live config");
+        let expected_base_url = running_codex_base_url(&service).await;
         assert!(
-            live_config.contains("http://127.0.0.1:15721/v1"),
+            live_config.contains(&expected_base_url),
             "stale enabled takeover must be rebuilt to the current proxy base_url"
         );
         assert!(
@@ -4202,7 +4654,8 @@ model = "gpt-5.1-codex"
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "DeepSeek V4 Flash",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1M]",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "DeepSeek V4 Pro",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-ultra [1m]"
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-ultra [1m]",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro[1M]"
                 },
                 "permissions": { "allow": ["Read"] }
             }),
@@ -4229,7 +4682,8 @@ model = "gpt-5.1-codex"
                     "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
                     "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
                     "ANTHROPIC_MODEL": "stale-model",
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet"
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Stale Sonnet",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "stale-subagent"
                 },
                 "permissions": { "allow": ["Bash"] }
             }))
@@ -4311,6 +4765,13 @@ model = "gpt-5.1-codex"
                 .and_then(|v| v.as_str()),
             Some("deepseek-v4-ultra"),
             "implicit display names should strip the local 1M marker"
+        );
+        assert_eq!(
+            live_env
+                .get("CLAUDE_CODE_SUBAGENT_MODEL")
+                .and_then(|v| v.as_str()),
+            Some("deepseek-v4-pro[1M]"),
+            "subagent model should follow the target provider during hot switch"
         );
 
         let backup = db
@@ -5101,8 +5562,10 @@ command = "shared-command"
         )
         .expect("set common config snippet");
 
-        let mut proxy_config = ProxyConfig::default();
-        proxy_config.listen_port = 0;
+        let proxy_config = ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        };
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config");
@@ -5239,8 +5702,10 @@ requires_openai_auth = true
         let db = Arc::new(Database::memory().expect("init db"));
         let state = crate::store::AppState::new(db.clone());
 
-        let mut proxy_config = ProxyConfig::default();
-        proxy_config.listen_port = 0;
+        let proxy_config = ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        };
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config");
@@ -5361,7 +5826,7 @@ requires_openai_auth = true
         )
         .expect("seed generated catalog file");
 
-        let pointer = catalog_path.to_string_lossy().to_string();
+        let pointer = catalog_path.to_string_lossy().replace('\\', "/");
         let backup_config = format!(
             "model_provider = \"custom\"\n\
              model = \"deepseek-v4-flash\"\n\
@@ -5527,5 +5992,257 @@ requires_openai_auth = true
             !crate::codex_config::get_codex_auth_path().exists(),
             "empty-auth restore must delete auth.json rather than write an empty one"
         );
+    }
+
+    /// Regression: when the backup row itself contains the proxy placeholder
+    /// (a corrupted state where previous start/stop cycles saved the proxy
+    /// config as the "original Live"), restore must NOT write it back to Live.
+    /// It should fall through to the SSOT (current provider) path and rebuild
+    /// Live from the provider DB instead.
+    #[tokio::test]
+    #[serial]
+    async fn restore_falls_through_to_ssot_when_backup_is_proxy_placeholder() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // Seed DB with a current provider that has a real API key
+        let provider = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
+                    "ANTHROPIC_API_KEY": "real-key-from-db"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &provider)
+            .expect("save provider");
+        db.set_current_provider("claude", "p1")
+            .expect("set current provider");
+
+        // Seed backup with proxy placeholder (the corrupted state)
+        let corrupted_backup = serde_json::to_string(&json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+            }
+        }))
+        .expect("serialize corrupted backup");
+        db.save_live_backup("claude", &corrupted_backup)
+            .await
+            .expect("seed corrupted backup");
+
+        // Seed Live with the same proxy placeholder (matches the corrupted state)
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed taken-over live file");
+
+        // Restore: must NOT use the corrupted backup
+        service
+            .restore_live_config_for_app_with_fallback(&AppType::Claude)
+            .await
+            .expect("restore should succeed via SSOT");
+
+        // The backup should still be the corrupted one (we didn't touch it on this path)
+        let backup_after = db
+            .get_live_backup("claude")
+            .await
+            .expect("get backup")
+            .expect("backup still exists");
+        assert_eq!(
+            backup_after.original_config, corrupted_backup,
+            "restore must NOT overwrite the corrupted backup"
+        );
+
+        // Live should now reflect the SSOT (provider DB), NOT the proxy URL
+        let restored_live = service.read_claude_live().expect("read live");
+        let restored_url = restored_live
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            restored_url,
+            Some("https://api.minimaxi.com/anthropic"),
+            "Live must be rebuilt from SSOT, not from the corrupted backup"
+        );
+        let restored_key = restored_live
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            restored_key,
+            Some("real-key-from-db"),
+            "Live must carry the real API key from the provider DB"
+        );
+        assert_ne!(
+            restored_live
+                .get("env")
+                .and_then(|env| env.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(|v| v.as_str()),
+            Some(PROXY_TOKEN_PLACEHOLDER),
+            "Live must not still carry the proxy placeholder"
+        );
+    }
+
+    /// Regression: when Live is already a proxy placeholder (a corrupted state
+    /// where previous stop failed to restore), backup must NOT overwrite a
+    /// previously-good backup with the proxy config. This prevents the bug
+    /// where stop-then-start cycles permanently corrupt the backup.
+    #[tokio::test]
+    #[serial]
+    async fn backup_skips_when_live_is_already_proxy_placeholder() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // Seed a GOOD backup (the "real" original Live)
+        let good_backup = serde_json::to_string(&json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "real-token"
+            }
+        }))
+        .expect("serialize good backup");
+        db.save_live_backup("claude", &good_backup)
+            .await
+            .expect("seed good backup");
+
+        // Seed Live with proxy placeholder (the corrupted state)
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed taken-over live file");
+
+        // Call backup_live_config_strict: must skip
+        service
+            .backup_live_config_strict(&AppType::Claude)
+            .await
+            .expect("backup should succeed (no-op when live is placeholder)");
+
+        // The good backup must still be intact
+        let backup_after = db
+            .get_live_backup("claude")
+            .await
+            .expect("get backup")
+            .expect("backup still exists");
+        assert_eq!(
+            backup_after.original_config, good_backup,
+            "must not overwrite a good backup with a proxy placeholder"
+        );
+    }
+
+    /// Regression: when ALL apps have Live=proxy-placeholder (worst-case
+    /// corrupted state), the bulk `backup_live_configs` path used by
+    /// `start_with_takeover` must skip every save — instead of overwriting
+    /// good backups with the proxy config.
+    #[tokio::test]
+    #[serial]
+    async fn bulk_backup_skips_all_when_live_is_proxy_placeholder() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        // Seed good backups for all three apps
+        let good_backup = serde_json::to_string(&json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "real-token"
+            }
+        }))
+        .expect("serialize good backup");
+        db.save_live_backup("claude", &good_backup)
+            .await
+            .expect("seed claude backup");
+
+        let codex_good_backup = serde_json::to_string(&json!({
+            "auth": { "OPENAI_API_KEY": "real-codex-token" }
+        }))
+        .expect("serialize codex good backup");
+        db.save_live_backup("codex", &codex_good_backup)
+            .await
+            .expect("seed codex backup");
+
+        let gemini_good_backup = serde_json::to_string(&json!({
+            "env": { "GEMINI_API_KEY": "real-gemini-key" }
+        }))
+        .expect("serialize gemini good backup");
+        db.save_live_backup("gemini", &gemini_good_backup)
+            .await
+            .expect("seed gemini backup");
+
+        // Seed all three Live files with proxy placeholders
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": PROXY_TOKEN_PLACEHOLDER,
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"
+                }
+            }))
+            .expect("seed claude live");
+        let codex_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&codex_dir).expect("create codex dir");
+        std::fs::write(
+            crate::codex_config::get_codex_config_path(),
+            r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "chat"
+experimental_bearer_token = "PROXY_MANAGED"
+"#,
+        )
+        .expect("seed codex config.toml");
+        std::fs::write(
+            crate::codex_config::get_codex_auth_path(),
+            r#"{"OPENAI_API_KEY":"PROXY_MANAGED"}"#,
+        )
+        .expect("seed codex auth.json");
+        let gemini_env_path = crate::gemini_config::get_gemini_env_path();
+        if let Some(parent) = gemini_env_path.parent() {
+            std::fs::create_dir_all(parent).expect("create gemini dir");
+        }
+        std::fs::write(&gemini_env_path, "GEMINI_API_KEY=PROXY_MANAGED\n")
+            .expect("seed gemini env");
+
+        // Call bulk backup: must skip all three apps
+        service
+            .backup_live_configs()
+            .await
+            .expect("bulk backup should succeed (no-op when all live are placeholders)");
+
+        // All three good backups must still be intact
+        for (app_type, original) in [
+            ("claude", good_backup.as_str()),
+            ("codex", codex_good_backup.as_str()),
+            ("gemini", gemini_good_backup.as_str()),
+        ] {
+            let backup_after = db
+                .get_live_backup(app_type)
+                .await
+                .expect("get backup")
+                .expect("backup still exists");
+            assert_eq!(
+                backup_after.original_config, original,
+                "must not overwrite good backup for {app_type} with proxy placeholder"
+            );
+        }
     }
 }

@@ -1964,7 +1964,7 @@ impl SkillService {
                     .strip_prefix(base_dir)
                     .unwrap_or(current_dir)
                     .to_string_lossy()
-                    .to_string()
+                    .replace('\\', "/")
             };
 
             let doc_path = skill_md

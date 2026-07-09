@@ -37,6 +37,18 @@ impl TokenUsage {
             .map(|mid| format!("{SESSION_REQUEST_ID_PREFIX}{mid}"))
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
     }
+
+    /// 是否产生了任一计费维度的 token。
+    ///
+    /// 用于在写入前过滤全 0 的空 usage：当 OpenAI 兼容上游在流式下省略 usage 时，
+    /// 转换器会合成一个全 0 的终止事件，若无 message_id 则 `dedup_request_id`
+    /// 退化为随机 UUID，导致每笔请求插入一条无意义的空行、虚增请求数。
+    pub fn has_billable_tokens(&self) -> bool {
+        self.input_tokens > 0
+            || self.output_tokens > 0
+            || self.cache_read_tokens > 0
+            || self.cache_creation_tokens > 0
+    }
 }
 
 /// API 类型
@@ -85,6 +97,7 @@ impl TokenUsage {
         let mut usage = Self::default();
         let mut model: Option<String> = None;
         let mut message_id: Option<String> = None;
+        let mut input_from_delta = false;
 
         for event in events {
             if let Some(event_type) = event.get("type").and_then(|v| v.as_str()) {
@@ -129,32 +142,52 @@ impl TokenUsage {
                             {
                                 usage.output_tokens = output as u32;
                             }
-                            // OpenRouter 转换后的流式响应：input_tokens 也在 message_delta 中
-                            // 如果 message_start 中没有 input_tokens，则从 message_delta 获取
-                            if usage.input_tokens == 0 {
-                                if let Some(input) =
-                                    delta_usage.get("input_tokens").and_then(|v| v.as_u64())
-                                {
-                                    usage.input_tokens = input as u32;
+
+                            let delta_input = delta_usage
+                                .get("input_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+                            let delta_cache_read = delta_usage
+                                .get("cache_read_input_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+                            let delta_cache_creation = delta_usage
+                                .get("cache_creation_input_tokens")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+
+                            // 部分 Anthropic-compatible SSE provider 会在 message_start 上报完整上下文，
+                            // 但在 message_delta 上报修正后的 fresh input。遇到更小的正数 delta input
+                            // 时采用 delta；若同一 usage 块带有缓存计数，也同步采用以避免重复计数。
+                            // 若 delta 缺少缓存字段，则保留 start 中已有的缓存值作为 best-effort fallback。
+                            if let Some(input) = delta_input {
+                                let should_use_delta_input = input > 0
+                                    && (usage.input_tokens == 0
+                                        || input < usage.input_tokens
+                                        || (input_from_delta && input <= usage.input_tokens));
+
+                                if should_use_delta_input {
+                                    usage.input_tokens = input;
+                                    input_from_delta = true;
+                                    if let Some(cache_read) = delta_cache_read {
+                                        usage.cache_read_tokens = cache_read;
+                                    }
+                                    if let Some(cache_creation) = delta_cache_creation {
+                                        usage.cache_creation_tokens = cache_creation;
+                                    }
                                 }
                             }
                             // 从 message_delta 中处理缓存命中(cache_read_input_tokens)
                             if usage.cache_read_tokens == 0 {
-                                if let Some(cache_read) = delta_usage
-                                    .get("cache_read_input_tokens")
-                                    .and_then(|v| v.as_u64())
-                                {
-                                    usage.cache_read_tokens = cache_read as u32;
+                                if let Some(cache_read) = delta_cache_read {
+                                    usage.cache_read_tokens = cache_read;
                                 }
                             }
                             // 从 message_delta 中处理缓存创建(cache_creation_input_tokens)
                             // 注: 现在 zhipu 没有返回 cache_creation_input_tokens 字段
                             if usage.cache_creation_tokens == 0 {
-                                if let Some(cache_creation) = delta_usage
-                                    .get("cache_creation_input_tokens")
-                                    .and_then(|v| v.as_u64())
-                                {
-                                    usage.cache_creation_tokens = cache_creation as u32;
+                                if let Some(cache_creation) = delta_cache_creation {
+                                    usage.cache_creation_tokens = cache_creation;
                                 }
                             }
                         }
@@ -164,7 +197,11 @@ impl TokenUsage {
             }
         }
 
-        if usage.input_tokens > 0 || usage.output_tokens > 0 {
+        // 用 has_billable_tokens 而非仅看 input/output：完全缓存命中、无输出的流式请求
+        // （input==0 && output==0 但 cache_read>0）是真实的 cache-read 计费，必须保留。
+        // Gemini→Anthropic 路径在 input 改为 fresh(promptTokenCount - cachedContentTokenCount)
+        // 后尤其会出现这种全缓存场景；旧 gate 会把它当成"无 usage"丢弃。
+        if usage.has_billable_tokens() {
             usage.model = model;
             usage.message_id = message_id;
             Some(usage)
@@ -502,6 +539,71 @@ mod tests {
     }
 
     #[test]
+    fn test_has_billable_tokens_gates_empty_usage() {
+        // 全 0 usage（如上游省略 usage 时合成的全 0 终止事件）不应计费——
+        // 这是 Codex 流式空行多记修复（D）的闸门依据。
+        assert!(!TokenUsage::default().has_billable_tokens());
+        // 仅有 cache_read 也属于真实计费 token，必须计入。
+        let only_cache = TokenUsage {
+            cache_read_tokens: 100,
+            ..Default::default()
+        };
+        assert!(only_cache.has_billable_tokens());
+        let normal = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..Default::default()
+        };
+        assert!(normal.has_billable_tokens());
+    }
+
+    #[test]
+    fn test_claude_stream_cache_only_request_is_recorded() {
+        // P2 回归：完全缓存命中、无输出的流式请求（input==0 && output==0 但 cache_read>0）
+        // 是真实计费，必须保留——旧 gate `input>0 || output>0` 会把它丢弃。
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "id": "msg_cacheonly",
+                    "model": "claude-opus-4-8",
+                    "usage": {
+                        "input_tokens": 0,
+                        "cache_read_input_tokens": 50000,
+                        "cache_creation_input_tokens": 0
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": { "output_tokens": 0 }
+            }),
+        ];
+        let usage = TokenUsage::from_claude_stream_events(&events)
+            .expect("cache-only 流式请求必须被记录，不能被 input/output gate 丢弃");
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 50000);
+        assert_eq!(usage.message_id, Some("msg_cacheonly".to_string()));
+    }
+
+    #[test]
+    fn test_codex_response_auto_returns_some_for_synthetic_all_zero() {
+        // P3 回归：上游非流式 Chat 省略 usage 时转换器合成的全 0 usage，from_codex_response_auto
+        // 仍返回 Some（字段存在、无 positivity check）——证明 handlers 必须用 has_billable_tokens
+        // 闸门才能挡住空行，单靠 `if let Some` 不够。
+        let synthetic = json!({
+            "usage": { "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 }
+        });
+        let usage = TokenUsage::from_codex_response_auto(&synthetic)
+            .expect("全 0 usage 字段存在时 from_codex_response_auto 返回 Some");
+        assert!(
+            !usage.has_billable_tokens(),
+            "全 0 usage 必须被 has_billable_tokens 判为非计费，由 handlers 闸门跳过"
+        );
+    }
+
+    #[test]
     fn test_claude_response_parsing_no_model() {
         let response = json!({
             "usage": {
@@ -796,6 +898,115 @@ mod tests {
         assert_eq!(usage.input_tokens, 150);
         assert_eq!(usage.output_tokens, 75);
         assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_prefers_smaller_delta_input_and_cache_pair() {
+        // 部分 Anthropic-compatible provider 会在 message_start 给出包含缓存的总上下文，
+        // 再在 message_delta 给出修正后的 fresh input，需要以 delta usage 为准。
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200_000,
+                        "cache_read_input_tokens": 180_000,
+                        "cache_creation_input_tokens": 2_000
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80_000,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 500
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 80_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 120_000);
+        assert_eq!(usage.cache_creation_tokens, 500);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_updates_cache_pair_from_later_delta_input() {
+        // 有些 provider 会多次发送带 input 的 message_delta；一旦采用过 delta input，
+        // 后续相同/更小 input 的 delta 应继续更新同一块里的缓存计数。
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "model": "qwen-max",
+                    "usage": {
+                        "input_tokens": 200_000,
+                        "cache_read_input_tokens": 180_000,
+                        "cache_creation_input_tokens": 2_000
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80_000,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 110_000,
+                    "cache_creation_input_tokens": 300
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 80_000,
+                    "output_tokens": 1_000,
+                    "cache_read_input_tokens": 120_000,
+                    "cache_creation_input_tokens": 500
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 80_000);
+        assert_eq!(usage.output_tokens, 1_000);
+        assert_eq!(usage.cache_read_tokens, 120_000);
+        assert_eq!(usage.cache_creation_tokens, 500);
+        assert_eq!(usage.model, Some("qwen-max".to_string()));
+    }
+
+    #[test]
+    fn test_claude_stream_keeps_start_when_delta_input_is_larger() {
+        // 正常 Anthropic 语义下，message_start 的 input_tokens 已经可信；
+        // 如果 delta input 变大，不应覆盖 start input/cache。
+        let events = vec![
+            json!({
+                "type": "message_start",
+                "message": {
+                    "usage": {
+                        "input_tokens": 100,
+                        "cache_read_input_tokens": 20
+                    }
+                }
+            }),
+            json!({
+                "type": "message_delta",
+                "usage": {
+                    "input_tokens": 150,
+                    "output_tokens": 75,
+                    "cache_read_input_tokens": 30
+                }
+            }),
+        ];
+
+        let usage = TokenUsage::from_claude_stream_events(&events).unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 75);
+        assert_eq!(usage.cache_read_tokens, 20);
     }
 
     #[test]

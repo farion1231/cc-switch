@@ -11,7 +11,7 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "minimax" | "zenmux";
+  id: "kimi" | "zhipu" | "zhipu_team" | "minimax" | "zenmux" | "volcengine";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -26,6 +26,16 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     pattern: /bigmodel\.cn|api\.z\.ai/i,
   },
   {
+    // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
+    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由。
+    // 个人版 zhipu 排在前面，detectCodingPlanProvider 首匹配仍命中个人版，
+    // 故团队版永不被 injectCodingPlanUsageScript 自动注入（必须用户手动选）。
+    // pattern 仅占位（下拉展示用），实际不参与自动检测。
+    id: "zhipu_team",
+    label: "Zhipu GLM Team (智谱团队)",
+    pattern: /bigmodel\.cn/i,
+  },
+  {
     id: "minimax",
     label: "MiniMax",
     pattern: /api\.minimaxi?\.com|api\.minimax\.io/i,
@@ -34,6 +44,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "zenmux",
     label: "ZenMux",
     pattern: /zenmux\./i,
+  },
+  {
+    // 火山方舟 Agent Plan / Coding Plan。base_url 形如
+    // ark.cn-beijing.volces.com/api/coding[/v3]；与后端 detect_provider 的
+    // `volces.com/api/coding` 子串判断同效。
+    id: "volcengine",
+    label: "火山方舟 (Volcengine)",
+    pattern: /volces\.com\/api\/coding/i,
   },
 ] as const;
 
