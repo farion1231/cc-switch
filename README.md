@@ -125,8 +125,8 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 </tr>
 
 <tr>
-<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
-<td>Thanks to <a href="https://code0.ai?source=ccswitch">code0.ai</a> for sponsoring this project! code0.ai is an AI coding service platform built for developers, supporting Claude Code, Codex, Gemini, and other mainstream AI coding capabilities. It helps individual developers and teams use AI Agents more stably and efficiently for coding, debugging, refactoring, and automation workflows. ccswitch users can contact customer support via the <a href="https://code0.ai?source=ccswitch">code0.ai website</a> to claim test credits and experience a reliable AI coding service.</td>
+<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>Thanks to <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> for sponsoring this project! code0.ai is an AI coding service platform built for developers, supporting Claude Code, Codex, Gemini, and other mainstream AI coding capabilities. It helps individual developers and teams use AI Agents more stably and efficiently for coding, debugging, refactoring, and automation workflows. ccswitch users can contact customer support via the <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai website</a> to claim test credits and experience a reliable AI coding service.</td>
 </tr>
 
 <tr>
