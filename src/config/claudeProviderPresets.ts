@@ -344,7 +344,7 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4-pro",
+        ANTHROPIC_MODEL: "deepseek-v4-pro[1m]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
