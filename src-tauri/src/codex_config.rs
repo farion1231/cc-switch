@@ -15,14 +15,14 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
-const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
+pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
 /// Value that disables the web-search tool. Some native `/responses` gateways
 /// reject a `web_search` tool with `responses_feature_not_supported` ("tool type
 /// 'web_search' is not supported by this gateway phase"), so for those we write
 /// this per the vendors' official Codex docs. Also doubles as cc-switch's
 /// ownership sentinel: we only ever remove a `web_search` key whose value equals
 /// this string, never a user's own setting.
-const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
+pub(crate) const CODEX_WEB_SEARCH_DISABLED: &str = "disabled";
 
 /// Native `/responses` gateways whose first-party models do NOT support the Codex
 /// `web_search` hosted tool. A BLACKLIST (default-on): everything not listed keeps
@@ -1473,6 +1473,45 @@ pub fn strip_codex_unified_session_bucket_from_settings(
     Ok(())
 }
 
+/// Backfill helper: strip `[mcp_servers]` from a live `{ auth, config }`
+/// settings object before it is stored back to the DB.
+///
+/// MCP 服务器的 SSOT 是 DB 的 mcp_servers 表，live `config.toml` 里的
+/// `[mcp_servers]` 只是每次写 live 之后由 MCP 同步重新投影的产物。若回填时
+/// 烙进供应商存储配置，已在应用里删除的服务器会随下次激活该供应商被写回
+/// live，而逐条 reconcile 只认识 DB 现存条目、永远清不掉这种孤儿。
+pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(), AppError> {
+    let Some(config_text) = settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    if !config_text.contains("mcp") {
+        return Ok(());
+    }
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+    let mut changed = doc.as_table_mut().remove("mcp_servers").is_some();
+    // 历史错误格式 [mcp.servers] 一并清理（live 侧 MCP 同步也做同样迁移）
+    if let Some(mcp_tbl) = doc.get_mut("mcp").and_then(|item| item.as_table_like_mut()) {
+        if mcp_tbl.remove("servers").is_some() {
+            changed = true;
+        }
+        if mcp_tbl.is_empty() {
+            doc.as_table_mut().remove("mcp");
+        }
+    }
+    if changed {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("config".to_string(), Value::String(doc.to_string()));
+        }
+    }
+    Ok(())
+}
+
 /// Route a Codex live write between full auth+config or config-only.
 ///
 /// Official providers with usable login material own `auth.json`. Third-party
@@ -1801,6 +1840,41 @@ requires_openai_auth = true
             Some("")
         );
         assert!(settings.pointer("/auth/tokens/access_token").is_some());
+    }
+
+    #[test]
+    fn strip_mcp_servers_from_settings_removes_table_and_legacy_form() {
+        let mut settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": "# user comment\nmodel = \"gpt-5.5\"\n\n[mcp_servers.echo]\ntype = \"stdio\"\ncommand = \"echo\"\n\n[mcp.servers.legacy]\ncommand = \"noop\"\n",
+        });
+        strip_codex_mcp_servers_from_settings(&mut settings).expect("strip mcp");
+        let config = settings
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(!config.contains("mcp_servers"), "got: {config}");
+        assert!(
+            !config.contains("[mcp"),
+            "legacy [mcp.servers] gone: {config}"
+        );
+        assert!(config.contains("# user comment"), "comments preserved");
+        assert!(config.contains("model = \"gpt-5.5\""));
+    }
+
+    #[test]
+    fn strip_mcp_servers_from_settings_is_noop_without_mcp() {
+        let original = "# comment\nmodel = \"gpt-5.5\"\n";
+        let mut settings = json!({
+            "auth": {},
+            "config": original,
+        });
+        strip_codex_mcp_servers_from_settings(&mut settings).expect("strip mcp");
+        assert_eq!(
+            settings.get("config").and_then(|v| v.as_str()),
+            Some(original),
+            "config text must be byte-identical when nothing is stripped"
+        );
     }
 
     #[test]
