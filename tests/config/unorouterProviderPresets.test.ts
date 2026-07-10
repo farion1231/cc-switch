@@ -48,20 +48,20 @@ describe("UnoRouter provider presets", () => {
     expect(preset?.config).toContain('wire_api = "responses"');
   });
 
-  it("uses the Gemini-compatible v1beta endpoint for Gemini", () => {
+  it("uses the bare base URL for Gemini (the SDK appends /v1beta itself)", () => {
     const preset = geminiProviderPresets.find(
       (item) => item.name === "UnoRouter",
     );
 
     expect(preset).toBeDefined();
-    expect(preset?.baseURL).toBe("https://api.unorouter.com/v1beta");
+    expect(preset?.baseURL).toBe("https://api.unorouter.com");
     expect(preset?.endpointCandidates).toEqual([
-      "https://api.unorouter.com/v1beta",
+      "https://api.unorouter.com",
     ]);
     expect(preset?.model).toBe("gemini-3.5-flash");
 
     const env = (preset?.settingsConfig as { env: Record<string, string> }).env;
-    expect(env.GOOGLE_GEMINI_BASE_URL).toBe("https://api.unorouter.com/v1beta");
+    expect(env.GOOGLE_GEMINI_BASE_URL).toBe("https://api.unorouter.com");
     expect(env.GEMINI_MODEL).toBe("gemini-3.5-flash");
   });
 

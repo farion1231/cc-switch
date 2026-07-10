@@ -436,15 +436,15 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     apiKeyUrl: "https://unorouter.com/token",
     settingsConfig: {
       env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.unorouter.com/v1beta",
+        GOOGLE_GEMINI_BASE_URL: "https://api.unorouter.com",
         GEMINI_MODEL: "gemini-3.5-flash",
       },
     },
-    baseURL: "https://api.unorouter.com/v1beta",
+    baseURL: "https://api.unorouter.com",
     model: "gemini-3.5-flash",
     description: "UnoRouter",
     category: "aggregator",
-    endpointCandidates: ["https://api.unorouter.com/v1beta"],
+    endpointCandidates: ["https://api.unorouter.com"],
     icon: "unorouter",
     iconColor: "#FF2A0C",
   },
