@@ -139,6 +139,8 @@ pub struct RequestForwarder {
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
     streaming_first_byte_timeout: std::time::Duration,
+    /// 是否启用自动故障转移；启用时即使候选链只有一家也必须经过熔断器。
+    auto_failover_enabled: bool,
     /// 单个客户端请求最多尝试的 provider 数。
     ///
     /// 由 `AppProxyConfig.max_retries` (UI: "请求失败时的重试次数, 0-10") 派生：
@@ -218,6 +220,7 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        auto_failover_enabled: bool,
         max_retries: u32,
         routed_provider_id: Option<String>,
         routing_model_override: Option<String>,
@@ -243,6 +246,7 @@ impl RequestForwarder {
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
             ),
+            auto_failover_enabled,
             max_attempts,
             routed_provider_id,
             routing_model_override,
@@ -419,8 +423,9 @@ impl RequestForwarder {
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
-        let bypass_circuit_breaker = providers.len() == 1;
+        // 故障转移关闭时跳过熔断器；开启时即使链中只有一家也必须获取放行许可。
+        // 层级路由目标可能是基础队列全熔断后的唯一候选，不能按链长误判为直连模式。
+        let bypass_circuit_breaker = !self.auto_failover_enabled;
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -442,7 +447,7 @@ impl RequestForwarder {
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
+            // 仅在故障转移关闭时跳过，避免直连模式被历史熔断状态阻塞。
             let (allowed, used_half_open_permit) = if bypass_circuit_breaker {
                 (true, false)
             } else {
@@ -3555,6 +3560,8 @@ mod tests {
         streaming_first_byte_timeout: Duration,
     ) -> RequestForwarder {
         let db = Arc::new(Database::memory().expect("memory db"));
+        db.save_provider("claude", &test_provider_with_type(None))
+            .expect("save default test provider");
 
         RequestForwarder {
             router: Arc::new(ProviderRouter::new(db.clone())),
@@ -3572,9 +3579,53 @@ mod tests {
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
             non_streaming_timeout,
             streaming_first_byte_timeout,
+            auto_failover_enabled: false,
             max_attempts: 1,
             routed_provider_id: None,
             routing_model_override: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn single_provider_still_respects_circuit_breaker_when_failover_is_enabled() {
+        let mut forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        forwarder.auto_failover_enabled = true;
+        let provider = test_provider_with_type(None);
+
+        // Claude 的默认阈值为 8；把唯一候选打开后，转发器应在网络请求前拒绝它。
+        for _ in 0..8 {
+            forwarder
+                .router
+                .record_result(
+                    &provider.id,
+                    "claude",
+                    false,
+                    false,
+                    Some("failed".to_string()),
+                )
+                .await
+                .expect("record circuit failure");
+        }
+
+        let result = forwarder
+            .forward_with_retry_inner(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                json!({ "model": "claude-opus-4-8", "messages": [] }),
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        match result {
+            Err(error) => assert!(
+                matches!(error.error, ProxyError::NoAvailableProvider),
+                "unexpected error: {}",
+                error.error
+            ),
+            Ok(_) => panic!("circuit-open provider must not be attempted"),
         }
     }
 

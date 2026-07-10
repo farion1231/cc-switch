@@ -229,35 +229,32 @@ pub struct TierRoutingOutcome {
     pub model_override: Option<String>,
 }
 
-/// 应用层级路由：纯函数，便于单测。
+/// 已通过配置与 Provider 可路由性校验的层级路由目标。
+#[derive(Debug, Clone)]
+pub struct TierRoutingTarget {
+    /// 应被提升为首选的 Provider。
+    pub provider: Provider,
+    /// 发往该 Provider 的真实上游模型名。
+    pub model_override: String,
+    /// 命中的 Claude 模型层级。
+    pub tier: ModelTier,
+}
+
+/// 解析当前请求的层级路由目标，但不负责选择故障转移链。
 ///
-/// 任一条件不满足都「不改」原选择，原样返回：
-/// 配置未启用、请求模型无法归类为层级、该 app/tier 无路由项、目标 Provider 查不到或不可路由。
-///
-/// 命中则把目标 Provider 提到链首并去重，同时回填 `routed_provider_id` 与 `model_override`。
-/// 调用方负责把 `model_override` 应用到目标 Provider 的请求体副本（仅对该 Provider 生效，
-/// 故障转移队列中的其它 Provider 仍用客户端原始别名）。
-pub fn apply_tier_routing(
+/// ProviderRouter 在基础故障转移队列之外也需要看到这个目标，才能在基础队列
+/// 全部熔断时仍把可用的层级目标纳入同一轮熔断筛选。
+pub fn resolve_tier_routing_target(
     request_model: &str,
     app_type: &str,
     config: &ModelTierRoutingConfig,
-    selected: &[Provider],
     lookup: impl Fn(&str) -> Option<Provider>,
-) -> TierRoutingOutcome {
-    let fallback = || TierRoutingOutcome {
-        providers: selected.to_vec(),
-        routed_provider_id: None,
-        model_override: None,
-    };
-
+) -> Option<TierRoutingTarget> {
     if !config.is_enabled_for_app(app_type) {
-        return fallback();
+        return None;
     }
 
-    let Some(tier) = classify_model_tier(request_model) else {
-        return fallback();
-    };
-
+    let tier = classify_model_tier(request_model)?;
     let TierRoute {
         provider_id, model, ..
     } = config
@@ -266,19 +263,19 @@ pub fn apply_tier_routing(
         .unwrap_or_default();
 
     if provider_id.is_empty() || model.trim().is_empty() {
-        return fallback();
+        return None;
     }
 
-    let Some(routed) = lookup(&provider_id) else {
+    let Some(provider) = lookup(&provider_id) else {
         // 路由项指向不存在的 Provider（被删除等），不改，避免把请求送进死路。
         log::warn!(
             "[ModelRouter] 层级 {} 路由到不存在的 Provider {provider_id}，回退默认选择",
             tier.as_str()
         );
-        return fallback();
+        return None;
     };
 
-    if !routed.supports_routing() {
+    if !provider.supports_routing() {
         // 路由项指向不可路由的 Provider（如官方账号：无可劫持 base_url、认证为 1P
         // OAuth，代理无法转发）。这是脏数据/旧配置——前端下拉已过滤，但后端是执行点，
         // 必须同样拦住，否则请求仍会被改写 model 并送进代理无法转发的上游。
@@ -286,10 +283,29 @@ pub fn apply_tier_routing(
         log::warn!(
             "[ModelRouter] 层级 {} 路由到不可路由的 Provider {provider_id}（category={:?}），回退默认选择",
             tier.as_str(),
-            routed.category
+            provider.category
         );
-        return fallback();
+        return None;
     }
+
+    Some(TierRoutingTarget {
+        provider,
+        model_override: model,
+        tier,
+    })
+}
+
+/// 把已解析且通过熔断筛选的层级目标应用到最终 Provider 链。
+pub fn apply_tier_routing_target(
+    request_model: &str,
+    target: TierRoutingTarget,
+    selected: &[Provider],
+) -> TierRoutingOutcome {
+    let TierRoutingTarget {
+        provider: routed,
+        model_override: model,
+        tier,
+    } = target;
 
     // 去重后把目标 Provider 提到链首：保持故障转移语义（目标失败时仍按原队列降级）。
     let mut chain: Vec<Provider> = vec![routed.clone()];
@@ -313,6 +329,25 @@ pub fn apply_tier_routing(
         routed_provider_id: Some(routed.id),
         model_override: Some(model),
     }
+}
+
+/// 解析并应用层级路由的纯函数封装，供模型路由单元测试覆盖完整语义。
+#[cfg(test)]
+fn apply_tier_routing(
+    request_model: &str,
+    app_type: &str,
+    config: &ModelTierRoutingConfig,
+    selected: &[Provider],
+    lookup: impl Fn(&str) -> Option<Provider>,
+) -> TierRoutingOutcome {
+    let Some(target) = resolve_tier_routing_target(request_model, app_type, config, lookup) else {
+        return TierRoutingOutcome {
+            providers: selected.to_vec(),
+            routed_provider_id: None,
+            model_override: None,
+        };
+    };
+    apply_tier_routing_target(request_model, target, selected)
 }
 
 #[cfg(test)]

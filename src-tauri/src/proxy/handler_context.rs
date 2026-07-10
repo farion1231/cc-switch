@@ -4,7 +4,7 @@
 
 use crate::app_config::AppType;
 use crate::provider::Provider;
-use crate::proxy::model_mapper::apply_tier_routing;
+use crate::proxy::model_mapper::{apply_tier_routing_target, resolve_tier_routing_target};
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
@@ -137,11 +137,23 @@ impl RequestContext {
             session_result.client_provided
         );
 
-        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
+        // 先解析模型层级路由目标，再把它作为首选项交给 ProviderRouter。目标即使不在
+        // 普通故障转移队列中，也会与基础队列一起经过熔断筛选，因此基础队列全部熔断
+        // 时仍可尝试可用的层级目标，同时不会绕过目标自身的熔断器。
+        let routing_config = state.db.get_model_tier_routing_config().unwrap_or_default();
+        let routing_target =
+            resolve_tier_routing_target(&request_model, app_type_str, &routing_config, |id| {
+                state.db.get_provider_by_id(id, app_type_str).ok().flatten()
+            });
+        let preferred_provider_id = routing_target
+            .as_ref()
+            .map(|target| target.provider.id.clone());
+
+        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）。
+        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额。
         let providers = state
             .provider_router
-            .select_providers(app_type_str)
+            .select_providers_with_preferred(app_type_str, preferred_provider_id.as_deref())
             .await
             .map_err(|e| match e {
                 crate::error::AppError::AllProvidersCircuitOpen => {
@@ -151,20 +163,31 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
-        // 模型层级路由：按请求模型的层级（opus/sonnet/haiku/fable）把请求分发到指定
-        // Provider 并改写模型名。未启用 / 未命中 / 目标 Provider 已删时原样返回既有选择。
-        let routing_config = state.db.get_model_tier_routing_config().unwrap_or_default();
-        let routing_outcome = apply_tier_routing(
-            &request_model,
-            app_type_str,
-            &routing_config,
-            &providers,
-            |id| state.db.get_provider_by_id(id, app_type_str).ok().flatten(),
-        );
-
-        let providers = routing_outcome.providers;
-        let routed_provider_id = routing_outcome.routed_provider_id;
-        let routing_model_override = routing_outcome.model_override;
+        // 只有路由目标实际通过熔断筛选并成为链首时才应用模型覆写。若目标熔断，
+        // ProviderRouter 会回退到普通队列，此时必须保留各 Provider 自己的模型映射。
+        let (providers, routed_provider_id, routing_model_override) = match routing_target {
+            Some(target)
+                if providers
+                    .first()
+                    .is_some_and(|provider| provider.id == target.provider.id) =>
+            {
+                let outcome = apply_tier_routing_target(&request_model, target, &providers);
+                (
+                    outcome.providers,
+                    outcome.routed_provider_id,
+                    outcome.model_override,
+                )
+            }
+            Some(target) => {
+                log::debug!(
+                    "[ModelRouter] 层级 {} 目标 Provider {} 当前不可用，回退默认选择",
+                    target.tier.as_str(),
+                    target.provider.id
+                );
+                (providers, None, None)
+            }
+            None => (providers, None, None),
+        };
 
         let provider = providers
             .first()
@@ -265,6 +288,7 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            self.app_config.auto_failover_enabled,
             max_retries,
             self.routed_provider_id.clone(),
             self.routing_model_override.clone(),
