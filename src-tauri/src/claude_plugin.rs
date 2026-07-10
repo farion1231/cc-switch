@@ -185,6 +185,10 @@ pub fn clear_claude_config_for_db(db: &Database) -> Result<bool, AppError> {
     Ok(changed)
 }
 
+pub(crate) fn clear_claude_config_for_profile_dir(profile_dir: &Path) -> Result<bool, AppError> {
+    clear_claude_config_at(&profile_dir.join(CLAUDE_CONFIG_FILE))
+}
+
 pub fn claude_config_status_for_db(db: &Database) -> Result<(bool, PathBuf), AppError> {
     let path = claude_config_path_for_db(db)?;
     Ok((path.exists(), path))

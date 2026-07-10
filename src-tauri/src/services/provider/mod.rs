@@ -3010,7 +3010,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn switch_claude_profile_and_config_syncs_mcp_to_target_profile() {
+    fn switch_claude_profile_and_config_syncs_assets_to_target_profile() {
         let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
@@ -3080,6 +3080,47 @@ mod tests {
                     tags: Vec::new(),
                 })
                 .expect("save managed mcp server");
+            state
+                .db
+                .save_prompt(
+                    AppType::Claude.as_str(),
+                    &crate::Prompt {
+                        id: "managed-prompt".to_string(),
+                        name: "Managed Prompt".to_string(),
+                        content: "managed switch prompt".to_string(),
+                        description: None,
+                        enabled: true,
+                        created_at: Some(1),
+                        updated_at: None,
+                    },
+                )
+                .expect("save enabled prompt");
+            let skill_dir = "managed-switch-skill";
+            let ssot_skill_dir = SkillService::get_ssot_dir()
+                .expect("ssot dir")
+                .join(skill_dir);
+            fs::create_dir_all(&ssot_skill_dir).expect("create ssot skill dir");
+            fs::write(ssot_skill_dir.join("SKILL.md"), "# Managed Switch Skill\n")
+                .expect("write skill manifest");
+            state
+                .db
+                .save_skill(&InstalledSkill {
+                    id: "local:managed-switch-skill".to_string(),
+                    name: "Managed Switch Skill".to_string(),
+                    description: None,
+                    directory: skill_dir.to_string(),
+                    repo_owner: None,
+                    repo_name: None,
+                    repo_branch: None,
+                    readme_url: None,
+                    apps: SkillApps::only(&AppType::Claude),
+                    installed_at: 1,
+                    content_hash: None,
+                    updated_at: 0,
+                })
+                .expect("save enabled skill");
+            crate::claude_plugin::write_claude_config_for_db(state.db.as_ref())
+                .expect("seed managed plugin config");
 
             ProviderService::switch(state, AppType::Claude, "claude-api")
                 .expect("switch to api profile");
@@ -3095,6 +3136,26 @@ mod tests {
             assert!(
                 !crate::config::get_default_claude_mcp_path().exists(),
                 "profile-and-config switch should not write the default MCP file when the target profile is active"
+            );
+            assert_eq!(
+                fs::read_to_string(api_dir.join("CLAUDE.md")).expect("read api profile prompt"),
+                "managed switch prompt",
+                "profile-and-config switch should project the enabled Claude prompt into the selected profile"
+            );
+            assert!(
+                api_dir
+                    .join("skills")
+                    .join(skill_dir)
+                    .join("SKILL.md")
+                    .is_file(),
+                "profile-and-config switch should project enabled Claude skills into the selected profile"
+            );
+            let api_plugin: Value =
+                read_json_file(&api_dir.join("config.json")).expect("read api profile plugin");
+            assert_eq!(
+                api_plugin["primaryApiKey"],
+                Value::String("any".to_string()),
+                "profile-and-config switch should project applied Claude plugin config into the selected profile"
             );
         });
     }
@@ -4105,6 +4166,73 @@ mod tests {
                 launch_profile_dir.as_deref(),
                 Some(normalized_dir.as_str()),
                 "terminal launches should export the trimmed profile directory validated by the switch plan"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn terminal_launch_profile_and_config_clears_stale_plugin_config_when_disabled() {
+        with_test_home(|state, home| {
+            let api_dir = home.join(".claude-profiles").join("api");
+            fs::create_dir_all(&api_dir).expect("create api profile dir");
+            write_json_file(
+                &api_dir.join("config.json"),
+                &json!({
+                    "primaryApiKey": "any",
+                    "theme": "dark"
+                }),
+            )
+            .expect("seed stale api profile plugin config");
+
+            let default_provider = claude_provider(
+                "default",
+                "Default",
+                "default-provider-token",
+                "https://default-provider.example",
+                None,
+            );
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &default_provider)
+                .expect("save default provider");
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "default")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("default"))
+                .expect("set local current provider");
+
+            ProviderService::prepare_claude_profile_terminal_launch(state, &api_provider)
+                .expect("prepare profile launch");
+
+            let api_plugin: Value =
+                read_json_file(&api_dir.join("config.json")).expect("read api profile plugin");
+            assert_eq!(
+                api_plugin.get("primaryApiKey"),
+                None,
+                "terminal launch should clear stale Claude plugin config when the plugin is disabled"
+            );
+            assert_eq!(
+                api_plugin["theme"],
+                Value::String("dark".to_string()),
+                "clearing stale plugin config should preserve unrelated Claude config keys"
             );
         });
     }
@@ -7077,13 +7205,25 @@ impl ProviderService {
         state: &AppState,
         profile_dir: &Path,
     ) -> Result<(), AppError> {
+        let plugin_applied =
+            crate::claude_plugin::is_claude_config_applied_for_db(state.db.as_ref())?;
+        Self::sync_claude_profile_assets_to_profile(state, profile_dir, plugin_applied)
+    }
+
+    fn sync_claude_profile_assets_to_profile(
+        state: &AppState,
+        profile_dir: &Path,
+        plugin_applied: bool,
+    ) -> Result<(), AppError> {
         McpService::sync_enabled_to_claude_profile(state, profile_dir)?;
         PromptService::sync_enabled_claude_prompt_to_profile(state, profile_dir)?;
         SkillService::sync_claude_to_profile(&state.db, profile_dir)
             .map_err(|err| AppError::Message(format!("Failed to sync Claude skills: {err}")))?;
 
-        if crate::claude_plugin::is_claude_config_applied_for_db(state.db.as_ref())? {
+        if plugin_applied {
             crate::claude_plugin::write_claude_config_for_profile_dir(profile_dir)?;
+        } else {
+            crate::claude_plugin::clear_claude_config_for_profile_dir(profile_dir)?;
         }
 
         Ok(())
@@ -8585,6 +8725,13 @@ impl ProviderService {
         } else {
             None
         };
+        let claude_profile_assets_plugin_applied = if matches!(app_type, AppType::Claude) {
+            Some(crate::claude_plugin::is_claude_config_applied_for_db(
+                state.db.as_ref(),
+            )?)
+        } else {
+            None
+        };
 
         // Backfill: Backfill current live config to current provider
         // Use effective current provider (validated existence) to ensure backfill targets valid provider
@@ -8729,12 +8876,36 @@ impl ProviderService {
             }
 
             if should_write_live {
-                // 切换重写了目标应用的 live，只重投影该应用的 MCP。走到
+                // 切换重写了目标应用的 live，只重投影该应用的附属资产。走到
                 // 这里 DB is_current 与 live 都已落盘，切换事实上已成功；
                 // 投影失败降级为警告，避免前端误报"切换失败"。
-                if let Err(err) = Self::sync_mcp_after_provider_live_write(state, &app_type) {
+                let sync_result = if matches!(app_type, AppType::Claude)
+                    && matches!(
+                        claude_switch_plan
+                            .as_ref()
+                            .map(|plan| &plan.activation_mode),
+                        Some(ClaudeActivationMode::ProfileAndConfig)
+                    ) {
+                    let profile_dir = claude_switch_plan
+                        .as_ref()
+                        .and_then(|plan| plan.override_dir.as_deref())
+                        .ok_or_else(|| {
+                            AppError::Message(
+                                "Claude profile switching requires a profile directory".to_string(),
+                            )
+                        })?;
+                    Self::sync_claude_profile_assets_to_profile(
+                        state,
+                        Path::new(profile_dir),
+                        claude_profile_assets_plugin_applied.unwrap_or(false),
+                    )
+                } else {
+                    Self::sync_mcp_after_provider_live_write(state, &app_type)
+                };
+
+                if let Err(err) = sync_result {
                     log::warn!(
-                        "切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
+                        "切换供应商后重投影 {app_type:?} 资产失败（将在下次同步时自愈）: {err}"
                     );
                 }
             }
