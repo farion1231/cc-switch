@@ -1415,6 +1415,39 @@ fn extend_windows_cli_manager_search_paths(paths: &mut Vec<std::path::PathBuf>, 
     push_unique_path(paths, program_data.join("scoop").join("shims"));
 }
 
+/// winget 安装的 CLI。WinGet 在不同 scope 下使用不同的根目录：
+///   - 用户 scope 默认: %LOCALAPPDATA%\Microsoft\WinGet
+///   - 机器 scope 默认: %ProgramFiles%\WinGet
+///     （`winget install --scope machine` 走这里,文档明确列出机器默认值）
+///
+/// 每个根下两种导出方式都存在：
+///   - Links shim 目录：`<root>\Links\`
+///   - Packages 目录：`<root>\Packages\<package>_<source>\...`
+///
+/// 全部显式纳入搜索路径,避免依赖 GUI 进程是否继承到了用户级 PATH——
+/// Tauri GUI 应用启动时的 PATH 经常不含用户后加的 winget 条目。
+#[cfg(target_os = "windows")]
+fn extend_winget_search_paths(paths: &mut Vec<std::path::PathBuf>) {
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+
+    // ① 用户 scope 默认
+    if let Some(local_data) = dirs::data_local_dir() {
+        roots.push(local_data.join("Microsoft").join("WinGet"));
+    }
+
+    // ② 机器 scope 默认(`winget install --scope machine` 走这里)。
+    //    与用户 root 平级,不互相覆盖——用户 root 默认是 LOCALAPPDATA,
+    //    机器 root 默认是 ProgramFiles,两个都加进去覆盖所有 scope 组合。
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        roots.push(std::path::PathBuf::from(program_files).join("WinGet"));
+    }
+
+    for root in &roots {
+        push_unique_path(paths, root.join("Links"));
+        extend_existing_child_search_paths(paths, &root.join("Packages"), None);
+    }
+}
+
 /// OpenCode install.sh 路径优先级（见 https://github.com/anomalyco/opencode README）:
 ///   $OPENCODE_INSTALL_DIR > $XDG_BIN_DIR > $HOME/bin > $HOME/.opencode/bin
 /// 额外扫描 Bun 默认全局安装路径（~/.bun/bin）
@@ -1572,25 +1605,9 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         );
         extend_windows_cli_manager_search_paths(&mut search_paths, &home);
 
-        // winget 安装的 CLI。winget 有两种导出方式：
-        // ① Links shim 模式：可执行 shim 集中在 `%LOCALAPPDATA%\Microsoft\WinGet\Links`，
-        //    winget 默认把该目录加进 PATH。
-        // ② 目录安装模式：每个包一个 `<publisher>_<source>` 子目录，包内直接放 .exe，
-        //    winget 把该 Packages 目录本身加进用户 PATH（而非 Links）。
-        // 两种模式都显式纳入搜索路径，避免依赖 GUI 进程是否继承到了用户级 PATH——
-        // Tauri GUI 应用启动时的 PATH 经常不含用户后加的 winget 条目。
-        if let Some(local_data) = dirs::data_local_dir() {
-            let winget_root = local_data.join("Microsoft").join("WinGet");
-            // ① Links shim 目录：直接作为 bin 目录加入。
-            push_unique_path(&mut search_paths, winget_root.join("Links"));
-            // ② Packages 模式：枚举每个 `<pkg>_<publisher>` 子目录，包内即 .exe 所在层。
-            //    遍历而非只盯 claude——未来其它工具发 winget 包时同样自动覆盖。
-            extend_existing_child_search_paths(
-                &mut search_paths,
-                &winget_root.join("Packages"),
-                None,
-            );
-        }
+        // winget 安装的 CLI:覆盖默认用户/机器 scope 两个根目录。
+        // 详见 `extend_winget_search_paths` 注释,这里只关心枚举范围本身。
+        extend_winget_search_paths(&mut search_paths);
     }
 
     let fnm_base = home.join(".local/state/fnm_multishells");
