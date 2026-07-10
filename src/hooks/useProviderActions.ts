@@ -234,15 +234,87 @@ export function useProviderActions(
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
 
-        // Show backfill warning if present
+        // 处理 warnings：区分 backfill 和统一会话历史
         if (result?.warnings?.length) {
-          toast.warning(
-            t("notifications.backfillWarning", {
-              defaultValue:
-                "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
-            }),
-            { duration: 5000 },
+          const backfillWarnings = result.warnings.filter(
+            (w) => !w.startsWith("unify_session_history:"),
           );
+          if (backfillWarnings.length) {
+            toast.warning(
+              t("notifications.backfillWarning", {
+                defaultValue:
+                  "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+              }),
+              { duration: 5000 },
+            );
+          }
+        }
+
+        // 统一会话历史反馈
+        if (result?.unifyHistory) {
+          const h = result.unifyHistory;
+          if (h.errors.length === 0) {
+            toast.success(
+              t("notifications.unifyHistoryDone", {
+                defaultValue: "统一会话历史完成",
+              }),
+              {
+                description: t("notifications.unifyHistoryDetail", {
+                  defaultValue:
+                    "已将 {{state}} 条记录和 {{jsonl}} 个文件的 provider 改写为 {{target}}，重启 Codex 后生效。",
+                  target: h.target,
+                  state: String(h.stateChanged),
+                  jsonl: String(h.jsonlChanged),
+                }),
+                duration: 5000,
+              },
+            );
+          } else if (h.stateChanged > 0 || h.jsonlChanged > 0) {
+            toast.warning(
+              t("notifications.unifyHistoryPartial", {
+                defaultValue: "统一会话历史部分成功",
+              }),
+              {
+                description: t("notifications.unifyHistoryPartialDetail", {
+                  defaultValue:
+                    "已改写 {{state}} 条记录、{{jsonl}} 个文件，但有 {{errors}} 个文件失败：{{detail}}",
+                  state: String(h.stateChanged),
+                  jsonl: String(h.jsonlChanged),
+                  errors: String(h.errors.length),
+                  detail: h.errors.slice(0, 3).join("; "),
+                }),
+                duration: 8000,
+                closeButton: true,
+                action: {
+                  label: t("common.copy", { defaultValue: "复制" }),
+                  onClick: () => {
+                    navigator.clipboard
+                      ?.writeText(h.errors.join("\n"))
+                      .catch(() => undefined);
+                  },
+                },
+              },
+            );
+          } else {
+            toast.error(
+              t("notifications.unifyHistoryFailed", {
+                defaultValue: "统一会话历史失败",
+              }),
+              {
+                description: h.errors.slice(0, 3).join("; "),
+                duration: 8000,
+                closeButton: true,
+                action: {
+                  label: t("common.copy", { defaultValue: "复制" }),
+                  onClick: () => {
+                    navigator.clipboard
+                      ?.writeText(h.errors.join("\n"))
+                      .catch(() => undefined);
+                  },
+                },
+              },
+            );
+          }
         }
 
         // 若已弹过 proxyRequired 警告则不再弹 success

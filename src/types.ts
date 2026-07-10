@@ -230,6 +230,8 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // 切换到此供应商时统一所有 Codex 会话历史的 model_provider
+  unifySessionHistory?: boolean;
 }
 
 // Skill 同步方式

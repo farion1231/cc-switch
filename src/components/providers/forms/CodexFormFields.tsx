@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  History,
   Loader2,
   Plus,
   Trash2,
@@ -34,6 +35,7 @@ import {
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { ToggleRow } from "@/components/ui/toggle-row";
 import { cn } from "@/lib/utils";
 import type {
   CodexApiFormat,
@@ -90,6 +92,10 @@ interface CodexFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  // Unify session history on switch
+  unifySessionHistory: boolean;
+  onUnifySessionHistoryChange: (value: boolean) => void;
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
@@ -169,6 +175,8 @@ export function CodexFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  unifySessionHistory,
+  onUnifySessionHistoryChange,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -700,6 +708,23 @@ export function CodexFormFields({
                   bodyJson={localProxyBodyOverride}
                   onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
                   onBodyJsonChange={onLocalProxyBodyOverrideChange}
+                />
+              </div>
+              <div className="border-t border-border-default pt-3">
+                <ToggleRow
+                  icon={<History className="h-4 w-4 text-sky-500" />}
+                  title={t("providerForm.unifySessionHistory", {
+                    defaultValue: "统一会话历史",
+                  })}
+                  description={t(
+                    "providerForm.unifySessionHistoryDescription",
+                    {
+                      defaultValue:
+                        "切换到此供应商时，将所有历史会话的 provider 统一为当前供应商，重启 Codex 后可看到全部会话。",
+                    },
+                  )}
+                  checked={unifySessionHistory}
+                  onCheckedChange={onUnifySessionHistoryChange}
                 />
               </div>
             </div>

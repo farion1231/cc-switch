@@ -985,6 +985,8 @@
   },
   "providerForm": {
     "supplierName": "Provider Name",
+    "unifySessionHistory": "Unify Session History",
+    "unifySessionHistoryDescription": "When switching to this provider, all session history will be unified to the current provider. After restarting Codex, all sessions will be visible.",
     "supplierNameRequired": "Provider Name *",
     "supplierNamePlaceholder": "e.g., Anthropic Official",
     "websiteUrl": "Website URL",

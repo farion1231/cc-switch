@@ -92,6 +92,9 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+    /// 统一会话历史改写结果（仅 Codex 供应商启用 unifySessionHistory 时非空）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unify_history: Option<crate::codex_history_migration::UnifyResult>,
 }
 
 #[cfg(test)]
@@ -2072,6 +2075,40 @@ impl ProviderService {
                 // Sync MCP
                 McpService::sync_all_enabled(state)?;
             }
+
+            // 供应商级"统一会话历史"：编辑当前 Codex 供应商并启用此选项时，
+            // 也需要触发统一改写（覆盖"已在该供应商上、仅编辑配置"的场景）。
+            if matches!(app_type, AppType::Codex) {
+                if let Some(true) = provider.meta.as_ref().and_then(|m| m.unify_session_history) {
+                    let target_id = crate::codex_config::read_codex_config_text()
+                        .ok()
+                        .and_then(|text| {
+                            text.parse::<toml_edit::DocumentMut>()
+                                .ok()
+                                .and_then(|doc| {
+                                    doc.get("model_provider")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.trim().to_string())
+                                        .filter(|s| !s.is_empty())
+                                })
+                        })
+                        .unwrap_or_else(|| "openai".to_string());
+
+                    log::info!(
+                        "[Update] 供应商 '{}' 启用了统一会话历史（编辑触发），目标 provider: {target_id}",
+                        provider.id
+                    );
+                    let unify = crate::codex_history_migration::unify_all_codex_sessions_to_provider(
+                        &target_id,
+                    );
+                    if !unify.errors.is_empty() {
+                        log::warn!(
+                            "[Update] 统一会话历史部分失败: errors={}",
+                            unify.errors.join("; ")
+                        );
+                    }
+                }
+            }
         }
 
         Ok(true)
@@ -2293,9 +2330,43 @@ impl ProviderService {
             )
             .map_err(|e| AppError::Message(format!("热切换失败: {e}")))?;
 
+            // 供应商级"统一会话历史"：代理接管热切换路径也需要触发
+            let mut result = SwitchResult::default();
+            if matches!(app_type, AppType::Codex) {
+                let provider = providers.get(id);
+                if let Some(true) = provider
+                    .and_then(|p| p.meta.as_ref())
+                    .and_then(|m| m.unify_session_history)
+                {
+                    let target_id = crate::codex_config::read_codex_config_text()
+                        .ok()
+                        .and_then(|text| {
+                            text.parse::<toml_edit::DocumentMut>()
+                                .ok()
+                                .and_then(|doc| {
+                                    doc.get("model_provider")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.trim().to_string())
+                                        .filter(|s| !s.is_empty())
+                                })
+                        })
+                        .unwrap_or_else(|| "openai".to_string());
+
+                    log::info!(
+                        "[HotSwitch] 供应商 '{}' 启用了统一会话历史，目标 provider: {target_id}",
+                        id
+                    );
+                    let unify =
+                        crate::codex_history_migration::unify_all_codex_sessions_to_provider(
+                            &target_id,
+                        );
+                    result.unify_history = Some(unify);
+                }
+            }
+
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
-            return Ok(SwitchResult::default());
+            return Ok(result);
         }
 
         // Normal mode: full switch with Live config write
@@ -2389,6 +2460,35 @@ impl ProviderService {
 
         // Sync to live (write_gemini_live handles security flag internally for Gemini)
         write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+
+        // 供应商级"统一会话历史"：切换到启用了此选项的 Codex 供应商后，
+        // 将所有历史会话的 model_provider 统一改写为当前供应商的 provider ID。
+        if matches!(app_type, AppType::Codex) {
+            if let Some(true) = provider.meta.as_ref().and_then(|m| m.unify_session_history) {
+                let target_id = crate::codex_config::read_codex_config_text()
+                    .ok()
+                    .and_then(|text| {
+                        text.parse::<toml_edit::DocumentMut>()
+                            .ok()
+                            .and_then(|doc| {
+                                doc.get("model_provider")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                            })
+                    })
+                    .unwrap_or_else(|| "openai".to_string());
+
+                log::info!(
+                    "[Switch] 供应商 '{}' 启用了统一会话历史，目标 provider: {target_id}",
+                    provider.id
+                );
+                let unify = crate::codex_history_migration::unify_all_codex_sessions_to_provider(
+                    &target_id,
+                );
+                result.unify_history = Some(unify);
+            }
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this

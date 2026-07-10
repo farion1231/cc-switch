@@ -16,6 +16,7 @@ use crate::settings::{
 };
 use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
@@ -2626,4 +2627,150 @@ model_provider = "aihubmix"
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-local-relay"));
     }
+}
+
+/// 统一会话历史改写结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifyResult {
+    pub target: String,
+    pub jsonl_changed: usize,
+    pub jsonl_scanned: usize,
+    pub state_changed: usize,
+    pub errors: Vec<String>,
+}
+
+/// 将所有 Codex 会话历史的 model_provider 统一改写为指定值。
+///
+/// 用于供应商级"统一会话历史"功能：切换到启用了该选项的供应商后，
+/// 把所有 JSONL 会话和 state DB 的 model_provider 统一改写为当前供应商的 provider ID，
+/// 这样重启 Codex 后无论之前用的是哪个供应商，所有会话都可见。
+pub fn unify_all_codex_sessions_to_provider(
+    target_provider_id: &str,
+) -> UnifyResult {
+    let mut result = UnifyResult {
+        target: target_provider_id.to_string(),
+        jsonl_changed: 0,
+        jsonl_scanned: 0,
+        state_changed: 0,
+        errors: Vec::new(),
+    };
+
+    if target_provider_id.trim().is_empty() {
+        result.errors.push("target_provider_id 为空".to_string());
+        return result;
+    }
+
+    let codex_dir = get_codex_config_dir();
+    let target = target_provider_id.to_string();
+
+    // 改写 JSONL 会话文件
+    let mut jsonl_files = Vec::new();
+    collect_jsonl_files(&codex_dir.join("sessions"), &mut jsonl_files, 0, 8);
+    collect_jsonl_files(&codex_dir.join("archived_sessions"), &mut jsonl_files, 0, 4);
+    result.jsonl_scanned = jsonl_files.len();
+
+    for file_path in &jsonl_files {
+        match rewrite_codex_session_file_unify(file_path, &codex_dir, &target) {
+            Ok(true) => result.jsonl_changed += 1,
+            Ok(false) => {}
+            Err(e) => result.errors.push(format!(
+                "JSONL 改写失败 {}: {e}",
+                file_path.file_name().unwrap_or_default().to_string_lossy()
+            )),
+        }
+    }
+
+    // 改写 state DB
+    let config_text = read_codex_config_text().unwrap_or_default();
+    for db_path in codex_state_db_paths(&codex_dir, &config_text) {
+        match unify_codex_state_db(&db_path, &target) {
+            Ok(n) => result.state_changed += n,
+            Err(e) => result.errors.push(format!(
+                "State DB 改写失败 {}: {e}",
+                db_path.file_name().unwrap_or_default().to_string_lossy()
+            )),
+        }
+    }
+
+    log::info!(
+        "[UnifyHistory] 统一会话历史完成: target={target}, jsonl_scanned={}, jsonl_changed={}, state_rows={}, errors={}",
+        result.jsonl_scanned, result.jsonl_changed, result.state_changed, result.errors.len()
+    );
+
+    result
+}
+
+fn rewrite_codex_session_file_unify(
+    path: &Path,
+    _codex_dir: &Path,
+    target_provider_id: &str,
+) -> Result<bool, AppError> {
+    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    let mut rewritten = String::with_capacity(content.len());
+    let mut changed = false;
+
+    for segment in content.split_inclusive('\n') {
+        let (line, newline) = segment
+            .strip_suffix('\n')
+            .map(|line| (line, "\n"))
+            .unwrap_or((segment, ""));
+
+        if line.contains("\"session_meta\"") && line.contains("\"model_provider\"") {
+            if let Ok(mut value) = serde_json::from_str::<Value>(line) {
+                if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+                    if let Some(payload) = value.get_mut("payload").and_then(Value::as_object_mut) {
+                        let current = payload.get("model_provider").and_then(Value::as_str);
+                        if current.is_some() && current != Some(target_provider_id) {
+                            payload.insert(
+                                "model_provider".to_string(),
+                                Value::String(target_provider_id.to_string()),
+                            );
+                            if let Ok(new_line) = serde_json::to_string(&value) {
+                                rewritten.push_str(&new_line);
+                                rewritten.push_str(newline);
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        rewritten.push_str(line);
+        rewritten.push_str(newline);
+    }
+
+    if changed {
+        atomic_write(path, rewritten.as_bytes())?;
+    }
+
+    Ok(changed)
+}
+
+fn unify_codex_state_db(db_path: &Path, target_provider_id: &str) -> Result<usize, AppError> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    let conn = Connection::open(db_path)
+        .map_err(|e| AppError::Database(format!("打开 Codex state DB 失败: {e}")))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| AppError::Database(format!("设置 Codex state DB busy_timeout 失败: {e}")))?;
+
+    // 强制 WAL checkpoint，确保 Codex 正在运行时 WAL 中的数据也被合并到主库
+    let _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", []);
+
+    if !Database::table_exists(&conn, "threads")?
+        || !Database::has_column(&conn, "threads", "model_provider")?
+    {
+        return Ok(0);
+    }
+
+    let changed = conn.execute(
+        "UPDATE threads SET model_provider = ? WHERE model_provider != ?",
+        rusqlite::params![target_provider_id, target_provider_id],
+    )?;
+    Ok(changed)
 }
