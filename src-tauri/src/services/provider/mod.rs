@@ -3242,6 +3242,72 @@ mod tests {
 
     #[test]
     #[serial]
+    fn sync_current_to_live_claude_profile_and_config_syncs_profile_assets() {
+        with_test_home(|state, home| {
+            let api_dir = home.join(".claude-profiles").join("full-sync-api");
+            fs::create_dir_all(&api_dir).expect("create full-sync api profile");
+            let api_provider = claude_provider(
+                "claude-api",
+                "Claude API",
+                "api-provider-token",
+                "https://api-provider.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &api_provider)
+                .expect("save api provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-api")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-api"))
+                .expect("set local current provider");
+            crate::settings::set_claude_provider_override_dir(Some(&api_dir.to_string_lossy()))
+                .expect("activate api profile");
+            state
+                .db
+                .save_prompt(
+                    AppType::Claude.as_str(),
+                    &crate::Prompt {
+                        id: "full-sync-prompt".to_string(),
+                        name: "Full Sync Prompt".to_string(),
+                        content: "full sync managed prompt".to_string(),
+                        description: None,
+                        enabled: true,
+                        created_at: Some(1),
+                        updated_at: None,
+                    },
+                )
+                .expect("save enabled prompt");
+            crate::claude_plugin::write_claude_config_for_profile_dir(&api_dir)
+                .expect("seed applied profile plugin config");
+
+            live::sync_current_to_live(state).expect("sync current providers to live");
+
+            assert_eq!(
+                fs::read_to_string(api_dir.join("CLAUDE.md"))
+                    .expect("read full-sync profile prompt"),
+                "full sync managed prompt",
+                "full sync should project the enabled Claude prompt into the selected profile"
+            );
+            let api_plugin: Value =
+                read_json_file(&api_dir.join("config.json")).expect("read full-sync plugin config");
+            assert_eq!(
+                api_plugin["primaryApiKey"],
+                Value::String("any".to_string()),
+                "full sync should preserve applied Claude plugin config in the selected profile"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn add_first_claude_profile_only_sets_profile_without_overwriting_default_live() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");

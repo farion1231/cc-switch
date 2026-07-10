@@ -1148,7 +1148,34 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    mcp_result
+    let claude_profile_assets_result = sync_current_claude_profile_assets(state);
+
+    mcp_result?;
+    claude_profile_assets_result
+}
+
+fn sync_current_claude_profile_assets(state: &AppState) -> Result<(), AppError> {
+    let Some(current_id) =
+        crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+    else {
+        return Ok(());
+    };
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(());
+    };
+    let plan = super::ProviderService::claude_switch_plan(provider);
+    if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
+        return Ok(());
+    }
+    let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
+        AppError::Message("Claude profile-and-config sync requires a profile directory".to_string())
+    })?;
+
+    super::ProviderService::sync_claude_profile_assets_for_terminal_launch(
+        state,
+        Path::new(profile_dir),
+    )
 }
 
 fn sync_mcp_preserving_claude_profile_only(
