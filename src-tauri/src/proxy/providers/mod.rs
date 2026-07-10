@@ -45,12 +45,12 @@ pub use claude::{
     normalize_anthropic_messages_for_provider, transform_claude_request_for_api_format,
     ClaudeAdapter,
 };
+pub use codex::apply_codex_chat_default_max_output_tokens;
 pub use codex::CodexAdapter;
 pub use codex::{
     apply_codex_chat_upstream_model, codex_provider_upstream_model,
     resolve_codex_chat_reasoning_config, should_convert_codex_responses_to_chat,
 };
-pub use codex::apply_codex_chat_default_max_output_tokens;
 pub use gemini::GeminiAdapter;
 
 /// 供应商类型枚举

@@ -1030,7 +1030,10 @@ wire_api = "chat"
         let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
 
         assert!(injected);
-        assert_eq!(body.get("max_output_tokens").and_then(|v| v.as_u64()), Some(8192));
+        assert_eq!(
+            body.get("max_output_tokens").and_then(|v| v.as_u64()),
+            Some(8192)
+        );
     }
 
     #[test]

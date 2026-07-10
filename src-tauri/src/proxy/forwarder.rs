@@ -1358,7 +1358,10 @@ impl RequestForwarder {
                 );
             }
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
-            super::providers::apply_codex_chat_default_max_output_tokens(provider, &mut mapped_body);
+            super::providers::apply_codex_chat_default_max_output_tokens(
+                provider,
+                &mut mapped_body,
+            );
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
             super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
