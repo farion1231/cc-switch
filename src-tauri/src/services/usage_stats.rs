@@ -2493,6 +2493,62 @@ mod tests {
     }
 
     #[test]
+    fn test_backfill_missing_usage_costs_uses_gpt_5_6_sol_pricing() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-gpt-5-6-sol-zero-cost",
+                "codex",
+                "_codex_session",
+                "gpt-5.6-sol",
+                "codex_session",
+                1000,
+                1_000_000,
+                100_000,
+                800_000,
+                20_000,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost): (
+            String,
+            String,
+            String,
+            String,
+            String,
+        ) = conn.query_row(
+            "SELECT input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                    cache_creation_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'codex-gpt-5-6-sol-zero-cost'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(input_cost, "1.000000");
+        assert_eq!(output_cost, "3.000000");
+        assert_eq!(cache_read_cost, "0.400000");
+        assert_eq!(cache_creation_cost, "0.125000");
+        assert_eq!(total_cost, "4.525000");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_backfill_missing_usage_costs_uses_stored_multiplier() -> Result<(), AppError> {
         let db = Database::memory()?;
 
@@ -4004,6 +4060,44 @@ mod tests {
         assert!(
             result.is_some(),
             "OpenAI 日期后缀模型应能回退到 gpt-5.5 基础定价"
+        );
+        let result = find_model_pricing_row(&conn, "OpenAI/GPT-5.6-SOL@HIGH")?;
+        assert_eq!(
+            result,
+            Some((
+                "5".to_string(),
+                "30".to_string(),
+                "0.50".to_string(),
+                "6.25".to_string(),
+            )),
+            "GPT-5.6 Sol 的 provider/effort 变体应命中 Sol 定价",
+        );
+        let result = find_model_pricing_row(&conn, "gpt-5.6-terra-2026-06-26")?;
+        assert_eq!(
+            result,
+            Some((
+                "2.50".to_string(),
+                "15".to_string(),
+                "0.25".to_string(),
+                "3.125".to_string(),
+            )),
+            "GPT-5.6 Terra 的日期变体应命中 Terra 定价",
+        );
+        let result = find_model_pricing_row(&conn, "gpt-5.6-luna-20260626")?;
+        assert_eq!(
+            result,
+            Some((
+                "1".to_string(),
+                "6".to_string(),
+                "0.10".to_string(),
+                "1.25".to_string(),
+            )),
+            "GPT-5.6 Luna 的紧凑日期变体应命中 Luna 定价",
+        );
+        let result = find_model_pricing_row(&conn, "gpt-5.6")?;
+        assert!(
+            result.is_none(),
+            "缺少明确档位的 gpt-5.6 不应猜测为 Sol/Terra/Luna 任一价格",
         );
         let result = find_model_pricing_row(&conn, "google/gemini-3-pro-preview-20260514")?;
         assert!(
