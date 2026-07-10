@@ -533,15 +533,32 @@ fn convert_input_to_messages(
             Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
                 let output = tool_result_content_from_responses_item(item);
-                push_block(
+                push_tool_result_block(
                     &mut messages,
-                    "user",
                     json!({
                         "type": "tool_result",
                         "tool_use_id": call_id,
                         "content": output
                     }),
                 );
+            }
+            Some("input_text") => {
+                if let Some(text) = item
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .filter(|text| is_meaningful_text(text))
+                {
+                    push_block(
+                        &mut messages,
+                        "user",
+                        json!({ "type": "text", "text": text }),
+                    );
+                }
+            }
+            Some("input_image") => {
+                if let Some(block) = image_block_from_input_image(item) {
+                    push_block(&mut messages, "user", block);
+                }
             }
             Some("reasoning") => {
                 if let Some(block) = item
@@ -837,6 +854,29 @@ fn push_block(messages: &mut Vec<Value>, role: &str, block: Value) {
     }
     messages.push(json!({
         "role": role,
+        "content": [block]
+    }));
+}
+
+/// Appends a tool result to a user turn while preserving Anthropic's required
+/// ordering: every tool_result block must precede any text or image blocks.
+fn push_tool_result_block(messages: &mut Vec<Value>, block: Value) {
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(Value::as_str) == Some("user") {
+            if let Some(content) = last.get_mut("content").and_then(Value::as_array_mut) {
+                let insert_at = content
+                    .iter()
+                    .position(|item| {
+                        item.get("type").and_then(Value::as_str) != Some("tool_result")
+                    })
+                    .unwrap_or(content.len());
+                content.insert(insert_at, block);
+                return;
+            }
+        }
+    }
+    messages.push(json!({
+        "role": "user",
         "content": [block]
     }));
 }
@@ -1363,6 +1403,28 @@ mod tests {
     }
 
     #[test]
+    fn test_request_tool_results_precede_user_text() {
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": "run it" },
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "then explain" }] },
+                { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let content = result["messages"].as_array().unwrap().last().unwrap()["content"]
+            .as_array()
+            .unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "c1");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "then explain");
+    }
+
+    #[test]
     fn test_request_orphan_tool_result_dropped() {
         // A function_call_output whose matching function_call was dropped (e.g. by
         // compaction) becomes an orphan tool_result; it must be removed so Anthropic
@@ -1485,6 +1547,28 @@ mod tests {
         assert_eq!(content[1]["type"], "image");
         assert_eq!(content[1]["source"]["type"], "base64");
         assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert_eq!(content[1]["source"]["data"], "abc123");
+    }
+
+    #[test]
+    fn test_request_top_level_content_items() {
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [
+                { "type": "input_text", "text": "what?" },
+                { "type": "input_image", "image_url": "data:image/png;base64,abc123" }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        let content = messages[0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "what?");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "base64");
         assert_eq!(content[1]["source"]["data"], "abc123");
     }
 
