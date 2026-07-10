@@ -259,6 +259,14 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "secretAccessKey")]
     pub secret_access_key: Option<String>,
+    /// 智谱团队套餐（Team Plan）的组织 ID（用量查询请求头 bigmodel-organization）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "teamOrganizationId")]
+    pub team_organization_id: Option<String>,
+    /// 智谱团队套餐（Team Plan）的项目 ID（用量查询请求头 bigmodel-project）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "teamProjectId")]
+    pub team_project_id: Option<String>,
 }
 
 /// 用量数据

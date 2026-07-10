@@ -287,6 +287,56 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
     );
 }
 
+/// "从应用导入"是 best-effort：单个应用的坏配置文件不阻断其余应用的
+/// 导入，但失败必须聚合上报——历史实现逐应用 `unwrap_or(0)` 吞错，
+/// 坏 config.toml 只会表现为"导入成功 0 个"，用户无从得知出了什么问题。
+#[test]
+fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
+    use support::create_test_state;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // 好的 ~/.claude.json：应正常导入
+    let claude_json = json!({
+        "mcpServers": {
+            "alpha": { "type": "stdio", "command": "echo" }
+        }
+    });
+    fs::write(
+        get_claude_mcp_path(),
+        serde_json::to_string_pretty(&claude_json).expect("serialize claude mcp"),
+    )
+    .expect("seed ~/.claude.json");
+
+    // 坏的 ~/.codex/config.toml：解析必然失败
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(codex_dir.join("config.toml"), "not = = valid toml")
+        .expect("seed broken codex config");
+
+    let state = create_test_state().expect("create test state");
+
+    let err = McpService::import_from_all_apps(&state)
+        .expect_err("broken codex config must surface, not be swallowed as zero imports");
+    let message = err.to_string();
+    assert!(
+        message.contains("codex"),
+        "aggregated error should name the failing app, got: {message}"
+    );
+
+    // Codex 的失败不阻断 Claude：alpha 应已入库并启用 Claude
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers
+        .get("alpha")
+        .expect("claude server imported despite codex failure");
+    assert!(
+        entry.apps.claude,
+        "imported server should have Claude app enabled"
+    );
+}
+
 #[test]
 fn set_mcp_enabled_for_codex_writes_live_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
