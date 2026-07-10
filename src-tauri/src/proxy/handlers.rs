@@ -1170,11 +1170,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     if is_stream {
         let events =
             responses_sse_events_from_anthropic_message(&anthropic_response, codex_tool_context);
-        let sse_stream = futures::stream::iter(
-            events
-                .into_iter()
-                .map(|event| Ok::<Bytes, std::io::Error>(event)),
-        );
+        let sse_stream = futures::stream::iter(events.into_iter().map(Ok::<Bytes, std::io::Error>));
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,
