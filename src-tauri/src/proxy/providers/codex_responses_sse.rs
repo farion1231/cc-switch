@@ -9,8 +9,8 @@
 //!
 //! Each function is pure — it takes primitives or a caller-built `item` `Value` and
 //! returns the exact bytes the converters previously constructed inline. Item shapes that
-//! vary per converter (Chat can emit a `custom_tool_call` variant; Anthropic only ever
-//! emits a plain `function_call`) are supplied by the caller via the generic
+//! vary per converter (including function, namespace, custom, and tool-search calls)
+//! are supplied by the caller via the generic
 //! `output_item_added` / `output_item_done` helpers.
 
 use bytes::Bytes;
@@ -235,30 +235,47 @@ pub(crate) fn reasoning_item(item_id: &str, text: &str) -> Value {
 /// `reasoning_summary_part.done` → `output_item.done`, and returns the completed item.
 pub(crate) fn reasoning_close(output_index: u32, item_id: &str, text: &str) -> (Vec<Bytes>, Value) {
     let item = reasoning_item(item_id, text);
-    let events = vec![
-        sse_event(
-            "response.reasoning_summary_text.done",
-            json!({
-                "type": "response.reasoning_summary_text.done",
-                "item_id": item_id,
-                "output_index": output_index,
-                "summary_index": 0,
-                "text": text
-            }),
-        ),
-        sse_event(
-            "response.reasoning_summary_part.done",
-            json!({
-                "type": "response.reasoning_summary_part.done",
-                "item_id": item_id,
-                "output_index": output_index,
-                "summary_index": 0,
-                "part": { "type": "summary_text", "text": text }
-            }),
-        ),
-        output_item_done(output_index, &item),
-    ];
+    let events = reasoning_close_with_item(output_index, item_id, text, &item, true);
     (events, item)
+}
+
+/// Close a reasoning item whose completed shape is supplied by the converter.
+/// Anthropic uses this to attach opaque signed/redacted thinking in
+/// `encrypted_content` while keeping the standard Responses event lifecycle.
+pub(crate) fn reasoning_close_with_item(
+    output_index: u32,
+    item_id: &str,
+    text: &str,
+    item: &Value,
+    has_visible_summary: bool,
+) -> Vec<Bytes> {
+    let mut events = Vec::new();
+    if has_visible_summary {
+        events.extend([
+            sse_event(
+                "response.reasoning_summary_text.done",
+                json!({
+                    "type": "response.reasoning_summary_text.done",
+                    "item_id": item_id,
+                    "output_index": output_index,
+                    "summary_index": 0,
+                    "text": text
+                }),
+            ),
+            sse_event(
+                "response.reasoning_summary_part.done",
+                json!({
+                    "type": "response.reasoning_summary_part.done",
+                    "item_id": item_id,
+                    "output_index": output_index,
+                    "summary_index": 0,
+                    "part": { "type": "summary_text", "text": text }
+                }),
+            ),
+        ]);
+    }
+    events.push(output_item_done(output_index, item));
+    events
 }
 
 // ---------------------------------------------------------------------------

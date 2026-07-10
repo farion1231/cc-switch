@@ -20,7 +20,7 @@ use super::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream, get_adapter, get_claude_api_format,
         streaming::create_anthropic_sse_stream,
-        streaming_codex_anthropic::create_responses_sse_stream_from_anthropic,
+        streaming_codex_anthropic::create_responses_sse_stream_from_anthropic_with_context,
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses, transform,
@@ -747,6 +747,7 @@ pub async fn handle_responses(
             &state,
             is_stream,
             connection_guard,
+            codex_tool_context,
         )
         .await;
     }
@@ -837,6 +838,7 @@ pub async fn handle_responses_compact(
             &state,
             is_stream,
             connection_guard,
+            codex_tool_context,
         )
         .await;
     }
@@ -1102,6 +1104,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     state: &ProxyState,
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
+    codex_tool_context: transform_codex_chat::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
 
@@ -1111,7 +1114,8 @@ async fn handle_codex_anthropic_to_responses_transform(
 
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_anthropic(stream);
+        let sse_stream =
+            create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
 
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
@@ -1228,13 +1232,15 @@ async fn handle_codex_anthropic_to_responses_transform(
             ));
         }
     };
-    let responses_response = transform_codex_anthropic::anthropic_response_to_responses(
-        anthropic_response,
-    )
-    .map_err(|e| {
-        log::error!("[Codex] Failed to convert Anthropic response to Responses: {e}");
-        e
-    })?;
+    let responses_response =
+        transform_codex_anthropic::anthropic_response_to_responses_with_context(
+            anthropic_response,
+            &codex_tool_context,
+        )
+        .map_err(|e| {
+            log::error!("[Codex] Failed to convert Anthropic response to Responses: {e}");
+            e
+        })?;
 
     if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response)
         .filter(TokenUsage::has_billable_tokens)

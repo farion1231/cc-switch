@@ -9,6 +9,15 @@
 use super::codex_responses_sse as sse;
 use super::transform_codex_anthropic::{
     build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
+    responses_reasoning_item_from_anthropic_block,
+};
+#[cfg(test)]
+use super::transform_codex_anthropic::{
+    decode_anthropic_thinking_block, ANTHROPIC_THINKING_ENCRYPTED_PREFIX,
+};
+use super::transform_codex_chat::{
+    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
+    CodexToolContext,
 };
 use super::transform_responses::sanitize_anthropic_tool_use_input_json;
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -37,6 +46,8 @@ struct BlockState {
     /// used as a fallback when the gateway sends the full input in the start event and
     /// emits no `input_json_delta`. Empty otherwise.
     start_input: String,
+    source_block: Value,
+    has_visible_summary: bool,
     done: bool,
 }
 
@@ -50,6 +61,7 @@ struct AnthropicToResponsesState {
     output_items: Vec<(u32, Value)>,
     anthropic_usage: Map<String, Value>,
     stop_reason: Option<String>,
+    tool_context: CodexToolContext,
 }
 
 impl Default for AnthropicToResponsesState {
@@ -64,11 +76,19 @@ impl Default for AnthropicToResponsesState {
             output_items: Vec::new(),
             anthropic_usage: Map::new(),
             stop_reason: None,
+            tool_context: CodexToolContext::default(),
         }
     }
 }
 
 impl AnthropicToResponsesState {
+    fn with_tool_context(tool_context: CodexToolContext) -> Self {
+        Self {
+            tool_context,
+            ..Self::default()
+        }
+    }
+
     fn next_output_index(&mut self) -> u32 {
         let index = self.next_output_index;
         self.next_output_index += 1;
@@ -165,8 +185,14 @@ impl AnthropicToResponsesState {
                         item_id,
                         call_id: String::new(),
                         name: String::new(),
-                        accum: String::new(),
+                        accum: block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
                         start_input: String::new(),
+                        source_block: block.clone(),
+                        has_visible_summary: false,
                         done: false,
                     },
                 );
@@ -182,18 +208,18 @@ impl AnthropicToResponsesState {
                     .filter(|v| v.as_object().map(|o| !o.is_empty()).unwrap_or(false))
                     .map(|v| v.to_string())
                     .unwrap_or_default();
-                let item_id = format!("fc_{call_id}");
-                events.push(sse::output_item_added(
-                    output_index,
-                    &json!({
-                        "id": item_id,
-                        "type": "function_call",
-                        "status": "in_progress",
-                        "call_id": call_id,
-                        "name": name,
-                        "arguments": ""
-                    }),
-                ));
+                let item_id =
+                    response_tool_call_item_id_from_chat_name(call_id, name, &self.tool_context);
+                let item = response_tool_call_item_from_chat_name(
+                    &item_id,
+                    "in_progress",
+                    call_id,
+                    name,
+                    "",
+                    None,
+                    &self.tool_context,
+                );
+                events.push(sse::output_item_added(output_index, &item));
                 self.blocks.insert(
                     index,
                     BlockState {
@@ -204,6 +230,8 @@ impl AnthropicToResponsesState {
                         name: name.to_string(),
                         accum: String::new(),
                         start_input,
+                        source_block: block.clone(),
+                        has_visible_summary: false,
                         done: false,
                     },
                 );
@@ -212,7 +240,10 @@ impl AnthropicToResponsesState {
                 let output_index = self.next_output_index();
                 let item_id = format!("rs_{}_{output_index}", self.response_id);
                 events.push(sse::reasoning_item_added(output_index, &item_id));
-                events.push(sse::reasoning_summary_part_added(output_index, &item_id));
+                let has_visible_summary = block_type == "thinking";
+                if has_visible_summary {
+                    events.push(sse::reasoning_summary_part_added(output_index, &item_id));
+                }
                 self.blocks.insert(
                     index,
                     BlockState {
@@ -221,8 +252,14 @@ impl AnthropicToResponsesState {
                         item_id,
                         call_id: String::new(),
                         name: String::new(),
-                        accum: String::new(),
+                        accum: block
+                            .get("thinking")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
                         start_input: String::new(),
+                        source_block: block.clone(),
+                        has_visible_summary,
                         done: false,
                     },
                 );
@@ -259,7 +296,7 @@ impl AnthropicToResponsesState {
                     .unwrap_or("");
                 block.accum.push_str(partial);
                 // The Read tool needs to be sanitized at close time, to avoid emitting pages:"" deltas mid-stream
-                if block.name == "Read" {
+                if block.name == "Read" || self.tool_context.is_custom_tool_chat_name(&block.name) {
                     return Vec::new();
                 }
                 vec![sse::function_call_arguments_delta(
@@ -271,13 +308,19 @@ impl AnthropicToResponsesState {
             "thinking_delta" => {
                 let text = delta.get("thinking").and_then(|t| t.as_str()).unwrap_or("");
                 block.accum.push_str(text);
+                block.source_block["thinking"] = json!(block.accum);
                 vec![sse::reasoning_summary_text_delta(
                     output_index,
                     &item_id,
                     text,
                 )]
             }
-            // Ignore signature_delta and the like
+            "signature_delta" => {
+                if let Some(signature) = delta.get("signature").and_then(Value::as_str) {
+                    block.source_block["signature"] = json!(signature);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -303,6 +346,8 @@ impl AnthropicToResponsesState {
         let text = block.accum.clone();
         let call_id = block.call_id.clone();
         let name = block.name.clone();
+        let source_block = block.source_block.clone();
+        let has_visible_summary = block.has_visible_summary;
 
         match kind {
             BlockKind::Text => {
@@ -319,28 +364,59 @@ impl AnthropicToResponsesState {
                 } else {
                     text
                 };
-                let arguments = if name == "Read" {
+                let arguments = if raw_input.trim().is_empty() {
+                    "{}".to_string()
+                } else if name == "Read" {
                     sanitize_anthropic_tool_use_input_json("Read", &raw_input)
                 } else {
                     canonicalize_tool_arguments_str(&raw_input)
                 };
-                let item = json!({
-                    "id": item_id,
-                    "type": "function_call",
-                    "status": "completed",
-                    "call_id": call_id,
-                    "name": name,
-                    "arguments": arguments
-                });
-                let events = vec![
-                    sse::function_call_arguments_done(output_index, &item_id, &arguments),
-                    sse::output_item_done(output_index, &item),
-                ];
+                let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&name);
+                let item = response_tool_call_item_from_chat_name(
+                    &item_id,
+                    "completed",
+                    &call_id,
+                    &name,
+                    &arguments,
+                    None,
+                    &self.tool_context,
+                );
+                let mut events = Vec::new();
+                if is_custom_tool {
+                    let input = item.get("input").and_then(Value::as_str).unwrap_or("");
+                    events.push(sse::custom_tool_call_input_done(
+                        output_index,
+                        &item_id,
+                        input,
+                    ));
+                } else {
+                    events.push(sse::function_call_arguments_done(
+                        output_index,
+                        &item_id,
+                        &arguments,
+                    ));
+                }
+                events.push(sse::output_item_done(output_index, &item));
                 self.output_items.push((output_index, item));
                 events
             }
             BlockKind::Thinking => {
-                let (events, item) = sse::reasoning_close(output_index, &item_id, &text);
+                let mut source_block = source_block;
+                if source_block.get("type").and_then(Value::as_str) == Some("thinking") {
+                    source_block["thinking"] = json!(text);
+                }
+                let Some(item) =
+                    responses_reasoning_item_from_anthropic_block(&item_id, &source_block)
+                else {
+                    return Vec::new();
+                };
+                let events = sse::reasoning_close_with_item(
+                    output_index,
+                    &item_id,
+                    &text,
+                    &item,
+                    has_visible_summary,
+                );
                 self.output_items.push((output_index, item));
                 events
             }
@@ -403,7 +479,10 @@ impl AnthropicToResponsesState {
         events
     }
 
-    fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
+    fn failed_event(&mut self, message: String, error_type: Option<String>) -> Option<Bytes> {
+        if self.completed {
+            return None;
+        }
         self.completed = true;
         let mut error = json!({ "message": message });
         if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
@@ -414,7 +493,7 @@ impl AnthropicToResponsesState {
         let output: Vec<Value> = output.into_iter().map(|(_, item)| item).collect();
         let mut response = self.base_response("failed", output);
         response["error"] = error;
-        sse::response_failed(&response)
+        Some(sse::response_failed(&response))
     }
 }
 
@@ -437,14 +516,76 @@ fn extract_anthropic_sse_error(value: &Value) -> (String, Option<String>) {
     (message, error_type)
 }
 
+fn process_anthropic_sse_block(
+    state: &mut AnthropicToResponsesState,
+    block: &str,
+) -> (Vec<Bytes>, bool) {
+    if block.trim().is_empty() {
+        return (Vec::new(), false);
+    }
+    let mut event_name: Option<String> = None;
+    let mut data_parts: Vec<String> = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = strip_sse_field(line, "event") {
+            event_name = Some(event.trim().to_string());
+        }
+        if let Some(data) = strip_sse_field(line, "data") {
+            data_parts.push(data.to_string());
+        }
+    }
+    if data_parts.is_empty() {
+        return (Vec::new(), false);
+    }
+    let Ok(data) = serde_json::from_str::<Value>(&data_parts.join("\n")) else {
+        return (Vec::new(), false);
+    };
+    let msg_type = data
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or(event_name)
+        .unwrap_or_default();
+
+    let events = match msg_type.as_str() {
+        "message_start" => state.handle_message_start(&data),
+        "content_block_start" => state.handle_content_block_start(&data),
+        "content_block_delta" => state.handle_content_block_delta(&data),
+        "content_block_stop" => state.handle_content_block_stop(&data),
+        "message_delta" => state.handle_message_delta(&data),
+        "message_stop" => state.finalize(),
+        "error" => {
+            let (message, error_type) = extract_anthropic_sse_error(&data);
+            return (
+                state
+                    .failed_event(message, error_type)
+                    .into_iter()
+                    .collect(),
+                true,
+            );
+        }
+        _ => Vec::new(),
+    };
+    (events, false)
+}
+
 /// Convert the upstream Anthropic Messages SSE into the Responses SSE that Codex expects.
+#[allow(dead_code)]
 pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_responses_sse_stream_from_anthropic_with_context(stream, CodexToolContext::default())
+}
+
+pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
+    E: std::error::Error + Send + 'static,
+>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
         let mut utf8_remainder: Vec<u8> = Vec::new();
-        let mut state = AnthropicToResponsesState::default();
+        let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
 
         tokio::pin!(stream);
@@ -455,76 +596,13 @@ pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     while let Some(block) = take_sse_block(&mut buffer) {
-                        if block.trim().is_empty() {
-                            continue;
+                        let (events, failed) = process_anthropic_sse_block(&mut state, &block);
+                        for event in events {
+                            yield Ok(event);
                         }
-
-                        let mut event_name: Option<String> = None;
-                        let mut data_parts: Vec<String> = Vec::new();
-                        for line in block.lines() {
-                            if let Some(event) = strip_sse_field(line, "event") {
-                                event_name = Some(event.trim().to_string());
-                            }
-                            if let Some(data) = strip_sse_field(line, "data") {
-                                data_parts.push(data.to_string());
-                            }
-                        }
-                        if data_parts.is_empty() {
-                            continue;
-                        }
-
-                        let data_str = data_parts.join("\n");
-                        let data: Value = match serde_json::from_str(&data_str) {
-                            Ok(value) => value,
-                            Err(_) => continue,
-                        };
-
-                        let msg_type = data
-                            .get("type")
-                            .and_then(|t| t.as_str())
-                            .map(str::to_string)
-                            .or_else(|| event_name.clone())
-                            .unwrap_or_default();
-
-                        match msg_type.as_str() {
-                            "message_start" => {
-                                for event in state.handle_message_start(&data) {
-                                    yield Ok(event);
-                                }
-                            }
-                            "content_block_start" => {
-                                for event in state.handle_content_block_start(&data) {
-                                    yield Ok(event);
-                                }
-                            }
-                            "content_block_delta" => {
-                                for event in state.handle_content_block_delta(&data) {
-                                    yield Ok(event);
-                                }
-                            }
-                            "content_block_stop" => {
-                                for event in state.handle_content_block_stop(&data) {
-                                    yield Ok(event);
-                                }
-                            }
-                            "message_delta" => {
-                                for event in state.handle_message_delta(&data) {
-                                    yield Ok(event);
-                                }
-                            }
-                            "message_stop" => {
-                                for event in state.finalize() {
-                                    yield Ok(event);
-                                }
-                            }
-                            "error" => {
-                                let (message, error_type) = extract_anthropic_sse_error(&data);
-                                yield Ok(state.failed_event(message, error_type));
-                                stream_failed = true;
-                                break;
-                            }
-                            // Ignore ping and other unknown events
-                            _ => {}
+                        if failed {
+                            stream_failed = true;
+                            break;
                         }
                     }
 
@@ -533,14 +611,27 @@ pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 
                     }
                 }
                 Err(e) => {
-                    yield Ok(state.failed_event(
+                    if let Some(event) = state.failed_event(
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
-                    ));
+                    ) {
+                        yield Ok(event);
+                    }
                     stream_failed = true;
                     break;
                 }
             }
+        }
+
+        // Process a final event even when the upstream omitted the trailing blank
+        // line. This is common with buffering reverse proxies and must not discard
+        // the last delta or terminal message_stop.
+        if !stream_failed && !buffer.trim().is_empty() {
+            let (events, failed) = process_anthropic_sse_block(&mut state, &buffer);
+            for event in events {
+                yield Ok(event);
+            }
+            stream_failed = failed;
         }
 
         if !stream_failed && !state.completed {
@@ -560,10 +651,12 @@ pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 
                 }
             } else {
                 // Stream ended before any terminal signal or output: surface a failure.
-                yield Ok(state.failed_event(
+                if let Some(event) = state.failed_event(
                     "Upstream Anthropic stream ended before message_stop".to_string(),
                     Some("stream_truncated".to_string()),
-                ));
+                ) {
+                    yield Ok(event);
+                }
             }
         }
     }
@@ -584,6 +677,18 @@ mod tests {
             .into_iter()
             .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
             .collect::<String>()
+    }
+
+    async fn run_with_context(input: &str, context: CodexToolContext) -> String {
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            input.as_bytes().to_vec(),
+        ))]);
+        create_responses_sse_stream_from_anthropic_with_context(upstream, context)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect()
     }
 
     #[tokio::test]
@@ -740,6 +845,31 @@ mod tests {
         assert!(merged.contains("\"type\":\"reasoning\""));
         assert!(merged.contains("event: response.reasoning_summary_text.delta"));
         assert!(merged.contains("\"delta\":\"hmm\""));
+        assert!(merged.contains(ANTHROPIC_THINKING_ENCRYPTED_PREFIX));
+    }
+
+    #[tokio::test]
+    async fn test_thinking_signature_is_preserved() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_sig\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_abc\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run(input).await;
+        let encoded_start = merged.find(ANTHROPIC_THINKING_ENCRYPTED_PREFIX).unwrap();
+        let encoded = merged[encoded_start..].split('"').next().unwrap();
+        let block = decode_anthropic_thinking_block(encoded).unwrap();
+        assert_eq!(block["signature"], "sig_abc");
+        assert_eq!(block["thinking"], "hmm");
     }
 
     #[tokio::test]
@@ -782,6 +912,78 @@ mod tests {
         let merged = run(input).await;
         assert!(merged.contains("/tmp/x"));
         assert!(!merged.contains("pages"));
+    }
+
+    #[tokio::test]
+    async fn test_empty_read_input_finishes_as_empty_object() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_read\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_r\",\"name\":\"Read\",\"input\":{}}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("\"arguments\":\"{}\""));
+    }
+
+    #[tokio::test]
+    async fn test_namespace_tool_stream_restores_namespace() {
+        let context = super::super::transform_codex_chat::build_codex_tool_context_from_request(
+            &json!({
+                "tools": [{
+                    "type": "namespace",
+                    "name": "mcp_files",
+                    "tools": [{"type": "function", "name": "read", "parameters": {"type": "object"}}]
+                }]
+            }),
+        );
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_ns\",\"model\":\"claude\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"mcp_files__read\",\"input\":{}}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        let merged = run_with_context(input, context).await;
+        assert!(merged.contains("\"namespace\":\"mcp_files\""));
+        assert!(merged.contains("\"name\":\"read\""));
+    }
+
+    #[tokio::test]
+    async fn test_final_event_without_blank_line_is_processed() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_tail\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"tail\"}}"
+        );
+        let merged = run(input).await;
+        assert!(merged.contains("\"delta\":\"tail\""));
+        assert!(merged.contains("\"status\":\"incomplete\""));
+    }
+
+    #[tokio::test]
+    async fn test_error_after_message_stop_does_not_emit_second_terminal_event() {
+        let input = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_terminal\"}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"message\":\"late\"}}\n\n"
+        );
+        let merged = run(input).await;
+        assert_eq!(merged.matches("event: response.completed").count(), 1);
+        assert_eq!(merged.matches("event: response.failed").count(), 0);
     }
 
     #[tokio::test]

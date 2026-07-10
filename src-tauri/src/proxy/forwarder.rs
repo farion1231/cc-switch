@@ -1446,7 +1446,8 @@ impl RequestForwarder {
             if codex_impersonate_claude_code {
                 prepend_claude_code_system_prompt(&mut anthropic_body);
             }
-            // Enable Anthropic prompt caching (5m ephemeral — no beta header required):
+            // Enable Anthropic prompt caching (no beta header required). Reuse the
+            // configured TTL rather than silently forcing 5m on this conversion path.
             // otherwise system/tools/history are re-sent at full price every round,
             // inflating cost and first-token latency. The injector handles the
             // string→array `system` conversion and the 4-breakpoint cap.
@@ -1456,7 +1457,7 @@ impl RequestForwarder {
                     enabled: true,
                     thinking_optimizer: false,
                     cache_injection: true,
-                    cache_ttl: "5m".to_string(),
+                    cache_ttl: self.optimizer_config.cache_ttl.clone(),
                 },
             );
             anthropic_body
@@ -1845,13 +1846,13 @@ impl RequestForwarder {
                 continue;
             }
 
-            // --- Codex/OpenAI fingerprint headers — drop while impersonating Claude Code ---
-            // A native Claude Code client never sends these; forwarding them defeats a
-            // gateway's "Claude Code only" fingerprint check and leaks the Codex/OpenAI
-            // origin. Scoped to impersonation so the plain Codex→Anthropic path is intact.
+            // --- Codex/OpenAI fingerprint headers — never leak to an Anthropic upstream ---
+            // These are client/session identifiers from the incoming Codex request,
+            // not Anthropic protocol headers. Forwarding them both leaks identity and
+            // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            if codex_impersonate_claude_code && is_codex_client_fingerprint_header(key_str) {
+            if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
                 continue;
             }
 
@@ -2126,9 +2127,14 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            let response = self
+            let mut response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
+            if codex_responses_to_anthropic && !request_is_streaming {
+                response = self
+                    .validate_codex_anthropic_success_response(response)
+                    .await?;
+            }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
@@ -2184,6 +2190,34 @@ impl RequestForwarder {
             })??;
 
         Ok(ProxyResponse::buffered(status, headers, body))
+    }
+
+    /// Some Anthropic-compatible gateways return an Anthropic error envelope with
+    /// HTTP 2xx. Validate it inside the retry loop so the request can fail over to
+    /// the next provider; the response transformer runs too late for that.
+    async fn validate_codex_anthropic_success_response(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let status = response.status();
+        let headers = response.headers().clone();
+        let encoding = get_content_encoding(&headers);
+        let raw = response.bytes().await?;
+        let decoded = match encoding {
+            Some(encoding) => match decompress_body(&encoding, &raw) {
+                Ok(Some(decompressed)) => decompressed,
+                _ => raw.to_vec(),
+            },
+            None => raw.to_vec(),
+        };
+
+        if let Some(message) = codex_anthropic_error_envelope_message(&decoded) {
+            return Err(ProxyError::TransformError(format!(
+                "Anthropic upstream returned a 2xx error envelope: {message}"
+            )));
+        }
+
+        Ok(ProxyResponse::buffered(status, headers, raw))
     }
 
     async fn prime_streaming_response(
@@ -2558,8 +2592,8 @@ fn prepend_claude_code_system_prompt(body: &mut Value) {
 }
 
 /// Headers a native Claude Code client never sends but the Codex/OpenAI CLI (and its
-/// stainless SDK layer) do. Dropped while impersonating Claude Code so the upstream sees a
-/// clean Claude Code fingerprint. Centralized here so the set stays in one place and future
+/// stainless SDK layer) do. Dropped for every Codex→Anthropic request so the upstream sees a
+/// clean Anthropic client fingerprint. Centralized here so the set stays in one place and future
 /// additions can't miss a code path. `key_str` is already lowercased by the http crate.
 /// Whether `base_url` already ends in `endpoint_suffix` (e.g. `/v1/messages` or
 /// `/chat/completions`), ignoring surrounding whitespace, any `?query`/`#fragment`, and a
@@ -2584,14 +2618,33 @@ fn is_codex_client_fingerprint_header(key_str: &str) -> bool {
         key_str,
         "originator"
             | "session_id"
+            | "session-id"
+            | "thread-id"
             | "conversation_id"
             | "chatgpt-account-id"
+            | "x-openai-subagent"
             | "x-client-request-id"
             | "openai-beta"
             | "openai-organization"
             | "openai-project"
     ) || key_str.starts_with("x-stainless-")
         || key_str.starts_with("x-codex-")
+}
+
+fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("error") && value.get("error").is_none() {
+        return None;
+    }
+    let error = value.get("error").unwrap_or(&value);
+    let error_type = error.get("type").and_then(Value::as_str).unwrap_or("error");
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| error.to_string());
+    Some(format!("{error_type}: {message}"))
 }
 
 /// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
@@ -3696,13 +3749,16 @@ mod tests {
     }
 
     #[test]
-    fn codex_client_fingerprint_headers_are_dropped_while_impersonating() {
+    fn codex_client_fingerprint_headers_are_dropped_for_anthropic_upstreams() {
         // Codex/OpenAI fingerprints a native Claude Code client never sends → must drop.
         for header in [
             "originator",
             "session_id",
+            "session-id",
+            "thread-id",
             "conversation_id",
             "chatgpt-account-id",
+            "x-openai-subagent",
             "x-client-request-id",
             "x-codex-window-id",
             "openai-beta",
@@ -3733,6 +3789,18 @@ mod tests {
                 "{header} must be preserved while impersonating Claude Code"
             );
         }
+    }
+
+    #[test]
+    fn codex_anthropic_2xx_error_envelope_is_detected_for_failover() {
+        let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"busy"}}"#;
+        assert_eq!(
+            codex_anthropic_error_envelope_message(body).as_deref(),
+            Some("overloaded_error: busy")
+        );
+        assert!(
+            codex_anthropic_error_envelope_message(br#"{"type":"message","content":[]}"#).is_none()
+        );
     }
 
     #[test]

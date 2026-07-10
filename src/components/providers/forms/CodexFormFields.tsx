@@ -211,6 +211,7 @@ export function CodexFormFields({
     hasRequestOverrides ||
     catalogModels.length > 0 ||
     apiFormat === "openai_responses" ||
+    isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
     !!maxOutputTokens;

@@ -10,12 +10,20 @@
 //! - `transform_responses.rs`: Anthropic request → Responses request, Responses response → Anthropic response
 //! - this module:               Responses request → Anthropic request, Anthropic response → Responses response
 
+use super::transform_codex_chat::{
+    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
+    response_tool_call_item_id_from_chat_name, CodexToolContext,
+};
 use super::transform_responses::sanitize_anthropic_tool_use_input;
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
+
+pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
+const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
 ///
@@ -32,6 +40,70 @@ pub(crate) fn effort_to_thinking_budget(effort: &str) -> Option<u64> {
     }
 }
 
+fn codex_effort_to_anthropic(effort: &str) -> Option<&'static str> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" | "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" | "max" => Some("max"),
+        _ => None,
+    }
+}
+
+fn reasoning_explicitly_disabled(effort: Option<&str>) -> bool {
+    matches!(
+        effort
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("none" | "off" | "disabled")
+    )
+}
+
+/// Preserve an Anthropic signed thinking/redacted-thinking block inside the opaque
+/// Responses `reasoning.encrypted_content` field so Codex replays it on the next
+/// tool-result request. The prefix keeps unrelated providers' ciphertext isolated.
+pub(crate) fn encode_anthropic_thinking_block(block: &Value) -> Option<String> {
+    match block.get("type").and_then(|value| value.as_str()) {
+        Some("thinking" | "redacted_thinking") => {}
+        _ => return None,
+    }
+    let bytes = serde_json::to_vec(block).ok()?;
+    Some(format!(
+        "{ANTHROPIC_THINKING_ENCRYPTED_PREFIX}{}",
+        URL_SAFE_NO_PAD.encode(bytes)
+    ))
+}
+
+pub(crate) fn decode_anthropic_thinking_block(encrypted_content: &str) -> Option<Value> {
+    let encoded = encrypted_content.strip_prefix(ANTHROPIC_THINKING_ENCRYPTED_PREFIX)?;
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    let block: Value = serde_json::from_slice(&bytes).ok()?;
+    match block.get("type").and_then(|value| value.as_str()) {
+        Some("thinking" | "redacted_thinking") => Some(block),
+        _ => None,
+    }
+}
+
+pub(crate) fn responses_reasoning_item_from_anthropic_block(
+    item_id: &str,
+    block: &Value,
+) -> Option<Value> {
+    let encrypted_content = encode_anthropic_thinking_block(block)?;
+    let summary = block
+        .get("thinking")
+        .and_then(|value| value.as_str())
+        .filter(|text| !text.is_empty())
+        .map(|text| vec![json!({ "type": "summary_text", "text": text })])
+        .unwrap_or_default();
+    Some(json!({
+        "id": item_id,
+        "type": "reasoning",
+        "summary": summary,
+        "encrypted_content": encrypted_content
+    }))
+}
+
 /// Anthropic's stop_reason → Responses' (status, incomplete_details.reason)
 pub(crate) fn map_anthropic_stop_reason_to_status(
     stop_reason: Option<&str>,
@@ -40,6 +112,7 @@ pub(crate) fn map_anthropic_stop_reason_to_status(
         Some("max_tokens") => ("incomplete", Some("max_output_tokens")),
         // Safety refusal: report as incomplete to avoid Codex treating it as a normally-completed empty reply.
         Some("refusal") => ("incomplete", Some("content_filter")),
+        Some("model_context_window_exceeded") => ("incomplete", Some("max_output_tokens")),
         // pause_turn is unreachable on this path (Codex requests do not declare Anthropic server-side tools);
         // if it does occur, log a warning and treat it as completed.
         Some("pause_turn") => {
@@ -80,6 +153,10 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
 
     let fresh_input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
     let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let reasoning = u
+        .pointer("/output_tokens_details/thinking_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let cache_read = u
         .get("cache_read_input_tokens")
         .and_then(|v| v.as_u64())
@@ -98,7 +175,7 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
         "input_tokens": input_tokens,
         "output_tokens": output,
         "total_tokens": total_tokens,
-        "output_tokens_details": { "reasoning_tokens": 0 }
+        "output_tokens_details": { "reasoning_tokens": reasoning }
     });
     if cache_read > 0 {
         result["input_tokens_details"] = json!({ "cached_tokens": cache_read });
@@ -119,6 +196,11 @@ pub fn responses_request_to_anthropic(
     default_max_tokens: u64,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
+    let tool_context = build_codex_tool_context_from_request(&body);
+    let model = body
+        .get("model")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
 
     // Pass model through (the upstream model has already been applied by the forwarder)
     if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
@@ -134,7 +216,7 @@ pub fn responses_request_to_anthropic(
 
     // input → messages
     let mut messages = match body.get("input") {
-        Some(Value::Array(items)) => convert_input_to_messages(items)?,
+        Some(Value::Array(items)) => convert_input_to_messages(items, &tool_context)?,
         Some(Value::String(text)) if is_meaningful_text(text) => vec![json!({
             "role": "user",
             "content": [{ "type": "text", "text": text }]
@@ -153,39 +235,23 @@ pub fn responses_request_to_anthropic(
             "cannot convert Codex request: empty messages".to_string(),
         ));
     }
-    // Extended thinking is only safe to enable when the final turn is a *fresh* user
-    // message (plain text, no tool_result). In that case the model starts a new
-    // assistant answer from scratch and no prior signed thinking block is required.
-    //
-    // It must stay off otherwise:
-    // - Mid tool-cycle (final turn is a user tool_result): Anthropic requires the
-    //   assistant's preceding tool_use turn to carry its signed thinking block, which we
-    //   dropped along with OpenAI's reasoning items → enabling thinking 400s.
-    // - Trailing assistant turn (a resumed/compacted history ending in an unpaired
-    //   tool_use): Anthropic requires the final assistant message to start with a
-    //   thinking block, which we likewise don't have → also a 400.
-    // A *completed* tool round is separated from the next user message by the assistant's
-    // answer, so its trailing user turn is text-only and thinking re-enables safely.
-    // (A whole-history scan instead stays disabled forever once any tool was ever used.)
-    let allow_thinking = trailing_turn_allows_thinking(&messages);
+    trim_trailing_assistant_text(&mut messages);
+    drop_empty_messages(&mut messages);
+    if messages.is_empty() {
+        return Err(ProxyError::InvalidRequest(
+            "cannot convert Codex request: empty messages".to_string(),
+        ));
+    }
+    let thinking_history_is_valid = trailing_turn_supports_thinking(&messages);
     result["messages"] = json!(messages);
 
-    // reasoning.effort → thinking budget
-    //
-    // Only enable thinking for recognized effort values; unknown values return None,
-    // keeping normal sampling (without accidentally swallowing temperature/top_p).
-    let mut thinking_enabled = false;
-    let mut thinking_budget = 0u64;
-    if allow_thinking {
-        if let Some(budget) = body
-            .pointer("/reasoning/effort")
-            .and_then(|v| v.as_str())
-            .and_then(effort_to_thinking_budget)
-        {
-            thinking_budget = budget;
-            thinking_enabled = true;
-        }
-    }
+    let reasoning_effort = body
+        .pointer("/reasoning/effort")
+        .and_then(|value| value.as_str());
+    let adaptive_model = crate::proxy::thinking_optimizer::uses_adaptive_thinking(model);
+    let adaptive_by_default = crate::proxy::thinking_optimizer::adaptive_thinking_is_default(model);
+    let cannot_disable_thinking =
+        crate::proxy::thinking_optimizer::thinking_cannot_be_disabled(model);
 
     // max_output_tokens → max_tokens (required)
     let max_tokens = body
@@ -193,7 +259,41 @@ pub fn responses_request_to_anthropic(
         .and_then(|v| v.as_u64())
         .filter(|v| *v > 0)
         .unwrap_or(default_max_tokens);
-    if thinking_enabled {
+    let mut thinking_enabled = false;
+    let mut thinking_budget = reasoning_effort
+        .and_then(effort_to_thinking_budget)
+        .unwrap_or(0);
+    let explicitly_disabled = reasoning_explicitly_disabled(reasoning_effort);
+    let adaptive_should_think = adaptive_model
+        && (adaptive_by_default
+            || reasoning_effort
+                .and_then(codex_effort_to_anthropic)
+                .is_some());
+
+    if !thinking_history_is_valid {
+        if cannot_disable_thinking {
+            return Err(ProxyError::InvalidRequest(
+                "Anthropic model requires thinking, but the tool history has no signed thinking block to replay"
+                    .to_string(),
+            ));
+        }
+        if adaptive_should_think {
+            result["thinking"] = json!({ "type": "disabled" });
+        }
+    } else if adaptive_should_think && (!explicitly_disabled || cannot_disable_thinking) {
+        thinking_enabled = true;
+        result["thinking"] = json!({ "type": "adaptive" });
+        if let Some(effort) = reasoning_effort.and_then(codex_effort_to_anthropic) {
+            result["output_config"] = json!({ "effort": effort });
+        } else if explicitly_disabled && cannot_disable_thinking {
+            // Fable/Mythos cannot turn thinking off. `low` is the closest safe
+            // representation of Codex's explicit `none` request.
+            result["output_config"] = json!({ "effort": "low" });
+        }
+    } else if explicitly_disabled {
+        result["thinking"] = json!({ "type": "disabled" });
+    } else if thinking_budget > 0 {
+        thinking_enabled = true;
         // Anthropic requires max_tokens > budget_tokens and budget >= 1024. Reserve
         // headroom for the visible answer: cap the thinking budget at half of max_tokens
         // so a large derived budget (e.g. 24576 for xhigh) can't consume nearly all of a
@@ -209,13 +309,14 @@ pub fn responses_request_to_anthropic(
     }
     result["max_tokens"] = json!(max_tokens);
 
-    if thinking_enabled {
+    if thinking_enabled && !adaptive_model {
         result["thinking"] = json!({
             "type": "enabled",
             "budget_tokens": thinking_budget
         });
-        // When extended thinking is enabled, Anthropic does not accept temperature/top_p, so do not pass them through
-    } else {
+    }
+
+    if !thinking_enabled {
         if let Some(v) = body.get("temperature") {
             result["temperature"] = v.clone();
         }
@@ -228,65 +329,91 @@ pub fn responses_request_to_anthropic(
         result["stream"] = v.clone();
     }
 
-    // tools: keep only the function type
-    let mut has_tools = false;
-    if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
-        let anth_tools: Vec<Value> = tools
-            .iter()
-            .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("function"))
-            .map(|t| {
-                // Do not emit an explicit null when description is missing (strict
-                // gateways will 400); when input_schema is missing or not an object,
-                // fall back to a valid empty object schema.
-                let mut tool = json!({
-                    "name": t.get("name").and_then(|n| n.as_str()).unwrap_or(""),
-                    "input_schema": t
-                        .get("parameters")
-                        .cloned()
-                        .filter(|p| p.is_object())
-                        .unwrap_or_else(|| json!({ "type": "object", "properties": {} })),
-                });
-                if let Some(desc) = t.get("description").and_then(|d| d.as_str()) {
-                    tool["description"] = json!(desc);
-                }
-                tool
-            })
-            .collect();
-        if !anth_tools.is_empty() {
-            has_tools = true;
-            result["tools"] = json!(anth_tools);
-        }
+    // Reuse the Codex tool context so function, namespace, custom, tool_search, and
+    // dynamically loaded tools all receive stable flat names upstream.
+    let anth_tools: Vec<Value> = tool_context
+        .chat_tools()
+        .iter()
+        .filter_map(chat_tool_to_anthropic_tool)
+        .collect();
+    let has_tools = !anth_tools.is_empty();
+    if has_tools {
+        result["tools"] = json!(anth_tools);
     }
 
     // Only forward tool_choice when tools survived the filter. Anthropic 400s on a
     // tool_choice with no tools ("tool_choice may only be specified while providing
     // tools"), and that 400 is non-retryable — so a request whose only tools were
-    // freeform/hosted (web_search, apply_patch, …) must drop tool_choice too.
+    // unsupported hosted tools (for example web_search) must drop tool_choice too.
     if has_tools {
         if let Some(tc) = body.get("tool_choice") {
-            let mapped = map_tool_choice_to_anthropic(tc);
-            // When extended thinking is enabled, Anthropic rejects forced tools (any/tool), so downgrade to auto.
-            result["tool_choice"] = if thinking_enabled {
-                downgrade_forced_tool_choice(mapped)
-            } else {
-                mapped
-            };
+            let mapped = map_tool_choice_to_anthropic(tc, &tool_context);
+            let forced = matches!(
+                mapped.get("type").and_then(|value| value.as_str()),
+                Some("any" | "tool")
+            );
+            if thinking_enabled && forced {
+                if cannot_disable_thinking {
+                    return Err(ProxyError::InvalidRequest(
+                        "Anthropic model requires adaptive thinking and cannot honor a forced tool_choice"
+                            .to_string(),
+                    ));
+                }
+                // Anthropic rejects forced tools while thinking is enabled. Preserve
+                // the caller's explicit tool constraint and disable thinking for this
+                // request instead of silently weakening `required`/named selection.
+                result["thinking"] = json!({ "type": "disabled" });
+                result.as_object_mut().unwrap().remove("output_config");
+                if let Some(value) = body.get("temperature") {
+                    result["temperature"] = value.clone();
+                }
+                if let Some(value) = body.get("top_p") {
+                    result["top_p"] = value.clone();
+                }
+            }
+            result["tool_choice"] = mapped;
+        }
+
+        if body.get("parallel_tool_calls").and_then(Value::as_bool) == Some(false) {
+            if result.get("tool_choice").is_none() {
+                result["tool_choice"] = json!({ "type": "auto" });
+            }
+            if let Some(tool_choice) = result.get_mut("tool_choice").and_then(Value::as_object_mut)
+            {
+                tool_choice.insert("disable_parallel_tool_use".to_string(), json!(true));
+            }
         }
     }
 
     Ok(result)
 }
 
-/// When extended thinking is enabled, downgrade a forced tool choice (any/tool) to auto; otherwise return it unchanged.
-fn downgrade_forced_tool_choice(tool_choice: Value) -> Value {
-    match tool_choice.get("type").and_then(|t| t.as_str()) {
-        Some("any") | Some("tool") => json!({ "type": "auto" }),
-        _ => tool_choice,
+fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
+    let function = chat_tool.get("function")?;
+    let name = function
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let mut tool = json!({
+        "name": name,
+        "input_schema": function
+            .get("parameters")
+            .cloned()
+            .filter(|value| value.as_object().is_some_and(|object| !object.is_empty()))
+            .unwrap_or_else(|| json!({ "type": "object", "properties": {} }))
+    });
+    if let Some(description) = function.get("description").and_then(|value| value.as_str()) {
+        tool["description"] = json!(description);
     }
+    if let Some(strict) = function.get("strict").and_then(|value| value.as_bool()) {
+        tool["strict"] = json!(strict);
+    }
+    Some(tool)
 }
 
 /// tool_choice: Responses → Anthropic (the reverse of `map_tool_choice_to_responses`)
-fn map_tool_choice_to_anthropic(tool_choice: &Value) -> Value {
+fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolContext) -> Value {
     match tool_choice {
         Value::String(s) => match s.as_str() {
             "required" => json!({ "type": "any" }),
@@ -297,7 +424,16 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value) -> Value {
         Value::Object(obj) => match obj.get("type").and_then(|t| t.as_str()) {
             Some("function") => {
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                json!({ "type": "tool", "name": name })
+                let namespace = obj.get("namespace").and_then(|value| value.as_str());
+                let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
+                json!({ "type": "tool", "name": upstream_name })
+            }
+            Some("custom") => json!({
+                "type": "tool",
+                "name": obj.get("name").and_then(|value| value.as_str()).unwrap_or("")
+            }),
+            Some("tool_search") => {
+                json!({ "type": "tool", "name": TOOL_SEARCH_PROXY_NAME })
             }
             // Other object shapes (allowed_tools / hosted-tool selectors, etc.) are
             // not recognized by Anthropic; downgrade to auto to avoid passing OpenAI's
@@ -314,8 +450,11 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value) -> Value {
 /// - input_image → image block
 /// - function_call → assistant's tool_use block (merged with the preceding assistant text into the same message)
 /// - function_call_output → user's tool_result block (consecutive ones merged into the same user message)
-/// - reasoning (including encrypted_content) → dropped
-fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> {
+/// - Anthropic-origin reasoning.encrypted_content → restored signed thinking block
+fn convert_input_to_messages(
+    items: &[Value],
+    tool_context: &CodexToolContext,
+) -> Result<Vec<Value>, ProxyError> {
     let mut messages: Vec<Value> = Vec::new();
 
     for item in items {
@@ -327,6 +466,8 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
                     .or_else(|| item.get("id").and_then(|v| v.as_str()))
                     .unwrap_or("");
                 let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let namespace = item.get("namespace").and_then(|value| value.as_str());
+                let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
                 let args_str = item.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
                 let input: Value = if args_str.trim().is_empty() {
                     json!({})
@@ -340,18 +481,58 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
                     json!({
                         "type": "tool_use",
                         "id": call_id,
-                        "name": name,
+                        "name": upstream_name,
                         "input": input
                     }),
                 );
             }
-            Some("function_call_output") => {
+            Some("custom_tool_call") => {
+                let call_id = item
+                    .get("call_id")
+                    .and_then(|value| value.as_str())
+                    .or_else(|| item.get("id").and_then(|value| value.as_str()))
+                    .unwrap_or("");
+                let name = item
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
+                push_block(
+                    &mut messages,
+                    "assistant",
+                    json!({
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": name,
+                        "input": { "input": input }
+                    }),
+                );
+            }
+            Some("tool_search_call") => {
+                let call_id = item
+                    .get("call_id")
+                    .and_then(|value| value.as_str())
+                    .or_else(|| item.get("id").and_then(|value| value.as_str()))
+                    .unwrap_or("");
+                let input = item
+                    .get("arguments")
+                    .cloned()
+                    .filter(Value::is_object)
+                    .unwrap_or_else(|| json!({}));
+                push_block(
+                    &mut messages,
+                    "assistant",
+                    json!({
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": TOOL_SEARCH_PROXY_NAME,
+                        "input": input
+                    }),
+                );
+            }
+            Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-                let output = match item.get("output") {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(v) => canonical_json_string(v),
-                    None => String::new(),
-                };
+                let output = tool_result_content_from_responses_item(item);
                 push_block(
                     &mut messages,
                     "user",
@@ -362,8 +543,15 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
                     }),
                 );
             }
-            // OpenAI reasoning item (including encrypted_content) has no Anthropic equivalent, drop it
-            Some("reasoning") => {}
+            Some("reasoning") => {
+                if let Some(block) = item
+                    .get("encrypted_content")
+                    .and_then(|value| value.as_str())
+                    .and_then(decode_anthropic_thinking_block)
+                {
+                    push_assistant_thinking_block(&mut messages, block);
+                }
+            }
             // message item or an item carrying a role
             _ => {
                 let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
@@ -426,6 +614,32 @@ fn convert_input_to_messages(items: &[Value]) -> Result<Vec<Value>, ProxyError> 
     }
 
     Ok(messages)
+}
+
+fn tool_result_content_from_responses_item(item: &Value) -> Value {
+    match item.get("output") {
+        Some(Value::String(text)) => json!(text),
+        Some(Value::Array(parts)) => {
+            let content: Vec<Value> = parts
+                .iter()
+                .filter_map(|part| match part.get("type").and_then(Value::as_str) {
+                    Some("input_text" | "output_text") => part
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(|text| json!({ "type": "text", "text": text })),
+                    Some("input_image") => image_block_from_input_image(part),
+                    _ => None,
+                })
+                .collect();
+            if content.is_empty() {
+                json!(canonical_json_string(&Value::Array(parts.clone())))
+            } else {
+                Value::Array(content)
+            }
+        }
+        Some(value) => json!(canonical_json_string(value)),
+        None => json!(canonical_json_string(item)),
+    }
 }
 
 /// Ensures the first message is a user: compacted/resumed sessions may start with
@@ -500,27 +714,71 @@ fn drop_orphan_tool_results(messages: &mut Vec<Value>) {
     }
 }
 
-/// Whether extended thinking is safe to enable for this request: true only when the
-/// final message is a *fresh* user turn that carries no `tool_result` block. A trailing
-/// user tool_result (mid tool-cycle) or a trailing assistant turn (a resumed/compacted
-/// history ending in an unpaired tool_use) both require a signed thinking block we don't
-/// have, so thinking must stay off there. Computed on the normalized message list so a
-/// dropped orphan tool_result does not count. Defaults to off in every ambiguous case.
-fn trailing_turn_allows_thinking(messages: &[Value]) -> bool {
+/// A fresh user prompt can start a new thinking turn. A tool-result continuation
+/// may keep thinking enabled only when the preceding assistant turn includes the
+/// signed thinking/redacted-thinking block that Anthropic requires callers to replay.
+fn trailing_turn_supports_thinking(messages: &[Value]) -> bool {
     let Some(last) = messages.last() else {
         return false;
     };
-    // Only a user turn can be a fresh prompt; a trailing assistant turn is never safe.
-    if last.get("role").and_then(|r| r.as_str()) != Some("user") {
+    if last.get("role").and_then(Value::as_str) != Some("user") {
         return false;
     }
-    match last.get("content") {
-        // A user turn allows thinking unless it still carries a tool_result block.
-        Some(Value::Array(blocks)) => !blocks
-            .iter()
-            .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result")),
-        // Plain string / absent content = ordinary user text → safe.
-        _ => true,
+    let has_tool_result = last
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| {
+            blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
+        });
+    if !has_tool_result {
+        return true;
+    }
+
+    messages.iter().rev().skip(1).any(|message| {
+        message.get("role").and_then(Value::as_str) == Some("assistant")
+            && message
+                .get("content")
+                .and_then(Value::as_array)
+                .is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        matches!(
+                            block.get("type").and_then(Value::as_str),
+                            Some("thinking" | "redacted_thinking")
+                        )
+                    })
+                })
+    })
+}
+
+/// Removes whitespace-only assistant prefills and trims trailing whitespace from a
+/// real prefill. Anthropic rejects an assistant prefill whose final text ends in
+/// whitespace, and Codex may replay an empty assistant text beside a tool call.
+fn trim_trailing_assistant_text(messages: &mut [Value]) {
+    let Some(last) = messages.last_mut() else {
+        return;
+    };
+    if last.get("role").and_then(Value::as_str) != Some("assistant") {
+        return;
+    }
+    let Some(blocks) = last.get_mut("content").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let Some(block) = blocks.last_mut() else {
+        return;
+    };
+    if block.get("type").and_then(Value::as_str) != Some("text") {
+        return;
+    }
+    let Some(text) = block.get("text").and_then(Value::as_str) else {
+        return;
+    };
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        blocks.pop();
+    } else if trimmed.len() != text.len() {
+        block["text"] = json!(trimmed);
     }
 }
 
@@ -559,6 +817,27 @@ fn push_block(messages: &mut Vec<Value>, role: &str, block: Value) {
     }));
 }
 
+fn push_assistant_thinking_block(messages: &mut Vec<Value>, block: Value) {
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(Value::as_str) == Some("assistant") {
+            if let Some(content) = last.get_mut("content").and_then(Value::as_array_mut) {
+                let index = content
+                    .iter()
+                    .take_while(|item| {
+                        matches!(
+                            item.get("type").and_then(Value::as_str),
+                            Some("thinking" | "redacted_thinking")
+                        )
+                    })
+                    .count();
+                content.insert(index, block);
+                return;
+            }
+        }
+    }
+    push_block(messages, "assistant", block);
+}
+
 /// Responses' input_image → Anthropic image block.
 fn image_block_from_input_image(part: &Value) -> Option<Value> {
     let url = part.get("image_url").and_then(|v| {
@@ -590,7 +869,28 @@ fn image_block_from_input_image(part: &Value) -> Option<Value> {
 }
 
 /// Anthropic Messages response → OpenAI Responses response (non-streaming)
+#[allow(dead_code)]
 pub fn anthropic_response_to_responses(body: Value) -> Result<Value, ProxyError> {
+    anthropic_response_to_responses_with_context(body, &CodexToolContext::default())
+}
+
+pub(crate) fn anthropic_response_to_responses_with_context(
+    body: Value,
+    tool_context: &CodexToolContext,
+) -> Result<Value, ProxyError> {
+    if body.get("type").and_then(Value::as_str) == Some("error") || body.get("error").is_some() {
+        let error = body.get("error").unwrap_or(&body);
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| error.as_str())
+            .unwrap_or("Anthropic upstream returned an error envelope");
+        let error_type = error.get("type").and_then(Value::as_str).unwrap_or("error");
+        return Err(ProxyError::TransformError(format!(
+            "Anthropic upstream {error_type}: {message}"
+        )));
+    }
+
     let id = body.get("id").and_then(|i| i.as_str()).unwrap_or("");
     let response_id = if id.is_empty() {
         "resp_ccswitch".to_string()
@@ -635,32 +935,28 @@ pub fn anthropic_response_to_responses(body: Value) -> Result<Value, ProxyError>
                     let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let input = block.get("input").cloned().unwrap_or(json!({}));
                     let input = sanitize_anthropic_tool_use_input(name, input);
-                    output.push(json!({
-                        "id": format!("fc_{call_id}"),
-                        "type": "function_call",
-                        "status": "completed",
-                        "call_id": call_id,
-                        "name": name,
-                        "arguments": canonical_json_string(&input)
-                    }));
+                    let item_id =
+                        response_tool_call_item_id_from_chat_name(call_id, name, tool_context);
+                    output.push(response_tool_call_item_from_chat_name(
+                        &item_id,
+                        "completed",
+                        call_id,
+                        name,
+                        &canonical_json_string(&input),
+                        None,
+                        tool_context,
+                    ));
                 }
-                "thinking" => {
-                    if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
-                        if !text.is_empty() {
-                            flush_text(&mut output, &mut text_parts);
-                            let idx = output.len();
-                            output.push(json!({
-                                "id": format!("rs_{response_id}_{idx}"),
-                                "type": "reasoning",
-                                "summary": [{
-                                    "type": "summary_text",
-                                    "text": text
-                                }]
-                            }));
-                        }
+                "thinking" | "redacted_thinking" => {
+                    flush_text(&mut output, &mut text_parts);
+                    let idx = output.len();
+                    if let Some(item) = responses_reasoning_item_from_anthropic_block(
+                        &format!("rs_{response_id}_{idx}"),
+                        block,
+                    ) {
+                        output.push(item);
                     }
                 }
-                // Drop other blocks such as redacted_thinking
                 _ => {}
             }
         }
@@ -705,6 +1001,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
     let mut json_accum: BTreeMap<u64, String> = BTreeMap::new();
     let mut stop_reason: Option<String> = None;
     let mut delta_output_tokens: Option<u64> = None;
+    let mut saw_message_stop = false;
 
     let mut buffer = body.to_string();
     let process_block = |block: &str,
@@ -712,7 +1009,8 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                          blocks: &mut BTreeMap<u64, Value>,
                          json_accum: &mut BTreeMap<u64, String>,
                          stop_reason: &mut Option<String>,
-                         delta_output_tokens: &mut Option<u64>|
+                         delta_output_tokens: &mut Option<u64>,
+                         saw_message_stop: &mut bool|
      -> Result<(), ProxyError> {
         let mut data = String::new();
         for line in block.lines() {
@@ -805,7 +1103,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                     *delta_output_tokens = Some(output);
                 }
             }
-            "message_stop" => {}
+            "message_stop" => *saw_message_stop = true,
             "error" => {
                 let msg = value
                     .pointer("/error/message")
@@ -828,6 +1126,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
             &mut json_accum,
             &mut stop_reason,
             &mut delta_output_tokens,
+            &mut saw_message_stop,
         )?;
     }
     // Tolerate the last event missing a trailing blank line (truncated stream).
@@ -839,6 +1138,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
             &mut json_accum,
             &mut stop_reason,
             &mut delta_output_tokens,
+            &mut saw_message_stop,
         )?;
     }
 
@@ -847,6 +1147,17 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
             "anthropic SSE aggregation: missing message_start event".to_string(),
         )
     })?;
+
+    if !saw_message_stop && stop_reason.is_none() {
+        if blocks.is_empty() {
+            return Err(ProxyError::TransformError(
+                "anthropic SSE aggregation: stream ended before message_stop".to_string(),
+            ));
+        }
+        // Preserve partial content but make the truncation visible to Codex instead
+        // of returning a normal completed response.
+        stop_reason = Some("max_tokens".to_string());
+    }
 
     // Merge in the content blocks (ordered by index), stop_reason, and the cumulative output_tokens.
     let content: Vec<Value> = blocks.into_values().collect();
@@ -944,10 +1255,11 @@ mod tests {
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0]["name"], "get_weather");
         assert_eq!(tools[0]["input_schema"]["type"], "object");
         assert!(tools[0].get("parameters").is_none());
+        assert_eq!(tools[1]["name"], "apply_patch");
     }
 
     #[test]
@@ -1189,6 +1501,22 @@ mod tests {
     }
 
     #[test]
+    fn test_adaptive_thinking_respects_model_defaults() {
+        let request = |model: &str| {
+            json!({
+                "model": model,
+                "max_output_tokens": 4096,
+                "input": [{"role": "user", "content": "hi"}]
+            })
+        };
+        let sonnet = responses_request_to_anthropic(request("claude-sonnet-5"), 4096).unwrap();
+        assert_eq!(sonnet["thinking"]["type"], "adaptive");
+
+        let opus = responses_request_to_anthropic(request("claude-opus-4.8"), 4096).unwrap();
+        assert!(opus.get("thinking").is_none());
+    }
+
+    #[test]
     fn test_request_unknown_effort_keeps_sampling_params() {
         // An unrecognized effort should not enable thinking, nor swallow temperature/top_p.
         let input = json!({
@@ -1252,9 +1580,7 @@ mod tests {
     }
 
     #[test]
-    fn test_request_tool_choice_dropped_when_no_function_tools() {
-        // When every tool is filtered out (web_search / apply_patch), no tools are
-        // emitted, so tool_choice must be dropped too — otherwise Anthropic 400s.
+    fn test_request_custom_tool_survives_with_required_choice() {
         let input = json!({
             "model": "c",
             "max_output_tokens": 100,
@@ -1266,13 +1592,13 @@ mod tests {
             "tool_choice": "required"
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
-        assert!(result.get("tools").is_none());
-        assert!(result.get("tool_choice").is_none());
+        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(result["tools"][0]["name"], "apply_patch");
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
     }
 
     #[test]
-    fn test_request_thinking_downgrades_forced_tool_choice() {
-        // First round (no tool history) + effort → thinking enabled; forced tool_choice is downgraded to auto.
+    fn test_request_forced_tool_choice_disables_thinking_instead_of_downgrading() {
         let input = json!({
             "model": "c",
             "max_output_tokens": 20000,
@@ -1284,8 +1610,8 @@ mod tests {
             ]
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
-        assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["tool_choice"], json!({ "type": "auto" }));
+        assert_eq!(result["thinking"]["type"], "disabled");
+        assert_eq!(result["tool_choice"], json!({ "type": "any" }));
     }
 
     #[test]
@@ -1498,6 +1824,7 @@ mod tests {
             "usage": {
                 "input_tokens": 20,
                 "output_tokens": 5,
+                "output_tokens_details": {"thinking_tokens": 3},
                 "cache_read_input_tokens": 60,
                 "cache_creation_input_tokens": 20
             }
@@ -1508,6 +1835,10 @@ mod tests {
         // and separately lists cache-creation cost via cache_creation_input_tokens; folding creation into input would double-charge.
         assert_eq!(result["usage"]["input_tokens"], 80);
         assert_eq!(result["usage"]["output_tokens"], 5);
+        assert_eq!(
+            result["usage"]["output_tokens_details"]["reasoning_tokens"],
+            3
+        );
         // total still includes everything: 80 + cache_creation 20 + output 5 = 105
         assert_eq!(result["usage"]["total_tokens"], 105);
         assert_eq!(result["usage"]["input_tokens_details"]["cached_tokens"], 60);
@@ -1544,6 +1875,154 @@ mod tests {
         let result = anthropic_response_to_responses(input).unwrap();
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "content_filter");
+    }
+
+    #[test]
+    fn test_signed_thinking_round_trips_through_responses_tool_loop() {
+        let converted = anthropic_response_to_responses(json!({
+            "id": "msg_signed",
+            "model": "claude-sonnet-5",
+            "stop_reason": "tool_use",
+            "content": [
+                {"type": "thinking", "thinking": "check", "signature": "sig_123"},
+                {"type": "tool_use", "id": "call_1", "name": "Read", "input": {"path": "/tmp/a"}}
+            ]
+        }))
+        .unwrap();
+        let reasoning = converted["output"][0].clone();
+        assert!(reasoning["encrypted_content"]
+            .as_str()
+            .unwrap()
+            .starts_with(ANTHROPIC_THINKING_ENCRYPTED_PREFIX));
+
+        let replay = responses_request_to_anthropic(
+            json!({
+                "model": "claude-sonnet-5",
+                "max_output_tokens": 4096,
+                "reasoning": {"effort": "high"},
+                "input": [
+                    reasoning,
+                    converted["output"][1].clone(),
+                    {"type": "function_call_output", "call_id": "call_1", "output": "ok"}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        assert_eq!(replay["thinking"]["type"], "adaptive");
+        assert_eq!(replay["messages"][1]["content"][0]["type"], "thinking");
+        assert_eq!(replay["messages"][1]["content"][0]["signature"], "sig_123");
+    }
+
+    #[test]
+    fn test_redacted_thinking_is_preserved_without_visible_summary() {
+        let response = anthropic_response_to_responses(json!({
+            "id": "msg_redacted",
+            "content": [{"type": "redacted_thinking", "data": "opaque"}]
+        }))
+        .unwrap();
+        assert_eq!(response["output"][0]["summary"], json!([]));
+        assert!(response["output"][0]["encrypted_content"].is_string());
+    }
+
+    #[test]
+    fn test_namespace_tool_response_restores_namespace() {
+        let context = build_codex_tool_context_from_request(&json!({
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp_files",
+                "tools": [{"type": "function", "name": "read", "parameters": {"type": "object"}}]
+            }]
+        }));
+        let response = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_ns",
+                "content": [{"type": "tool_use", "id": "call_1", "name": "mcp_files__read", "input": {}}]
+            }),
+            &context,
+        )
+        .unwrap();
+        assert_eq!(response["output"][0]["type"], "function_call");
+        assert_eq!(response["output"][0]["name"], "read");
+        assert_eq!(response["output"][0]["namespace"], "mcp_files");
+    }
+
+    #[test]
+    fn test_success_status_error_envelope_is_not_completed() {
+        let error = anthropic_response_to_responses(json!({
+            "type": "error",
+            "error": {"type": "overloaded_error", "message": "busy"}
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("overloaded_error"));
+    }
+
+    #[test]
+    fn test_context_window_stop_reason_is_incomplete() {
+        let response = anthropic_response_to_responses(json!({
+            "id": "msg_ctx",
+            "stop_reason": "model_context_window_exceeded",
+            "content": [{"type": "text", "text": "partial"}]
+        }))
+        .unwrap();
+        assert_eq!(response["status"], "incomplete");
+        assert_eq!(
+            response["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+    }
+
+    #[test]
+    fn test_request_parallel_tool_calls_false_disables_parallel_use() {
+        let response = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [{"role": "user", "content": "hi"}],
+                "tools": [{"type": "function", "name": "x", "parameters": {"type": "object"}}],
+                "parallel_tool_calls": false
+            }),
+            4096,
+        )
+        .unwrap();
+        assert_eq!(response["tool_choice"]["type"], "auto");
+        assert_eq!(response["tool_choice"]["disable_parallel_tool_use"], true);
+    }
+
+    #[test]
+    fn test_request_trims_trailing_assistant_whitespace() {
+        let response = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {"role": "user", "content": "continue"},
+                    {"role": "assistant", "content": [{"type": "output_text", "text": "prefix   \n"}]}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        assert_eq!(response["messages"][1]["content"][0]["text"], "prefix");
+    }
+
+    #[test]
+    fn test_structured_tool_output_preserves_text_and_image_blocks() {
+        let response = responses_request_to_anthropic(
+            json!({
+                "model": "c",
+                "input": [
+                    {"type": "function_call", "call_id": "c1", "name": "inspect", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c1", "output": [
+                        {"type": "output_text", "text": "result"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,abc"}
+                    ]}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        let content = &response["messages"][2]["content"][0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
     }
 
     // ==================== Request normalization: non-empty & first is user ====================
@@ -1692,5 +2171,25 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
         let msg = anthropic_sse_to_message_value(sse).unwrap();
         assert_eq!(msg["stop_reason"], "end_turn");
         assert_eq!(msg["usage"]["output_tokens"], 2);
+    }
+
+    #[test]
+    fn test_anthropic_sse_aggregation_truncated_output_is_incomplete() {
+        let sse = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n\
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"partial\"}}\n\n";
+        let message = anthropic_sse_to_message_value(sse).unwrap();
+        let response = anthropic_response_to_responses(message).unwrap();
+        assert_eq!(response["status"], "incomplete");
+        assert_eq!(
+            response["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+    }
+
+    #[test]
+    fn test_anthropic_sse_aggregation_truncated_without_output_errors() {
+        let sse =
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n";
+        assert!(anthropic_sse_to_message_value(sse).is_err());
     }
 }

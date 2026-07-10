@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  isCodexAnthropicWireApi,
   isCodexRemoteCompactionEnabled,
   setCodexRemoteCompaction,
 } from "./providerConfigUtils";
+
+describe("Codex wire API helpers", () => {
+  it("recognizes Anthropic Messages aliases", () => {
+    expect(isCodexAnthropicWireApi("anthropic")).toBe(true);
+    expect(isCodexAnthropicWireApi("anthropic_messages")).toBe(true);
+    expect(isCodexAnthropicWireApi("responses")).toBe(false);
+  });
+});
 
 describe("Codex remote compaction config helpers", () => {
   it("enables remote compaction by naming the active custom provider OpenAI", () => {
