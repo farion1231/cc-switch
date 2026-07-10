@@ -63,6 +63,7 @@ import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
   setCodexWireApi,
+  extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
@@ -554,6 +555,7 @@ function ProviderFormFull({
     codexConfig,
     codexApiKey,
     codexBaseUrl,
+    codexModel,
     codexCatalogModels,
     codexAuthError,
     setCodexAuth,
@@ -561,6 +563,7 @@ function ProviderFormFull({
     setCodexCatalogModels,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
+    handleCodexModelChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
@@ -1286,8 +1289,13 @@ function ProviderFormFull({
           category !== "official"
             ? normalizeCodexCatalogModelsForSave(codexCatalogModels)
             : [];
-        // Sync first catalog row's model into config.toml so Codex uses it as default
-        if (normalizedCatalogModels.length > 0) {
+        // The default-model field writes the top-level `model` into the TOML
+        // as the user types; only when it was left empty fall back to the
+        // first catalog row so "fill mapping only" keeps its old behavior.
+        if (
+          normalizedCatalogModels.length > 0 &&
+          !extractCodexModelName(normalizedCodexConfig)
+        ) {
           normalizedCodexConfig = setCodexModelNameInConfig(
             normalizedCodexConfig,
             normalizedCatalogModels[0].model,
@@ -2168,6 +2176,8 @@ function ProviderFormFull({
               }
               autoSelect={endpointAutoSelect}
               onAutoSelectChange={setEndpointAutoSelect}
+              codexModel={codexModel}
+              onModelChange={handleCodexModelChange}
               apiFormat={localCodexApiFormat}
               onApiFormatChange={handleCodexApiFormatChange}
               anthropicAuthField={localCodexAnthropicAuthField}
