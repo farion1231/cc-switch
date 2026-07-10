@@ -1395,7 +1395,7 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TokenHub Token Plan",
-    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
     settingsConfig: {
       env: {
@@ -1412,7 +1412,7 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TokenHub Token Plan 企业版",
-    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
     settingsConfig: {
       env: {

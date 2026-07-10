@@ -1152,7 +1152,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenHub Token Plan",
-    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
     category: "cn_official",
     baseUrl: "https://api.lkeap.cloud.tencent.com/plan/anthropic",
@@ -1166,7 +1166,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenHub Token Plan 企业版",
-    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
     apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
     category: "cn_official",
     baseUrl: "https://tokenhub.tencentmaas.com/plan/anthropic",
