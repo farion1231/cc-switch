@@ -697,7 +697,9 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "showProfileSwitcher": "Show project switcher",
+      "showProfileSwitcherDescription": "Show the project switcher in the main page header"
     },
     "skillStorage": {
       "title": "Skill Storage Location",

@@ -697,7 +697,9 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "showProfileSwitcher": "プロジェクト切り替えを表示",
+      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
     },
     "skillStorage": {
       "title": "スキル保存場所",
