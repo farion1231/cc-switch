@@ -309,4 +309,43 @@ describe("ClaudeDesktopProviderForm", () => {
     });
     expect(submitted.meta.codexFastMode).toBe(true);
   });
+
+  it("通过 Claude Desktop settingsConfig fallback endpoint 识别 Codex OAuth", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Imported Codex OAuth",
+        settingsConfig: {
+          baseURL: "https://chatgpt.com/backend-api/codex",
+        },
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "codex-account-1",
+          },
+          codexFastMode: true,
+          claudeDesktopMode: "direct",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-4-6": { model: "claude-sonnet-4-6" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    expect(screen.getByTestId("codex-oauth-section")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.meta.providerType).toBe("codex_oauth");
+    expect(submitted.meta.authBinding).toMatchObject({
+      source: "managed_account",
+      authProvider: "codex_oauth",
+      accountId: "codex-account-1",
+    });
+    expect(submitted.meta.codexFastMode).toBe(true);
+  });
 });

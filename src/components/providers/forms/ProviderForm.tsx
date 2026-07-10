@@ -57,8 +57,10 @@ import { HermesFormFields } from "./HermesFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
+  firstNonEmptyString,
   hasApiKeyField,
   isChatGptCodexOAuthBaseUrl,
+  resolveClaudeBaseUrlFromSettingsConfig,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
@@ -134,43 +136,6 @@ type PresetEntry = {
 };
 
 type ClaudeManagedProviderType = "github_copilot" | "codex_oauth";
-
-const firstNonEmptyString = (...values: Array<unknown>): string | undefined => {
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed) return trimmed;
-  }
-  return undefined;
-};
-
-const resolveClaudeBaseUrlFromSettingsConfig = (
-  settingsConfig?: string | null,
-): string | undefined => {
-  if (!settingsConfig?.trim()) return undefined;
-
-  try {
-    const parsed = JSON.parse(settingsConfig) as Record<string, unknown>;
-    const env =
-      parsed.env && typeof parsed.env === "object"
-        ? (parsed.env as Record<string, unknown>)
-        : undefined;
-    const apiEndpoint =
-      parsed.apiEndpoint && typeof parsed.apiEndpoint === "object"
-        ? (parsed.apiEndpoint as Record<string, unknown>)
-        : undefined;
-
-    return firstNonEmptyString(
-      env?.ANTHROPIC_BASE_URL,
-      parsed.base_url,
-      parsed.baseURL,
-      parsed.apiEndpoint,
-      apiEndpoint?.url,
-    );
-  } catch {
-    return undefined;
-  }
-};
 
 export const resolveClaudeManagedProviderType = ({
   baseUrl,
