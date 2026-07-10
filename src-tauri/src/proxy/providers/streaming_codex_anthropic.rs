@@ -568,6 +568,86 @@ fn process_anthropic_sse_block(
     (events, false)
 }
 
+fn json_document_candidate(input: &str) -> Option<&str> {
+    let trimmed = input.trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}');
+    matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')).then_some(trimmed)
+}
+
+/// Convert a complete non-streaming Anthropic message (or error envelope) into
+/// the same Responses SSE lifecycle emitted by the live stream converter. Some
+/// compatible gateways ignore `stream:true` and return JSON with HTTP 200.
+pub(crate) fn responses_sse_events_from_anthropic_message(
+    body: &Value,
+    tool_context: CodexToolContext,
+) -> Vec<Bytes> {
+    let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
+    if body.get("type").and_then(Value::as_str) == Some("error") || body.get("error").is_some() {
+        let (message, error_type) = extract_anthropic_sse_error(body);
+        return state
+            .failed_event(message, error_type)
+            .into_iter()
+            .collect();
+    }
+
+    let mut message_start = body.clone();
+    message_start["content"] = json!([]);
+    let mut events = state.handle_message_start(&json!({
+        "type": "message_start",
+        "message": message_start
+    }));
+
+    if let Some(content) = body.get("content").and_then(Value::as_array) {
+        for (index, block) in content.iter().enumerate() {
+            let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
+            let mut start_block = block.clone();
+            match block_type {
+                "text" => start_block["text"] = json!(""),
+                "thinking" => start_block["thinking"] = json!(""),
+                _ => {}
+            }
+            events.extend(state.handle_content_block_start(&json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": start_block
+            })));
+
+            match block_type {
+                "text" => {
+                    if let Some(text) = block.get("text").and_then(Value::as_str) {
+                        events.extend(state.handle_content_block_delta(&json!({
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": { "type": "text_delta", "text": text }
+                        })));
+                    }
+                }
+                "thinking" => {
+                    if let Some(thinking) = block.get("thinking").and_then(Value::as_str) {
+                        events.extend(state.handle_content_block_delta(&json!({
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": { "type": "thinking_delta", "thinking": thinking }
+                        })));
+                    }
+                }
+                _ => {}
+            }
+
+            events.extend(state.handle_content_block_stop(&json!({
+                "type": "content_block_stop",
+                "index": index
+            })));
+        }
+    }
+
+    events.extend(state.handle_message_delta(&json!({
+        "type": "message_delta",
+        "delta": { "stop_reason": body.get("stop_reason").cloned().unwrap_or(Value::Null) }
+    })));
+    events.extend(state.finalize());
+    events
+}
+
 /// Convert the upstream Anthropic Messages SSE into the Responses SSE that Codex expects.
 #[allow(dead_code)]
 pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 'static>(
@@ -595,14 +675,19 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 Ok(bytes) => {
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
-                    while let Some(block) = take_sse_block(&mut buffer) {
-                        let (events, failed) = process_anthropic_sse_block(&mut state, &block);
-                        for event in events {
-                            yield Ok(event);
-                        }
-                        if failed {
-                            stream_failed = true;
-                            break;
+                    // A few compatible gateways ignore stream:true and return one
+                    // JSON document. Hold that body intact (including pretty-printed
+                    // blank lines) until EOF instead of discarding it as SSE blocks.
+                    if json_document_candidate(&buffer).is_none() {
+                        while let Some(block) = take_sse_block(&mut buffer) {
+                            let (events, failed) = process_anthropic_sse_block(&mut state, &block);
+                            for event in events {
+                                yield Ok(event);
+                            }
+                            if failed {
+                                stream_failed = true;
+                                break;
+                            }
                         }
                     }
 
@@ -627,11 +712,26 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         // line. This is common with buffering reverse proxies and must not discard
         // the last delta or terminal message_stop.
         if !stream_failed && !buffer.trim().is_empty() {
-            let (events, failed) = process_anthropic_sse_block(&mut state, &buffer);
-            for event in events {
-                yield Ok(event);
+            if !state.response_started {
+                if let Some(candidate) = json_document_candidate(&buffer) {
+                    if let Ok(body) = serde_json::from_str::<Value>(candidate) {
+                        for event in responses_sse_events_from_anthropic_message(
+                            &body,
+                            state.tool_context.clone(),
+                        ) {
+                            yield Ok(event);
+                        }
+                        state.completed = true;
+                    }
+                }
             }
-            stream_failed = failed;
+            if !state.completed {
+                let (events, failed) = process_anthropic_sse_block(&mut state, &buffer);
+                for event in events {
+                    yield Ok(event);
+                }
+                stream_failed = failed;
+            }
         }
 
         if !stream_failed && !state.completed {
@@ -689,6 +789,71 @@ mod tests {
             .into_iter()
             .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
             .collect()
+    }
+
+    fn render_message_events(body: &Value) -> String {
+        responses_sse_events_from_anthropic_message(body, CodexToolContext::default())
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(&chunk).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_json_error_envelope_preserves_upstream_error() {
+        let merged = render_message_events(&json!({
+            "type": "error",
+            "error": { "type": "authentication_error", "message": "bad key" }
+        }));
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("authentication_error"));
+        assert!(merged.contains("bad key"));
+        assert!(!merged.contains("stream_truncated"));
+    }
+
+    #[test]
+    fn test_json_message_becomes_complete_responses_stream() {
+        let merged = render_message_events(&json!({
+            "id": "msg_json",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude",
+            "content": [{ "type": "text", "text": "Hello" }],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 4, "output_tokens": 2 }
+        }));
+        assert!(merged.contains("event: response.created"));
+        assert!(merged.contains("event: response.output_text.delta"));
+        assert!(merged.contains("\"delta\":\"Hello\""));
+        assert!(merged.contains("event: response.completed"));
+        assert!(merged.contains("\"status\":\"completed\""));
+        assert!(!merged.contains("event: response.failed"));
+    }
+
+    #[tokio::test]
+    async fn test_raw_json_error_body_is_not_reported_as_truncated_sse() {
+        let merged = run(concat!(
+            "{\n",
+            "  \"type\": \"error\",\n\n",
+            "  \"error\": {\"type\":\"overloaded_error\",\"message\":\"busy\"}\n",
+            "}"
+        ))
+        .await;
+        assert!(merged.contains("event: response.failed"));
+        assert!(merged.contains("overloaded_error"));
+        assert!(merged.contains("busy"));
+        assert!(!merged.contains("stream_truncated"));
+    }
+
+    #[tokio::test]
+    async fn test_raw_json_message_body_becomes_responses_stream() {
+        let merged = run(
+            r#"{"id":"msg_json","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":2}}"#,
+        )
+        .await;
+        assert!(merged.contains("event: response.output_text.delta"));
+        assert!(merged.contains("\"delta\":\"Hello\""));
+        assert!(merged.contains("event: response.completed"));
+        assert!(!merged.contains("stream_truncated"));
     }
 
     #[tokio::test]

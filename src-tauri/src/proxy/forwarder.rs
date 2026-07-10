@@ -2130,7 +2130,11 @@ impl RequestForwarder {
             let mut response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
-            if codex_responses_to_anthropic && !request_is_streaming {
+            // Streaming requests normally return SSE. If a compatible gateway
+            // explicitly returns JSON instead, buffer and validate it inside the retry
+            // loop as well so a 2xx Anthropic error envelope can still fail over. Do
+            // not buffer unknown content types: some gateways omit the SSE header.
+            if codex_responses_to_anthropic && (!request_is_streaming || response.is_json()) {
                 response = self
                     .validate_codex_anthropic_success_response(response)
                     .await?;

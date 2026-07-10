@@ -226,8 +226,8 @@ pub fn responses_request_to_anthropic(
     // Anthropic /v1/messages requires messages to be non-empty and the first to be user.
     // Normalize the history (compacted/resumed sessions may start with
     // assistant/function_call, or input may be entirely reasoning and thus empty after being dropped).
-    // Drop unpaired tool_result blocks first (they would otherwise 400), then guarantee a leading user.
-    drop_orphan_tool_results(&mut messages);
+    // Drop incomplete tool turns first (they would otherwise 400), then guarantee a leading user.
+    drop_incomplete_tool_turns(&mut messages);
     drop_empty_messages(&mut messages);
     ensure_leading_user_message(&mut messages);
     if messages.is_empty() {
@@ -679,56 +679,93 @@ fn ensure_leading_user_message(messages: &mut Vec<Value>) {
     }
 }
 
-/// Drops `tool_result` blocks whose matching `tool_use` is absent from an earlier
-/// assistant message. Anthropic 400s on an unpaired tool_result, which can occur
-/// when a compacted/resumed history keeps a `function_call_output` but dropped its
-/// `function_call` (e.g. history that begins with a tool_result). tool_use ids are
-/// introduced only by preceding assistant turns, so a single left-to-right pass is
-/// sufficient. If removing orphans empties a message, that message is dropped too.
-fn drop_orphan_tool_results(messages: &mut Vec<Value>) {
-    let mut seen_tool_use_ids: HashSet<String> = HashSet::new();
-    let mut removed_any = false;
+/// Removes compacted/resumed tool turns that no longer form a complete adjacent
+/// assistant `tool_use` → user `tool_result` pair. Anthropic requires every tool
+/// call in an assistant turn to be answered together in the immediately following
+/// user turn. Dropping the whole incomplete assistant turn also avoids modifying a
+/// subset of a signed thinking/tool-use response.
+fn drop_incomplete_tool_turns(messages: &mut Vec<Value>) {
+    let original = std::mem::take(messages);
+    let mut sanitized = Vec::with_capacity(original.len());
+    let mut index = 0;
 
-    for msg in messages.iter_mut() {
-        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-        if role == "assistant" {
-            // Record tool_use ids as we pass; a later tool_result must reference one of these.
-            if let Some(blocks) = msg.get("content").and_then(|c| c.as_array()) {
-                for block in blocks {
-                    if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                        if let Some(id) = block.get("id").and_then(|v| v.as_str()) {
-                            seen_tool_use_ids.insert(id.to_string());
-                        }
-                    }
+    while index < original.len() {
+        let message = &original[index];
+        let is_assistant = message.get("role").and_then(Value::as_str) == Some("assistant");
+        let tool_use_ids = if is_assistant {
+            message_block_ids(message, "tool_use", "id")
+        } else {
+            Vec::new()
+        };
+
+        if !tool_use_ids.is_empty() {
+            let paired_user = original
+                .get(index + 1)
+                .filter(|next| next.get("role").and_then(Value::as_str) == Some("user"));
+            let tool_result_ids = paired_user
+                .map(|user| message_block_ids(user, "tool_result", "tool_use_id"))
+                .unwrap_or_default();
+            let unique_tool_uses: HashSet<&str> = tool_use_ids.iter().copied().collect();
+            let unique_tool_results: HashSet<&str> = tool_result_ids.iter().copied().collect();
+            let complete = tool_use_ids.iter().all(|id| !id.is_empty())
+                && tool_result_ids.iter().all(|id| !id.is_empty())
+                && unique_tool_uses.len() == tool_use_ids.len()
+                && unique_tool_results.len() == tool_result_ids.len()
+                && unique_tool_uses == unique_tool_results;
+
+            if complete {
+                sanitized.push(message.clone());
+                sanitized.push(paired_user.unwrap().clone());
+            } else if let Some(user) = paired_user {
+                let mut user = user.clone();
+                drop_tool_result_blocks(&mut user);
+                if message_has_content(&user) {
+                    sanitized.push(user);
                 }
             }
-        } else if let Some(blocks) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
-            let before = blocks.len();
-            blocks.retain(|block| {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                    block
-                        .get("tool_use_id")
-                        .and_then(|v| v.as_str())
-                        .map(|id| seen_tool_use_ids.contains(id))
-                        .unwrap_or(false)
-                } else {
-                    true
-                }
-            });
-            if blocks.len() != before {
-                removed_any = true;
-            }
+
+            index += if paired_user.is_some() { 2 } else { 1 };
+            continue;
         }
+
+        let mut message = message.clone();
+        if message.get("role").and_then(Value::as_str) == Some("user") {
+            // A user message not consumed as the adjacent half of a complete tool
+            // pair cannot legally retain any tool_result blocks.
+            drop_tool_result_blocks(&mut message);
+        }
+        if message_has_content(&message) {
+            sanitized.push(message);
+        }
+        index += 1;
     }
 
-    if removed_any {
-        messages.retain(|msg| {
-            msg.get("content")
-                .and_then(|c| c.as_array())
-                .map(|arr| !arr.is_empty())
-                .unwrap_or(true)
-        });
+    *messages = sanitized;
+}
+
+fn message_block_ids<'a>(message: &'a Value, block_type: &str, id_field: &str) -> Vec<&'a str> {
+    message
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some(block_type))
+        .map(|block| block.get(id_field).and_then(Value::as_str).unwrap_or(""))
+        .collect()
+}
+
+fn drop_tool_result_blocks(message: &mut Value) {
+    if let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) {
+        content.retain(|block| block.get("type").and_then(Value::as_str) != Some("tool_result"));
     }
+}
+
+fn message_has_content(message: &Value) -> bool {
+    message
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|content| !content.is_empty())
+        .unwrap_or(true)
 }
 
 /// A fresh user prompt can start a new thinking turn. A tool-result continuation
@@ -1359,14 +1396,15 @@ mod tests {
             "max_output_tokens": 100,
             "input": [
                 { "role": "assistant", "content": [{ "type": "output_text", "text": "Let me check" }] },
-                { "type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Tokyo\"}" }
+                { "type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Tokyo\"}" },
+                { "type": "function_call_output", "call_id": "call_1", "output": "sunny" }
             ]
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         let messages = result["messages"].as_array().unwrap();
         // The assistant-first history is normalized: a synthetic user message is
-        // prepended, and the assistant (text + tool_use merged) becomes the second one.
-        assert_eq!(messages.len(), 2);
+        // prepended, and the complete assistant tool turn remains intact.
+        assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[1]["role"], "assistant");
         assert_eq!(messages[1]["content"][0]["type"], "text");
@@ -1400,6 +1438,49 @@ mod tests {
         assert_eq!(content[0]["tool_use_id"], "c1");
         assert_eq!(content[0]["content"], "A");
         assert_eq!(content[1]["tool_use_id"], "c2");
+    }
+
+    #[test]
+    fn test_request_unanswered_trailing_tool_use_is_dropped() {
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": "run it" },
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "run it");
+    }
+
+    #[test]
+    fn test_request_partial_parallel_tool_turn_is_dropped_as_a_unit() {
+        let input = json!({
+            "model": "c",
+            "max_output_tokens": 100,
+            "input": [
+                { "role": "user", "content": "run both" },
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "{}" },
+                { "type": "function_call", "call_id": "c2", "name": "t", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c1", "output": "one" },
+                { "role": "user", "content": [{ "type": "input_text", "text": "continue" }] }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert!(messages.iter().all(|message| {
+            message["content"].as_array().unwrap().iter().all(|block| {
+                !matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("tool_use" | "tool_result")
+                )
+            })
+        }));
+        assert_eq!(messages.last().unwrap()["content"][0]["text"], "continue");
     }
 
     #[test]
@@ -1521,7 +1602,8 @@ mod tests {
             "model": "c",
             "max_output_tokens": 100,
             "input": [
-                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "" }
+                { "type": "function_call", "call_id": "c1", "name": "t", "arguments": "" },
+                { "type": "function_call_output", "call_id": "c1", "output": "ok" }
             ]
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
@@ -1853,9 +1935,9 @@ mod tests {
     }
 
     #[test]
-    fn test_request_thinking_disabled_when_trailing_turn_is_assistant() {
-        // A resumed/compacted history ending in an unpaired assistant tool_use must not
-        // re-enable thinking — Anthropic would 400 on the missing signed thinking block.
+    fn test_request_unpaired_tool_turn_is_dropped_before_thinking_gate() {
+        // A resumed/compacted history ending in an unpaired assistant tool_use is
+        // removed, leaving the original user prompt as a fresh thinking turn.
         let input = json!({
             "model": "c",
             "max_output_tokens": 40000,
@@ -1866,10 +1948,10 @@ mod tests {
             ]
         });
         let result = responses_request_to_anthropic(input, 4096).unwrap();
-        // Trailing message is an assistant tool_use turn → thinking stays off.
         let messages = result["messages"].as_array().unwrap();
-        assert_eq!(messages.last().unwrap()["role"], "assistant");
-        assert!(result.get("thinking").is_none());
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(result["thinking"]["type"], "enabled");
     }
 
     #[test]
