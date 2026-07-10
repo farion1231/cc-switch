@@ -17,8 +17,17 @@ export interface ProviderSwitchEvent {
   providerId: string;
 }
 
+export interface UnifyHistoryResult {
+  target: string;
+  jsonlChanged: number;
+  jsonlScanned: number;
+  stateChanged: number;
+  errors: string[];
+}
+
 export interface SwitchResult {
   warnings: string[];
+  unifyHistory?: UnifyHistoryResult;
 }
 
 export interface OpenTerminalOptions {
