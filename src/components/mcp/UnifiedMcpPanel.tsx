@@ -55,7 +55,7 @@ const UnifiedMcpPanel = React.forwardRef<
     return Object.entries(serversMap);
   }, [serversMap]);
 
-  const enabledCounts = useMemo(() => {
+  const enabledCounts = useMemo((): Partial<Record<AppId, number>> => {
     const counts = {
       claude: 0,
       "claude-desktop": 0,
@@ -67,7 +67,7 @@ const UnifiedMcpPanel = React.forwardRef<
     };
     serverEntries.forEach(([_, server]) => {
       for (const app of MCP_APP_IDS) {
-        if (server.apps[app]) counts[app]++;
+        if (server.apps[app]) counts[app] = (counts[app] ?? 0) + 1;
       }
     });
     return counts;

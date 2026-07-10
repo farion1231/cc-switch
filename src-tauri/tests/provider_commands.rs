@@ -20,6 +20,66 @@ fn settings_path(home: &Path) -> PathBuf {
 }
 
 #[test]
+fn pi_default_import_preserves_live_provider_identity() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let pi_dir = home.join(".pi").join("agent");
+    std::fs::create_dir_all(&pi_dir).expect("create Pi config dir");
+    std::fs::write(
+        pi_dir.join("models.json"),
+        serde_json::to_string_pretty(&json!({
+            "providers": {
+                "packy": {
+                    "baseURL": "https://api.packy.example/v1",
+                    "apiKey": "sk-packy",
+                    "api": "openai-chat",
+                    "models": [{ "id": "gpt-5.5", "name": "GPT 5.5" }]
+                }
+            }
+        }))
+        .expect("serialize Pi models"),
+    )
+    .expect("seed Pi models.json");
+    std::fs::write(
+        pi_dir.join("settings.json"),
+        serde_json::to_string_pretty(&json!({
+            "defaultProvider": "packy",
+            "defaultModel": "gpt-5.5"
+        }))
+        .expect("serialize Pi settings"),
+    )
+    .expect("seed Pi settings.json");
+
+    let state = create_test_state().expect("create test state");
+    assert!(
+        import_default_config_test_hook(&state, AppType::Pi).expect("import Pi default config"),
+        "Pi live config should be imported"
+    );
+
+    let providers = state
+        .db
+        .get_all_providers(AppType::Pi.as_str())
+        .expect("get Pi providers");
+    assert!(
+        providers.contains_key("packy"),
+        "the imported provider should keep Pi's defaultProvider id"
+    );
+    assert!(
+        !providers.contains_key("default"),
+        "Pi import must not invent a replacement provider id"
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::Pi.as_str())
+            .expect("get current Pi provider")
+            .as_deref(),
+        Some("packy")
+    );
+}
+
+#[test]
 fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();

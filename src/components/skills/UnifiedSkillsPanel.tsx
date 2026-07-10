@@ -113,7 +113,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     return map;
   }, [skillUpdates]);
 
-  const enabledCounts = useMemo(() => {
+  const enabledCounts = useMemo((): Partial<Record<AppId, number>> => {
     const counts = {
       claude: 0,
       "claude-desktop": 0,
@@ -126,7 +126,7 @@ const UnifiedSkillsPanel = React.forwardRef<
     if (!skills) return counts;
     skills.forEach((skill) => {
       for (const app of SKILLS_APP_IDS) {
-        if (skill.apps[app]) counts[app]++;
+        if (skill.apps[app]) counts[app] = (counts[app] ?? 0) + 1;
       }
     });
     return counts;

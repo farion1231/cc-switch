@@ -53,6 +53,7 @@ import {
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
+import { PiFormFields } from "./PiFormFields";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import {
   applyTemplateValues,
@@ -102,6 +103,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  usePiFormState,
   useCopilotAuth,
   useCodexOauth,
 } from "./hooks";
@@ -113,6 +115,7 @@ import {
   GEMINI_DEFAULT_CONFIG,
   OPENCODE_DEFAULT_CONFIG,
   OPENCLAW_DEFAULT_CONFIG,
+  PI_DEFAULT_CONFIG,
   normalizePricingSource,
 } from "./helpers/opencodeFormUtils";
 import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
@@ -409,7 +412,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "pi"
+                    ? PI_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -680,6 +685,8 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "pi") {
+      return [];
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -886,6 +893,13 @@ function ProviderFormFull({
     data: hermesLiveProviderIds = [],
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
+
+  const piForm = usePiFormState({
+    initialData,
+    appId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
 
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
@@ -1601,6 +1615,19 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  const {
+    shouldShowApiKeyLink: shouldShowPiApiKeyLink,
+    websiteUrl: piWebsiteUrl,
+    isPartner: isPiPartner,
+    partnerPromotionKey: piPartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "pi",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -2271,6 +2298,27 @@ function ProviderFormFull({
             />
           )}
 
+          {/* Pi Agent 专属字段 */}
+          {appId === "pi" && (
+            <PiFormFields
+              baseUrl={piForm.piBaseUrl}
+              onBaseUrlChange={piForm.handlePiBaseUrlChange}
+              apiKey={piForm.piApiKey}
+              onApiKeyChange={piForm.handlePiApiKeyChange}
+              category={category}
+              shouldShowApiKeyLink={shouldShowPiApiKeyLink}
+              websiteUrl={piWebsiteUrl}
+              isPartner={isPiPartner}
+              partnerPromotionKey={piPartnerPromotionKey}
+              api={piForm.piApi}
+              onApiChange={piForm.handlePiApiChange}
+              models={piForm.piModels}
+              onModelsChange={piForm.handlePiModelsChange}
+              defaultModel={piForm.piDefaultModel}
+              onDefaultModelChange={piForm.handlePiDefaultModelChange}
+            />
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2359,7 +2407,7 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" || appId === "hermes" || appId === "pi" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2375,7 +2423,17 @@ function ProviderFormFull({
   "base_url": "https://api.example.com/v1",
   "api_key": ""
 }`
-                      : `{
+                      : appId === "pi"
+                        ? `{
+  "baseUrl": "https://api.example.com/v1",
+  "apiKey": "your-api-key-here",
+  "api": "openai-chat",
+  "models": [
+    { "id": "gpt-5.5", "name": "GPT 5.5" }
+  ],
+  "defaultModel": "gpt-5.5"
+}`
+                        : `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
   "api": "openai-completions",
@@ -2421,7 +2479,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "pi" && (
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}

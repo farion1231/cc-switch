@@ -30,6 +30,7 @@ impl McpApps {
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
             AppType::ClaudeDesktop => false,
+            AppType::Pi => false,
         }
     }
 
@@ -43,6 +44,7 @@ impl McpApps {
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
+            AppType::Pi => {}            // Pi Agent MCP sync is not supported
         }
     }
 
@@ -99,6 +101,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
+            AppType::Pi => false,
         }
     }
 
@@ -112,6 +115,7 @@ impl SkillApps {
             AppType::Hermes => self.hermes = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
+            AppType::Pi => {}            // Pi Agent skill sync is not supported
         }
     }
 
@@ -280,6 +284,9 @@ pub struct McpRoot {
     /// Hermes MCP 配置（实际使用 config.yaml）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub hermes: McpConfig,
+    /// Pi Agent does not support MCP sync; retained only so AppType matches are total.
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub pi: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -295,6 +302,7 @@ impl Default for McpRoot {
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
             hermes: McpConfig::default(),
+            pi: McpConfig::default(),
         }
     }
 }
@@ -351,6 +359,7 @@ pub enum AppType {
     OpenCode,
     OpenClaw,
     Hermes,
+    Pi,
 }
 
 impl AppType {
@@ -363,6 +372,7 @@ impl AppType {
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
+            AppType::Pi => "pi",
         }
     }
 
@@ -387,6 +397,7 @@ impl AppType {
             AppType::OpenCode,
             AppType::OpenClaw,
             AppType::Hermes,
+            AppType::Pi,
         ]
         .into_iter()
     }
@@ -405,10 +416,11 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
+            "pi" => Ok(AppType::Pi),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes, pi。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes, pi."),
             )),
         }
     }
@@ -447,6 +459,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
+            AppType::Pi => None,
         }
     }
 
@@ -460,6 +473,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
+            AppType::Pi => {}
         }
     }
 }
@@ -503,6 +517,7 @@ impl Default for MultiAppConfig {
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
         apps.insert("hermes".to_string(), ProviderManager::default());
+        apps.insert("pi".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -583,12 +598,14 @@ impl MultiAppConfig {
             }
         }
 
-        // 确保 gemini 应用存在（兼容旧配置文件）
-        if !config.apps.contains_key("gemini") {
-            config
-                .apps
-                .insert("gemini".to_string(), ProviderManager::default());
-            updated = true;
+        // 确保后续版本新增的应用存在（兼容旧配置文件）
+        for app_id in ["gemini", "pi"] {
+            if !config.apps.contains_key(app_id) {
+                config
+                    .apps
+                    .insert(app_id.to_string(), ProviderManager::default());
+                updated = true;
+            }
         }
 
         // 执行 MCP 迁移（v3.6.x → v3.7.0）
@@ -665,6 +682,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
             AppType::Hermes => &self.mcp.hermes,
+            AppType::Pi => &self.mcp.pi,
         }
     }
 
@@ -678,6 +696,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
             AppType::Hermes => &mut self.mcp.hermes,
+            AppType::Pi => &mut self.mcp.pi,
         }
     }
 
@@ -804,6 +823,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            AppType::Pi => unreachable!("Pi prompt import is not supported"),
         };
 
         prompts.insert(id, prompt);
@@ -846,6 +866,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Pi => continue,       // Pi Agent MCP sync is not supported
             };
 
             for (id, entry) in old_servers {
@@ -976,6 +997,25 @@ mod tests {
             AppType::ClaudeDesktop
         );
         assert_eq!(AppType::ClaudeDesktop.as_str(), "claude-desktop");
+    }
+
+    #[test]
+    fn app_type_parses_pi() {
+        assert_eq!("pi".parse::<AppType>().unwrap(), AppType::Pi);
+        assert_eq!(AppType::Pi.as_str(), "pi");
+        assert!(
+            AppType::all().any(|app| app == AppType::Pi),
+            "Pi should be included in global app iteration"
+        );
+    }
+
+    #[test]
+    fn default_config_contains_pi_provider_manager() {
+        let config = MultiAppConfig::default();
+        assert!(
+            config.get_manager(&AppType::Pi).is_some(),
+            "default config should include a Pi provider manager"
+        );
     }
 
     struct TempHome {

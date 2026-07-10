@@ -148,6 +148,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Pi => build_pi_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -498,6 +499,56 @@ fn build_additive_app_settings(request: &DeepLinkImportRequest) -> serde_json::V
     json!(config)
 }
 
+/// Build settings for Pi Agent.
+/// Format: { baseUrl, apiKey, api, models, defaultModel }
+fn build_pi_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+    let mut config = extract_pi_config_object(request).unwrap_or_default();
+
+    if !endpoint.is_empty() {
+        config.insert("baseUrl".to_string(), json!(endpoint));
+        config.remove("baseURL");
+        config.remove("base_url");
+    }
+
+    if let Some(api_key) = &request.api_key {
+        config.insert("apiKey".to_string(), json!(api_key));
+        config.remove("api_key");
+    }
+
+    config
+        .entry("api".to_string())
+        .or_insert_with(|| json!("openai-chat"));
+
+    if let Some(model) = &request.model {
+        config.insert(
+            "models".to_string(),
+            json!([{ "id": model, "name": model }]),
+        );
+        config.insert("defaultModel".to_string(), json!(model));
+    }
+
+    json!(config)
+}
+
+fn extract_pi_config_object(
+    request: &DeepLinkImportRequest,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let config_b64 = request.config.as_ref()?;
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let content = std::str::from_utf8(&decoded).ok()?;
+    let value = match request.config_format.as_deref().unwrap_or("json") {
+        "json" => serde_json::from_str(content).ok()?,
+        "toml" => {
+            let value: toml::Value = toml::from_str(content).ok()?;
+            serde_json::to_value(value).ok()?
+        }
+        _ => return None,
+    };
+
+    value.as_object().cloned()
+}
+
 /// Build Hermes provider settings (snake_case YAML-native fields).
 ///
 /// Hermes' `custom_providers:` entries use `base_url` / `api_key` / `api_mode`
@@ -601,7 +652,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" => {
+        "openclaw" | "opencode" | "hermes" | "pi" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {
@@ -797,6 +848,7 @@ fn merge_additive_config(
     if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(base_url) = config
             .get("baseUrl")
+            .or_else(|| config.get("baseURL"))
             .or_else(|| config.get("base_url"))
             .or_else(|| config.get("options").and_then(|o| o.get("baseURL")))
             .and_then(|v| v.as_str())
@@ -952,5 +1004,30 @@ mod tests {
         let obj = settings.as_object().unwrap();
         assert!(obj.contains_key("baseUrl"));
         assert!(obj.contains_key("apiKey"));
+    }
+
+    #[test]
+    fn build_pi_settings_uses_pi_protocol_defaults() {
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("pi".to_string()),
+            name: Some("Pi Provider".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-pi".to_string()),
+            model: Some("gpt-5.5".to_string()),
+            ..Default::default()
+        };
+
+        let provider = build_provider_from_request(&AppType::Pi, &request).unwrap();
+        let obj = provider.settings_config.as_object().unwrap();
+
+        assert_eq!(obj.get("baseUrl").unwrap(), "https://api.example.com/v1");
+        assert_eq!(obj.get("apiKey").unwrap(), "sk-pi");
+        assert_eq!(obj.get("api").unwrap(), "openai-chat");
+        assert_eq!(
+            provider.settings_config.pointer("/models/0/id"),
+            Some(&json!("gpt-5.5"))
+        );
+        assert_eq!(obj.get("defaultModel"), Some(&json!("gpt-5.5")));
     }
 }

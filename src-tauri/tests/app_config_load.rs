@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use cc_switch_lib::{AppError, MultiAppConfig};
+use cc_switch_lib::{AppError, AppType, MultiAppConfig};
 
 mod support;
 use support::{ensure_test_home, reset_test_fs, test_mutex};
@@ -104,4 +104,37 @@ fn load_valid_v2_config_succeeds() {
         .get_manager(&cc_switch_lib::AppType::Claude)
         .is_some());
     assert!(loaded.get_manager(&cc_switch_lib::AppType::Codex).is_some());
+}
+
+#[test]
+fn load_v2_config_backfills_missing_pi_manager_and_persists_it() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let path = cfg_path();
+    fs::create_dir_all(path.parent().unwrap()).expect("create cfg dir");
+
+    let mut value = serde_json::to_value(MultiAppConfig::default()).expect("serialize config");
+    value.as_object_mut().expect("config root").remove("pi");
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&value).expect("serialize legacy v2 config"),
+    )
+    .expect("write legacy v2 config");
+
+    let loaded = MultiAppConfig::load().expect("legacy v2 config should load");
+    assert!(
+        loaded.get_manager(&AppType::Pi).is_some(),
+        "loading an existing v2 config should add the Pi provider manager"
+    );
+
+    let persisted: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read migrated config"))
+            .expect("parse migrated config");
+    assert!(
+        persisted
+            .get("pi")
+            .is_some_and(serde_json::Value::is_object),
+        "the Pi provider manager migration should be persisted"
+    );
 }
