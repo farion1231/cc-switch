@@ -473,6 +473,10 @@ fn codex_catalog_model_entry(
             entry_obj.remove(key);
         }
         entry_obj.insert("shell_type".to_string(), json!("shell_command"));
+        // Codex Desktop expects this field on every catalog entry. Third-party
+        // native gateways use the regular Responses wire contract, so keep the
+        // OpenAI-specific Responses Lite path explicitly disabled.
+        entry_obj.insert("use_responses_lite".to_string(), json!(false));
 
         if let Some(base_instructions) = spec
             .base_instructions
@@ -2558,6 +2562,11 @@ base_url = "https://production.api/v1"
         assert!(
             entry.get("model_messages").is_none(),
             "native entries must not carry the gpt-5.5 model_messages persona text"
+        );
+        assert_eq!(
+            entry.get("use_responses_lite"),
+            Some(&json!(false)),
+            "third-party native entries must explicitly opt out of OpenAI Responses Lite"
         );
         assert_eq!(
             entry.get("supports_parallel_tool_calls"),
