@@ -15,6 +15,9 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
 const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
+const CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER: &str =
+    "statsig.last_modified_time.evaluations";
+const CODEX_DESKTOP_STATSIG_PIN_HORIZON_MILLIS: i64 = 30 * 24 * 60 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodexDesktopStatsigWrapperEncoding {
@@ -511,7 +514,6 @@ fn encode_codex_desktop_statsig_wrapper(
     Some(encoded)
 }
 
-#[cfg(test)]
 fn codex_desktop_statsig_available_model_ids(wrapper: &Value) -> Option<HashSet<String>> {
     let data_text = wrapper.get("data").and_then(Value::as_str)?;
     let data = serde_json::from_str::<Value>(data_text).ok()?;
@@ -527,6 +529,52 @@ fn codex_desktop_statsig_available_model_ids(wrapper: &Value) -> Option<HashSet<
                 .map(str::to_string)
                 .collect()
         })
+}
+
+fn codex_desktop_statsig_has_all_models(wrapper: &Value, model_ids: &[String]) -> bool {
+    let Some(available_models) = codex_desktop_statsig_available_model_ids(wrapper) else {
+        return false;
+    };
+    model_ids
+        .iter()
+        .all(|model_id| available_models.contains(model_id))
+}
+
+fn codex_desktop_statsig_cache_key_from_leveldb_key(key_text: &str) -> Option<String> {
+    let start = key_text.find(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER)?;
+    Some(key_text[start..].trim_matches(char::from(0)).to_string())
+}
+
+fn codex_desktop_now_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or_default()
+}
+
+fn pin_codex_desktop_statsig_last_modified_cache_keys(
+    last_modified: &mut Value,
+    cache_keys: &HashSet<String>,
+    now_millis: i64,
+) -> bool {
+    if cache_keys.is_empty() {
+        return false;
+    }
+    let Some(entries) = last_modified.as_object_mut() else {
+        return false;
+    };
+    let pinned_until = now_millis.saturating_add(CODEX_DESKTOP_STATSIG_PIN_HORIZON_MILLIS);
+    let mut changed = false;
+    for cache_key in cache_keys {
+        if entries.get(cache_key).and_then(Value::as_i64) != Some(pinned_until) {
+            entries.insert(cache_key.clone(), json!(pinned_until));
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: &[String]) -> bool {
@@ -707,7 +755,8 @@ fn sync_codex_desktop_available_models_cache_path(
         _ => format!("Failed to open Codex Desktop localStorage LevelDB {leveldb_path:?}: {err}"),
     })?;
 
-    let mut updates = Vec::new();
+    let mut cache_entries = Vec::new();
+    let mut last_modified_entries = Vec::new();
     {
         use rusty_leveldb::LdbIterator;
 
@@ -718,23 +767,58 @@ fn sync_codex_desktop_available_models_cache_path(
             let Some((key, value)) = iter.current() else {
                 continue;
             };
-            if !String::from_utf8_lossy(&key).contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER) {
+            let key_text = String::from_utf8_lossy(&key).to_string();
+            if key_text.contains(CODEX_DESKTOP_STATSIG_LAST_MODIFIED_KEY_MARKER) {
+                if let Some((prefix, encoding, last_modified)) =
+                    decode_codex_desktop_statsig_wrapper(&value)
+                {
+                    last_modified_entries.push((key.to_vec(), prefix, encoding, last_modified));
+                }
+            }
+            if !key_text.contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER) {
                 continue;
             }
-            let Some((prefix, encoding, mut wrapper)) =
-                decode_codex_desktop_statsig_wrapper(&value)
-            else {
-                continue;
-            };
-            if !merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids) {
-                continue;
-            }
-            let Some(updated) = encode_codex_desktop_statsig_wrapper(prefix, encoding, &wrapper)
-            else {
-                continue;
-            };
-            updates.push((key.to_vec(), updated));
+            cache_entries.push((key.to_vec(), key_text, value.to_vec()));
         }
+    }
+
+    let mut updates = Vec::new();
+    let mut pinned_cache_keys = HashSet::new();
+    for (key, key_text, value) in cache_entries {
+        let Some(cache_key) = codex_desktop_statsig_cache_key_from_leveldb_key(&key_text) else {
+            continue;
+        };
+        let Some((prefix, encoding, mut wrapper)) = decode_codex_desktop_statsig_wrapper(&value)
+        else {
+            continue;
+        };
+        let changed = merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids);
+        if codex_desktop_statsig_has_all_models(&wrapper, model_ids) {
+            pinned_cache_keys.insert(cache_key);
+        }
+        if !changed {
+            continue;
+        }
+        let Some(updated) = encode_codex_desktop_statsig_wrapper(prefix, encoding, &wrapper) else {
+            continue;
+        };
+        updates.push((key, updated));
+    }
+
+    let now_millis = codex_desktop_now_millis();
+    for (key, prefix, encoding, mut last_modified) in last_modified_entries {
+        if !pin_codex_desktop_statsig_last_modified_cache_keys(
+            &mut last_modified,
+            &pinned_cache_keys,
+            now_millis,
+        ) {
+            continue;
+        }
+        let Some(updated) = encode_codex_desktop_statsig_wrapper(prefix, encoding, &last_modified)
+        else {
+            continue;
+        };
+        updates.push((key, updated));
     }
 
     let updated_count = updates.len();
@@ -2939,6 +3023,29 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn codex_desktop_statsig_pin_keeps_custom_cache_newer_than_network_refresh() {
+        let mut last_modified = json!({
+            "statsig.cached.evaluations.custom": 1_000,
+            "statsig.cached.evaluations.network": 2_000,
+        });
+        let cache_keys = HashSet::from(["statsig.cached.evaluations.custom".to_string()]);
+
+        assert!(pin_codex_desktop_statsig_last_modified_cache_keys(
+            &mut last_modified,
+            &cache_keys,
+            10_000,
+        ));
+        assert!(
+            last_modified["statsig.cached.evaluations.custom"]
+                .as_i64()
+                .unwrap()
+                > last_modified["statsig.cached.evaluations.network"]
+                    .as_i64()
+                    .unwrap()
+        );
+    }
+
+    #[test]
     fn codex_desktop_statsig_leveldb_sync_updates_cached_models() {
         let temp_dir = tempfile::tempdir().expect("create temp leveldb");
         let options = rusty_leveldb::Options {
@@ -2947,6 +3054,8 @@ base_url = "https://production.api/v1"
         };
         let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("open temp leveldb");
         let key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let last_modified_key =
+            b"_https://codex\x00statsig.last_modified_time.evaluations".to_vec();
         let data = json!({
             "dynamic_configs": {
                 CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
@@ -2962,6 +3071,14 @@ base_url = "https://production.api/v1"
         )
         .unwrap();
         db.put(&key, &value).expect("seed cache");
+        let last_modified_value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &json!({ "statsig.cached.evaluations.active": 1_000 }),
+        )
+        .unwrap();
+        db.put(&last_modified_key, &last_modified_value)
+            .expect("seed last modified cache");
         db.close().expect("close seeded leveldb");
 
         assert_eq!(
@@ -2970,7 +3087,7 @@ base_url = "https://production.api/v1"
                 &["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()],
             )
             .expect("sync temp leveldb"),
-            1
+            2
         );
 
         let options = rusty_leveldb::Options {
@@ -2987,6 +3104,17 @@ base_url = "https://production.api/v1"
                 "gpt-5.6-sol".to_string(),
                 "gpt-5.6-terra".to_string(),
             ]))
+        );
+        let last_modified_value = db
+            .get(&last_modified_key)
+            .expect("read updated last modified cache");
+        let (_, _, last_modified) =
+            decode_codex_desktop_statsig_wrapper(&last_modified_value).unwrap();
+        assert!(
+            last_modified["statsig.cached.evaluations.active"]
+                .as_i64()
+                .unwrap()
+                > 1_000
         );
         db.close().expect("close leveldb");
     }

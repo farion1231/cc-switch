@@ -7,6 +7,7 @@
 - Read model ids from the cc-switch `modelCatalog` database field.
 - Preserve Chromium LocalStorage value prefixes and UTF-8/UTF-16LE encodings.
 - Update only Statsig cached-evaluations records and only the `107580212.value.available_models` array.
+- Promote patched cache keys in `statsig.last_modified_time.evaluations` so a newer official-only network cache does not immediately win after Codex starts.
 - Discover both traditional Codex data paths and Microsoft Store/MSIX package paths.
 - Run once after a Codex provider is written live; log lock/errors without failing the provider switch.
 
