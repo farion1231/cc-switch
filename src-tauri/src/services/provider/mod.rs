@@ -3458,7 +3458,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn add_first_claude_profile_and_config_writes_to_target_profile() {
+    fn add_first_claude_profile_and_config_syncs_assets_to_target_profile() {
         with_test_home(|state, home| {
             let default_dir = home.join(".claude");
             fs::create_dir_all(&default_dir).expect("create default claude dir");
@@ -3486,6 +3486,22 @@ mod tests {
                 }),
             );
 
+            state
+                .db
+                .save_prompt(
+                    AppType::Claude.as_str(),
+                    &crate::Prompt {
+                        id: "first-add-prompt".to_string(),
+                        name: "First Add Prompt".to_string(),
+                        content: "first add managed prompt".to_string(),
+                        description: None,
+                        enabled: true,
+                        created_at: Some(1),
+                        updated_at: None,
+                    },
+                )
+                .expect("save enabled prompt");
+
             ProviderService::add(state, AppType::Claude, api_provider, true)
                 .expect("add first profile-and-config provider");
 
@@ -3508,6 +3524,12 @@ mod tests {
                 api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("api-provider-token".to_string()),
                 "profile-and-config add should write provider settings into the target profile"
+            );
+            assert_eq!(
+                fs::read_to_string(api_dir.join("CLAUDE.md"))
+                    .expect("read first-added profile prompt"),
+                "first add managed prompt",
+                "profile-and-config add should project enabled Claude assets into the target profile"
             );
 
             let default_live: Value =
@@ -3690,6 +3712,88 @@ mod tests {
                 default_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("default-live-token".to_string()),
                 "profile-only current-provider update should not overwrite default live settings"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_current_claude_profile_and_config_syncs_assets_to_target_profile() {
+        with_test_home(|state, home| {
+            let default_dir = home.join(".claude");
+            fs::create_dir_all(&default_dir).expect("create default claude dir");
+            write_json_file(
+                &default_dir.join("settings.json"),
+                &json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "default-live-token",
+                        "ANTHROPIC_BASE_URL": "https://default-live.example"
+                    }
+                }),
+            )
+            .expect("seed default live settings");
+
+            let legacy_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "legacy-token",
+                "https://legacy.example",
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &legacy_provider)
+                .expect("save legacy provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "claude-current")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("claude-current"))
+                .expect("set local current provider");
+            state
+                .db
+                .save_prompt(
+                    AppType::Claude.as_str(),
+                    &crate::Prompt {
+                        id: "updated-profile-prompt".to_string(),
+                        name: "Updated Profile Prompt".to_string(),
+                        content: "updated profile managed prompt".to_string(),
+                        description: None,
+                        enabled: true,
+                        created_at: Some(1),
+                        updated_at: None,
+                    },
+                )
+                .expect("save enabled prompt");
+
+            let api_dir = home.join(".claude-profiles").join("updated-api");
+            let updated_provider = claude_provider(
+                "claude-current",
+                "Claude Current",
+                "updated-api-token",
+                "https://updated-api.example",
+                Some(ProviderMeta {
+                    claude_profile_dir: Some(api_dir.to_string_lossy().to_string()),
+                    claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+                    ..Default::default()
+                }),
+            );
+
+            ProviderService::update(state, AppType::Claude, None, updated_provider)
+                .expect("update current provider to profile-and-config");
+
+            let api_live: Value =
+                read_json_file(&api_dir.join("settings.json")).expect("read updated api profile");
+            assert_eq!(
+                api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
+                Value::String("updated-api-token".to_string()),
+                "profile-and-config update should write provider settings into the target profile"
+            );
+            assert_eq!(
+                fs::read_to_string(api_dir.join("CLAUDE.md"))
+                    .expect("read updated profile prompt"),
+                "updated profile managed prompt",
+                "profile-and-config update should project enabled Claude assets into the target profile"
             );
         });
     }
@@ -8084,6 +8188,19 @@ impl ProviderService {
                     return Err(err);
                 }
 
+                if matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
+                    if let Some(profile_dir) = plan.override_dir.as_deref() {
+                        if let Err(err) = Self::sync_claude_profile_assets_for_terminal_launch(
+                            state,
+                            Path::new(profile_dir),
+                        ) {
+                            log::warn!(
+                                "首次添加 Claude 供应商后重投影 profile 资产失败（将在下次同步时自愈）: {err}"
+                            );
+                        }
+                    }
+                }
+
                 return Ok(true);
             }
             // No current provider, set as current and sync
@@ -8358,6 +8475,30 @@ impl ProviderService {
                     }
                 } else if !is_claude_profile_only {
                     write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+                }
+
+                if matches!(app_type, AppType::Claude)
+                    && matches!(
+                        claude_switch_plan
+                            .as_ref()
+                            .map(|plan| &plan.activation_mode),
+                        Some(ClaudeActivationMode::ProfileAndConfig)
+                    )
+                {
+                    if let Some(profile_dir) = claude_switch_plan
+                        .as_ref()
+                        .and_then(|plan| plan.override_dir.as_deref())
+                    {
+                        if let Err(err) = Self::sync_claude_profile_assets_for_terminal_launch(
+                            state,
+                            Path::new(profile_dir),
+                        ) {
+                            log::warn!(
+                                "保存供应商后重投影 Claude profile 资产失败（将在下次同步时自愈）: {err}"
+                            );
+                        }
+                    }
+                } else if !should_sync_via_proxy && !is_claude_profile_only {
                     // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
                     // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
                     // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
