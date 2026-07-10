@@ -299,11 +299,6 @@
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
       "confirm": "理解しました、設定する"
     },
-    "streamCheck": {
-      "title": "モデルヘルスチェック",
-      "message": "ヘルスチェックは API リクエストを直接送信してプロバイダーの接続性をテストします。以下の場合、チェックが失敗する可能性があります：\n\n• 公式プロバイダー（OAuth ログイン使用、独立した API キーなし）\n• 一部の中継サービス（リクエストが Claude Code CLI からのものか検証）\n• AWS Bedrock（IAM 署名認証を使用）\n\nチェック失敗はプロバイダーが使用不能であることを意味しません。独立したリクエストでの検証ができないことを示すだけです。アプリ内の実際の動作を基準にしてください。",
-      "confirm": "理解しました、続行する"
-    },
     "autoSync": {
       "title": "自動同期を有効にする",
       "message": "自動同期を有効にすると、データベースの変更ごとに WebDAV サーバーへ自動アップロードされます。\n\nネットワークトラフィックが大幅に増加する可能性があります。ネットワーク環境と WebDAV サービスが頻繁なデータ転送に対応できることをご確認ください。",
@@ -344,9 +339,9 @@
         "running": "実行中",
         "stopped": "停止中"
       },
-      "modelTest": {
-        "title": "モデルテスト設定",
-        "description": "モデルテストで使用するデフォルトモデルとプロンプトを設定"
+      "connectivityCheck": {
+        "title": "接続チェック設定",
+        "description": "プロバイダー接続チェックのタイムアウト、リトライ、低速判定しきい値を設定"
       },
       "failover": {
         "title": "自動フェイルオーバー",
@@ -1240,15 +1235,6 @@
     "empty": "エンドポイントがありません"
   },
   "providerAdvanced": {
-    "testConfig": "モデルテスト設定",
-    "useCustomConfig": "個別設定を使用",
-    "testConfigDesc": "このプロバイダーに個別のモデルテストパラメータを設定します。無効の場合はグローバル設定を使用します。",
-    "testModel": "テストモデル",
-    "testModelPlaceholder": "空白の場合はグローバル設定を使用",
-    "timeoutSecs": "タイムアウト（秒）",
-    "testPrompt": "テストプロンプト",
-    "degradedThreshold": "低下閾値（ミリ秒）",
-    "maxRetries": "最大リトライ回数",
     "pricingConfig": "課金設定",
     "useCustomPricing": "個別設定を使用",
     "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
@@ -2450,9 +2436,6 @@
   "agents": {
     "title": "エージェント"
   },
-  "modelTest": {
-    "testProvider": "モデルテスト"
-  },
   "health": {
     "operational": "正常",
     "degraded": "低下",
@@ -2660,35 +2643,13 @@
     "unreachable": "{{providerName}} に接続できません: {{message}}",
     "unreachableHint": "接続を確立できませんでした（DNS / 接続 / TLS / タイムアウト）。base_url とネットワークを確認してください。",
     "connectivityNote": "接続チェックはプロバイダーのアドレスに到達できるかを確認するだけで、実際のモデルリクエストは送信しません。何らかの応答があれば「到達可能」とみなされますが、認証やモデル設定が正しいことを保証するものではありません。",
-    "configSaved": "ヘルスチェック設定を保存しました",
+    "configSaved": "接続チェック設定を保存しました",
     "configSaveFailed": "保存に失敗しました",
-    "testModels": "テストモデル",
-    "claudeModel": "Claude モデル",
-    "codexModel": "Codex モデル",
-    "geminiModel": "Gemini モデル",
     "checkParams": "チェックパラメーター",
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
-    "degradedThreshold": "劣化しきい値（ミリ秒）",
-    "testPrompt": "テストプロンプト",
-    "operational": "{{providerName}} は正常に動作しています ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} の応答が遅いです ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} のチェックに失敗しました: {{message}}",
-    "rejected": "{{providerName}} のチェックが拒否されました: {{message}}",
-    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
-    "modelNotFound": "{{providerName}} のテストモデル {{model}} は存在しないか廃止されています",
-    "modelNotFoundHint": "このモデルはプロバイダーにより廃止された可能性があります。「モデルテスト設定」でデフォルトのテストモデルを更新してください。",
-    "quotaExceeded": "{{providerName}} の Coding Plan 利用枠を超過しました",
-    "quotaExceededHint": "Baidu Qianfan が Coding Plan の利用枠超過エラーを返しました。5時間・週次・月次の利用枠更新を待つか、Qianfan コンソールでプランを確認してください。",
-    "httpHint": {
-      "400": "リクエスト形式が拒否されました。ヘルスチェックの形式は実際の使用と異なる場合があります。",
-      "401": "APIキーが無効か、OAuthなどの認証方式を使用しています。チェック失敗は実際に使えないことを意味しません。",
-      "402": "アカウントの利用枠または請求の問題です。",
-      "403": "プロバイダーがリクエストを拒否しました。実際の使用では正常に動作する場合があります。",
-      "404": "エンドポイントが見つかりません。Base URLとAPIパスを確認してください。",
-      "429": "リクエストが多すぎます。しばらくしてからお試しください。",
-      "5xx": "プロバイダーの内部エラーです。一時的な問題の可能性が高いです。"
-    }
+    "degradedThreshold": "低速判定しきい値（ミリ秒）",
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "ルーティング総スイッチ",

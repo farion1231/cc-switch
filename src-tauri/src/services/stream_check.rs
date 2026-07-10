@@ -92,19 +92,12 @@ impl StreamCheckService {
         config: &StreamCheckConfig,
         base_url_override: Option<String>,
     ) -> Result<StreamCheckResult, AppError> {
-        let effective = Self::merge_provider_config(provider, config);
-
         let mut last_result: Option<StreamCheckResult> = None;
-        for attempt in 0..=effective.max_retries {
+        for attempt in 0..=config.max_retries {
             let start = Instant::now();
-            let result = Self::check_once(
-                app_type,
-                provider,
-                &effective,
-                base_url_override.clone(),
-                start,
-            )
-            .await?;
+            let result =
+                Self::check_once(app_type, provider, config, base_url_override.clone(), start)
+                    .await?;
 
             if result.success {
                 return Ok(StreamCheckResult {
@@ -114,7 +107,7 @@ impl StreamCheckService {
             }
 
             // 仅超时 / abort 类网络抖动值得重试；连接被拒、DNS 失败等立即返回。
-            if Self::should_retry(&result.message) && attempt < effective.max_retries {
+            if Self::should_retry(&result.message) && attempt < config.max_retries {
                 last_result = Some(result);
                 continue;
             }
@@ -132,29 +125,9 @@ impl StreamCheckService {
             http_status: None,
             model_used: String::new(),
             tested_at: chrono::Utc::now().timestamp(),
-            retry_count: effective.max_retries,
+            retry_count: config.max_retries,
             error_category: None,
         }))
-    }
-
-    /// 合并供应商单独配置（`meta.testConfig`，仅当 `enabled`）与全局配置。
-    fn merge_provider_config(provider: &Provider, global: &StreamCheckConfig) -> StreamCheckConfig {
-        let tc = provider
-            .meta
-            .as_ref()
-            .and_then(|m| m.test_config.as_ref())
-            .filter(|tc| tc.enabled);
-
-        match tc {
-            Some(tc) => StreamCheckConfig {
-                timeout_secs: tc.timeout_secs.unwrap_or(global.timeout_secs),
-                max_retries: tc.max_retries.unwrap_or(global.max_retries),
-                degraded_threshold_ms: tc
-                    .degraded_threshold_ms
-                    .unwrap_or(global.degraded_threshold_ms),
-            },
-            None => global.clone(),
-        }
     }
 
     /// 单次连通性探测。
@@ -472,48 +445,6 @@ mod tests {
         let r = StreamCheckService::build_result(Ok(200), 3000, 1500);
         assert!(r.success);
         assert_eq!(r.status, HealthStatus::Degraded);
-    }
-
-    #[test]
-    fn test_merge_provider_config_override_and_default() {
-        use crate::provider::{ProviderMeta, ProviderTestConfig};
-
-        let global = StreamCheckConfig::default();
-
-        // 无 testConfig → 用全局
-        let p = make_provider(serde_json::json!({}));
-        let merged = StreamCheckService::merge_provider_config(&p, &global);
-        assert_eq!(merged.timeout_secs, global.timeout_secs);
-
-        // testConfig 启用并覆盖部分字段
-        let mut p2 = make_provider(serde_json::json!({}));
-        p2.meta = Some(ProviderMeta {
-            test_config: Some(ProviderTestConfig {
-                enabled: true,
-                timeout_secs: Some(20),
-                degraded_threshold_ms: Some(3000),
-                max_retries: None,
-            }),
-            ..Default::default()
-        });
-        let merged2 = StreamCheckService::merge_provider_config(&p2, &global);
-        assert_eq!(merged2.timeout_secs, 20);
-        assert_eq!(merged2.degraded_threshold_ms, 3000);
-        assert_eq!(merged2.max_retries, global.max_retries); // 未覆盖 → 全局
-
-        // testConfig 存在但未启用 → 忽略，用全局
-        let mut p3 = make_provider(serde_json::json!({}));
-        p3.meta = Some(ProviderMeta {
-            test_config: Some(ProviderTestConfig {
-                enabled: false,
-                timeout_secs: Some(99),
-                degraded_threshold_ms: None,
-                max_retries: None,
-            }),
-            ..Default::default()
-        });
-        let merged3 = StreamCheckService::merge_provider_config(&p3, &global);
-        assert_eq!(merged3.timeout_secs, global.timeout_secs);
     }
 
     #[test]

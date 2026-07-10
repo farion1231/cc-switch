@@ -299,11 +299,6 @@
       "message": "用量查詢需要設定專用的查詢腳本或 API 參數，請確保您已從供應商處取得相關資訊。\n\n如不確定如何設定，請先查閱供應商文件。",
       "confirm": "我已了解，繼續設定"
     },
-    "streamCheck": {
-      "title": "模型健康檢測",
-      "message": "健康檢測透過直接發送 API 請求來測試供應商連線能力，以下情況可能導致檢測失敗：\n\n• 官方供應商（使用 OAuth 登入，無獨立 API Key）\n• 部分中繼服務（會驗證請求是否來自 Claude Code CLI）\n• AWS Bedrock（使用 IAM 簽章驗證）\n\n檢測失敗不代表供應商不可用，僅表示無法透過獨立請求驗證。請以應用程式內的實際情況為準。",
-      "confirm": "我已了解，繼續檢測"
-    },
     "autoSync": {
       "title": "開啟自動同步",
       "message": "開啟自動同步後，每次資料庫變更都會自動上傳至 WebDAV 伺服器。\n\n這可能會產生較高的網路流量消耗，請確保您的網路環境和 WebDAV 服務支援頻繁的資料傳輸。",
@@ -344,9 +339,9 @@
         "running": "執行中",
         "stopped": "已停止"
       },
-      "modelTest": {
-        "title": "模型測試設定",
-        "description": "設定模型測試使用的預設模型和提示詞"
+      "connectivityCheck": {
+        "title": "連通檢測設定",
+        "description": "設定供應商位址探測的逾時、重試與緩慢閾值"
       },
       "failover": {
         "title": "自動故障轉移",
@@ -1212,15 +1207,6 @@
     "empty": "暫無端點"
   },
   "providerAdvanced": {
-    "testConfig": "模型測試設定",
-    "useCustomConfig": "使用獨立設定",
-    "testConfigDesc": "為此供應商設定獨立的模型測試參數，不啟用時使用全域設定。",
-    "testModel": "測試模型",
-    "testModelPlaceholder": "留空使用全域設定",
-    "timeoutSecs": "逾時時間（秒）",
-    "testPrompt": "測試提示詞",
-    "degradedThreshold": "降級閾值（毫秒）",
-    "maxRetries": "最大重試次數",
     "pricingConfig": "計費設定",
     "useCustomPricing": "使用獨立設定",
     "pricingConfigDesc": "為此供應商設定獨立的計費參數，不啟用時使用全域預設設定。",
@@ -2422,9 +2408,6 @@
   "agents": {
     "title": "Agent"
   },
-  "modelTest": {
-    "testProvider": "測試模型"
-  },
   "health": {
     "operational": "正常",
     "degraded": "降級",
@@ -2632,35 +2615,13 @@
     "unreachable": "{{providerName}} 無法連通: {{message}}",
     "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
     "connectivityNote": "連通檢測僅探測供應商位址是否可達，不發送真實模型請求。收到任意回應即視為「可達」——這不代表驗證或模型設定一定正確。",
-    "configSaved": "健康檢測設定已儲存",
+    "configSaved": "連通檢測設定已儲存",
     "configSaveFailed": "儲存失敗",
-    "testModels": "測試模型",
-    "claudeModel": "Claude 模型",
-    "codexModel": "Codex 模型",
-    "geminiModel": "Gemini 模型",
     "checkParams": "檢查參數",
     "timeout": "逾時時間（秒）",
     "maxRetries": "最大重試次數",
-    "degradedThreshold": "降級閾值（毫秒）",
-    "testPrompt": "檢查提示詞",
-    "operational": "{{providerName}} 執行正常 ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} 回應較慢 ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} 檢查失敗：{{message}}",
-    "rejected": "{{providerName}} 檢查被拒：{{message}}",
-    "error": "{{providerName}} 檢查出錯：{{error}}",
-    "modelNotFound": "{{providerName}} 測試模型 {{model}} 不存在或已下架",
-    "modelNotFoundHint": "該模型可能已被供應商棄用。請在「模型測試設定」中更新預設測試模型。",
-    "quotaExceeded": "{{providerName}} Coding Plan 額度已用盡",
-    "quotaExceededHint": "百度千帆回傳了 Coding Plan 超額錯誤。請等待 5 小時 / 每週 / 每月額度重新整理，或在千帆控制台切換方案。",
-    "httpHint": {
-      "400": "供應商拒絕了請求格式。健康檢測的探測格式可能與實際使用不同。",
-      "401": "API Key 可能無效，或供應商使用 OAuth 等驗證方式。檢查失敗不代表實際不可用。",
-      "402": "帳號配額或計費問題。",
-      "403": "供應商拒絕了此請求。部分供應商會驗證用戶端身分，檢查失敗但實際使用可能正常。",
-      "404": "API 位址不存在，請檢查 Base URL 和 API 路徑。",
-      "429": "請求頻率過高，請稍後重試。",
-      "5xx": "供應商內部錯誤，通常是臨時問題。"
-    }
+    "degradedThreshold": "緩慢閾值（毫秒）",
+    "error": "{{providerName}} 檢查出錯：{{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",

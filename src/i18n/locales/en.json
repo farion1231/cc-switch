@@ -299,11 +299,6 @@
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
       "confirm": "I understand, configure"
     },
-    "streamCheck": {
-      "title": "Model Health Check",
-      "message": "Health check tests provider connectivity by sending a direct API request. The following may cause check failures:\n\n• Official providers (uses OAuth login, no standalone API Key)\n• Some relay services (verify requests come from Claude Code CLI)\n• AWS Bedrock (uses IAM signature authentication)\n\nA failed check does not mean the provider is unusable — it only means it cannot be verified via a standalone request. Please refer to actual behavior within the application.",
-      "confirm": "I understand, proceed"
-    },
     "autoSync": {
       "title": "Enable Auto Sync",
       "message": "When auto sync is enabled, every database change will be automatically uploaded to the WebDAV server.\n\nThis may result in significant network traffic. Please ensure your network and WebDAV service can handle frequent data transfers.",
@@ -344,9 +339,9 @@
         "running": "Running",
         "stopped": "Stopped"
       },
-      "modelTest": {
-        "title": "Model Test Config",
-        "description": "Configure default models and prompts for model testing"
+      "connectivityCheck": {
+        "title": "Connectivity Check Settings",
+        "description": "Configure timeout, retries, and the slow-response threshold for provider reachability checks"
       },
       "failover": {
         "title": "Auto Failover",
@@ -1240,15 +1235,6 @@
     "empty": "No endpoints"
   },
   "providerAdvanced": {
-    "testConfig": "Model Test Config",
-    "useCustomConfig": "Use separate config",
-    "testConfigDesc": "Configure separate model testing parameters for this provider. Uses global settings when disabled.",
-    "testModel": "Test Model",
-    "testModelPlaceholder": "Leave empty to use global config",
-    "timeoutSecs": "Timeout (seconds)",
-    "testPrompt": "Test Prompt",
-    "degradedThreshold": "Degraded Threshold (ms)",
-    "maxRetries": "Max Retries",
     "pricingConfig": "Pricing Config",
     "useCustomPricing": "Use separate config",
     "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
@@ -2450,9 +2436,6 @@
   "agents": {
     "title": "Agents"
   },
-  "modelTest": {
-    "testProvider": "Test model"
-  },
   "health": {
     "operational": "Operational",
     "degraded": "Degraded",
@@ -2660,35 +2643,13 @@
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
     "connectivityNote": "Connectivity check only probes whether the provider address is reachable; it does not send a real model request. Any response counts as \"reachable\" — which does not guarantee that auth or model settings are correct.",
-    "configSaved": "Health check config saved",
+    "configSaved": "Connectivity check settings saved",
     "configSaveFailed": "Save failed",
-    "testModels": "Test Models",
-    "claudeModel": "Claude Model",
-    "codexModel": "Codex Model",
-    "geminiModel": "Gemini Model",
     "checkParams": "Check Parameters",
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
-    "degradedThreshold": "Degraded Threshold (ms)",
-    "testPrompt": "Test Prompt",
-    "operational": "{{providerName}} is operational ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} is slow ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} check failed: {{message}}",
-    "rejected": "{{providerName}} check rejected: {{message}}",
-    "error": "{{providerName}} check error: {{error}}",
-    "modelNotFound": "{{providerName}} test model {{model}} does not exist or has been deprecated",
-    "modelNotFoundHint": "This model may have been retired by the provider. Update the default test model in \"Model Test Config\".",
-    "quotaExceeded": "{{providerName}} Coding Plan quota has been exceeded",
-    "quotaExceededHint": "Baidu Qianfan returned a Coding Plan quota-limit error. Wait for the 5-hour, weekly, or monthly quota refresh, or adjust the plan in the Qianfan console.",
-    "httpHint": {
-      "400": "Provider rejected request format. Health check probe may differ from actual usage.",
-      "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
-      "402": "Account quota or billing issue.",
-      "403": "Provider blocked this request. Some verify client identity; may work fine in actual use.",
-      "404": "Endpoint not found. Check base URL and API path.",
-      "429": "Too many requests. Try again later.",
-      "5xx": "Provider internal error. Likely temporary."
-    }
+    "degradedThreshold": "Slow-response threshold (ms)",
+    "error": "{{providerName}} check error: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",

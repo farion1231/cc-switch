@@ -111,18 +111,6 @@ export interface UsageResult {
   error?: string;
 }
 
-// 供应商单独的连通检测配置（覆盖全局配置）
-export interface ProviderTestConfig {
-  // 是否启用单独配置（false 时使用全局配置）
-  enabled: boolean;
-  // 超时时间（秒）
-  timeoutSecs?: number;
-  // 降级阈值（毫秒）
-  degradedThresholdMs?: number;
-  // 最大重试次数
-  maxRetries?: number;
-}
-
 export type AuthBindingSource = "provider_config" | "managed_account";
 
 export interface AuthBinding {
@@ -196,8 +184,6 @@ export interface ProviderMeta {
   isPartner?: boolean;
   // 合作伙伴促销 key（用于后端识别 PackyCode 等）
   partnerPromotionKey?: string;
-  // 供应商单独的模型测试配置
-  testConfig?: ProviderTestConfig;
   // 供应商成本倍率
   costMultiplier?: string;
   // 供应商计费模式来源
@@ -371,8 +357,6 @@ export interface Settings {
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
   usageDashboardRefreshIntervalMs?: number;
-  // User has confirmed the stream check first-run notice
-  streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header

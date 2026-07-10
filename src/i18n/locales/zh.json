@@ -299,11 +299,6 @@
       "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
       "confirm": "我已了解，继续配置"
     },
-    "streamCheck": {
-      "title": "模型健康检测",
-      "message": "健康检测通过直接发送 API 请求来测试供应商连通性，以下情况可能导致检测失败：\n\n• 官方供应商（使用 OAuth 登录，无独立 API Key）\n• 部分中转服务（会校验请求是否来自 Claude Code CLI）\n• AWS Bedrock（使用 IAM 签名认证）\n\n检测失败不代表供应商不可用，仅表示无法通过独立请求验证。请以应用内的实际情况为准。",
-      "confirm": "我已了解，继续检测"
-    },
     "autoSync": {
       "title": "开启自动同步",
       "message": "开启自动同步后，每次数据库变更都会自动上传到 WebDAV 服务器。\n\n这可能会产生较高的网络流量消耗，请确保您的网络环境和 WebDAV 服务支持频繁的数据传输。",
@@ -344,9 +339,9 @@
         "running": "运行中",
         "stopped": "已停止"
       },
-      "modelTest": {
-        "title": "模型测试配置",
-        "description": "配置模型测试使用的默认模型和提示词"
+      "connectivityCheck": {
+        "title": "连通检测配置",
+        "description": "配置供应商地址探测的超时、重试和较慢阈值"
       },
       "failover": {
         "title": "自动故障转移",
@@ -1240,15 +1235,6 @@
     "empty": "暂无端点"
   },
   "providerAdvanced": {
-    "testConfig": "模型测试配置",
-    "useCustomConfig": "使用单独配置",
-    "testConfigDesc": "为此供应商配置单独的模型测试参数，不启用时使用全局配置。",
-    "testModel": "测试模型",
-    "testModelPlaceholder": "留空使用全局配置",
-    "timeoutSecs": "超时时间（秒）",
-    "testPrompt": "测试提示词",
-    "degradedThreshold": "降级阈值（毫秒）",
-    "maxRetries": "最大重试次数",
     "pricingConfig": "计费配置",
     "useCustomPricing": "使用单独配置",
     "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
@@ -2450,9 +2436,6 @@
   "agents": {
     "title": "智能体"
   },
-  "modelTest": {
-    "testProvider": "测试模型"
-  },
   "health": {
     "operational": "正常",
     "degraded": "降级",
@@ -2660,35 +2643,13 @@
     "unreachable": "{{providerName}} 无法连通: {{message}}",
     "unreachableHint": "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
     "connectivityNote": "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
-    "configSaved": "健康检查配置已保存",
+    "configSaved": "连通检测配置已保存",
     "configSaveFailed": "保存失败",
-    "testModels": "测试模型",
-    "claudeModel": "Claude 模型",
-    "codexModel": "Codex 模型",
-    "geminiModel": "Gemini 模型",
     "checkParams": "检查参数",
     "timeout": "超时时间（秒）",
     "maxRetries": "最大重试次数",
-    "degradedThreshold": "降级阈值（毫秒）",
-    "testPrompt": "检查提示词",
-    "operational": "{{providerName}} 运行正常 ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} 响应较慢 ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} 检查失败: {{message}}",
-    "rejected": "{{providerName}} 检查被拒: {{message}}",
-    "error": "{{providerName}} 检查出错: {{error}}",
-    "modelNotFound": "{{providerName}} 测试模型 {{model}} 不存在或已下架",
-    "modelNotFoundHint": "该模型可能已被供应商弃用。请在\"模型测试配置\"中更新默认测试模型。",
-    "quotaExceeded": "{{providerName}} Coding Plan 额度已用尽",
-    "quotaExceededHint": "百度千帆返回了 Coding Plan 超额错误。请等待 5 小时/每周/每月额度刷新，或在千帆控制台切换套餐。",
-    "httpHint": {
-      "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
-      "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
-      "402": "账户配额或计费问题。",
-      "403": "供应商拒绝了此请求。部分供应商会校验客户端身份，检查失败但实际使用可能正常。",
-      "404": "接口地址不存在，请检查 Base URL 和 API 路径。",
-      "429": "请求频率过高，请稍后重试。",
-      "5xx": "供应商内部错误，通常是临时问题。"
-    }
+    "degradedThreshold": "较慢阈值（毫秒）",
+    "error": "{{providerName}} 检查出错: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由总开关",

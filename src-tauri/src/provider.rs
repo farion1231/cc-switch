@@ -303,26 +303,6 @@ pub struct UsageResult {
     pub error: Option<String>,
 }
 
-/// 供应商单独的连通检测配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderTestConfig {
-    /// 是否启用单独配置（false 时使用全局配置）
-    #[serde(default)]
-    pub enabled: bool,
-    /// 超时时间（秒）
-    #[serde(rename = "timeoutSecs", skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u64>,
-    /// 降级阈值（毫秒）
-    #[serde(
-        rename = "degradedThresholdMs",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub degraded_threshold_ms: Option<u64>,
-    /// 最大重试次数
-    #[serde(rename = "maxRetries", skip_serializing_if = "Option::is_none")]
-    pub max_retries: Option<u32>,
-}
-
 /// 认证绑定来源
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -454,9 +434,6 @@ pub struct ProviderMeta {
     /// 每月消费限额（USD）
     #[serde(rename = "limitMonthlyUsd", skip_serializing_if = "Option::is_none")]
     pub limit_monthly_usd: Option<String>,
-    /// 供应商单独的模型测试配置
-    #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
-    pub test_config: Option<ProviderTestConfig>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
