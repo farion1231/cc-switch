@@ -387,12 +387,13 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
         provider_display_name
     };
 
-    // Model name: use deeplink model or default
-    let model_name = request
+    // Model name: use a non-empty deeplink model or the existing default.
+    let explicit_model = request
         .model
         .as_deref()
-        .unwrap_or("gpt-5-codex")
-        .to_string();
+        .map(str::trim)
+        .filter(|model| !model.is_empty());
+    let model_name = explicit_model.unwrap_or("gpt-5-codex").to_string();
 
     // Endpoint: normalize trailing slashes (use primary endpoint only)
     let endpoint = get_primary_endpoint(request)
@@ -419,12 +420,23 @@ requires_openai_auth = true
 "#
     );
 
-    json!({
+    let mut settings = json!({
         "auth": {
             "OPENAI_API_KEY": request.api_key,
         },
         "config": config_toml
-    })
+    });
+
+    // Codex Desktop only exposes named custom models when a model catalog is
+    // present. Reuse the existing simplified catalog format so the regular
+    // provider switch path can generate cc-switch-model-catalog.json.
+    if let Some(model) = explicit_model {
+        settings["modelCatalog"] = json!({
+            "models": [{ "model": model }]
+        });
+    }
+
+    settings
 }
 
 /// Build Gemini settings configuration
@@ -934,6 +946,56 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
         );
+    }
+
+    #[test]
+    fn build_codex_settings_adds_explicit_model_to_catalog() {
+        let request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("codex".to_string()),
+            name: Some("Sol Relay".to_string()),
+            endpoint: Some("https://api.example.com/v1".to_string()),
+            api_key: Some("sk-test".to_string()),
+            model: Some("gpt-5.6-sol".to_string()),
+            ..Default::default()
+        };
+
+        let settings = build_codex_settings(&request);
+
+        assert_eq!(
+            settings.get("modelCatalog"),
+            Some(&json!({
+                "models": [{ "model": "gpt-5.6-sol" }]
+            }))
+        );
+        assert!(
+            settings.get("apiFormat").is_none(),
+            "adding a catalog must not change the provider API format"
+        );
+    }
+
+    #[test]
+    fn build_codex_settings_without_non_empty_model_keeps_default_without_catalog() {
+        for model in [None, Some(" \t\n".to_string())] {
+            let request = DeepLinkImportRequest {
+                resource: "provider".to_string(),
+                app: Some("codex".to_string()),
+                name: Some("Default Relay".to_string()),
+                endpoint: Some("https://api.example.com/v1".to_string()),
+                api_key: Some("sk-test".to_string()),
+                model,
+                ..Default::default()
+            };
+
+            let settings = build_codex_settings(&request);
+            let config_text = settings
+                .get("config")
+                .and_then(|value| value.as_str())
+                .expect("config text");
+
+            assert!(config_text.contains("model = \"gpt-5-codex\""));
+            assert!(settings.get("modelCatalog").is_none());
+        }
     }
 
     #[test]
