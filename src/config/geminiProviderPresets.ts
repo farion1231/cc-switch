@@ -108,6 +108,47 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.qnaigc.com/bypass/vertex",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://api.qnaigc.com/bypass/vertex",
+    model: "gemini-3.1-pro-preview",
+    description: "Qiniu",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    endpointCandidates: [
+      "https://api.qnaigc.com/bypass/vertex",
+      "https://api.modelink.ai/bypass/vertex",
+    ],
+    icon: "qiniu",
+  },
+  {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
+        GEMINI_MODEL: "gemini-3.1-pro-preview",
+      },
+    },
+    baseURL: "https://code0.ai",
+    model: "gemini-3.1-pro-preview",
+    description: "Code0",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+  },
+  {
     name: "PackyCode",
     websiteUrl: "https://www.packyapi.com",
     apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",

@@ -46,7 +46,7 @@ pub struct ClaudeDesktopDefaultRoute {
 
 pub const DEFAULT_PROXY_ROUTES: &[ClaudeDesktopDefaultRoute] = &[
     ClaudeDesktopDefaultRoute {
-        route_id: "claude-sonnet-4-6",
+        route_id: "claude-sonnet-5",
         env_key: "ANTHROPIC_DEFAULT_SONNET_MODEL",
         supports_1m: true,
     },
@@ -1966,9 +1966,9 @@ mod tests {
                     },
                 ),
                 (
-                    "claude-sonnet-4-6".to_string(),
+                    "claude-sonnet-5".to_string(),
                     ClaudeDesktopModelRoute {
-                        model: "claude-sonnet-4-6".to_string(),
+                        model: "claude-sonnet-5".to_string(),
                         label_override: None,
                         supports_1m: Some(false),
                     },
