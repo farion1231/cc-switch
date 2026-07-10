@@ -803,12 +803,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
             let config_str = obj.get("config").and_then(|v| v.as_str());
 
-            // Native (direct) Responses providers must suppress Codex's freeform
-            // apply_patch custom tool via the generated catalog; chat/proxy
-            // providers keep the default tool set. Keyed on provider.meta.apiFormat.
-            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-            );
+            // Native (direct) Responses and Anthropic providers must suppress Codex's
+            // freeform apply_patch custom tool via the generated catalog; chat/proxy
+            // providers keep the default tool set. Uses the same Anthropic detection as
+            // the proxy router (apiFormat meta/settings + TOML wire_api).
+            let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &provider.settings_config,
