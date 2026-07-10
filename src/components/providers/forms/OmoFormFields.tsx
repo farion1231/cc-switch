@@ -128,11 +128,11 @@ const BUILTIN_AGENT_KEYS_SLIM = new Set(
 const BUILTIN_CATEGORY_KEYS = new Set(OMO_BUILTIN_CATEGORIES.map((c) => c.key));
 const EMPTY_VARIANT_VALUE = "__cc_switch_omo_variant_empty__";
 
-// 模块级常量：作为 prop 默认值时使用稳定引用，避免每次渲染都生成新对象，
-// 否则会导致依赖该 prop 的 useEffect / useCallback 持续触发重渲染循环。
-// 详见: OMO Slim 传入 categories=undefined 时的无限循环问题。
-const EMPTY_OBJECT: Record<string, Record<string, unknown>> = {};
-const EMPTY_VARIANTS_MAP: Record<string, string[]> = {};
+// 模块级稳定引用：仅用于 `categories` 的默认值。omo-slim 分类下调用点会传 undefined
+// （见 ProviderForm.tsx），若默认值写成 `= {}`，函数每次调用都会创建新对象，触发
+// 依赖 `categories` 的 useEffect 无限重渲染。modelVariantsMap / presetMetaMap 由
+// useOmoModelSource 的 useMemo 稳定，无需此保护。
+const EMPTY_CATEGORIES: Record<string, Record<string, unknown>> = {};
 
 function ModelCombobox({
   value,
@@ -309,11 +309,11 @@ export function mergeCustomModelsIntoStore(
 
 export function OmoFormFields({
   modelOptions,
-  modelVariantsMap = EMPTY_VARIANTS_MAP,
-  presetMetaMap: _presetMetaMap = EMPTY_OBJECT,
+  modelVariantsMap = {},
+  presetMetaMap: _presetMetaMap = {},
   agents,
   onAgentsChange,
-  categories = EMPTY_OBJECT,
+  categories = EMPTY_CATEGORIES,
   onCategoriesChange,
   otherFieldsStr,
   onOtherFieldsStrChange,
