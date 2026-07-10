@@ -157,6 +157,22 @@ impl RequestForwarder {
         replaced_images
     }
 
+    fn strip_hosted_image_namespace_tools(body: &mut Value) -> usize {
+        let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+            return 0;
+        };
+        let original_len = tools.len();
+        tools.retain(|tool| {
+            !(tool.get("type").and_then(Value::as_str) == Some("namespace")
+                && tool.get("name").and_then(Value::as_str) == Some("image_gen"))
+        });
+        let removed = original_len.saturating_sub(tools.len());
+        if removed > 0 {
+            log::debug!("[Codex] Removed {removed} hosted image_gen namespace tool(s)");
+        }
+        removed
+    }
+
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
     ///
     /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
@@ -1482,6 +1498,9 @@ impl RequestForwarder {
         };
 
         if matches!(app_type, AppType::Codex) {
+            if !super::providers::codex_provider_supports_hosted_namespaces(provider) {
+                Self::strip_hosted_image_namespace_tools(&mut request_body);
+            }
             self.apply_media_prevention(&mut request_body, provider);
         }
 
@@ -3299,6 +3318,26 @@ mod tests {
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#
         );
+    }
+
+    #[test]
+    fn strip_hosted_image_namespace_tools_preserves_other_response_tools() {
+        let mut body = json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "image_gen",
+                    "tools": [{"type": "function", "name": "imagegen"}]
+                },
+                {"type": "function", "name": "shell_command"}
+            ]
+        });
+
+        let removed = RequestForwarder::strip_hosted_image_namespace_tools(&mut body);
+
+        assert_eq!(removed, 1);
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tools"][0]["name"], "shell_command");
     }
 
     #[test]
