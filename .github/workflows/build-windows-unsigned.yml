@@ -1,0 +1,138 @@
+# 自用/fork 构建：不依赖 Tauri/Apple 签名密钥，产物上传为 Actions Artifact。
+# 触发：Actions 页手动 Run workflow，或 push 到任意分支（可按需关掉 push）。
+name: Build Windows (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/fable-common-config
+      - fix/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64 portable + MSI
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # 官方 release 开启了 createUpdaterArtifacts，没有 TAURI_SIGNING_* 会失败。
+      # fork 自用构建关闭 updater 产物即可，不影响 exe/msi 本身。
+      - name: Disable updater artifacts (no signing secrets)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'src-tauri/tauri.conf.json'
+          $json = Get-Content $path -Raw | ConvertFrom-Json
+          if ($null -eq $json.bundle) { throw 'tauri.conf.json missing bundle' }
+          $json.bundle.createUpdaterArtifacts = $false
+          $json | ConvertTo-Json -Depth 100 | Set-Content -Path $path -Encoding utf8
+          Write-Host 'createUpdaterArtifacts set to false'
+
+      - name: Build Tauri (Windows)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm tauri build --bundles msi
+
+      - name: Pack portable zip + MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $sha = $env:GITHUB_SHA.Substring(0, 7)
+          $tag = "fix4272-$sha"
+          $targetRoot = 'src-tauri/target/release'
+
+          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Filter *.msi -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($null -eq $msi) {
+            $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Filter *.msi -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+          if ($null -ne $msi) {
+            $dest = "CC-Switch-$tag-Windows.msi"
+            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+            Write-Host "Installer: $dest"
+          } else {
+            Write-Warning 'No MSI found (portable zip may still work)'
+          }
+
+          $exeCandidates = @(
+            'src-tauri/target/release/cc-switch.exe',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -eq $exePath) { throw 'cc-switch.exe not found' }
+
+          $portableDir = 'release-assets/CC-Switch-Portable'
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item $exePath (Join-Path $portableDir 'cc-switch.exe')
+          @(
+            '# CC Switch portable build marker (unsigned fork build)',
+            'portable=true',
+            "fix=issue-4272-fable-common-config",
+            "commit=$($env:GITHUB_SHA)"
+          ) | Set-Content -Path (Join-Path $portableDir 'portable.ini') -Encoding UTF8
+
+          $portableZip = "release-assets/CC-Switch-$tag-Windows-Portable.zip"
+          Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+          Remove-Item -Recurse -Force $portableDir
+          Write-Host "Portable: $portableZip"
+          Get-ChildItem release-assets | Format-Table Name, Length
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-windows-fix4272
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
