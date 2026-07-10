@@ -960,9 +960,11 @@ mod tests {
         assert_eq!(result["stop_reason"], "tool_use");
     }
 
+    // ===== responses_to_anthropic 兼容性测试 (arguments 兼容 string 和 object 两种格式) =====
+
     #[test]
     fn test_responses_to_anthropic_function_call_with_object_arguments() {
-        // arguments 作为 JSON 对象（而非字符串）时也应正确转换为 Anthropic tool_use (#5062)
+        // arguments 作为 JSON 对象（而非字符串）时也应正确转换为 Anthropic tool_use
         let input = json!({
             "id": "resp_obj",
             "status": "completed",
@@ -982,6 +984,8 @@ mod tests {
         assert_eq!(result["content"][0]["input"]["query"], "hello");
         assert_eq!(result["content"][0]["input"]["limit"], 10);
     }
+
+    // ===== 输出路径测试 (output path: arguments = JSON string per Responses API spec) =====
 
     #[test]
     fn test_responses_to_anthropic_read_drops_empty_pages() {
@@ -1742,8 +1746,10 @@ mod tests {
         assert_eq!(result["cache_creation_input_tokens"], json!(20));
     }
 
+    // ===== 输入回放路径测试 (input replay: arguments = JSON object for upstream) =====
+
     #[test]
-    fn repro_anthropic_to_responses_arguments_must_be_object() {
+    fn test_anthropic_to_responses_input_arguments_is_object() {
         let input = json!({
             "model": "gpt-4o",
             "max_tokens": 1024,
@@ -1760,18 +1766,13 @@ mod tests {
         let fc = &result["input"].as_array().unwrap()[1];
         assert!(
             fc["arguments"].is_object(),
-            "BUG REPRODUCED: convert_messages_to_input emits arguments as {:?} (type: {})",
+            "input replay: arguments should be a JSON object, got: {:?}",
             fc["arguments"],
-            if fc["arguments"].is_string() {
-                "string"
-            } else {
-                "unknown"
-            }
         );
     }
 
     #[test]
-    fn repro_upstream_400_when_arguments_is_string() {
+    fn test_input_replay_arguments_is_object_upstream_compatible() {
         let input = json!({
             "model": "gpt-4o",
             "max_tokens": 1024,
@@ -1803,14 +1804,13 @@ mod tests {
         let input_arr = result["input"].as_array().unwrap();
 
         // 模拟上游 Responses API 严格校验
-        for (i, item) in input_arr.iter().enumerate() {
+        for item in input_arr.iter() {
             if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
                 let arguments = &item["arguments"];
                 assert!(
                     arguments.is_object(),
-                    "upstream HTTP 400: Invalid type for 'input[{}].arguments': \
-                     expected an object, but got a string instead. Got: {:?}",
-                    i,
+                    "input replay: arguments must be a JSON object for upstream compatibility, \
+                     got: {:?}",
                     arguments
                 );
             }

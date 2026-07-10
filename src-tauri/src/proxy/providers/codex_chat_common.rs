@@ -150,19 +150,6 @@ pub(crate) fn attach_optional_reasoning_content_field(
     attach_reasoning_content_field(item, reasoning)
 }
 
-/// 将 arguments 字符串解析为 JSON Value（对象），空串/空白返回 `{}`。
-/// 若解析失败或结果不是对象，则包装为 `{"query": raw}`。
-/// 与 transform_codex_chat.rs 的 parse_tool_arguments_object 逻辑一致。
-pub(crate) fn parse_arguments_to_value(arguments: &str) -> Value {
-    if arguments.trim().is_empty() {
-        return json!({});
-    }
-    serde_json::from_str::<Value>(arguments)
-        .ok()
-        .filter(|value| value.is_object())
-        .unwrap_or_else(|| json!({ "query": arguments }))
-}
-
 pub(crate) fn response_function_call_item(
     item_id: &str,
     status: &str,
@@ -177,7 +164,7 @@ pub(crate) fn response_function_call_item(
         "status": status,
         "call_id": call_id,
         "name": name,
-        "arguments": parse_arguments_to_value(arguments)
+        "arguments": arguments
     });
     attach_optional_reasoning_content_field(&mut item, reasoning);
     item
@@ -255,40 +242,10 @@ fn strip_think_answer_separator(text: &str) -> &str {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_arguments_to_value_empty_string() {
-        assert_eq!(parse_arguments_to_value(""), json!({}));
-        assert_eq!(parse_arguments_to_value("   "), json!({}));
-        assert_eq!(parse_arguments_to_value("\n\t"), json!({}));
-    }
+    // ===== 输出路径测试 (output path: arguments = JSON-encoded string per Responses API spec) =====
 
     #[test]
-    fn parse_arguments_to_value_valid_json_object() {
-        assert_eq!(
-            parse_arguments_to_value(r#"{"a":1,"b":2}"#),
-            json!({"a": 1, "b": 2})
-        );
-    }
-
-    #[test]
-    fn parse_arguments_to_value_non_json_string() {
-        assert_eq!(
-            parse_arguments_to_value("not json"),
-            json!({"query": "not json"})
-        );
-    }
-
-    #[test]
-    fn parse_arguments_to_value_json_array_wrapped() {
-        // JSON array is not an object, so it gets wrapped
-        assert_eq!(
-            parse_arguments_to_value("[1,2,3]"),
-            json!({"query": "[1,2,3]"})
-        );
-    }
-
-    #[test]
-    fn response_function_call_item_arguments_is_object() {
+    fn response_function_call_item_arguments_is_string() {
         let item = response_function_call_item(
             "fc_1",
             "completed",
@@ -299,21 +256,22 @@ mod tests {
         );
         assert_eq!(item["type"], "function_call");
         assert!(
-            item["arguments"].is_object(),
-            "arguments must be a JSON object, got: {:?}",
+            item["arguments"].is_string(),
+            "arguments must be a JSON-encoded string per Responses API spec, got: {:?}",
             item["arguments"]
         );
-        assert_eq!(item["arguments"]["city"], "Tokyo");
+        assert_eq!(item["arguments"], r#"{"city":"Tokyo"}"#);
     }
 
     #[test]
-    fn response_function_call_item_empty_arguments_is_empty_object() {
+    fn response_function_call_item_empty_arguments_is_empty_string() {
         let item = response_function_call_item("fc_1", "completed", "call_1", "noop", "", None);
-        assert_eq!(item["arguments"], json!({}));
+        assert!(item["arguments"].is_string());
+        assert_eq!(item["arguments"], "");
     }
 
     #[test]
-    fn response_function_call_item_with_namespace_arguments_is_object() {
+    fn response_function_call_item_with_namespace_preserves_string_arguments() {
         let item = response_function_call_item_with_namespace(
             "fc_1",
             "completed",
@@ -323,42 +281,8 @@ mod tests {
             r#"{"q":"hello"}"#,
             None,
         );
-        assert!(item["arguments"].is_object());
-        assert_eq!(item["arguments"]["q"], "hello");
+        assert!(item["arguments"].is_string());
+        assert_eq!(item["arguments"], r#"{"q":"hello"}"#);
         assert_eq!(item["namespace"], "mcp__gmail");
-    }
-
-    #[test]
-    fn repro_arguments_must_be_object_not_string() {
-        let item = response_function_call_item(
-            "fc_1",
-            "completed",
-            "call_1",
-            "get_weather",
-            r#"{"location":"Tokyo"}"#,
-            None,
-        );
-        assert!(
-            item["arguments"].is_object(),
-            "BUG REPRODUCED: arguments is {:?} (type: {}), expected JSON object. \
-             This causes upstream HTTP 400",
-            item["arguments"],
-            if item["arguments"].is_string() {
-                "string"
-            } else {
-                "unknown"
-            }
-        );
-    }
-
-    #[test]
-    fn repro_empty_arguments_must_be_empty_object() {
-        let item = response_function_call_item("fc_1", "completed", "call_1", "noop", "", None);
-        assert!(
-            item["arguments"].is_object(),
-            "BUG REPRODUCED: empty arguments is {:?}, expected {{}}",
-            item["arguments"]
-        );
-        assert_eq!(item["arguments"], json!({}));
     }
 }
