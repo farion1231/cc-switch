@@ -7,6 +7,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -1868,14 +1869,30 @@ impl SkillService {
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
+        Self::sync_skills_to_app_dir(&skills, &ssot_dir, app, &app_dir)
+    }
 
+    pub(crate) fn sync_claude_to_profile(db: &Arc<Database>, profile_dir: &Path) -> Result<()> {
+        let app = AppType::Claude;
+        let skills = db.get_all_installed_skills()?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let app_dir = profile_dir.join("skills");
+        Self::sync_skills_to_app_dir(&skills, &ssot_dir, &app, &app_dir)
+    }
+
+    fn sync_skills_to_app_dir(
+        skills: &IndexMap<String, InstalledSkill>,
+        ssot_dir: &Path,
+        app: &AppType,
+        app_dir: &Path,
+    ) -> Result<()> {
         let indexed_skills: HashMap<String, &InstalledSkill> = skills
             .values()
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
         if app_dir.exists() {
-            for entry in fs::read_dir(&app_dir)? {
+            for entry in fs::read_dir(app_dir)? {
                 let entry = entry?;
                 let path = entry.path();
                 let dir_name = entry.file_name().to_string_lossy().to_string();
@@ -1891,7 +1908,7 @@ impl SkillService {
                     continue;
                 }
 
-                if Self::is_symlink_to_ssot(&path, &ssot_dir) {
+                if Self::is_symlink_to_ssot(&path, ssot_dir) {
                     Self::remove_path(&path)?;
                 }
             }
@@ -1899,7 +1916,7 @@ impl SkillService {
 
         for skill in skills.values() {
             if skill.apps.is_enabled_for(app) {
-                Self::sync_to_app_dir_with_db(db, &skill.directory, app)?;
+                Self::sync_to_app_dir_at(&skill.directory, app, app_dir)?;
             }
         }
 

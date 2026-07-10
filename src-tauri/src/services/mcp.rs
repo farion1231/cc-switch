@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::app_config::{AppType, McpServer};
 use crate::error::AppError;
@@ -221,6 +222,21 @@ impl McpService {
     }
 
     pub fn sync_all_enabled_to_active_claude(state: &AppState) -> Result<(), AppError> {
+        let claude_config = Self::enabled_claude_mcp_config(state)?;
+        mcp::sync_enabled_to_active_claude(&claude_config)
+    }
+
+    pub(crate) fn sync_enabled_to_claude_profile(
+        state: &AppState,
+        profile_dir: &Path,
+    ) -> Result<(), AppError> {
+        let claude_config = Self::enabled_claude_mcp_config(state)?;
+        mcp::sync_enabled_to_claude_profile(&claude_config, profile_dir)
+    }
+
+    fn enabled_claude_mcp_config(
+        state: &AppState,
+    ) -> Result<crate::app_config::MultiAppConfig, AppError> {
         let servers = Self::get_all_servers(state)?;
         let mut claude_config = crate::app_config::MultiAppConfig::default();
         for server in servers.values() {
@@ -234,7 +250,7 @@ impl McpService {
                 );
             }
         }
-        mcp::sync_enabled_to_active_claude(&claude_config)
+        Ok(claude_config)
     }
 
     pub fn sync_all_enabled_without_claude(state: &AppState) -> Result<(), AppError> {

@@ -131,6 +131,10 @@ pub fn write_claude_config_for_db(db: &Database) -> Result<bool, AppError> {
     write_claude_config_at(&claude_config_path_for_db(db)?)
 }
 
+pub(crate) fn write_claude_config_for_profile_dir(profile_dir: &Path) -> Result<bool, AppError> {
+    write_claude_config_at(&profile_dir.join(CLAUDE_CONFIG_FILE))
+}
+
 fn clear_claude_config_at(path: &Path) -> Result<bool, AppError> {
     if !path.exists() {
         return Ok(false);

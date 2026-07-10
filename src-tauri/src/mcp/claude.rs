@@ -72,6 +72,14 @@ pub fn sync_enabled_to_active_claude(config: &MultiAppConfig) -> Result<(), AppE
     crate::claude_mcp::set_mcp_servers_map_at_path(&mcp_path, &enabled)
 }
 
+pub fn sync_enabled_to_claude_profile(
+    config: &MultiAppConfig,
+    profile_dir: &Path,
+) -> Result<(), AppError> {
+    let enabled = collect_enabled_servers(&config.mcp.claude);
+    crate::claude_mcp::set_mcp_servers_map_at_path(&profile_dir.join(".claude.json"), &enabled)
+}
+
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
 /// 已存在的服务器将启用 Claude 应用，不覆盖其他字段和应用状态
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError> {

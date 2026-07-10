@@ -6,6 +6,7 @@ use crate::error::AppError;
 use crate::prompt::Prompt;
 use crate::prompt_files::{prompt_file_path, prompt_file_path_for_db};
 use crate::store::AppState;
+use std::path::Path;
 
 /// 安全地获取当前 Unix 时间戳
 fn get_unix_timestamp() -> Result<i64, AppError> {
@@ -66,6 +67,22 @@ impl PromptService {
             if configured_path != target_path {
                 write_text_file(&configured_path, content)?;
             }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn sync_enabled_claude_prompt_to_profile(
+        state: &AppState,
+        profile_dir: &Path,
+    ) -> Result<(), AppError> {
+        let target_path = profile_dir.join("CLAUDE.md");
+        let prompts = state.db.get_prompts(AppType::Claude.as_str())?;
+
+        if let Some(prompt) = prompts.values().find(|prompt| prompt.enabled) {
+            write_text_file(&target_path, &prompt.content)?;
+        } else if target_path.exists() {
+            write_text_file(&target_path, "")?;
         }
 
         Ok(())

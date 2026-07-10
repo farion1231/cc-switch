@@ -22,7 +22,7 @@ use crate::config::{get_claude_settings_path, write_json_file};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{ClaudeActivationMode, Provider, UsageResult};
-use crate::services::mcp::McpService;
+use crate::services::{mcp::McpService, prompt::PromptService, skill::SkillService};
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
 
@@ -156,7 +156,7 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_config::{McpApps, McpServer};
+    use crate::app_config::{InstalledSkill, McpApps, McpServer, SkillApps};
     #[cfg(any(target_os = "macos", windows))]
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
@@ -3966,6 +3966,66 @@ mod tests {
                 .expect("set current provider");
             crate::settings::set_current_provider(&AppType::Claude, Some("default"))
                 .expect("set local current provider");
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: "managed-mcp".to_string(),
+                    name: "Managed MCP".to_string(),
+                    description: None,
+                    server: json!({
+                        "type": "stdio",
+                        "command": "managed-tool"
+                    }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                })
+                .expect("save managed mcp");
+            state
+                .db
+                .save_prompt(
+                    AppType::Claude.as_str(),
+                    &crate::Prompt {
+                        id: "managed-prompt".to_string(),
+                        name: "Managed Prompt".to_string(),
+                        content: "managed launch prompt".to_string(),
+                        description: None,
+                        enabled: true,
+                        created_at: Some(1),
+                        updated_at: None,
+                    },
+                )
+                .expect("save enabled prompt");
+            let skill_dir = "managed-skill";
+            let ssot_skill_dir = SkillService::get_ssot_dir()
+                .expect("ssot dir")
+                .join(skill_dir);
+            fs::create_dir_all(&ssot_skill_dir).expect("create ssot skill dir");
+            fs::write(ssot_skill_dir.join("SKILL.md"), "# Managed Skill\n")
+                .expect("write skill manifest");
+            state
+                .db
+                .save_skill(&InstalledSkill {
+                    id: "local:managed-skill".to_string(),
+                    name: "Managed Skill".to_string(),
+                    description: None,
+                    directory: skill_dir.to_string(),
+                    repo_owner: None,
+                    repo_name: None,
+                    repo_branch: None,
+                    readme_url: None,
+                    apps: SkillApps::only(&AppType::Claude),
+                    installed_at: 1,
+                    content_hash: None,
+                    updated_at: 0,
+                })
+                .expect("save enabled skill");
+            crate::claude_plugin::write_claude_config_for_db(state.db.as_ref())
+                .expect("seed managed plugin config");
 
             ProviderService::prepare_claude_profile_terminal_launch(state, &api_provider)
                 .expect("prepare profile launch");
@@ -3976,6 +4036,33 @@ mod tests {
                 api_live["env"]["ANTHROPIC_AUTH_TOKEN"],
                 Value::String("api-provider-token".to_string()),
                 "terminal launch should write the selected provider settings into the target profile"
+            );
+            let api_mcp: Value =
+                read_json_file(&api_dir.join(".claude.json")).expect("read api profile mcp");
+            assert_eq!(
+                api_mcp["mcpServers"]["managed-mcp"]["command"],
+                Value::String("managed-tool".to_string()),
+                "terminal launch should project enabled Claude MCP into the target profile"
+            );
+            assert_eq!(
+                fs::read_to_string(api_dir.join("CLAUDE.md")).expect("read api profile prompt"),
+                "managed launch prompt",
+                "terminal launch should project the enabled Claude prompt into the target profile"
+            );
+            assert!(
+                api_dir
+                    .join("skills")
+                    .join(skill_dir)
+                    .join("SKILL.md")
+                    .is_file(),
+                "terminal launch should project enabled Claude skills into the target profile"
+            );
+            let api_plugin: Value =
+                read_json_file(&api_dir.join("config.json")).expect("read api profile plugin");
+            assert_eq!(
+                api_plugin["primaryApiKey"],
+                Value::String("any".to_string()),
+                "terminal launch should project applied Claude plugin config into the target profile"
             );
             assert_eq!(
                 crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)
@@ -6986,6 +7073,22 @@ impl ProviderService {
         Ok(Self::prepare_claude_terminal_launch(state, provider)?.profile_dir)
     }
 
+    fn sync_claude_profile_assets_for_terminal_launch(
+        state: &AppState,
+        profile_dir: &Path,
+    ) -> Result<(), AppError> {
+        McpService::sync_enabled_to_claude_profile(state, profile_dir)?;
+        PromptService::sync_enabled_claude_prompt_to_profile(state, profile_dir)?;
+        SkillService::sync_claude_to_profile(&state.db, profile_dir)
+            .map_err(|err| AppError::Message(format!("Failed to sync Claude skills: {err}")))?;
+
+        if crate::claude_plugin::is_claude_config_applied_for_db(state.db.as_ref())? {
+            crate::claude_plugin::write_claude_config_for_profile_dir(profile_dir)?;
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn prepare_claude_terminal_launch(
         state: &AppState,
         provider: &Provider,
@@ -7021,6 +7124,7 @@ impl ProviderService {
             provider,
             Path::new(profile_dir),
         )?;
+        Self::sync_claude_profile_assets_for_terminal_launch(state, Path::new(profile_dir))?;
 
         Ok(launch)
     }
