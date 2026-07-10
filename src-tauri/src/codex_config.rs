@@ -13,6 +13,14 @@ use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+const CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: &str = "107580212";
+const CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER: &str = "statsig.cached.evaluations";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexDesktopStatsigWrapperEncoding {
+    Utf8,
+    Utf16Le,
+}
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
@@ -420,6 +428,353 @@ fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
         Some(Value::Number(n)) => n.as_u64().filter(|v| *v > 0),
         Some(Value::String(s)) => s.trim().parse::<u64>().ok().filter(|v| *v > 0),
         _ => None,
+    }
+}
+
+fn codex_model_ids_from_settings(settings: &Value) -> Vec<String> {
+    let Some(models) = settings
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    models
+        .iter()
+        .filter_map(|model_config| {
+            model_config
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+        })
+        .filter(|model| seen.insert((*model).to_string()))
+        .map(str::to_string)
+        .collect()
+}
+
+fn decode_codex_desktop_statsig_wrapper(
+    bytes: &[u8],
+) -> Option<(Option<u8>, CodexDesktopStatsigWrapperEncoding, Value)> {
+    let (prefix, json_bytes) = if matches!(bytes.first(), Some(0) | Some(1)) {
+        (bytes.first().copied(), &bytes[1..])
+    } else {
+        (None, bytes)
+    };
+
+    if let Ok(text) = std::str::from_utf8(json_bytes) {
+        if let Ok(wrapper) = serde_json::from_str(text) {
+            return Some((prefix, CodexDesktopStatsigWrapperEncoding::Utf8, wrapper));
+        }
+    }
+
+    if json_bytes.len() % 2 == 0 {
+        let units = json_bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        if let Ok(text) = String::from_utf16(&units) {
+            if let Ok(wrapper) = serde_json::from_str(&text) {
+                return Some((prefix, CodexDesktopStatsigWrapperEncoding::Utf16Le, wrapper));
+            }
+        }
+    }
+
+    None
+}
+
+fn encode_codex_desktop_statsig_wrapper(
+    prefix: Option<u8>,
+    encoding: CodexDesktopStatsigWrapperEncoding,
+    wrapper: &Value,
+) -> Option<Vec<u8>> {
+    let text = serde_json::to_string(wrapper).ok()?;
+    let mut encoded = Vec::with_capacity(
+        match encoding {
+            CodexDesktopStatsigWrapperEncoding::Utf8 => text.len(),
+            CodexDesktopStatsigWrapperEncoding::Utf16Le => text.len() * 2,
+        } + usize::from(prefix.is_some()),
+    );
+    if let Some(prefix) = prefix {
+        encoded.push(prefix);
+    }
+    match encoding {
+        CodexDesktopStatsigWrapperEncoding::Utf8 => encoded.extend_from_slice(text.as_bytes()),
+        CodexDesktopStatsigWrapperEncoding::Utf16Le => {
+            for unit in text.encode_utf16() {
+                encoded.extend_from_slice(&unit.to_le_bytes());
+            }
+        }
+    }
+    Some(encoded)
+}
+
+#[cfg(test)]
+fn codex_desktop_statsig_available_model_ids(wrapper: &Value) -> Option<HashSet<String>> {
+    let data_text = wrapper.get("data").and_then(Value::as_str)?;
+    let data = serde_json::from_str::<Value>(data_text).ok()?;
+    data.get("dynamic_configs")
+        .and_then(|value| value.get(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID))
+        .and_then(|value| value.get("value"))
+        .and_then(|value| value.get("available_models"))
+        .and_then(Value::as_array)
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+}
+
+fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: &[String]) -> bool {
+    if model_ids.is_empty() {
+        return false;
+    }
+    let Some(data_text) = wrapper.get("data").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(mut data) = serde_json::from_str::<Value>(data_text) else {
+        return false;
+    };
+    let Some(data_obj) = data.as_object_mut() else {
+        return false;
+    };
+    let Some(dynamic_configs) = data_obj
+        .entry("dynamic_configs")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return false;
+    };
+    let Some(config) = dynamic_configs
+        .entry(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
+        .or_insert_with(|| json!({ "value": {} }))
+        .as_object_mut()
+    else {
+        return false;
+    };
+    let Some(value) = config
+        .entry("value")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return false;
+    };
+    let Some(available_models) = value
+        .entry("available_models")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+    else {
+        return false;
+    };
+
+    let mut seen = available_models
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    let mut changed = false;
+    for model_id in model_ids {
+        if seen.insert(model_id.clone()) {
+            available_models.push(json!(model_id));
+            changed = true;
+        }
+    }
+    if !changed {
+        return false;
+    }
+
+    let Ok(updated_data_text) = serde_json::to_string(&data) else {
+        return false;
+    };
+    if let Some(wrapper_obj) = wrapper.as_object_mut() {
+        wrapper_obj.insert("data".to_string(), json!(updated_data_text));
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn append_codex_leveldb_layouts(candidates: &mut Vec<PathBuf>, codex_root: &Path) {
+    candidates.push(codex_root.join("Local Storage").join("leveldb"));
+    candidates.push(
+        codex_root
+            .join("Default")
+            .join("Local Storage")
+            .join("leveldb"),
+    );
+    candidates.push(
+        codex_root
+            .join("Partitions")
+            .join("codex-browser-app")
+            .join("Local Storage")
+            .join("leveldb"),
+    );
+    candidates.push(
+        codex_root
+            .join("Default")
+            .join("Partitions")
+            .join("codex-browser-app")
+            .join("Local Storage")
+            .join("leveldb"),
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn codex_desktop_windows_leveldb_candidates(appdata: &Path, local_appdata: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    append_codex_leveldb_layouts(&mut candidates, &appdata.join("Codex"));
+
+    let packages = local_appdata.join("Packages");
+    if let Ok(entries) = fs::read_dir(packages) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if !name.starts_with("openai.codex_") {
+                continue;
+            }
+            let package_codex = entry
+                .path()
+                .join("LocalCache")
+                .join("Roaming")
+                .join("Codex");
+            append_codex_leveldb_layouts(&mut candidates, &package_codex);
+            append_codex_leveldb_layouts(&mut candidates, &package_codex.join("web").join("Codex"));
+        }
+    }
+    candidates
+}
+
+fn codex_desktop_local_storage_leveldb_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    if let (Some(appdata), Some(local_appdata)) = (
+        std::env::var_os("APPDATA"),
+        std::env::var_os("LOCALAPPDATA"),
+    ) {
+        candidates.extend(codex_desktop_windows_leveldb_candidates(
+            &PathBuf::from(appdata),
+            &PathBuf::from(local_appdata),
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let codex_root = get_home_dir()
+            .join("Library")
+            .join("Application Support")
+            .join("Codex");
+        candidates.push(codex_root.join("Local Storage").join("leveldb"));
+        candidates.push(
+            codex_root
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let codex_root = get_home_dir().join(".config").join("Codex");
+        candidates.push(codex_root.join("Local Storage").join("leveldb"));
+        candidates.push(
+            codex_root
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb"),
+        );
+    }
+
+    candidates
+}
+
+fn sync_codex_desktop_available_models_cache_path(
+    leveldb_path: &Path,
+    model_ids: &[String],
+) -> Result<usize, String> {
+    let options = rusty_leveldb::Options {
+        create_if_missing: false,
+        ..Default::default()
+    };
+    let mut db = rusty_leveldb::DB::open(leveldb_path, options).map_err(|err| match err.code {
+        rusty_leveldb::StatusCode::LockError => {
+            format!("Codex Desktop localStorage LevelDB is locked: {leveldb_path:?}")
+        }
+        _ => format!("Failed to open Codex Desktop localStorage LevelDB {leveldb_path:?}: {err}"),
+    })?;
+
+    let mut updates = Vec::new();
+    {
+        use rusty_leveldb::LdbIterator;
+
+        let mut iter = db.new_iter().map_err(|err| {
+            format!("Failed to iterate Codex Desktop localStorage LevelDB: {err}")
+        })?;
+        while iter.advance() {
+            let Some((key, value)) = iter.current() else {
+                continue;
+            };
+            if !String::from_utf8_lossy(&key).contains(CODEX_DESKTOP_STATSIG_CACHE_KEY_MARKER) {
+                continue;
+            }
+            let Some((prefix, encoding, mut wrapper)) =
+                decode_codex_desktop_statsig_wrapper(&value)
+            else {
+                continue;
+            };
+            if !merge_codex_desktop_statsig_available_models(&mut wrapper, model_ids) {
+                continue;
+            }
+            let Some(updated) = encode_codex_desktop_statsig_wrapper(prefix, encoding, &wrapper)
+            else {
+                continue;
+            };
+            updates.push((key.to_vec(), updated));
+        }
+    }
+
+    let updated_count = updates.len();
+    for (key, value) in updates {
+        db.put(&key, &value)
+            .map_err(|err| format!("Failed to update Codex Desktop localStorage LevelDB: {err}"))?;
+    }
+    db.close()
+        .map_err(|err| format!("Failed to close Codex Desktop localStorage LevelDB: {err}"))?;
+    Ok(updated_count)
+}
+
+fn sync_codex_desktop_available_models_cache(model_ids: &[String]) -> Result<usize, String> {
+    if model_ids.is_empty() {
+        return Ok(0);
+    }
+    let mut seen = HashSet::new();
+    let paths = codex_desktop_local_storage_leveldb_candidates()
+        .into_iter()
+        .filter(|path| path.exists())
+        .filter(|path| seen.insert(path.clone()))
+        .collect::<Vec<_>>();
+    let mut updated_count = 0;
+    let mut errors = Vec::new();
+    for path in paths {
+        match sync_codex_desktop_available_models_cache_path(&path, model_ids) {
+            Ok(count) => updated_count += count,
+            Err(err) => errors.push(err),
+        }
+    }
+    if updated_count == 0 && !errors.is_empty() {
+        Err(errors.join("; "))
+    } else {
+        if !errors.is_empty() {
+            log::warn!(
+                "Some Codex Desktop model whitelist cache paths could not be synced: {}",
+                errors.join("; ")
+            );
+        }
+        Ok(updated_count)
     }
 }
 
@@ -1186,7 +1541,20 @@ pub fn write_codex_provider_live_with_catalog(
         .map(|text| prepare_codex_config_text_with_model_catalog(settings, text, profile))
         .transpose()?;
 
-    write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+    write_codex_live_for_provider(category, auth, prepared_config.as_deref())?;
+
+    let model_ids = codex_model_ids_from_settings(settings);
+    match sync_codex_desktop_available_models_cache(&model_ids) {
+        Ok(updated) if updated > 0 => {
+            log::info!("Synced {updated} Codex Desktop model whitelist cache entries")
+        }
+        Ok(_) => {}
+        Err(err) => log::warn!(
+            "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
+        ),
+    }
+
+    Ok(())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -2506,6 +2874,149 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_appends_models_without_duplicates() {
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": {
+                        "available_models": ["gpt-5.5", "gpt-5.6-sol"]
+                    }
+                }
+            }
+        });
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": data.to_string()
+        });
+        let models = vec![
+            "gpt-5.6-sol".to_string(),
+            "gpt-5.6-terra".to_string(),
+            "gpt-5.6-luna".to_string(),
+        ];
+
+        assert!(merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+        assert_eq!(
+            codex_desktop_statsig_available_model_ids(&wrapper),
+            Some(HashSet::from([
+                "gpt-5.5".to_string(),
+                "gpt-5.6-sol".to_string(),
+                "gpt-5.6-terra".to_string(),
+                "gpt-5.6-luna".to_string(),
+            ]))
+        );
+        assert!(!merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &models
+        ));
+    }
+
+    #[test]
+    fn codex_desktop_statsig_wrapper_round_trips_utf16le_values() {
+        let wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": "{}"
+        });
+        let text = serde_json::to_string(&wrapper).unwrap();
+        let mut encoded = vec![1];
+        for unit in text.encode_utf16() {
+            encoded.extend_from_slice(&unit.to_le_bytes());
+        }
+
+        let (prefix, encoding, decoded) = decode_codex_desktop_statsig_wrapper(&encoded).unwrap();
+        assert_eq!(prefix, Some(1));
+        assert_eq!(encoding, CodexDesktopStatsigWrapperEncoding::Utf16Le);
+        assert_eq!(decoded, wrapper);
+        assert_eq!(
+            encode_codex_desktop_statsig_wrapper(prefix, encoding, &decoded).unwrap(),
+            encoded
+        );
+    }
+
+    #[test]
+    fn codex_desktop_statsig_leveldb_sync_updates_cached_models() {
+        let temp_dir = tempfile::tempdir().expect("create temp leveldb");
+        let options = rusty_leveldb::Options {
+            create_if_missing: true,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("open temp leveldb");
+        let key = b"_https://codex\x00statsig.cached.evaluations.active".to_vec();
+        let data = json!({
+            "dynamic_configs": {
+                CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID: {
+                    "value": { "available_models": ["gpt-5.5"] }
+                }
+            }
+        });
+        let wrapper = json!({ "source": "Network", "data": data.to_string() });
+        let value = encode_codex_desktop_statsig_wrapper(
+            Some(1),
+            CodexDesktopStatsigWrapperEncoding::Utf8,
+            &wrapper,
+        )
+        .unwrap();
+        db.put(&key, &value).expect("seed cache");
+        db.close().expect("close seeded leveldb");
+
+        assert_eq!(
+            sync_codex_desktop_available_models_cache_path(
+                temp_dir.path(),
+                &["gpt-5.6-sol".to_string(), "gpt-5.6-terra".to_string()],
+            )
+            .expect("sync temp leveldb"),
+            1
+        );
+
+        let options = rusty_leveldb::Options {
+            create_if_missing: false,
+            ..Default::default()
+        };
+        let mut db = rusty_leveldb::DB::open(temp_dir.path(), options).expect("reopen leveldb");
+        let value = db.get(&key).expect("read updated cache");
+        let (_, _, wrapper) = decode_codex_desktop_statsig_wrapper(&value).unwrap();
+        assert_eq!(
+            codex_desktop_statsig_available_model_ids(&wrapper),
+            Some(HashSet::from([
+                "gpt-5.5".to_string(),
+                "gpt-5.6-sol".to_string(),
+                "gpt-5.6-terra".to_string(),
+            ]))
+        );
+        db.close().expect("close leveldb");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_store_codex_leveldb_candidates_include_msix_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let appdata = temp.path().join("Roaming");
+        let local_appdata = temp.path().join("Local");
+        let package_root = local_appdata
+            .join("Packages")
+            .join("OpenAI.Codex_test")
+            .join("LocalCache")
+            .join("Roaming")
+            .join("Codex");
+        std::fs::create_dir_all(&package_root).expect("create fake package root");
+
+        let candidates = codex_desktop_windows_leveldb_candidates(&appdata, &local_appdata);
+
+        assert!(candidates.contains(&appdata.join("Codex").join("Local Storage").join("leveldb")));
+        assert!(candidates.contains(&package_root.join("Local Storage").join("leveldb")));
+        assert!(candidates.contains(
+            &package_root
+                .join("web")
+                .join("Codex")
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb")
+        ));
     }
 
     #[test]
