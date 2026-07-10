@@ -784,6 +784,20 @@ fn desktop_tier_routing_model_specs(
 fn desktop_tier_routing_fallback_model_specs(
     provider: &Provider,
 ) -> Result<Vec<InferenceModelSpec>, AppError> {
+    // 未配置 tier 只能回退到本地代理实际可转发的当前 Provider。官方 1P Provider
+    // 没有可提取的 base_url/凭据；若在这里只因 models 为空而补齐默认四档，Desktop
+    // 会展示最终必然转发失败的模型。其它缺少代理凭据的脏配置同样不应成为 fallback。
+    if !provider.supports_routing() {
+        return Ok(Vec::new());
+    }
+    if let Err(error) = validate_tier_routing_target_provider(provider) {
+        log::warn!(
+            "[ClaudeDesktop] 当前 Provider {} 无法作为层级路由 fallback，已仅发布显式配置的 tier: {error}",
+            provider.id
+        );
+        return Ok(Vec::new());
+    }
+
     match provider_mode(provider) {
         ClaudeDesktopMode::Direct => {
             let specs = direct_inference_model_specs(provider)?;
@@ -1910,6 +1924,64 @@ mod tests {
             find_model(list_models, CURRENT_OPUS_ROUTE_ID)["supports1m"],
             json!(true)
         );
+    }
+
+    #[test]
+    fn claude_desktop_tier_routing_official_provider_only_exposes_configured_tiers() {
+        let temp = TempDir::new().expect("tempdir");
+        let paths = test_paths(temp.path());
+        let current_provider = official_provider();
+        let routed_provider = proxy_provider("zhipu");
+        let db = test_db();
+        set_proxy_port(&db, 15721);
+        db.save_provider(MODEL_TIER_ROUTING_APP, &routed_provider)
+            .expect("save routed provider");
+
+        let mut enabled_apps = std::collections::HashMap::new();
+        enabled_apps.insert(MODEL_TIER_ROUTING_APP.to_string(), true);
+        let mut claude_desktop_routes = std::collections::HashMap::new();
+        claude_desktop_routes.insert(
+            "opus".to_string(),
+            crate::proxy::types::TierRoute {
+                provider_id: "zhipu".to_string(),
+                model: "glm-5.2".to_string(),
+                display_name: "GLM-5.2".to_string(),
+                supports_1m: true,
+            },
+        );
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(MODEL_TIER_ROUTING_APP.to_string(), claude_desktop_routes);
+        db.set_model_tier_routing_config(&crate::proxy::types::ModelTierRoutingConfig {
+            enabled: true,
+            enabled_apps,
+            routes,
+            ..Default::default()
+        })
+        .expect("set tier config");
+
+        apply_provider_to_paths(&db, &current_provider, &paths)
+            .expect("apply tier routing profile over official provider");
+
+        let profile: Value = read_json_file(&paths.profile_path).expect("read profile");
+        let models = profile["inferenceModels"]
+            .as_array()
+            .expect("inferenceModels array");
+        assert_eq!(
+            models.len(),
+            1,
+            "official provider cannot back fallback tiers"
+        );
+        assert_eq!(
+            find_model(models, CURRENT_OPUS_ROUTE_ID)["labelOverride"],
+            json!("GLM-5.2")
+        );
+
+        let list = model_list_response_for_tier_routing(&db, &current_provider)
+            .expect("model list response")
+            .expect("tier response present");
+        let list_models = list["data"].as_array().expect("model list data");
+        assert_eq!(list_models.len(), 1);
+        assert_eq!(list_models[0]["id"], json!(CURRENT_OPUS_ROUTE_ID));
     }
 
     #[test]

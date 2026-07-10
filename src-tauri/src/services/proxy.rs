@@ -124,7 +124,7 @@ impl ProxyService {
     /// 读取层级路由配置，并剔除指向不可路由 provider（如官方账号）的路由项，
     /// 仅供 Claude 接管菜单字段构建使用。
     ///
-    /// 与请求路径 `apply_tier_routing` 的「目标不可路由→回退」对齐：菜单字段
+    /// 与请求路径 `resolve_tier_routing_target` 的「目标不可路由→回退」对齐：菜单字段
     /// （`_MODEL`/`_MODEL_NAME`）也只对可路由目标写入，避免 Claude 菜单显示某
     /// tier 已配、实际请求却因路由器跳过该 tier 的不一致。查不到的 provider
     /// 视为不可路由（与请求路径一致）。返回前端的命令/请求路径仍读原始 config。
@@ -371,7 +371,7 @@ impl ProxyService {
             let Some(route) = claude_routes.get(tier) else {
                 continue;
             };
-            // 与 apply_tier_routing（model_mapper）对齐：model 为空视为未配置，
+            // 与 resolve_tier_routing_target（model_mapper）对齐：model 为空视为未配置，
             // 不写 _MODEL/_MODEL_NAME，否则 Claude 菜单显示该 tier 已配、
             // 实际请求却因路由器回退默认 provider，二者矛盾。
             if route.model.trim().is_empty() {
@@ -3357,7 +3357,7 @@ mod tests {
 
     #[test]
     fn tier_routing_skips_routes_with_empty_model() {
-        // model 为空的路由项视为未配置：不写 _MODEL/_MODEL_NAME（与 apply_tier_routing 对齐），
+        // model 为空的路由项视为未配置：不写 _MODEL/_MODEL_NAME（与请求路由解析对齐），
         // 否则 Claude 菜单显示该 tier 已配、实际请求却回退默认 provider。
         let provider = Provider::with_id(
             "p".to_string(),
@@ -3422,7 +3422,7 @@ mod tests {
     #[test]
     fn claude_tier_routing_for_takeover_drops_non_routable_routes() {
         // 菜单字段投影：指向不可路由 provider（官方）的 tier 路由项应被剔除，
-        // 与请求路径 apply_tier_routing 的「目标不可路由→跳过」对齐。
+        // 与请求路径 resolve_tier_routing_target 的「目标不可路由→跳过」对齐。
         // 仅依赖内存 db（不写 live 配置），无需 TempHome/serial。
         let db = Arc::new(Database::memory().expect("init db"));
         let service = ProxyService::new(db.clone());
