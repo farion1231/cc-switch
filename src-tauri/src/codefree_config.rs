@@ -27,7 +27,7 @@ pub fn get_codefree_dir() -> PathBuf {
 
 pub fn get_codefree_data_dir() -> PathBuf {
     if let Some(override_dir) = crate::settings::get_codefree_override_dir() {
-        return override_dir;
+        return override_dir.join(".local").join("share");
     }
 
     if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {

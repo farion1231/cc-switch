@@ -538,7 +538,7 @@ impl SkillService {
             }
             AppType::Codefree => {
                 if let Some(custom) = crate::settings::get_codefree_override_dir() {
-                    return Ok(custom.join("skills"));
+                    return Ok(custom.join(".config").join("skills"));
                 }
             }
         }
@@ -558,7 +558,7 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
-            AppType::Codefree => home.join(".codefree-o").join("skills"),
+            AppType::Codefree => home.join(".codefree-o").join(".config").join("skills"),
         })
     }
 

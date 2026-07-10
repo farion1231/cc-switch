@@ -45,7 +45,7 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub codefree: bool,
 }
 
