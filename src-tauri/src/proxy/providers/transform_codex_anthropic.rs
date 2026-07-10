@@ -724,32 +724,56 @@ fn trailing_turn_supports_thinking(messages: &[Value]) -> bool {
     if last.get("role").and_then(Value::as_str) != Some("user") {
         return false;
     }
-    let has_tool_result = last
-        .get("content")
-        .and_then(Value::as_array)
-        .is_some_and(|blocks| {
-            blocks
-                .iter()
-                .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
-        });
-    if !has_tool_result {
+    let mut tool_result_ids = Vec::new();
+    if let Some(blocks) = last.get("content").and_then(Value::as_array) {
+        for block in blocks {
+            if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                continue;
+            }
+            let Some(id) = block
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            else {
+                return false;
+            };
+            tool_result_ids.push(id);
+        }
+    }
+    if tool_result_ids.is_empty() {
         return true;
     }
 
-    messages.iter().rev().skip(1).any(|message| {
-        message.get("role").and_then(Value::as_str) == Some("assistant")
-            && message
-                .get("content")
-                .and_then(Value::as_array)
-                .is_some_and(|blocks| {
-                    blocks.iter().any(|block| {
-                        matches!(
-                            block.get("type").and_then(Value::as_str),
-                            Some("thinking" | "redacted_thinking")
-                        )
-                    })
-                })
-    })
+    // A tool-result turn answers the immediately preceding assistant tool-use turn.
+    // Looking any farther back can pick up an unrelated signed thinking block and
+    // incorrectly re-enable thinking for an unsigned tool call.
+    let Some(paired_assistant) = messages.get(messages.len().saturating_sub(2)) else {
+        return false;
+    };
+    if paired_assistant.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+    let Some(blocks) = paired_assistant.get("content").and_then(Value::as_array) else {
+        return false;
+    };
+    let has_signed_thinking = blocks.iter().any(|block| {
+        matches!(
+            block.get("type").and_then(Value::as_str),
+            Some("thinking" | "redacted_thinking")
+        )
+    });
+    if !has_signed_thinking {
+        return false;
+    }
+
+    let paired_tool_use_ids: HashSet<&str> = blocks
+        .iter()
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        .filter_map(|block| block.get("id").and_then(Value::as_str))
+        .collect();
+    tool_result_ids
+        .iter()
+        .all(|id| paired_tool_use_ids.contains(id))
 }
 
 /// Removes whitespace-only assistant prefills and trims trailing whitespace from a
@@ -1551,6 +1575,64 @@ mod tests {
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         assert!(result.get("thinking").is_none());
         assert_eq!(result["temperature"], 0.5);
+    }
+
+    #[test]
+    fn test_older_signed_turn_does_not_enable_thinking_for_unsigned_tool_call() {
+        let encrypted = encode_anthropic_thinking_block(&json!({
+            "type": "thinking",
+            "thinking": "old reasoning",
+            "signature": "sig_old"
+        }))
+        .unwrap();
+        let input = json!({
+            "model": "claude-sonnet-5",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "high" },
+            "input": [
+                { "role": "user", "content": "first question" },
+                { "type": "reasoning", "encrypted_content": encrypted },
+                { "role": "assistant", "content": [{ "type": "output_text", "text": "first answer" }] },
+                { "role": "user", "content": "call the tool" },
+                { "type": "function_call", "call_id": "c2", "name": "Read", "arguments": "{}" },
+                { "type": "function_call_output", "call_id": "c2", "output": "ok" }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+        assert_eq!(result["thinking"]["type"], "disabled");
+        let messages = result["messages"].as_array().unwrap();
+        let paired_assistant = &messages[messages.len() - 2];
+        assert_eq!(paired_assistant["role"], "assistant");
+        assert_eq!(paired_assistant["content"][0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_thinking_requires_all_parallel_tool_results_to_match_paired_turn() {
+        let paired = json!([
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "reason", "signature": "sig"},
+                {"type": "tool_use", "id": "c1", "name": "a", "input": {}},
+                {"type": "tool_use", "id": "c2", "name": "b", "input": {}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "one"},
+                {"type": "tool_result", "tool_use_id": "c2", "content": "two"}
+            ]}
+        ]);
+        assert!(trailing_turn_supports_thinking(paired.as_array().unwrap()));
+
+        let mismatched = json!([
+            paired[0].clone(),
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "one"},
+                {"type": "tool_result", "tool_use_id": "c3", "content": "three"}
+            ]}
+        ]);
+        assert!(!trailing_turn_supports_thinking(
+            mismatched.as_array().unwrap()
+        ));
     }
 
     #[test]

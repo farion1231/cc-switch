@@ -60,6 +60,7 @@ import {
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
+  codexApiFormatFromWireApi,
   extractCodexWireApi,
   setCodexWireApi,
   setCodexModelName as setCodexModelNameInConfig,
@@ -129,29 +130,6 @@ type PresetEntry = {
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
     | HermesProviderPreset;
-};
-
-const codexApiFormatFromWireApi = (
-  wireApi: string | undefined,
-): CodexApiFormat | undefined => {
-  switch (wireApi?.trim().toLowerCase()) {
-    case "chat":
-    case "chat_completions":
-    case "chat-completions":
-    case "openai_chat":
-    case "openai-chat":
-      return "openai_chat";
-    case "responses":
-    case "openai_responses":
-    case "openai-responses":
-      return "openai_responses";
-    case "anthropic":
-    case "anthropic_messages":
-    case "anthropic-messages":
-      return "anthropic";
-    default:
-      return undefined;
-  }
 };
 
 export const normalizeCodexCatalogModelsForSave = (
