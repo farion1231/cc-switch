@@ -6324,6 +6324,21 @@ command = "legacy-cmd"
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("legacy"))
             .expect("set local current provider");
+        db.save_prompt(
+            AppType::Claude.as_str(),
+            &crate::Prompt {
+                id: "hot-switch-prompt".to_string(),
+                name: "Hot Switch Prompt".to_string(),
+                content: "hot switch managed prompt".to_string(),
+                description: None,
+                enabled: true,
+                created_at: Some(1),
+                updated_at: None,
+            },
+        )
+        .expect("save enabled prompt");
+        crate::claude_plugin::write_claude_config_for_db(db.as_ref())
+            .expect("seed managed plugin config");
         db.save_live_backup(
             "claude",
             &serde_json::to_string(&legacy.settings_config).expect("serialize legacy provider"),
@@ -6370,6 +6385,19 @@ command = "legacy-cmd"
             profile_live["env"]["ANTHROPIC_BASE_URL"],
             Value::String("http://127.0.0.1:15732".to_string()),
             "profile-and-config hot-switch should keep the proxy endpoint in the selected profile"
+        );
+        assert_eq!(
+            fs::read_to_string(profile_dir.join("CLAUDE.md"))
+                .expect("read hot-switch profile prompt"),
+            "hot switch managed prompt",
+            "profile-and-config hot-switch should project enabled Claude prompts into the selected profile"
+        );
+        let profile_plugin: Value = read_json_file(&profile_dir.join("config.json"))
+            .expect("read hot-switch profile plugin config");
+        assert_eq!(
+            profile_plugin["primaryApiKey"],
+            Value::String("any".to_string()),
+            "profile-and-config hot-switch should project applied Claude plugin config into the selected profile"
         );
 
         let default_live: Value =
@@ -8816,6 +8844,13 @@ impl ProviderService {
             } else {
                 None
             };
+            let claude_profile_assets_plugin_applied = if matches!(app_type, AppType::Claude) {
+                Some(crate::claude_plugin::is_claude_config_applied_for_db(
+                    state.db.as_ref(),
+                )?)
+            } else {
+                None
+            };
             let codex_source_provider = if matches!(app_type, AppType::Codex) {
                 crate::settings::get_effective_current_provider(&state.db, &app_type)?
                     .as_deref()
@@ -8861,8 +8896,30 @@ impl ProviderService {
                 return Err(err);
             }
 
-            // Note: No Live config write, no MCP sync
-            // The proxy server will route requests to the new provider via is_current
+            if matches!(
+                claude_switch_plan
+                    .as_ref()
+                    .map(|plan| &plan.activation_mode),
+                Some(ClaudeActivationMode::ProfileAndConfig)
+            ) {
+                if let Some(profile_dir) = claude_switch_plan
+                    .as_ref()
+                    .and_then(|plan| plan.override_dir.as_deref())
+                {
+                    if let Err(err) = Self::sync_claude_profile_assets_to_profile(
+                        state,
+                        Path::new(profile_dir),
+                        claude_profile_assets_plugin_applied.unwrap_or(false),
+                    ) {
+                        log::warn!(
+                            "代理热切换后重投影 Claude profile 资产失败（将在下次同步时自愈）: {err}"
+                        );
+                    }
+                }
+            }
+
+            // No upstream Live restore/write. The proxy server routes requests
+            // to the new provider via is_current.
             let mut result = SwitchResult::default();
             if matches!(app_type, AppType::Codex) {
                 match Self::codex_desktop_live_provider_key().and_then(|live_key| match live_key {
