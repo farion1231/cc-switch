@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   extractCodexBaseUrl,
+  resolveClaudeBaseUrlFromSettingsConfig,
   setCodexBaseUrl as setCodexBaseUrlInConfig,
 } from "@/utils/providerConfigUtils";
 import type { ProviderCategory } from "@/types";
@@ -39,15 +40,10 @@ export function useBaseUrlState({
     if (category === "official") return;
     if (isUpdatingRef.current) return;
 
-    try {
-      const config = JSON.parse(settingsConfig || "{}");
-      const envUrl: unknown = config?.env?.ANTHROPIC_BASE_URL;
-      const nextUrl = typeof envUrl === "string" ? envUrl.trim() : "";
-      if (nextUrl !== baseUrl) {
-        setBaseUrl(nextUrl);
-      }
-    } catch {
-      // ignore
+    const nextUrl =
+      resolveClaudeBaseUrlFromSettingsConfig(settingsConfig) ?? "";
+    if (nextUrl !== baseUrl) {
+      setBaseUrl(nextUrl);
     }
   }, [appType, category, settingsConfig, baseUrl]);
 

@@ -755,6 +755,9 @@ function ProviderFormFull({
     initialProviderType: initialData?.meta?.providerType,
     templateProviderType: templatePreset?.providerType,
   });
+  const effectiveClaudeBaseUrl =
+    firstNonEmptyString(baseUrl) ??
+    resolveClaudeBaseUrlFromSettingsConfig(form.getValues("settingsConfig"));
   const isManagedCopilotProvider = managedProviderType === "github_copilot";
   const isManagedCodexOauthProvider = managedProviderType === "codex_oauth";
 
@@ -1234,7 +1237,7 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !baseUrl.trim()) {
+        if (!isCodexOauthProvider && !effectiveClaudeBaseUrl) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
