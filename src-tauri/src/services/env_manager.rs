@@ -34,11 +34,19 @@ pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn get_user_env_var(name: &str) -> Result<Option<String>, String> {
-    if let Ok(value) = std::env::var(name) {
-        return Ok(Some(value));
-    }
+    get_unix_user_env_var(name, std::env::var(name).ok())
+}
 
-    get_persisted_unix_user_env_var(name)
+#[cfg(any(not(target_os = "windows"), test))]
+fn get_unix_user_env_var(
+    name: &str,
+    process_value: Option<String>,
+) -> Result<Option<String>, String> {
+    match get_persisted_unix_user_env_var(name)? {
+        PersistedUnixEnvVar::Set(value) => Ok(Some(value)),
+        PersistedUnixEnvVar::Unset => Ok(None),
+        PersistedUnixEnvVar::Missing => Ok(process_value),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -198,8 +206,16 @@ fn ensure_unix_shell_startup_sources_env(home: &std::path::Path) -> Result<(), S
     Ok(())
 }
 
-#[cfg(not(target_os = "windows"))]
-fn get_persisted_unix_user_env_var(name: &str) -> Result<Option<String>, String> {
+#[cfg(any(not(target_os = "windows"), test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PersistedUnixEnvVar {
+    Missing,
+    Unset,
+    Set(String),
+}
+
+#[cfg(any(not(target_os = "windows"), test))]
+fn get_persisted_unix_user_env_var(name: &str) -> Result<PersistedUnixEnvVar, String> {
     if !is_valid_env_name(name) {
         return Err(format!("Invalid environment variable name: {name}"));
     }
@@ -209,7 +225,9 @@ fn get_persisted_unix_user_env_var(name: &str) -> Result<Option<String>, String>
         .join("env.sh");
     let content = match fs::read_to_string(&env_file) {
         Ok(content) => content,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PersistedUnixEnvVar::Missing);
+        }
         Err(err) => {
             return Err(format!(
                 "读取 Unix 用户环境变量文件失败 {}: {err}",
@@ -221,24 +239,24 @@ fn get_persisted_unix_user_env_var(name: &str) -> Result<Option<String>, String>
     Ok(parse_unix_env_file_var(&content, name))
 }
 
-#[cfg(not(target_os = "windows"))]
-fn parse_unix_env_file_var(content: &str, name: &str) -> Option<String> {
+#[cfg(any(not(target_os = "windows"), test))]
+fn parse_unix_env_file_var(content: &str, name: &str) -> PersistedUnixEnvVar {
     let export_prefix = format!("export {name}=");
     let unset_line = format!("unset {name}");
-    let mut current = None;
+    let mut current = PersistedUnixEnvVar::Missing;
 
     for line in content.lines().map(str::trim) {
         if line == unset_line {
-            current = None;
+            current = PersistedUnixEnvVar::Unset;
         } else if let Some(value) = line.strip_prefix(&export_prefix) {
-            current = Some(parse_shell_single_quoted_value(value));
+            current = PersistedUnixEnvVar::Set(parse_shell_single_quoted_value(value));
         }
     }
 
     current
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(any(not(target_os = "windows"), test))]
 fn parse_shell_single_quoted_value(value: &str) -> String {
     if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
         value[1..value.len() - 1].replace("'\\''", "'")
@@ -504,7 +522,6 @@ fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(target_os = "windows"))]
     use serial_test::serial;
 
     #[cfg(not(target_os = "windows"))]
@@ -600,6 +617,67 @@ mod tests {
         assert!(content.contains("export CC_SWITCH_KEEP='old'"));
         assert!(!content.contains("export CC_SWITCH_TEST_UNIX_ENV="));
         assert!(content.contains("unset CC_SWITCH_TEST_UNIX_ENV"));
+    }
+
+    #[test]
+    #[serial]
+    fn unix_env_lookup_prefers_persisted_file_over_process_env() {
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let name = "CC_SWITCH_TEST_UNIX_ENV_PRIORITY";
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let env_dir = temp_home.path().join(".cc-switch");
+        fs::create_dir_all(&env_dir).expect("create unix env dir");
+        fs::write(
+            env_dir.join("env.sh"),
+            upsert_unix_env_file_content("", name, Some("/persisted/profile")),
+        )
+        .expect("write unix env file");
+
+        let result = get_unix_user_env_var(name, Some("/external/profile".to_string()))
+            .expect("read unix env var");
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        assert_eq!(
+            result.as_deref(),
+            Some("/persisted/profile"),
+            "persisted cc-switch Unix env should take precedence over inherited process env"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn unix_env_lookup_respects_persisted_unset_over_process_env() {
+        let temp_home = tempfile::tempdir().expect("temp home");
+        let name = "CC_SWITCH_TEST_UNIX_ENV_UNSET_PRIORITY";
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp_home.path());
+
+        let env_dir = temp_home.path().join(".cc-switch");
+        fs::create_dir_all(&env_dir).expect("create unix env dir");
+        fs::write(
+            env_dir.join("env.sh"),
+            upsert_unix_env_file_content("", name, None),
+        )
+        .expect("write unix env file");
+
+        let result = get_unix_user_env_var(name, Some("/external/profile".to_string()))
+            .expect("read unix env var");
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        assert_eq!(
+            result, None,
+            "persisted cc-switch Unix unset should take precedence over inherited process env"
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

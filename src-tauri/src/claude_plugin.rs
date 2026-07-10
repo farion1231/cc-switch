@@ -128,7 +128,15 @@ fn write_claude_config_at(path: &Path) -> Result<bool, AppError> {
 }
 
 pub fn write_claude_config_for_db(db: &Database) -> Result<bool, AppError> {
-    write_claude_config_at(&claude_config_path_for_db(db)?)
+    let active_path = claude_config_path_for_db(db)?;
+    let mut changed = write_claude_config_at(&active_path)?;
+
+    let default_path = claude_dir()?.join(CLAUDE_CONFIG_FILE);
+    if default_path != active_path {
+        changed |= write_claude_config_at(&default_path)?;
+    }
+
+    Ok(changed)
 }
 
 pub(crate) fn write_claude_config_for_profile_dir(profile_dir: &Path) -> Result<bool, AppError> {
@@ -322,6 +330,47 @@ mod tests {
         let path = claude_config_path_for_db(&db).expect("Claude plugin config path");
 
         assert_eq!(path, profile_dir.join("config.json"));
+    }
+
+    #[test]
+    #[serial]
+    fn write_profile_and_config_plugin_config_also_writes_configured_dir() {
+        let home = TempHome::new();
+        let db = crate::database::Database::memory().expect("memory database");
+        let configured_dir = home.path().join("configured-claude");
+        let profile_dir = home.path().join("profile-and-config");
+        let configured_config = configured_dir.join("config.json");
+        let profile_config = profile_dir.join("config.json");
+
+        crate::settings::update_settings(crate::settings::AppSettings {
+            claude_config_dir: Some(configured_dir.to_string_lossy().into_owned()),
+            claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .expect("set Claude dirs");
+        save_current_claude_provider(
+            &db,
+            "profile-and-config",
+            crate::provider::ClaudeActivationMode::ProfileAndConfig,
+            Some(&profile_dir),
+        );
+
+        let changed = write_claude_config_for_db(&db).expect("write plugin config");
+
+        assert!(changed);
+        assert_eq!(
+            read_claude_config_at(&profile_config)
+                .expect("read profile plugin config")
+                .as_deref(),
+            Some("{\n  \"primaryApiKey\": \"any\"\n}\n")
+        );
+        assert_eq!(
+            read_claude_config_at(&configured_config)
+                .expect("read configured plugin config")
+                .as_deref(),
+            Some("{\n  \"primaryApiKey\": \"any\"\n}\n"),
+            "profile-and-config plugin enable should also update the configured/default Claude config"
+        );
     }
 
     #[test]

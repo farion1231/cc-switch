@@ -1652,7 +1652,14 @@ impl SkillService {
         }
 
         let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
-        Self::sync_to_app_dir_at(directory, app, &app_dir)
+        Self::sync_to_app_dir_at(directory, app, &app_dir)?;
+
+        if let Some(configured_dir) = Self::configured_claude_skills_dir_if_distinct(app, &app_dir)?
+        {
+            Self::sync_to_app_dir_at(directory, app, &configured_dir)?;
+        }
+
+        Ok(())
     }
 
     fn sync_to_app_dir_at(directory: &str, app: &AppType, app_dir: &Path) -> Result<()> {
@@ -1869,7 +1876,14 @@ impl SkillService {
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_app_skills_dir_for_db(db.as_ref(), app)?;
-        Self::sync_skills_to_app_dir(&skills, &ssot_dir, app, &app_dir)
+        Self::sync_skills_to_app_dir(&skills, &ssot_dir, app, &app_dir)?;
+
+        if let Some(configured_dir) = Self::configured_claude_skills_dir_if_distinct(app, &app_dir)?
+        {
+            Self::sync_skills_to_app_dir(&skills, &ssot_dir, app, &configured_dir)?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn sync_claude_to_profile(db: &Arc<Database>, profile_dir: &Path) -> Result<()> {
@@ -1878,6 +1892,22 @@ impl SkillService {
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = profile_dir.join("skills");
         Self::sync_skills_to_app_dir(&skills, &ssot_dir, &app, &app_dir)
+    }
+
+    fn configured_claude_skills_dir_if_distinct(
+        app: &AppType,
+        app_dir: &Path,
+    ) -> Result<Option<PathBuf>> {
+        if !matches!(app, AppType::Claude) {
+            return Ok(None);
+        }
+
+        let configured_dir = Self::get_app_skills_dir(app)?;
+        if configured_dir == app_dir {
+            return Ok(None);
+        }
+
+        Ok(Some(configured_dir))
     }
 
     fn sync_skills_to_app_dir(
@@ -3364,12 +3394,12 @@ mod tests {
             "profile-and-config Claude skills should sync into the selected profile"
         );
         assert!(
-            !configured_claude_dir
+            configured_claude_dir
                 .join("skills")
                 .join(skill_dir)
                 .join("SKILL.md")
-                .exists(),
-            "profile-and-config Claude sync should not land in configured/default Claude dir"
+                .is_file(),
+            "profile-and-config Claude sync should also mirror into the configured/default Claude dir"
         );
     }
 

@@ -114,6 +114,11 @@ impl McpService {
                         &server.id,
                         &server.server,
                     )?;
+                    mcp::sync_single_server_to_claude(
+                        &Default::default(),
+                        &server.id,
+                        &server.server,
+                    )?;
                 } else {
                     mcp::sync_single_server_to_claude(
                         &Default::default(),
@@ -680,6 +685,62 @@ mod tests {
             .collect();
         ids.sort();
         ids
+    }
+
+    #[test]
+    #[serial]
+    fn enable_claude_mcp_server_in_profile_and_config_updates_default_copy_too() {
+        with_test_home(|state, home| {
+            let profile_dir = home.join("work-profile").join(".claude");
+            crate::settings::update_settings(crate::settings::AppSettings {
+                claude_provider_config_dir: Some(profile_dir.to_string_lossy().into_owned()),
+                ..Default::default()
+            })
+            .expect("set active profile override");
+
+            let active_mcp_path = crate::config::get_claude_mcp_path();
+            let default_mcp_path = crate::config::get_claude_configured_mcp_path();
+            assert_ne!(active_mcp_path, default_mcp_path);
+            std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+            std::fs::create_dir_all(home.join(".claude")).expect("create default Claude dir");
+
+            let provider = claude_provider("profile-and-config", &profile_dir);
+            state
+                .db
+                .save_provider(AppType::Claude.as_str(), &provider)
+                .expect("save provider");
+            state
+                .db
+                .set_current_provider(AppType::Claude.as_str(), "profile-and-config")
+                .expect("set current provider");
+            crate::settings::set_current_provider(&AppType::Claude, Some("profile-and-config"))
+                .expect("set local current provider");
+
+            McpService::upsert_server(
+                state,
+                McpServer {
+                    id: "new-server".to_string(),
+                    name: "New Server".to_string(),
+                    server: json!({ "type": "stdio", "command": "new-tool" }),
+                    apps: McpApps {
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: Vec::new(),
+                },
+            )
+            .expect("enable mcp server");
+
+            assert_eq!(mcp_server_ids(&active_mcp_path), vec!["new-server"]);
+            assert_eq!(
+                mcp_server_ids(&default_mcp_path),
+                vec!["new-server"],
+                "profile-and-config MCP enables must also update the default Claude MCP copy"
+            );
+        });
     }
 
     #[test]
