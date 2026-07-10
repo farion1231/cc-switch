@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiModelsJson {
@@ -79,47 +80,91 @@ pub fn read_models_json_at(path: &Path) -> Result<PiModelsJson, PiConfigError> {
 }
 
 pub fn write_models_json_at(path: &Path, value: &Value) -> Result<String, PiConfigError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            PiConfigError::new(format!(
-                "Failed to create Pi config dir {}: {e}",
-                parent.display()
-            ))
-        })?;
-    }
-
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|e| PiConfigError::new(format!("Failed to serialize Pi models.json: {e}")))?;
-    let tmp = path.with_extension("json.tmp");
-    {
-        let mut file = fs::File::create(&tmp).map_err(|e| {
-            PiConfigError::new(format!(
-                "Failed to create temp Pi models.json {}: {e}",
-                tmp.display()
-            ))
-        })?;
-        file.write_all(&bytes).map_err(|e| {
-            PiConfigError::new(format!(
-                "Failed to write temp Pi models.json {}: {e}",
-                tmp.display()
-            ))
-        })?;
-        file.sync_all().map_err(|e| {
-            PiConfigError::new(format!(
-                "Failed to sync temp Pi models.json {}: {e}",
-                tmp.display()
-            ))
-        })?;
-    }
-    fs::rename(&tmp, path).map_err(|e| {
+    let temp = prepare_private_temp_file(path, &bytes)?;
+    persist_temp_file(temp, path)?;
+
+    Ok(sha256_hex(&bytes))
+}
+
+fn prepare_private_temp_file(path: &Path, bytes: &[u8]) -> Result<NamedTempFile, PiConfigError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| PiConfigError::new("Pi models.json path has no parent directory"))?;
+    fs::create_dir_all(parent).map_err(|e| {
         PiConfigError::new(format!(
-            "Failed to replace Pi models.json {} with {}: {e}",
-            path.display(),
-            tmp.display()
+            "Failed to create Pi config dir {}: {e}",
+            parent.display()
         ))
     })?;
 
-    Ok(sha256_hex(&bytes))
+    let mut temp = NamedTempFile::new_in(parent).map_err(|e| {
+        PiConfigError::new(format!(
+            "Failed to create private temp Pi models.json in {}: {e}",
+            parent.display()
+        ))
+    })?;
+    temp.write_all(bytes).map_err(|e| {
+        PiConfigError::new(format!(
+            "Failed to write temp Pi models.json {}: {e}",
+            temp.path().display()
+        ))
+    })?;
+    temp.as_file().sync_all().map_err(|e| {
+        PiConfigError::new(format!(
+            "Failed to sync temp Pi models.json {}: {e}",
+            temp.path().display()
+        ))
+    })?;
+    Ok(temp)
+}
+
+fn persist_temp_file(temp: NamedTempFile, path: &Path) -> Result<(), PiConfigError> {
+    temp.persist(path).map_err(|e| {
+        PiConfigError::new(format!(
+            "Failed to replace Pi models.json {} with {}: {}",
+            path.display(),
+            e.file.path().display(),
+            e.error
+        ))
+    })?;
+    set_private_file_permissions(path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<(), PiConfigError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+        PiConfigError::new(format!(
+            "Failed to secure Pi config file {}: {e}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<(), PiConfigError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_dir_permissions(path: &Path) -> Result<(), PiConfigError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| {
+        PiConfigError::new(format!(
+            "Failed to secure Pi backup directory {}: {e}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_private_dir_permissions(_path: &Path) -> Result<(), PiConfigError> {
+    Ok(())
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -155,6 +200,7 @@ pub fn create_backup_at(path: &Path, backup_dir: &Path) -> Result<PiModelsBackup
             backup_dir.display()
         ))
     })?;
+    set_private_dir_permissions(backup_dir)?;
     let created_at = chrono::Utc::now().timestamp_millis();
     let id = chrono::Utc::now().format("%Y%m%d-%H%M%S%.3f").to_string();
     let backup_path = backup_dir.join(format!("{id}-models.json"));
@@ -175,6 +221,7 @@ pub fn create_backup_at(path: &Path, backup_dir: &Path) -> Result<PiModelsBackup
             ))
         })?;
     }
+    set_private_file_permissions(&backup_path)?;
 
     Ok(PiModelsBackup {
         id,
@@ -204,6 +251,22 @@ pub fn write_models_json_with_expected_hash_at(
     value: &Value,
     expected_hash: &str,
 ) -> Result<String, PiConfigError> {
+    write_models_json_with_expected_hash_at_impl(path, value, expected_hash, || {})
+}
+
+fn write_models_json_with_expected_hash_at_impl<F>(
+    path: &Path,
+    value: &Value,
+    expected_hash: &str,
+    before_final_check: F,
+) -> Result<String, PiConfigError>
+where
+    F: FnOnce(),
+{
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|e| PiConfigError::new(format!("Failed to serialize Pi models.json: {e}")))?;
+    let temp = prepare_private_temp_file(path, &bytes)?;
+    before_final_check();
     let current = read_models_json_at(path)?;
     if current.file_hash != expected_hash {
         return Err(PiConfigError::new(format!(
@@ -211,5 +274,19 @@ pub fn write_models_json_with_expected_hash_at(
             current.file_hash
         )));
     }
-    write_models_json_at(path, value)
+    persist_temp_file(temp, path)?;
+    Ok(sha256_hex(&bytes))
+}
+
+#[cfg(test)]
+pub fn write_models_json_with_expected_hash_at_test_hook<F>(
+    path: &Path,
+    value: &Value,
+    expected_hash: &str,
+    before_final_check: F,
+) -> Result<String, PiConfigError>
+where
+    F: FnOnce(),
+{
+    write_models_json_with_expected_hash_at_impl(path, value, expected_hash, before_final_check)
 }

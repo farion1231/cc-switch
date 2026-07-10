@@ -28,6 +28,7 @@ mod prompt;
 mod prompt_files;
 mod provider;
 mod provider_defaults;
+mod provider_runtime;
 mod proxy;
 mod services;
 mod session_manager;
@@ -54,11 +55,18 @@ pub use mcp::{
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+pub use provider_runtime::{
+    ProviderLiveSyncPolicy, ProviderRuntimeApp, ProviderRuntimeCapabilities, ProviderTruthSource,
+};
+pub use services::pi_provider::{
+    PiApiKeyDraft, PiApiKeyMode, PiModelDraft, PiProviderDraft, PiProviderMode,
+    PiProviderPatchPreview, PiProviderTemplate,
+};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    ConfigService, EndpointLatency, McpService, PromptService, ProviderRuntimeProviders,
+    ProviderRuntimeService, ProviderService, ProxyService, SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -560,9 +568,11 @@ pub fn run() {
             let fresh_install_at_startup =
                 app_state.db.is_providers_empty().unwrap_or(false);
 
-            for app_type in
-                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
-            {
+            for app_type in crate::app_config::AppType::all().filter(|app_type| {
+                crate::provider_runtime::ProviderRuntimeApp::from(app_type.clone())
+                    .capabilities()
+                    .has_current_provider
+            }) {
                 if !crate::services::provider::should_import_default_config_on_startup(
                     &app_state,
                     &app_type,

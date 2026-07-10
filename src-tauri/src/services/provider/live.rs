@@ -13,6 +13,7 @@ use crate::config::{delete_file, get_claude_settings_path, read_json_file, write
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::provider_runtime::{ProviderLiveSyncPolicy, ProviderRuntimeApp};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -20,6 +21,13 @@ use super::gemini_auth::{
     detect_gemini_auth_type, ensure_google_oauth_security_flag, GeminiAuthType,
 };
 use super::normalize_claude_models_in_value;
+
+fn uses_multi_provider_live_config(app_type: &AppType) -> bool {
+    ProviderRuntimeApp::from(app_type.clone())
+        .capabilities()
+        .live_sync_policy
+        == ProviderLiveSyncPolicy::MultiProviderLive
+}
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
@@ -924,7 +932,7 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    if app_type.is_additive_mode() {
+    if uses_multi_provider_live_config(app_type) {
         sync_all_providers_to_live(state, app_type)?;
     } else {
         let current_id = match crate::settings::get_effective_current_provider(&state.db, app_type)?
@@ -996,7 +1004,7 @@ fn sync_current_provider_for_app_respecting_takeover(
 pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // Sync providers based on mode
     for app_type in AppType::all() {
-        if app_type.is_additive_mode() {
+        if uses_multi_provider_live_config(&app_type) {
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)?;
         } else {
@@ -1142,7 +1150,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
 pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     // Additive mode apps (OpenCode, OpenClaw) should use their dedicated
     // import_xxx_providers_from_live functions, not this generic default config import
-    if app_type.is_additive_mode() {
+    if uses_multi_provider_live_config(&app_type) {
         return Ok(false);
     }
 
@@ -1282,7 +1290,7 @@ pub fn should_import_default_config_on_startup(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() {
+    if uses_multi_provider_live_config(app_type) {
         return Ok(false);
     }
 

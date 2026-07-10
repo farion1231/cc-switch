@@ -16,6 +16,9 @@ use crate::app_config::AppType;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
+use crate::provider_runtime::{
+    ProviderLiveSyncPolicy, ProviderRuntimeApp, ProviderRuntimeCapabilities,
+};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -1585,6 +1588,19 @@ base_url = "http://localhost:8080"
 }
 
 impl ProviderService {
+    fn runtime_capabilities(app_type: &AppType) -> ProviderRuntimeCapabilities {
+        ProviderRuntimeApp::from(app_type.clone()).capabilities()
+    }
+
+    fn has_current_provider(app_type: &AppType) -> bool {
+        Self::runtime_capabilities(app_type).has_current_provider
+    }
+
+    fn uses_multi_provider_live_config(app_type: &AppType) -> bool {
+        Self::runtime_capabilities(app_type).live_sync_policy
+            == ProviderLiveSyncPolicy::MultiProviderLive
+    }
+
     fn normalize_provider_if_claude(app_type: &AppType, provider: &mut Provider) {
         if matches!(app_type, AppType::Claude) {
             let mut v = provider.settings_config.clone();
@@ -1704,8 +1720,7 @@ impl ProviderService {
     ///
     /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
-        // Additive mode apps have no "current" provider concept
-        if app_type.is_additive_mode() {
+        if !Self::has_current_provider(&app_type) {
             return Ok(String::new());
         }
         crate::settings::get_effective_current_provider(&state.db, &app_type)
@@ -1725,7 +1740,7 @@ impl ProviderService {
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
-        if app_type.is_additive_mode() {
+        if Self::uses_multi_provider_live_config(&app_type) {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
@@ -1733,7 +1748,7 @@ impl ProviderService {
         state.db.save_provider(app_type.as_str(), &provider)?;
 
         // Additive mode apps (OpenCode, OpenClaw): optionally write to live config.
-        if app_type.is_additive_mode() {
+        if Self::uses_multi_provider_live_config(&app_type) {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
                 && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
@@ -1782,7 +1797,7 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
-            if !app_type.is_additive_mode() {
+            if !Self::uses_multi_provider_live_config(&app_type) {
                 return Err(AppError::Message(
                     "Only additive-mode providers support changing provider key".to_string(),
                 ));
@@ -1854,7 +1869,7 @@ impl ProviderService {
 
         // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
         // already exists in live config. Editing a DB-only provider must not auto-add it.
-        if app_type.is_additive_mode() {
+        if Self::uses_multi_provider_live_config(&app_type) {
             let omo_variant = if matches!(app_type, AppType::OpenCode) {
                 match provider.category.as_deref() {
                     Some("omo") => Some(&crate::services::omo::STANDARD),
@@ -1974,7 +1989,7 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         // Additive mode apps - no current provider concept
-        if app_type.is_additive_mode() {
+        if Self::uses_multi_provider_live_config(&app_type) {
             // Single DB read shared across all additive-mode sub-paths below.
             let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
 
@@ -2233,7 +2248,7 @@ impl ProviderService {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
-                if !app_type.is_additive_mode() {
+                if !Self::uses_multi_provider_live_config(&app_type) {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
@@ -2270,7 +2285,7 @@ impl ProviderService {
         }
 
         // Additive mode apps skip setting is_current (no such concept)
-        if !app_type.is_additive_mode() {
+        if Self::has_current_provider(&app_type) {
             // Update local settings (device-level, takes priority)
             crate::settings::set_current_provider(&app_type, Some(id))?;
 
@@ -2306,7 +2321,8 @@ impl ProviderService {
         //
         // If persisting the marker fails, roll back the just-written live config so we don't leave
         // the provider in a silent inconsistent state (present in live, but still marked DB-only).
-        if app_type.is_additive_mode() && Self::provider_live_config_managed(provider) != Some(true)
+        if Self::uses_multi_provider_live_config(&app_type)
+            && Self::provider_live_config_managed(provider) != Some(true)
         {
             let mut updated = provider.clone();
             Self::set_provider_live_config_managed(&mut updated, true);
@@ -2350,7 +2366,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() {
+        if Self::uses_multi_provider_live_config(&app_type) {
             return sync_current_provider_for_app_to_live(state, &app_type);
         }
 
@@ -2400,7 +2416,7 @@ impl ProviderService {
         app_type: AppType,
         legacy_snippet: &str,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() || legacy_snippet.trim().is_empty() {
+        if Self::uses_multi_provider_live_config(&app_type) || legacy_snippet.trim().is_empty() {
             return Ok(());
         }
 
@@ -2453,7 +2469,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() {
+        if Self::uses_multi_provider_live_config(&app_type) {
             return Ok(());
         }
 

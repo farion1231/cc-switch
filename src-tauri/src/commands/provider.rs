@@ -6,7 +6,8 @@ use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::services::{
-    EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
+    EndpointLatency, ProviderRuntimeProviders, ProviderRuntimeService, ProviderService,
+    ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
 use crate::store::AppState;
 use std::str::FromStr;
@@ -25,13 +26,20 @@ pub fn get_providers(
     app: String,
 ) -> Result<IndexMap<String, Provider>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())
+    match ProviderRuntimeService::list(Some(state.inner()), app_type.into())
+        .map_err(|e| e.to_string())?
+    {
+        ProviderRuntimeProviders::Db(providers) => Ok(providers),
+        ProviderRuntimeProviders::Pi(_) => {
+            Err("Pi providers use the Pi provider command API".into())
+        }
+    }
 }
 
 #[tauri::command]
 pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::current(state.inner(), app_type).map_err(|e| e.to_string())
+    ProviderRuntimeService::current(Some(state.inner()), app_type.into()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

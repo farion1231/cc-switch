@@ -88,6 +88,60 @@ fn expected_hash_mismatch_blocks_write() {
         .contains("changed on disk"));
 }
 
+#[cfg(unix)]
+#[test]
+fn write_keeps_models_json_private() {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let models_path = dir.path().join("models.json");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    options
+        .open(&models_path)
+        .expect("create private models file");
+
+    pi_config::write_models_json_at(
+        &models_path,
+        &serde_json::json!({"providers":{"private":{"apiKey":"secret"}}}),
+    )
+    .expect("write models json");
+
+    let mode = fs::metadata(&models_path)
+        .expect("models metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn expected_hash_detects_change_after_temp_preparation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let models_path = dir.path().join("models.json");
+    fs::write(&models_path, r#"{"providers":{}}"#).expect("write original");
+    let expected_hash = pi_config::read_models_json_at(&models_path)
+        .expect("read original")
+        .file_hash;
+
+    let result = pi_config::write_models_json_with_expected_hash_at_test_hook(
+        &models_path,
+        &serde_json::json!({"providers":{"ours":{}}}),
+        &expected_hash,
+        || {
+            fs::write(&models_path, r#"{"providers":{"external-change":{}}}"#)
+                .expect("write concurrent change");
+        },
+    );
+
+    assert!(result
+        .expect_err("late concurrent change must be rejected")
+        .to_string()
+        .contains("changed on disk"));
+    let current = fs::read_to_string(&models_path).expect("read concurrent value");
+    assert!(current.contains("external-change"));
+}
+
 #[test]
 fn custom_provider_draft_maps_to_pi_models_json() {
     let draft = pi_provider::PiProviderDraft {

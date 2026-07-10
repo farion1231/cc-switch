@@ -1,5 +1,7 @@
 use crate::pi_config;
-use crate::services::pi_provider::{self, PiProviderDraft, PiProviderPatchPreview};
+use crate::provider_runtime::ProviderRuntimeApp;
+use crate::services::pi_provider::{PiProviderDraft, PiProviderPatchPreview};
+use crate::services::{ProviderRuntimeProviders, ProviderRuntimeService};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
@@ -20,12 +22,10 @@ pub struct PiModelsMeta {
 
 #[tauri::command]
 pub fn list_pi_providers() -> Result<Value, String> {
-    let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
-    Ok(loaded
-        .value
-        .get("providers")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({})))
+    match ProviderRuntimeService::list(None, ProviderRuntimeApp::Pi).map_err(|e| e.to_string())? {
+        ProviderRuntimeProviders::Pi(providers) => Ok(Value::Object(providers)),
+        ProviderRuntimeProviders::Db(_) => Err("Pi provider runtime returned DB providers".into()),
+    }
 }
 
 /// Read-only metadata for Pi `models.json`. Returns the current file hash so the
@@ -33,16 +33,14 @@ pub fn list_pi_providers() -> Result<Value, String> {
 /// validation path (which would reject the empty draft a delete uses).
 #[tauri::command]
 pub fn read_pi_models_meta() -> Result<PiModelsMeta, String> {
-    let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
     Ok(PiModelsMeta {
-        file_hash: loaded.file_hash,
+        file_hash: ProviderRuntimeService::read_pi_models_meta().map_err(|e| e.to_string())?,
     })
 }
 
 #[tauri::command]
 pub fn preview_pi_provider_patch(draft: PiProviderDraft) -> Result<PiProviderPatchPreview, String> {
-    let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
-    pi_provider::build_upsert_preview(loaded, &draft).map_err(|e| e.to_string())
+    ProviderRuntimeService::preview_pi_provider_patch(&draft).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -50,27 +48,12 @@ pub fn apply_pi_provider_patch(
     draft: PiProviderDraft,
     #[allow(non_snake_case)] expectedFileHash: String,
 ) -> Result<PiProviderApplyResult, String> {
-    let models_path = pi_config::get_pi_models_json_path();
-    let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
-    if loaded.file_hash != expectedFileHash {
-        return Err(format!(
-            "Pi models.json changed on disk; expected hash {}, found {}",
-            expectedFileHash, loaded.file_hash
-        ));
-    }
-    let backup = pi_config::create_backup(&models_path).map_err(|e| e.to_string())?;
-    let next =
-        pi_provider::upsert_provider_value(loaded.value, &draft).map_err(|e| e.to_string())?;
-    // Atomic write: re-reads and re-checks the hash before replacing, closing
-    // the TOCTOU window between the pre-check above and the actual write.
-    let file_hash =
-        pi_config::write_models_json_with_expected_hash_at(&models_path, &next, &expectedFileHash)
-            .map_err(|e| e.to_string())?;
-
+    let result = ProviderRuntimeService::apply_pi_provider_patch(&draft, &expectedFileHash)
+        .map_err(|e| e.to_string())?;
     Ok(PiProviderApplyResult {
-        file_hash,
-        models_json: next,
-        backup_path: backup.path.display().to_string(),
+        file_hash: result.file_hash,
+        models_json: result.models_json,
+        backup_path: result.backup_path,
     })
 }
 
@@ -79,28 +62,12 @@ pub fn delete_pi_provider(
     #[allow(non_snake_case)] providerId: String,
     #[allow(non_snake_case)] expectedFileHash: String,
 ) -> Result<PiProviderApplyResult, String> {
-    let models_path = pi_config::get_pi_models_json_path();
-    let loaded = pi_config::read_models_json().map_err(|e| e.to_string())?;
-    if loaded.file_hash != expectedFileHash {
-        return Err(format!(
-            "Pi models.json changed on disk; expected hash {}, found {}",
-            expectedFileHash, loaded.file_hash
-        ));
-    }
-
-    let backup = pi_config::create_backup(&models_path).map_err(|e| e.to_string())?;
-    let next =
-        pi_provider::delete_provider_value(loaded.value, &providerId).map_err(|e| e.to_string())?;
-    // Atomic write: re-reads and re-checks the hash before replacing, closing
-    // the TOCTOU window between the pre-check above and the actual write.
-    let file_hash =
-        pi_config::write_models_json_with_expected_hash_at(&models_path, &next, &expectedFileHash)
-            .map_err(|e| e.to_string())?;
-
+    let result = ProviderRuntimeService::delete_pi_provider(&providerId, &expectedFileHash)
+        .map_err(|e| e.to_string())?;
     Ok(PiProviderApplyResult {
-        file_hash,
-        models_json: next,
-        backup_path: backup.path.display().to_string(),
+        file_hash: result.file_hash,
+        models_json: result.models_json,
+        backup_path: result.backup_path,
     })
 }
 
@@ -129,6 +96,21 @@ fn resolve_api_key(raw: &str) -> Option<String> {
         return run_shell_command(cmd).filter(|v| !v.is_empty());
     }
     Some(trimmed.to_string())
+}
+
+fn validate_connectivity_url(
+    base_url: &str,
+    has_api_credentials: bool,
+) -> Result<url::Url, &'static str> {
+    let parsed = url::Url::parse(base_url.trim()).map_err(|_| "invalidBaseUrl")?;
+    if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() {
+        return Err("invalidBaseUrl");
+    }
+    let has_url_credentials = !parsed.username().is_empty() || parsed.password().is_some();
+    if (has_api_credentials || has_url_credentials) && parsed.scheme() != "https" {
+        return Err("insecureTransport");
+    }
+    Ok(parsed)
 }
 
 #[cfg(unix)]
@@ -181,12 +163,23 @@ pub async fn test_pi_connectivity(
         });
     }
 
-    let normalized = base_url.trim().trim_end_matches('/').to_string();
     let api_key_raw = provider
         .get("apiKey")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let resolved_key = resolve_api_key(api_key_raw);
+    let parsed_base_url = match validate_connectivity_url(base_url, resolved_key.is_some()) {
+        Ok(url) => url,
+        Err(kind) => {
+            return Ok(PiConnectivityResult {
+                reachable: false,
+                status_code: None,
+                error_kind: Some(kind.to_string()),
+                detail: None,
+            });
+        }
+    };
+    let normalized = parsed_base_url.as_str().trim_end_matches('/').to_string();
 
     let client = crate::proxy::http_client::get();
     let timeout = Duration::from_secs(10);
@@ -218,5 +211,37 @@ pub async fn test_pi_connectivity(
                 detail: Some(err.to_string()),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_connectivity_url;
+
+    #[test]
+    fn credentialed_connectivity_rejects_cleartext_http() {
+        let err = validate_connectivity_url("http://api.example.com/v1", true)
+            .expect_err("credentialed HTTP must be rejected");
+        assert_eq!(err, "insecureTransport");
+    }
+
+    #[test]
+    fn connectivity_rejects_cleartext_url_credentials() {
+        let err = validate_connectivity_url("http://user:secret@api.example.com/v1", false)
+            .expect_err("URL credentials over HTTP must be rejected");
+        assert_eq!(err, "insecureTransport");
+    }
+
+    #[test]
+    fn connectivity_accepts_https_with_credentials_and_http_without_them() {
+        assert!(validate_connectivity_url("https://api.example.com/v1", true).is_ok());
+        assert!(validate_connectivity_url("http://127.0.0.1:11434/v1", false).is_ok());
+    }
+
+    #[test]
+    fn connectivity_rejects_non_http_schemes() {
+        let err = validate_connectivity_url("file:///tmp/models", false)
+            .expect_err("non-HTTP URL must be rejected");
+        assert_eq!(err, "invalidBaseUrl");
     }
 }
