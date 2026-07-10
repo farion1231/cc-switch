@@ -306,6 +306,40 @@ fn remove_toml_table_like(target: &mut dyn TableLike, source: &dyn TableLike) {
     }
 }
 
+/// 前端表单勾选/取消"使用通用配置"时，对编辑器里的 config.toml 文本做
+/// 结构化合并/剥离。必须在后端用 toml_edit 做：前端 smol-toml 只能
+/// parse → merge → 整文档重序列化，注释全丢、键序重排，还会生成多余的
+/// 空父表头（如 `[model_providers]`）。
+pub fn update_toml_common_config_snippet(
+    config_toml: &str,
+    snippet_toml: &str,
+    enabled: bool,
+) -> Result<String, AppError> {
+    let trimmed = snippet_toml.trim();
+    if trimmed.is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut target_doc = if config_toml.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        config_toml
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?
+    };
+    let source_doc = trimmed
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex common config snippet: {e}")))?;
+
+    if enabled {
+        merge_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    } else {
+        remove_toml_table_like(target_doc.as_table_mut(), source_doc.as_table());
+    }
+
+    Ok(target_doc.to_string())
+}
+
 fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet: &str) -> bool {
     let trimmed = snippet.trim();
     if trimmed.is_empty() {
@@ -596,6 +630,15 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
+    // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
+    if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {
+        log::warn!(
+            "Failed to strip mcp_servers while backfilling '{}': {err}",
+            provider.id
+        );
+    }
+
     // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
     // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
     if provider.category.as_deref() == Some("official") {
@@ -760,11 +803,19 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
             let config_str = obj.get("config").and_then(|v| v.as_str());
 
+            // Native (direct) Responses providers must suppress Codex's freeform
+            // apply_patch custom tool via the generated catalog; chat/proxy
+            // providers keep the default tool set. Keyed on provider.meta.apiFormat.
+            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
+                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
+            );
+
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &provider.settings_config,
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                profile,
             )?;
         }
         AppType::Gemini => {
@@ -931,7 +982,10 @@ pub(crate) fn sync_current_provider_for_app_to_live(
         }
     }
 
-    McpService::sync_all_enabled(state)?;
+    // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
+    // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
+    // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
+    McpService::sync_enabled_for_app(state, app_type)?;
 
     Ok(())
 }
@@ -999,8 +1053,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    // MCP sync
-    McpService::sync_all_enabled(state)?;
+    // MCP sync（best-effort 逐应用投影，内部已聚合失败）。错误暂存到
+    // Skill 同步之后再返回：MCP 的失败不该跳过 Skill 同步，但调用方
+    //（配置导入 / 云同步恢复）需要知道结果不完整。
+    let mcp_result = McpService::sync_all_enabled(state);
 
     // Skill sync
     for app_type in AppType::all() {
@@ -1010,7 +1066,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    Ok(())
+    mcp_result
 }
 
 /// Read current live settings for an app type
@@ -1396,15 +1452,10 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("opencode")?;
 
     for (id, config) in providers {
-        // Skip if already exists in database
-        if existing_ids.contains(&id) {
-            log::debug!("OpenCode provider '{id}' already exists in database, skipping");
-            continue;
-        }
-
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
@@ -1414,13 +1465,36 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             }
         };
 
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "opencode") {
+                Ok(Some(existing)) => {
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
+                    if existing.settings_config != settings_config || existing.name != display_name
+                    {
+                        let mut provider = existing;
+                        provider.name = display_name;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("opencode", &provider) {
+                            log::warn!(
+                                "Failed to update OpenCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated OpenCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("OpenCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up OpenCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
         // Create provider
-        let mut provider = Provider::with_id(
-            id.clone(),
-            config.name.clone().unwrap_or_else(|| id.clone()),
-            settings_config,
-            None,
-        );
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
         provider.meta = Some(crate::provider::ProviderMeta {
             live_config_managed: Some(true),
             ..Default::default()
@@ -1436,7 +1510,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Imported OpenCode provider '{id}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Import all providers from OpenClaw live config to database
@@ -1453,6 +1527,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("openclaw")?;
 
     for (id, config) in providers {
@@ -1466,12 +1541,6 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
             continue;
         }
 
-        // Skip if already exists in database
-        if existing_ids.contains(&id) {
-            log::debug!("OpenClaw provider '{id}' already exists in database, skipping");
-            continue;
-        }
-
         // Convert to Value for settings_config
         let settings_config = match serde_json::to_value(&config) {
             Ok(v) => v,
@@ -1480,6 +1549,30 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
                 continue;
             }
         };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "openclaw") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != settings_config {
+                        let mut provider = existing;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+                            log::warn!(
+                                "Failed to update OpenClaw provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated OpenClaw provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("OpenClaw provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up OpenClaw provider '{id}': {e}"),
+            }
+            continue;
+        }
 
         // Determine display name: use first model name if available, otherwise use id
         let display_name = config
@@ -1505,7 +1598,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         log::info!("Imported OpenClaw provider '{id}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Import all providers from Hermes live config to database
@@ -1522,6 +1615,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
     }
 
     let mut imported = 0;
+    let mut updated = 0;
     let existing_ids = state.db.get_provider_ids("hermes")?;
 
     for (name, config) in providers {
@@ -1531,9 +1625,27 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
             continue;
         }
 
-        // Skip if already exists in database
         if existing_ids.contains(&name) {
-            log::debug!("Hermes provider '{name}' already exists in database, skipping");
+            match state.db.get_provider_by_id(&name, "hermes") {
+                Ok(Some(existing)) => {
+                    if existing.settings_config != config {
+                        let mut provider = existing;
+                        provider.settings_config = config;
+                        if let Err(e) = state.db.save_provider("hermes", &provider) {
+                            log::warn!(
+                                "Failed to update Hermes provider '{name}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated Hermes provider '{name}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("Hermes provider '{name}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up Hermes provider '{name}': {e}"),
+            }
             continue;
         }
 
@@ -1554,7 +1666,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         log::info!("Imported Hermes provider '{name}' from live config");
     }
 
-    Ok(imported)
+    Ok(imported + updated)
 }
 
 /// Remove a Hermes provider from live config
@@ -1599,6 +1711,71 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。
+    /// smol-toml 的 parse→merge→stringify 整文档重序列化会丢注释、
+    /// 按字母序重排键、并为 dotted 表生成多余的空父表头。
+    #[test]
+    fn update_toml_common_config_snippet_preserves_comments_and_key_order() {
+        // 刻意非字母序的键序 + 注释，模拟用户手写格式
+        let config = r#"# my precious comment
+model = "gpt-5.5"
+model_provider = "aprov"
+disable_response_storage = true
+
+[model_providers.aprov]
+# provider comment
+name = "A Prov"
+base_url = "https://a.example/v1"
+"#;
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged = update_toml_common_config_snippet(config, snippet, true).unwrap();
+        assert!(merged.contains("# my precious comment"));
+        assert!(merged.contains("# provider comment"));
+        let model_pos = merged.find("model = ").unwrap();
+        let provider_pos = merged.find("model_provider = ").unwrap();
+        let disable_pos = merged.find("disable_response_storage").unwrap();
+        assert!(
+            model_pos < provider_pos && provider_pos < disable_pos,
+            "merge must not reorder user keys, got: {merged}"
+        );
+        assert!(merged.contains("[tui]"));
+        assert!(merged.contains("notifications = true"));
+        assert!(
+            !merged.contains("[model_providers]\n"),
+            "merge must not synthesize an empty parent table header, got: {merged}"
+        );
+
+        let removed = update_toml_common_config_snippet(&merged, snippet, false).unwrap();
+        assert!(!removed.contains("[tui]"), "snippet keys must be stripped");
+        assert!(removed.contains("# my precious comment"));
+        assert!(removed.contains("disable_response_storage = true"));
+    }
+
+    /// 合并时标量=片段覆盖供应商值（与 Claude 侧 deepMerge 一致）；
+    /// 剥离按值匹配：用户改过的值不删（与 strip 路径的
+    /// toml_value_is_subset 语义一致）。
+    #[test]
+    fn update_toml_common_config_snippet_scalar_override_and_value_matched_removal() {
+        let snippet = "[tui]\nnotifications = true\n";
+
+        let merged =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, true)
+                .unwrap();
+        assert!(
+            merged.contains("notifications = true"),
+            "snippet scalar should override provider value, got: {merged}"
+        );
+
+        let removed =
+            update_toml_common_config_snippet("[tui]\nnotifications = false\n", snippet, false)
+                .unwrap();
+        assert!(
+            removed.contains("notifications = false"),
+            "user-modified value must survive removal, got: {removed}"
+        );
+    }
 
     #[test]
     fn claude_common_config_apply_and_remove_roundtrip_for_non_overlapping_fields() {
@@ -1794,6 +1971,42 @@ mod tests {
             result.get("modelCatalog"),
             live_settings.get("modelCatalog"),
             "backfill must keep the Live-reconstructed catalog when the DB has none"
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_strips_synced_mcp_servers() {
+        // Live 里的 [mcp_servers] 是 MCP 同步的投影（SSOT 在 DB 表），
+        // 回填进供应商存储配置会让已删除的服务器随快照复活。
+        let provider = Provider::with_id(
+            "prov".to_string(),
+            "Prov".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": "model = \"gpt-5.5\"\n"
+            }),
+            None,
+        );
+
+        let live_settings = json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" },
+            "config": "model = \"gpt-5.5\"\n\n[mcp_servers.echo]\ntype = \"stdio\"\ncommand = \"echo\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        let config_text = result
+            .get("config")
+            .and_then(|v| v.as_str())
+            .expect("config text");
+        assert!(
+            !config_text.contains("mcp_servers"),
+            "backfill must strip synced [mcp_servers] from the stored provider config, got: {config_text}"
+        );
+        assert!(
+            config_text.contains("model = \"gpt-5.5\""),
+            "non-MCP content must survive the strip"
         );
     }
 }

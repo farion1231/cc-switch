@@ -331,7 +331,7 @@ export function UsageDateRangePicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[340px] max-w-[calc(100vw-2rem)] p-3 sm:w-[620px]"
+        className="usage-range-popover w-[620px] max-w-[calc(100vw-2rem)] p-3"
         align="end"
       >
         {/* Preset shortcuts */}
@@ -353,9 +353,9 @@ export function UsageDateRangePicker({
           ))}
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="usage-range-layout flex flex-col gap-3">
           {/* Left: date fields */}
-          <div className="space-y-2 sm:w-[250px] sm:flex-none">
+          <div className="usage-range-fields space-y-2">
             <p className="text-xs text-muted-foreground">
               {t("usage.customRangeHint", "支持日期与时间，最长 30 天")}
             </p>
@@ -403,7 +403,7 @@ export function UsageDateRangePicker({
           </div>
 
           {/* Right: calendar */}
-          <div className="rounded-lg border border-border/50 bg-muted/30 p-2.5 sm:min-w-0 sm:flex-1">
+          <div className="usage-range-calendar rounded-lg border border-border/50 bg-muted/30 p-2.5">
             {/* Month navigation */}
             <div className="flex items-center justify-between mb-1.5">
               <Button
