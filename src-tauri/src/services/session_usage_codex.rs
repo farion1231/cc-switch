@@ -569,16 +569,13 @@ fn repair_legacy_codex_subagent_usage(
         )
         .map_err(|e| AppError::Database(format!("复查 Codex 子代理迁移状态失败: {e}")))?;
 
-    let codex_rollup_dates = if migration_became_active {
-        HashSet::new()
-    } else {
-        tx.prepare("SELECT DISTINCT date FROM usage_daily_rollups WHERE app_type = 'codex'")
-            .and_then(|mut stmt| {
-                stmt.query_map([], |row| row.get::<_, String>(0))?
-                    .collect::<Result<HashSet<_>, _>>()
-            })
-            .map_err(|e| AppError::Database(format!("查询 Codex 历史汇总日期失败: {e}")))?
-    };
+    let codex_rollup_dates = tx
+        .prepare("SELECT DISTINCT date FROM usage_daily_rollups WHERE app_type = 'codex'")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<HashSet<_>, _>>()
+        })
+        .map_err(|e| AppError::Database(format!("查询 Codex 历史汇总日期失败: {e}")))?;
 
     let synced_session_ids: HashSet<&str> = active_synced_subagent_paths
         .iter()
@@ -630,7 +627,16 @@ fn repair_legacy_codex_subagent_usage(
             continue;
         }
         if rebuilt_session_ids.contains(&session_id) {
-            late_rebuild_subagent_paths.insert(path);
+            let overlaps_rollup = file_rollup_coverage
+                .get(Path::new(&path))
+                .is_none_or(|coverage| coverage.may_overlap(&codex_rollup_dates));
+            if overlaps_rollup {
+                // 该文件的历史可能已经进入无 session 维度的日汇总，不能从头补回。
+                // 只迁移旧游标，后续仍可安全导入 offset 之后的新事件。
+                preserved_synced_subagent_paths.insert(path);
+            } else {
+                late_rebuild_subagent_paths.insert(path);
+            }
         } else {
             preserved_session_ids.insert(session_id);
             preserved_synced_subagent_paths.insert(path);
@@ -1844,6 +1850,146 @@ mod tests {
             vec![
                 "codex_session:child-a:1".to_string(),
                 "codex_session:child-b:1".to_string(),
+                "codex_session:parent:1".to_string(),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_late_sibling_with_rollup_only_imports_new_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let main = temp.path().join("main.jsonl");
+        let child_a = temp.path().join("child-a.jsonl");
+        let child_b = temp.path().join("child-b.jsonl");
+        write_codex_usage_log(&main, "parent", "parent", 100, 10);
+        write_codex_usage_log(&child_a, "child-a", "parent", 200, 20);
+
+        let child_b_lines = [
+            serde_json::json!({
+                "timestamp": "2025-07-10T03:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child-b",
+                    "session_id": "parent",
+                    "source": { "subagent": {} }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2025-07-10T03:00:01Z",
+                "type": "turn_context",
+                "payload": { "model": "gpt-5.6-sol" }
+            }),
+            serde_json::json!({
+                "timestamp": "2025-07-10T03:00:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 300,
+                        "cached_input_tokens": 150,
+                        "output_tokens": 30
+                    }}
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:03Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 400,
+                        "cached_input_tokens": 200,
+                        "output_tokens": 40
+                    }}
+                }
+            }),
+        ];
+        fs::write(
+            &child_b,
+            child_b_lines
+                .iter()
+                .map(serde_json::Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        let main_identity = read_codex_session_identity(&main).unwrap();
+        let child_a_identity = read_codex_session_identity(&child_a).unwrap();
+        let child_b_identity = read_codex_session_identity(&child_b).unwrap();
+        insert_legacy_codex_usage_row(&db, "parent")?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET provider_id = 'openai', data_source = 'proxy'
+                 WHERE request_id = 'codex_session:parent:1'",
+                [],
+            )?;
+        }
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+
+        let main_path = main.to_string_lossy().to_string();
+        let child_a_path = child_a.to_string_lossy().to_string();
+        let child_b_path = child_b.to_string_lossy().to_string();
+        update_sync_state(&db, &main_path, 1, 3)?;
+        update_sync_state(&db, &child_a_path, 1, 3)?;
+        update_sync_state(&db, &child_b_path, 1, 3)?;
+
+        let first_files = vec![
+            (main.clone(), Some(main_identity.clone())),
+            (child_a.clone(), Some(child_a_identity.clone())),
+        ];
+        repair_legacy_codex_subagent_usage(&db, &first_files)?;
+        assert_eq!(
+            sync_single_codex_file(&db, &main, Some(&main_identity))?,
+            (1, 0)
+        );
+        assert_eq!(
+            sync_single_codex_file(&db, &child_a, Some(&child_a_identity))?,
+            (1, 0)
+        );
+
+        let all_files = vec![
+            (main, Some(main_identity)),
+            (child_a, Some(child_a_identity)),
+            (child_b.clone(), Some(child_b_identity.clone())),
+        ];
+        repair_legacy_codex_subagent_usage(&db, &all_files)?;
+
+        let subagent_key = format!("{child_b_path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        assert_eq!(get_sync_state(&db, &child_b_path)?, (0, 0));
+        assert_eq!(get_sync_state(&db, &subagent_key)?, (1, 3));
+        assert_eq!(
+            sync_single_codex_file(&db, &child_b, Some(&child_b_identity))?,
+            (1, 0)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let rollup_count: i64 = conn.query_row(
+            "SELECT request_count FROM usage_daily_rollups
+             WHERE app_type = 'codex' AND provider_id = 'openai'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rollup_count, 1);
+
+        let request_ids = conn
+            .prepare(
+                "SELECT request_id FROM proxy_request_logs
+                 WHERE data_source = 'codex_session' ORDER BY request_id",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            request_ids,
+            vec![
+                "codex_session:child-a:1".to_string(),
+                "codex_session:child-b:2".to_string(),
                 "codex_session:parent:1".to_string(),
             ]
         );
