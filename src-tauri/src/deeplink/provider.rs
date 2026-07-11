@@ -4,10 +4,10 @@
 
 use super::utils::{decode_base64_param, infer_homepage_from_endpoint};
 use super::DeepLinkImportRequest;
-use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
+use crate::app::AppError;
+use crate::app::AppState;
+use crate::app::{ClaudeDesktopMode, Provider, ProviderMeta, UsageScript};
 use crate::services::ProviderService;
-use crate::store::AppState;
 use crate::AppType;
 use serde_json::json;
 use std::str::FromStr;
@@ -693,7 +693,7 @@ fn merge_codex_config(
     if request.api_key.as_ref().is_none_or(|s| s.is_empty()) {
         let config_str = config.get("config").and_then(|v| v.as_str());
         if let Some(api_key) =
-            crate::codex_config::extract_codex_api_key(config.get("auth"), config_str)
+            crate::live_config::codex::extract_codex_api_key(config.get("auth"), config_str)
         {
             request.api_key = Some(api_key.to_string());
         }

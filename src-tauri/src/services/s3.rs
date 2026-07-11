@@ -8,7 +8,7 @@ use reqwest::StatusCode;
 use std::time::Duration;
 use url::Url;
 
-use crate::error::AppError;
+use crate::app::AppError;
 use crate::proxy::http_client;
 use futures::StreamExt;
 

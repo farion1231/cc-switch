@@ -13,9 +13,9 @@
 //! - 无需状态恢复：不依赖前一条消息的累计值
 //! - 天然去重：每条消息有唯一 id 字段
 
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
-use crate::gemini_config::get_gemini_dir;
+use crate::live_config::gemini::get_gemini_dir;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
@@ -352,7 +352,7 @@ fn insert_gemini_session_entry(
     // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
     let changed = conn.changes() > 0;
     if changed {
-        crate::usage_events::notify_log_recorded();
+        crate::usage::events::notify_log_recorded();
     }
     Ok(changed)
 }

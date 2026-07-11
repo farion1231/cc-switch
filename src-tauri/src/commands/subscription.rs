@@ -1,9 +1,9 @@
 use std::str::FromStr;
 use tauri::{Emitter, State};
 
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
+use crate::app::AppState;
 use crate::services::subscription::SubscriptionQuota;
-use crate::store::AppState;
 
 /// 查询官方订阅额度
 ///
@@ -35,7 +35,7 @@ pub async fn get_subscription_quota(
             state
                 .usage_cache
                 .put_subscription(app_type, snapshot.clone());
-            crate::tray::schedule_tray_refresh(&app);
+            crate::platform::tray::schedule_tray_refresh(&app);
         }
     }
     inner

@@ -6,7 +6,7 @@
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
-use crate::provider::{CodexChatReasoningConfig, Provider};
+use crate::app::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
 use regex::Regex;
 use serde_json::Value as JsonValue;
@@ -140,8 +140,8 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 /// Non-Anthropic providers keep the existing `meta.api_format` classification.
 pub fn resolve_codex_catalog_tool_profile(
     provider: &Provider,
-) -> crate::codex_config::CodexCatalogToolProfile {
-    use crate::codex_config::CodexCatalogToolProfile;
+) -> crate::live_config::codex::CodexCatalogToolProfile {
+    use crate::live_config::codex::CodexCatalogToolProfile;
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
     }
@@ -473,7 +473,7 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
 fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
     // Canonical parser lives in codex_config; keep this thin alias so the
     // proxy hot path and the usage-credential resolver share one implementation.
-    crate::codex_config::extract_codex_base_url(config_text)
+    crate::live_config::codex::extract_codex_base_url(config_text)
 }
 
 impl CodexAdapter {
@@ -505,7 +505,7 @@ impl CodexAdapter {
 
         // 2. 尝试从 auth 中获取 (Codex CLI 格式)
         if let Some(auth) = provider.settings_config.get("auth") {
-            if let Some(key) = crate::codex_config::extract_codex_auth_api_key(auth) {
+            if let Some(key) = crate::live_config::codex::extract_codex_auth_api_key(auth) {
                 return Some(key.to_string());
             }
         }
@@ -536,7 +536,7 @@ impl CodexAdapter {
 
             if let Some(config_str) = config.as_str() {
                 if let Some(key) =
-                    crate::codex_config::extract_codex_experimental_bearer_token(config_str)
+                    crate::live_config::codex::extract_codex_experimental_bearer_token(config_str)
                 {
                     return Some(key);
                 }
@@ -784,7 +784,7 @@ experimental_bearer_token = "sk-config-key"
     #[test]
     fn test_uses_anthropic_from_meta_api_format() {
         let mut provider = create_provider(json!({}));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             api_format: Some("anthropic".to_string()),
             ..Default::default()
         });
@@ -845,7 +845,7 @@ wire_api = "anthropic"
 
     #[test]
     fn test_resolve_catalog_profile_matches_router() {
-        use crate::codex_config::CodexCatalogToolProfile;
+        use crate::live_config::codex::CodexCatalogToolProfile;
 
         // Anthropic declared only via TOML wire_api (no meta.api_format) must still
         // resolve to the Anthropic catalog profile — this is the routing/catalog
@@ -871,7 +871,7 @@ wire_api = "anthropic"
 
         // Native openai_responses (meta) → NativeResponses; chat → ProxyChat.
         let mut native = create_provider(json!({}));
-        native.meta = Some(crate::provider::ProviderMeta {
+        native.meta = Some(crate::app::ProviderMeta {
             api_format: Some("openai_responses".to_string()),
             ..Default::default()
         });
@@ -944,7 +944,7 @@ wire_api = "anthropic"
             "apiFormat": "anthropic",
             "auth": { "OPENAI_API_KEY": "sk-anthropic-key-123" }
         }));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             api_format: Some("anthropic".to_string()),
             api_key_field: Some("ANTHROPIC_API_KEY".to_string()),
             ..Default::default()
@@ -1058,7 +1058,7 @@ wire_api = "chat"
         let mut provider = create_provider(json!({
             "base_url": "https://example.com/v1"
         }));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             api_format: Some("openai_chat".to_string()),
             ..Default::default()
         });
@@ -1075,7 +1075,7 @@ wire_api = "chat"
         let mut provider = create_provider(json!({
             "base_url": "https://api.deepseek.com/v1"
         }));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             api_format: Some("openai_chat".to_string()),
             ..Default::default()
         });
@@ -1099,7 +1099,7 @@ base_url = "https://api.deepseek.com/v1"
 wire_api = "responses"
 "#
         }));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             api_format: Some("openai_chat".to_string()),
             ..Default::default()
         });
@@ -1136,7 +1136,7 @@ wire_api = "responses"
                 ]
             }
         }));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             api_format: Some("openai_chat".to_string()),
             ..Default::default()
         });
@@ -1187,7 +1187,7 @@ base_url = "https://api.deepseek.com"
 wire_api = "chat"
 "#
         }));
-        provider.meta = Some(crate::provider::ProviderMeta {
+        provider.meta = Some(crate::app::ProviderMeta {
             codex_chat_reasoning: Some(CodexChatReasoningConfig {
                 supports_thinking: Some(false),
                 supports_effort: Some(false),

@@ -2,12 +2,11 @@
 //!
 //! Handles executing and formatting usage query results.
 
-use crate::app_config::AppType;
-use crate::error::AppError;
-use crate::provider::{UsageData, UsageResult, UsageScript};
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::AppState;
+use crate::app::{UsageData, UsageResult, UsageScript};
 use crate::settings;
-use crate::store::AppState;
-use crate::usage_script;
 
 /// Execute usage script and format result (private helper method)
 pub(crate) async fn execute_and_format_usage_result(
@@ -19,7 +18,7 @@ pub(crate) async fn execute_and_format_usage_result(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    match usage_script::execute_usage_script(
+    match crate::usage::script::execute_usage_script(
         script_code,
         api_key,
         base_url,
@@ -100,7 +99,7 @@ pub(crate) async fn execute_and_format_usage_result(
 /// use, so `{{apiKey}}`/`{{baseUrl}}` match what the UI shows for them.
 fn resolve_script_credentials(
     app_type: &AppType,
-    provider: &crate::provider::Provider,
+    provider: &crate::app::Provider,
     api_key: Option<&str>,
     base_url: Option<&str>,
 ) -> (String, String) {
@@ -248,8 +247,8 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
 #[cfg(test)]
 mod tests {
     use super::resolve_script_credentials;
-    use crate::app_config::AppType;
-    use crate::provider::Provider;
+    use crate::app::app_config::AppType;
+    use crate::app::Provider;
     use serde_json::json;
 
     fn provider_with_settings(settings_config: serde_json::Value) -> Provider {

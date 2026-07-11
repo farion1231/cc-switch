@@ -4,10 +4,10 @@
 
 use super::utils::decode_base64_param;
 use super::DeepLinkImportRequest;
-use crate::error::AppError;
-use crate::prompt::Prompt;
+use crate::app::AppError;
+use crate::app::AppState;
+use crate::prompts::Prompt;
 use crate::services::PromptService;
-use crate::store::AppState;
 use crate::AppType;
 use std::str::FromStr;
 

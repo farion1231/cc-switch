@@ -9,7 +9,7 @@
 //! - `Ok(success:false)` = 确定性失败（空 key/未知供应商/鉴权/非 2xx/响应体非法 JSON），
 //!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
-use crate::provider::{UsageData, UsageResult};
+use crate::app::{UsageData, UsageResult};
 use std::time::Duration;
 
 // ── 供应商检测 ──────────────────────────────────────────────

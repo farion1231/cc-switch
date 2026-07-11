@@ -4,10 +4,10 @@
 
 use super::utils::decode_base64_param;
 use super::DeepLinkImportRequest;
-use crate::app_config::{McpApps, McpServer};
-use crate::error::AppError;
+use crate::app::app_config::{McpApps, McpServer};
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::services::McpService;
-use crate::store::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

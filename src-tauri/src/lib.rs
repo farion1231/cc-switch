@@ -1,58 +1,38 @@
-mod app_config;
-mod app_store;
-mod auto_launch;
-mod claude_desktop_config;
-mod claude_mcp;
+mod app;
 mod claude_plugin;
-mod codex_config;
-mod codex_history_migration;
-mod codex_state_db;
 mod commands;
 mod config;
 mod database;
 mod deeplink;
-mod error;
-mod gemini_config;
-mod gemini_mcp;
-pub mod hermes_config;
-mod init_status;
-mod lightweight;
-#[cfg(target_os = "linux")]
-mod linux_fix;
+mod live_config;
 mod mcp;
-mod openclaw_config;
-mod opencode_config;
-mod panic_hook;
-mod prompt;
-mod prompt_files;
-mod provider;
-mod provider_defaults;
+mod platform;
+mod prompts;
 mod proxy;
 mod services;
-mod session_manager;
+mod session;
 mod settings;
-mod store;
+mod usage;
 
-mod tray;
-mod usage_events;
-mod usage_script;
-
-pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
-pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use app::AppError;
+pub use app::AppState;
+pub use app::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
+pub use app::{Provider, ProviderMeta};
 pub use commands::open_provider_terminal;
 pub use commands::*;
-pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
+pub use config::read_json_file;
 pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
-pub use error::AppError;
+pub use live_config::claude_code::{get_claude_mcp_path, get_claude_settings_path};
+pub use live_config::codex::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use live_config::hermes as hermes_config;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, remove_server_from_claude,
     remove_server_from_codex, remove_server_from_gemini, sync_enabled_to_claude,
     sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
     sync_single_server_to_codex, sync_single_server_to_gemini,
 };
-pub use prompt::Prompt;
-pub use provider::{Provider, ProviderMeta};
+pub use prompts::Prompt;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::reapply_current_codex_official_live,
@@ -61,7 +41,6 @@ pub use services::{
     SkillService, SpeedtestService,
 };
 pub use settings::{update_settings, AppSettings};
-pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -191,9 +170,9 @@ async fn update_tray_menu(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    match tray::create_tray_menu(&app, state.inner()) {
+    match crate::platform::tray::create_tray_menu(&app, state.inner()) {
         Ok(new_menu) => {
-            if let Some(tray) = app.tray_by_id(tray::TRAY_ID) {
+            if let Some(tray) = app.tray_by_id(crate::platform::tray::TRAY_ID) {
                 tray.set_menu(Some(new_menu))
                     .map_err(|e| format!("更新托盘菜单失败: {e}"))?;
                 return Ok(true);
@@ -223,7 +202,7 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
-    panic_hook::setup_panic_hook();
+    crate::platform::panic_hook::setup_panic_hook();
 
     let mut builder = tauri::Builder::default();
 
@@ -236,8 +215,8 @@ pub fn run() {
                 log::debug!("  arg[{i}]: {}", redact_url_for_log(arg));
             }
 
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            if crate::platform::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::platform::lightweight::exit_lightweight_mode(app) {
                     log::error!("退出轻量模式重建窗口失败: {e}");
                 }
             }
@@ -275,7 +254,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
-                let in_db_recovery = crate::init_status::get_init_error()
+                let in_db_recovery = crate::app::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
                     .unwrap_or(false);
                 if in_db_recovery {
@@ -295,7 +274,7 @@ pub fn run() {
                     }
                     #[cfg(target_os = "macos")]
                     {
-                        tray::apply_tray_policy(window.app_handle(), false);
+                        crate::platform::tray::apply_tray_policy(window.app_handle(), false);
                     }
                 } else {
                     api.prevent_close();
@@ -316,8 +295,8 @@ pub fn run() {
             let _ = rustls::crypto::ring::default_provider().install_default();
 
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
-            app_store::refresh_app_config_dir_override(app.handle());
-            panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
+            crate::app::app_store::refresh_app_config_dir_override(app.handle());
+            crate::platform::panic_hook::init_app_config_dir(crate::config::get_app_config_dir());
             #[cfg(target_os = "windows")]
             set_windows_app_user_model_id(app.handle());
 
@@ -336,7 +315,7 @@ pub fn run() {
             {
                 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
-                let log_dir = panic_hook::get_log_dir();
+                let log_dir = crate::platform::panic_hook::get_log_dir();
 
                 // 确保日志目录存在
                 if let Err(e) = std::fs::create_dir_all(&log_dir) {
@@ -372,7 +351,7 @@ pub fn run() {
             // 注入 AppHandle 给 usage_events，让无 AppHandle 持有的写日志路径
             // 也能向前端推送 `usage-log-recorded`。
             // 放在日志系统初始化之后，确保 init 的日志能正常输出。
-            usage_events::init(app.handle().clone());
+            crate::usage::events::init(app.handle().clone());
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
@@ -390,7 +369,7 @@ pub fn run() {
 
                 // 循环：支持用户重试加载配置文件
                 loop {
-                    match crate::app_config::MultiAppConfig::load() {
+                    match crate::app::app_config::MultiAppConfig::load() {
                         Ok(config) => {
                             log::info!("✓ 配置文件加载成功");
                             break Some(config);
@@ -423,7 +402,7 @@ pub fn run() {
             match crate::database::Database::stored_user_version_exceeds_supported(&db_path) {
                 Ok(Some(version)) => {
                     log::warn!("数据库版本过新（v{version}），引导用户在应用内升级应用");
-                    crate::init_status::set_init_error(crate::init_status::InitErrorPayload {
+                    crate::app::init_status::set_init_error(crate::app::init_status::InitErrorPayload {
                         path: db_path.display().to_string(),
                         error: format!(
                             "数据库版本过新（{version}），当前应用仅支持 {}，请升级应用后再尝试。",
@@ -471,7 +450,7 @@ pub fn run() {
                     Ok(_) => {
                         log::info!("✓ 配置迁移成功");
                         // 标记迁移成功，供前端显示 Toast
-                        crate::init_status::set_migration_success();
+                        crate::app::init_status::set_migration_success();
                         // 归档旧配置文件（重命名而非删除，便于用户恢复）
                         let archive_path = json_path.with_extension("json.migrated");
                         if let Err(e) = std::fs::rename(&json_path, &archive_path) {
@@ -528,7 +507,7 @@ pub fn run() {
                             Ok(count) => {
                                 log::info!("✓ Auto imported {count} skill(s) into SSOT");
                                 if count > 0 {
-                                    crate::init_status::set_skills_migration_result(count);
+                                    crate::app::init_status::set_skills_migration_result(count);
                                 }
                                 let _ = app_state
                                     .db
@@ -536,7 +515,7 @@ pub fn run() {
                             }
                             Err(e) => {
                                 log::warn!("✗ Failed to auto import legacy skills to SSOT: {e}");
-                                crate::init_status::set_skills_migration_error(e.to_string());
+                                crate::app::init_status::set_skills_migration_error(e.to_string());
                                 // 保留 pending 标志，方便下次启动重试
                             }
                         }
@@ -561,7 +540,7 @@ pub fn run() {
                 app_state.db.is_providers_empty().unwrap_or(false);
 
             for app_type in
-                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+                crate::app::app_config::AppType::all().filter(|t| !t.is_additive_mode())
             {
                 if !crate::services::provider::should_import_default_config_on_startup(
                     &app_state,
@@ -606,7 +585,7 @@ pub fn run() {
             {
                 let db_for_codex_history_migration = app_state.db.clone();
                 tauri::async_runtime::spawn_blocking(move || {
-                    match crate::codex_history_migration::maybe_migrate_codex_third_party_history_provider_bucket(
+                    match crate::session::codex_history_migration::maybe_migrate_codex_third_party_history_provider_bucket(
                         &db_for_codex_history_migration,
                     ) {
                         Ok(outcome) => {
@@ -626,7 +605,7 @@ pub fn run() {
                         }
                     }
 
-                    match crate::codex_history_migration::maybe_migrate_codex_provider_template_bucket(
+                    match crate::session::codex_history_migration::maybe_migrate_codex_provider_template_bucket(
                         &db_for_codex_history_migration,
                     ) {
                         Ok(outcome) => {
@@ -646,7 +625,7 @@ pub fn run() {
 
                     // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
                     // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
-                    match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+                    match crate::session::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
                                 log::debug!("○ Codex official history unify migration skipped: {reason}");
@@ -804,12 +783,12 @@ pub fn run() {
                 log::info!("Prompts table empty, importing from live configurations...");
 
                 for app in [
-                    crate::app_config::AppType::Claude,
-                    crate::app_config::AppType::Codex,
-                    crate::app_config::AppType::Gemini,
-                    crate::app_config::AppType::OpenCode,
-                    crate::app_config::AppType::OpenClaw,
-                    crate::app_config::AppType::Hermes,
+                    crate::app::app_config::AppType::Claude,
+                    crate::app::app_config::AppType::Codex,
+                    crate::app::app_config::AppType::Gemini,
+                    crate::app::app_config::AppType::OpenCode,
+                    crate::app::app_config::AppType::OpenClaw,
+                    crate::app::app_config::AppType::Hermes,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -825,7 +804,7 @@ pub fn run() {
             }
 
             // 迁移旧的 app_config_dir 配置到 Store
-            if let Err(e) = app_store::migrate_app_config_dir_from_settings(app.handle()) {
+            if let Err(e) = crate::app::app_store::migrate_app_config_dir_from_settings(app.handle()) {
                 log::warn!("迁移 app_config_dir 失败: {e}");
             }
 
@@ -877,8 +856,8 @@ pub fn run() {
                     let urls = event.urls();
                     log::info!("Received {} URL(s)", urls.len());
 
-                    if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(&app_handle) {
+                    if crate::platform::lightweight::is_lightweight_mode() {
+                        if let Err(e) = crate::platform::lightweight::exit_lightweight_mode(&app_handle) {
                             log::error!("退出轻量模式重建窗口失败: {e}");
                         }
                     }
@@ -896,10 +875,10 @@ pub fn run() {
             log::info!("✓ Deep-link URL handler registered");
 
             // 创建动态托盘菜单
-            let menu = tray::create_tray_menu(app.handle(), &app_state)?;
+            let menu = crate::platform::tray::create_tray_menu(app.handle(), &app_state)?;
 
             // 构建托盘
-            let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
+            let mut tray_builder = TrayIconBuilder::with_id(crate::platform::tray::TRAY_ID)
                 .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(|tray, event| match event {
                     // 鼠标悬停/点击到托盘图标时，后台异步刷新用量缓存，
@@ -908,14 +887,14 @@ pub fn run() {
                     TrayIconEvent::Enter { .. } | TrayIconEvent::Click { .. } => {
                         let app = tray.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
-                            crate::tray::refresh_all_usage_in_tray(&app).await;
+                            crate::platform::tray::refresh_all_usage_in_tray(&app).await;
                         });
                     }
                     _ => log::debug!("unhandled event {event:?}"),
                 })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
-                    tray::handle_tray_menu_event(app, &event.id.0);
+                    crate::platform::tray::handle_tray_menu_event(app, &event.id.0);
                 })
                 .show_menu_on_left_click(true);
 
@@ -1081,7 +1060,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     const SESSION_SYNC_INTERVAL_SECS: u64 = 60;
 
-                    fn run_step<T>(name: &str, result: Result<T, crate::error::AppError>) {
+                    fn run_step<T>(name: &str, result: Result<T, crate::app::AppError>) {
                         if let Err(e) = result {
                             log::warn!("{name} failed: {e}");
                         }
@@ -1166,7 +1145,7 @@ pub fn run() {
                     #[cfg(target_os = "windows")]
                     let _ = window.set_skip_taskbar(true);
                     #[cfg(target_os = "macos")]
-                    tray::apply_tray_policy(app.handle(), false);
+                    crate::platform::tray::apply_tray_policy(app.handle(), false);
                     log::info!("静默启动模式：主窗口已隐藏");
                 } else {
                     // 正常启动模式：显示窗口
@@ -1587,9 +1566,9 @@ pub fn run() {
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
-                        tray::apply_tray_policy(app_handle, true);
-                    } else if crate::lightweight::is_lightweight_mode() {
-                        if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
+                        crate::platform::tray::apply_tray_policy(app_handle, true);
+                    } else if crate::platform::lightweight::is_lightweight_mode() {
+                        if let Err(e) = crate::platform::lightweight::exit_lightweight_mode(app_handle) {
                             log::error!("退出轻量模式重建窗口失败: {e}");
                         }
                     }
@@ -1601,8 +1580,8 @@ pub fn run() {
                         log::info!("RunEvent::Opened with URL: {url_str}");
 
                         if url_str.starts_with("ccswitch://") {
-                            if crate::lightweight::is_lightweight_mode() {
-                                if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle)
+                            if crate::platform::lightweight::is_lightweight_mode() {
+                                if let Err(e) = crate::platform::lightweight::exit_lightweight_mode(app_handle)
                                 {
                                     log::error!("退出轻量模式重建窗口失败: {e}");
                                 }
@@ -1674,7 +1653,7 @@ pub fn run() {
 /// 确保 Claude Code/Codex/Gemini 的配置不会处于损坏状态。
 /// 使用 stop_with_restore_keep_state 保留 settings 表中的代理状态，下次启动时自动恢复。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
-    if let Some(state) = app_handle.try_state::<store::AppState>() {
+    if let Some(state) = app_handle.try_state::<crate::app::AppState>() {
         let proxy_service = &state.proxy_service;
 
         // 退出时也需要兜底：代理可能已崩溃/未运行，但 Live 接管残留仍在（占位符/备份）。
@@ -1721,7 +1700,7 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
 /// 在进程结束前干净地把图标摘掉。其它平台 `set_visible(false)` 也是
 /// 正常的隐藏/移除语义，作为跨平台兜底也安全。
 pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
-    if let Some(tray) = app_handle.tray_by_id(tray::TRAY_ID) {
+    if let Some(tray) = app_handle.tray_by_id(crate::platform::tray::TRAY_ID) {
         if let Err(e) = tray.set_visible(false) {
             log::warn!("退出时移除托盘图标失败: {e}");
         } else {
@@ -1738,7 +1717,7 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 ///
 /// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
 /// 则自动启动代理服务并接管对应应用的 Live 配置。
-async fn restore_proxy_state_on_startup(state: &store::AppState) {
+async fn restore_proxy_state_on_startup(state: &crate::app::AppState) {
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let mut apps_to_restore = Vec::new();
     for app_type in ["claude", "codex", "gemini"] {
@@ -1781,11 +1760,11 @@ async fn restore_proxy_state_on_startup(state: &store::AppState) {
     }
 }
 
-fn initialize_common_config_snippets(state: &store::AppState) {
+fn initialize_common_config_snippets(state: &crate::app::AppState) {
     // Auto-extract common config snippets from clean live files when snippet is missing.
     // This must run before proxy takeover is restored on startup, otherwise we'd read
     // proxy-placeholder configs instead of the user's actual live settings.
-    for app_type in crate::app_config::AppType::all() {
+    for app_type in crate::app::app_config::AppType::all() {
         if !state
             .db
             .should_auto_extract_config_snippet(app_type.as_str())
@@ -1839,9 +1818,9 @@ fn initialize_common_config_snippets(state: &store::AppState) {
 
     if should_run_legacy_migration {
         for app_type in [
-            crate::app_config::AppType::Claude,
-            crate::app_config::AppType::Codex,
-            crate::app_config::AppType::Gemini,
+            crate::app::app_config::AppType::Claude,
+            crate::app::app_config::AppType::Codex,
+            crate::app::app_config::AppType::Gemini,
         ] {
             if let Err(e) = crate::services::provider::ProviderService::migrate_legacy_common_config_usage_if_needed(
                 state,

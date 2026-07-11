@@ -2,8 +2,8 @@
 //!
 //! Detects whether a Gemini provider uses PackyCode API Key, Google OAuth, or generic API Key.
 
-use crate::error::AppError;
-use crate::provider::Provider;
+use crate::app::AppError;
+use crate::app::Provider;
 
 /// Gemini authentication type enumeration
 ///
@@ -135,7 +135,7 @@ pub(crate) fn ensure_google_oauth_security_flag(provider: &Provider) -> Result<(
     }
 
     // Write to Gemini directory settings.json (~/.gemini/settings.json)
-    use crate::gemini_config::write_google_oauth_settings;
+    use crate::live_config::gemini::write_google_oauth_settings;
     write_google_oauth_settings()?;
 
     Ok(())

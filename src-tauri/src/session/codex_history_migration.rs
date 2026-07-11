@@ -3,13 +3,13 @@
 //! 只迁移本机 `~/.codex` 历史数据；完成标记写入设备级 `settings.json`，
 //! 失败时不写标记，下一次启动自动重试。
 
-use crate::codex_config::{
-    get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
-};
-use crate::codex_state_db::codex_state_db_paths;
+use crate::app::AppError;
 use crate::config::{atomic_write, copy_file, get_app_config_dir};
 use crate::database::{is_official_seed_id, Database};
-use crate::error::AppError;
+use crate::live_config::codex::{
+    get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+};
+use crate::session::codex_state_db::codex_state_db_paths;
 use crate::settings::{
     CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
     CodexThirdPartyHistoryProviderBucketMigration,
@@ -1280,8 +1280,8 @@ fn relative_backup_path(path: &Path, root: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
-    use crate::provider::Provider;
+    use crate::app::Provider;
+    use crate::session::codex_state_db::CODEX_STATE_DB_FILENAME;
     use serial_test::serial;
     use std::ffi::OsString;
     use tempfile::tempdir;

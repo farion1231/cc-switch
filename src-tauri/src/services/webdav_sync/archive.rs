@@ -7,7 +7,7 @@ use tempfile::{tempdir, TempDir};
 use zip::write::SimpleFileOptions;
 use zip::DateTime;
 
-use crate::error::AppError;
+use crate::app::AppError;
 use crate::services::skill::SkillService;
 
 use crate::services::sync_protocol::{

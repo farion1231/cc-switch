@@ -7,7 +7,7 @@
 //! - **GeminiCli**: OAuth Bearer 认证 (用于 Gemini CLI)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
-use crate::provider::Provider;
+use crate::app::Provider;
 use crate::proxy::error::ProxyError;
 
 /// Gemini 适配器

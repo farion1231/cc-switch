@@ -118,9 +118,9 @@ impl Provider {
     /// in `UsageScriptModal.tsx`.
     pub fn resolve_usage_credentials(
         &self,
-        app_type: &crate::app_config::AppType,
+        app_type: &crate::app::app_config::AppType,
     ) -> (String, String) {
-        use crate::app_config::AppType;
+        use crate::app::app_config::AppType;
 
         let settings = &self.settings_config;
         let str_at =
@@ -150,10 +150,10 @@ impl Provider {
             AppType::Codex => {
                 let auth = settings.get("auth");
                 let config_text = settings.get("config").and_then(|v| v.as_str());
-                let api_key = crate::codex_config::extract_codex_api_key(auth, config_text)
+                let api_key = crate::live_config::codex::extract_codex_api_key(auth, config_text)
                     .unwrap_or_default();
                 let base_url = config_text
-                    .and_then(crate::codex_config::extract_codex_base_url)
+                    .and_then(crate::live_config::codex::extract_codex_base_url)
                     .unwrap_or_default();
                 (base_url, api_key)
             }
@@ -1387,7 +1387,7 @@ mod tests {
 
     // ── resolve_usage_credentials (per-app credential extraction) ──
 
-    use crate::app_config::AppType;
+    use crate::app::app_config::AppType;
 
     fn provider_with(settings_config: serde_json::Value) -> Provider {
         Provider::with_id("p".to_string(), "P".to_string(), settings_config, None)

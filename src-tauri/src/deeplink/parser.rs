@@ -4,7 +4,7 @@
 
 use super::utils::validate_url;
 use super::DeepLinkImportRequest;
-use crate::error::AppError;
+use crate::app::AppError;
 use std::collections::HashMap;
 use url::Url;
 

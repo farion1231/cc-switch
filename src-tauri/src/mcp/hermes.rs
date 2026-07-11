@@ -17,9 +17,8 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
-use crate::error::AppError;
-use crate::hermes_config;
+use crate::app::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app::AppError;
 
 use super::validation::validate_server_spec;
 
@@ -45,7 +44,7 @@ const HERMES_EXTRA_FIELDS: &[&str] = &[
 
 /// Check if Hermes MCP sync should proceed
 fn should_sync_hermes_mcp() -> bool {
-    hermes_config::get_hermes_dir().exists()
+    crate::live_config::hermes::get_hermes_dir().exists()
 }
 
 // ============================================================================
@@ -185,17 +184,17 @@ pub fn sync_single_server_to_hermes(
     let hermes_spec = convert_to_hermes_format(server_spec)?;
     let id_owned = id.to_string();
 
-    hermes_config::update_mcp_servers_yaml(|servers| {
+    crate::live_config::hermes::update_mcp_servers_yaml(|servers| {
         let id_yaml = serde_yaml::Value::String(id_owned.clone());
 
         let merged_json = if let Some(existing_yaml) = servers.get(&id_yaml) {
-            let existing_json = hermes_config::yaml_to_json(existing_yaml)?;
+            let existing_json = crate::live_config::hermes::yaml_to_json(existing_yaml)?;
             merge_hermes_spec(&existing_json, &hermes_spec)
         } else {
             hermes_spec.clone()
         };
 
-        let merged_yaml_value = hermes_config::json_to_yaml(&merged_json)?;
+        let merged_yaml_value = crate::live_config::hermes::json_to_yaml(&merged_json)?;
         servers.insert(id_yaml, merged_yaml_value);
         Ok(())
     })
@@ -239,7 +238,7 @@ pub fn remove_server_from_hermes(id: &str) -> Result<(), AppError> {
     }
 
     let id_owned = id.to_string();
-    hermes_config::update_mcp_servers_yaml(|servers| {
+    crate::live_config::hermes::update_mcp_servers_yaml(|servers| {
         servers.remove(serde_yaml::Value::String(id_owned.clone()));
         Ok(())
     })
@@ -249,7 +248,7 @@ pub fn remove_server_from_hermes(id: &str) -> Result<(), AppError> {
 ///
 /// Existing servers will have Hermes app enabled without overwriting other fields.
 pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let yaml_map = hermes_config::get_mcp_servers_yaml()?;
+    let yaml_map = crate::live_config::hermes::get_mcp_servers_yaml()?;
     if yaml_map.is_empty() {
         return Ok(0);
     }
@@ -270,7 +269,7 @@ pub fn import_from_hermes(config: &mut MultiAppConfig) -> Result<usize, AppError
         };
 
         // Convert YAML value to JSON
-        let spec_json = match hermes_config::yaml_to_json(spec_yaml) {
+        let spec_json = match crate::live_config::hermes::yaml_to_json(spec_yaml) {
             Ok(j) => j,
             Err(e) => {
                 log::warn!("Skip Hermes MCP server '{id}': failed to convert YAML to JSON: {e}");

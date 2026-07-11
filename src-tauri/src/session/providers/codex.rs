@@ -10,9 +10,9 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
-use crate::codex_state_db::codex_state_db_paths;
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::live_config::codex::{get_codex_config_dir, read_codex_config_text};
+use crate::session::codex_state_db::codex_state_db_paths;
+use crate::session::manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
@@ -524,7 +524,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
+    use crate::session::codex_state_db::CODEX_STATE_DB_FILENAME;
     use tempfile::tempdir;
 
     fn write_codex_session(path: &Path, session_id: &str, message: &str) {

@@ -2,10 +2,10 @@
 //!
 //! 提供前端调用的 API 接口
 
-use crate::error::AppError;
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
-use crate::store::AppState;
 
 /// 启动代理服务器（仅启动服务，不接管 Live 配置）
 #[tauri::command]

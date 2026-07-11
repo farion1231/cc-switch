@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::app::AppError;
 
 /// 基础校验：允许 stdio/http/sse；或省略 type（视为 stdio）。对应必填字段存在
 pub fn validate_server_spec(spec: &Value) -> Result<(), AppError> {

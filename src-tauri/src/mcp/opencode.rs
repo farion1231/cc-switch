@@ -15,9 +15,8 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
-use crate::error::AppError;
-use crate::opencode_config;
+use crate::app::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app::AppError;
 
 use super::validation::validate_server_spec;
 
@@ -28,7 +27,7 @@ use super::validation::validate_server_spec;
 /// Check if OpenCode MCP sync should proceed
 fn should_sync_opencode_mcp() -> bool {
     // Skip if OpenCode config directory doesn't exist
-    opencode_config::get_opencode_dir().exists()
+    crate::live_config::opencode::get_opencode_dir().exists()
 }
 
 // ============================================================================
@@ -194,7 +193,7 @@ pub fn sync_single_server_to_opencode(
     let opencode_spec = convert_to_opencode_format(server_spec)?;
 
     // Set in OpenCode config
-    opencode_config::set_mcp_server(id, opencode_spec)
+    crate::live_config::opencode::set_mcp_server(id, opencode_spec)
 }
 
 /// Remove a single MCP server from OpenCode live config
@@ -203,14 +202,14 @@ pub fn remove_server_from_opencode(id: &str) -> Result<(), AppError> {
         return Ok(());
     }
 
-    opencode_config::remove_mcp_server(id)
+    crate::live_config::opencode::remove_mcp_server(id)
 }
 
 /// Import MCP servers from OpenCode config to unified structure
 ///
 /// Existing servers will have OpenCode app enabled without overwriting other fields.
 pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let mcp_map = opencode_config::get_mcp_servers()?;
+    let mcp_map = crate::live_config::opencode::get_mcp_servers()?;
     if mcp_map.is_empty() {
         return Ok(0);
     }

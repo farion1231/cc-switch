@@ -3,9 +3,9 @@
 //! Handles importing skill repository configurations via ccswitch:// URLs.
 
 use super::DeepLinkImportRequest;
-use crate::error::AppError;
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::services::skill::SkillRepo;
-use crate::store::AppState;
 
 /// Import a skill from deep link request
 pub fn import_skill_from_deeplink(

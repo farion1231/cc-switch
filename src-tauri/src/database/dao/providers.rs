@@ -1,6 +1,6 @@
+use crate::app::AppError;
+use crate::app::{Provider, ProviderMeta};
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
-use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
@@ -476,8 +476,8 @@ impl Database {
                 "Failed to parse {category} provider settings_config (provider_id={id}): {e}"
             ))
         })?;
-        let meta: crate::provider::ProviderMeta = if meta_str.trim().is_empty() {
-            crate::provider::ProviderMeta::default()
+        let meta: crate::app::ProviderMeta = if meta_str.trim().is_empty() {
+            crate::app::ProviderMeta::default()
         } else {
             serde_json::from_str(&meta_str).map_err(|e| {
                 AppError::Database(format!(
@@ -661,7 +661,7 @@ impl Database {
     pub fn ensure_official_seed_by_id(
         &self,
         seed_id: &str,
-        app_type: crate::app_config::AppType,
+        app_type: crate::app::app_config::AppType,
     ) -> Result<bool, AppError> {
         use crate::database::dao::providers_seed::OFFICIAL_SEEDS;
 
@@ -709,7 +709,7 @@ impl Database {
 
 #[cfg(test)]
 mod ensure_official_seed_tests {
-    use crate::app_config::AppType;
+    use crate::app::app_config::AppType;
     use crate::database::{Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID};
 
     #[test]

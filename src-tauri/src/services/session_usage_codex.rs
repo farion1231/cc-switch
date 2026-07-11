@@ -13,9 +13,9 @@
 //! - `turn_context` → 提取当前 model
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 
-use crate::codex_config::get_codex_config_dir;
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
+use crate::live_config::codex::get_codex_config_dir;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
@@ -700,7 +700,7 @@ fn insert_codex_session_entry(
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 
     if inserted_rows > 0 {
-        crate::usage_events::notify_log_recorded();
+        crate::usage::events::notify_log_recorded();
     }
 
     Ok(true)

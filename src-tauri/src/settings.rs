@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
-use crate::app_config::AppType;
-use crate::error::AppError;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
 use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
@@ -139,16 +139,16 @@ impl Default for WebDavSyncSettings {
 }
 
 impl WebDavSyncSettings {
-    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+    pub fn validate(&self) -> Result<(), crate::app::AppError> {
         if self.base_url.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::app::AppError::localized(
                 "webdav.base_url.required",
                 "WebDAV 地址不能为空",
                 "WebDAV URL is required.",
             ));
         }
         if self.username.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::app::AppError::localized(
                 "webdav.username.required",
                 "WebDAV 用户名不能为空",
                 "WebDAV username is required.",
@@ -220,30 +220,30 @@ impl Default for S3SyncSettings {
 }
 
 impl S3SyncSettings {
-    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+    pub fn validate(&self) -> Result<(), crate::app::AppError> {
         if self.bucket.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::app::AppError::localized(
                 "s3.bucket.required",
                 "S3 存储桶不能为空",
                 "S3 bucket is required.",
             ));
         }
         if self.region.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::app::AppError::localized(
                 "s3.region.required",
                 "S3 区域不能为空",
                 "S3 region is required.",
             ));
         }
         if self.access_key_id.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::app::AppError::localized(
                 "s3.access_key_id.required",
                 "S3 Access Key ID 不能为空",
                 "S3 Access Key ID is required.",
             ));
         }
         if self.secret_access_key.trim().is_empty() {
-            return Err(crate::error::AppError::localized(
+            return Err(crate::app::AppError::localized(
                 "s3.secret_access_key.required",
                 "S3 Secret Access Key 不能为空",
                 "S3 Secret Access Key is required.",
@@ -1114,7 +1114,7 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_config::AppType;
+    use crate::app::app_config::AppType;
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

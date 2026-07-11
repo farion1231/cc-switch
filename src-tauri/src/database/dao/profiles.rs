@@ -4,8 +4,8 @@
 //! payload 为原始 JSON 文本（按 app 分槽），解析在 service 层进行。
 //! 各应用分组（scope）独立的 current 标记存放于 settings 表（key-value）。
 
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
 use rusqlite::params;
 
 /// 每个 scope 的 current 标记 key = 前缀 + scope（如 current_profile_id_claude）

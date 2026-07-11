@@ -1,10 +1,7 @@
-pub mod providers;
-pub mod terminal;
-
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codex, gemini, hermes, openclaw, opencode};
+use crate::session::providers::{claude, codex, gemini, hermes, openclaw, opencode};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -190,11 +187,11 @@ fn delete_session_with_roots(
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
     let roots = match provider_id {
         "codex" => codex::session_roots(),
-        "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
+        "claude" => vec![crate::live_config::claude_code::get_claude_config_dir().join("projects")],
         "opencode" => vec![opencode::get_opencode_data_dir()],
-        "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
-        "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
-        "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
+        "openclaw" => vec![crate::live_config::openclaw::get_openclaw_dir().join("agents")],
+        "gemini" => vec![crate::live_config::gemini::get_gemini_dir().join("tmp")],
+        "hermes" => vec![crate::live_config::hermes::get_hermes_dir().join("sessions")],
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

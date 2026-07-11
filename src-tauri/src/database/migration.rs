@@ -3,8 +3,8 @@
 //! 将旧版 config.json (MultiAppConfig) 数据迁移到 SQLite 数据库。
 
 use super::{lock_conn, to_json_string, Database};
-use crate::app_config::MultiAppConfig;
-use crate::error::AppError;
+use crate::app::app_config::MultiAppConfig;
+use crate::app::AppError;
 use rusqlite::{params, Connection};
 
 impl Database {
@@ -155,7 +155,7 @@ impl Database {
     ) -> Result<(), AppError> {
         let migrate_app_prompts = |prompts_map: &std::collections::HashMap<
             String,
-            crate::prompt::Prompt,
+            crate::prompts::Prompt,
         >,
                                    app_type: &str|
          -> Result<(), AppError> {

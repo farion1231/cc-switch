@@ -13,7 +13,7 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        crate::tray::apply_tray_policy(app, false);
+        crate::platform::tray::apply_tray_policy(app, false);
     }
 
     if let Some(window) = app.get_webview_window("main") {
@@ -25,7 +25,7 @@ pub fn enter_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     // else: already in lightweight mode or window not found, just set the flag
 
     LIGHTWEIGHT_MODE.store(true, Ordering::Release);
-    crate::tray::refresh_tray_menu(app);
+    crate::platform::tray::refresh_tray_menu(app);
     log::info!("进入轻量模式");
     Ok(())
 }
@@ -39,7 +39,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::platform::linux_fix::nudge_main_window(window.clone());
         }
         #[cfg(target_os = "windows")]
         {
@@ -47,10 +47,10 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         }
         #[cfg(target_os = "macos")]
         {
-            crate::tray::apply_tray_policy(app, true);
+            crate::platform::tray::apply_tray_policy(app, true);
         }
         LIGHTWEIGHT_MODE.store(false, Ordering::Release);
-        crate::tray::refresh_tray_menu(app);
+        crate::platform::tray::refresh_tray_menu(app);
         log::info!("退出轻量模式");
         return Ok(());
     }
@@ -74,7 +74,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         let _ = window.set_focus();
         #[cfg(target_os = "linux")]
         {
-            crate::linux_fix::nudge_main_window(window.clone());
+            crate::platform::linux_fix::nudge_main_window(window.clone());
         }
     }
 
@@ -86,11 +86,11 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        crate::tray::apply_tray_policy(app, true);
+        crate::platform::tray::apply_tray_policy(app, true);
     }
 
     LIGHTWEIGHT_MODE.store(false, Ordering::Release);
-    crate::tray::refresh_tray_menu(app);
+    crate::platform::tray::refresh_tray_menu(app);
     log::info!("退出轻量模式");
     Ok(())
 }

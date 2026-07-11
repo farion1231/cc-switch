@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::app::AppError;
 use crate::services::webdav::{
     auth_from_credentials, build_remote_url, ensure_remote_directories, get_bytes, head_etag,
     path_segments, put_bytes, test_connection, WebDavAuth,

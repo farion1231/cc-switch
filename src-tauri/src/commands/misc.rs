@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
-use crate::app_config::AppType;
-use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
+use crate::app::app_config::AppType;
+use crate::app::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -79,21 +79,21 @@ pub async fn is_portable_mode() -> Result<bool, String> {
 /// 用于前端在早期主动拉取，避免事件订阅竞态导致的提示缺失。
 #[tauri::command]
 pub async fn get_init_error() -> Result<Option<InitErrorPayload>, String> {
-    Ok(crate::init_status::get_init_error())
+    Ok(crate::app::init_status::get_init_error())
 }
 
 /// 获取 JSON→SQLite 迁移结果（若有）。
 /// 只返回一次 true，之后返回 false，用于前端显示一次性 Toast 通知。
 #[tauri::command]
 pub async fn get_migration_result() -> Result<bool, String> {
-    Ok(crate::init_status::take_migration_success())
+    Ok(crate::app::init_status::take_migration_success())
 }
 
 /// 获取 Skills 自动导入（SSOT）迁移结果（若有）。
 /// 只返回一次 Some({count})，之后返回 None，用于前端显示一次性 Toast 通知。
 #[tauri::command]
 pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPayload>, String> {
-    Ok(crate::init_status::take_skills_migration_result())
+    Ok(crate::app::init_status::take_skills_migration_result())
 }
 
 #[derive(serde::Serialize)]
@@ -638,7 +638,7 @@ fn build_tool_action_line(
         // (npm/pnpm)或 .exe(volta),静态命令头部是 `npm`(也是 .cmd)、`py` 等——
         // 全部加 `call ` 前缀,风格统一且语义正确。含空格的头部已被 `win_quote_path_for_batch`
         // 加上双引号,call 对带引号的路径解析正常。
-        return Ok(format!("call {command}"));
+        Ok(format!("call {command}"))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2585,7 +2585,7 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn open_provider_terminal(
-    state: State<'_, crate::store::AppState>,
+    state: State<'_, crate::app::AppState>,
     app: String,
     #[allow(non_snake_case)] providerId: String,
     cwd: Option<String>,
@@ -2731,7 +2731,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]

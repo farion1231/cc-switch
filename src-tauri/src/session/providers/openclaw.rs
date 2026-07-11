@@ -5,10 +5,10 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::openclaw_config::get_openclaw_dir;
+use crate::live_config::openclaw::get_openclaw_dir;
 use crate::{
     config::write_json_file,
-    session_manager::{SessionMessage, SessionMeta},
+    session::manager::{SessionMessage, SessionMeta},
 };
 
 use super::utils::{

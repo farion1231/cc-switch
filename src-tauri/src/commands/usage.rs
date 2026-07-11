@@ -1,8 +1,8 @@
 //! 使用统计相关命令
 
-use crate::error::AppError;
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::services::usage_stats::*;
-use crate::store::AppState;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use tauri::State;

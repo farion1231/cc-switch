@@ -4,7 +4,7 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config::write_text_file;
-use crate::openclaw_config::get_openclaw_dir;
+use crate::live_config::openclaw::get_openclaw_dir;
 
 /// Allowed workspace filenames (whitelist for security)
 const ALLOWED_FILES: &[&str] = &[

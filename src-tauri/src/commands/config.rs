@@ -4,15 +4,16 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::app_config::AppType;
-use crate::codex_config;
-use crate::config::{self, get_claude_settings_path, ConfigStatus};
+use crate::app::app_config::AppType;
+use crate::app::AppState;
+use crate::config;
+use crate::live_config::claude_code::{get_claude_settings_path, ConfigStatus};
+use crate::live_config::codex;
 use crate::settings;
-use crate::store::AppState;
 
 #[tauri::command]
 pub async fn get_claude_config_status() -> Result<ConfigStatus, String> {
-    Ok(config::get_claude_config_status())
+    Ok(crate::live_config::claude_code::get_claude_config_status())
 }
 
 use std::str::FromStr;
@@ -68,63 +69,82 @@ pub async fn get_config_status(
     app: String,
 ) -> Result<ConfigStatus, String> {
     match AppType::from_str(&app).map_err(|e| e.to_string())? {
-        AppType::Claude => Ok(config::get_claude_config_status()),
+        AppType::Claude => Ok(crate::live_config::claude_code::get_claude_config_status()),
         AppType::ClaudeDesktop => {
-            let status = crate::claude_desktop_config::get_status(
+            let status = crate::live_config::claude_desktop::get_status(
                 state.db.as_ref(),
                 state.proxy_service.is_running().await,
             )
             .map_err(|e| e.to_string())?;
             Ok(ConfigStatus {
-                exists: status.configured,
-                path: status.config_library_path.unwrap_or_default(),
+                config_file_exists: status.configured,
+                config_file_path: status.config_library_path.unwrap_or_default(),
+                mcp_config_path: String::new(),
             })
         }
         AppType::Codex => {
-            let auth_path = codex_config::get_codex_auth_path();
-            let config_text = codex_config::read_codex_config_text().unwrap_or_default();
+            let auth_path = codex::get_codex_auth_path();
+            let config_text = codex::read_codex_config_text().unwrap_or_default();
             let exists = auth_path.exists() || !config_text.trim().is_empty();
-            let path = codex_config::get_codex_config_dir()
-                .to_string_lossy()
-                .to_string();
+            let path = codex::get_codex_config_dir().to_string_lossy().to_string();
 
-            Ok(ConfigStatus { exists, path })
+            Ok(ConfigStatus {
+                config_file_exists: exists,
+                config_file_path: path,
+                mcp_config_path: String::new(),
+            })
         }
         AppType::Gemini => {
-            let env_path = crate::gemini_config::get_gemini_env_path();
+            let env_path = crate::live_config::gemini::get_gemini_env_path();
             let exists = env_path.exists();
-            let path = crate::gemini_config::get_gemini_dir()
+            let path = crate::live_config::gemini::get_gemini_dir()
                 .to_string_lossy()
                 .to_string();
 
-            Ok(ConfigStatus { exists, path })
+            Ok(ConfigStatus {
+                config_file_exists: exists,
+                config_file_path: path,
+                mcp_config_path: String::new(),
+            })
         }
         AppType::OpenCode => {
-            let config_path = crate::opencode_config::get_opencode_config_path();
+            let config_path = crate::live_config::opencode::get_opencode_config_path();
             let exists = config_path.exists();
-            let path = crate::opencode_config::get_opencode_dir()
+            let path = crate::live_config::opencode::get_opencode_dir()
                 .to_string_lossy()
                 .to_string();
 
-            Ok(ConfigStatus { exists, path })
+            Ok(ConfigStatus {
+                config_file_exists: exists,
+                config_file_path: path,
+                mcp_config_path: String::new(),
+            })
         }
         AppType::OpenClaw => {
-            let config_path = crate::openclaw_config::get_openclaw_config_path();
+            let config_path = crate::live_config::openclaw::get_openclaw_config_path();
             let exists = config_path.exists();
-            let path = crate::openclaw_config::get_openclaw_dir()
+            let path = crate::live_config::openclaw::get_openclaw_dir()
                 .to_string_lossy()
                 .to_string();
 
-            Ok(ConfigStatus { exists, path })
+            Ok(ConfigStatus {
+                config_file_exists: exists,
+                config_file_path: path,
+                mcp_config_path: String::new(),
+            })
         }
         AppType::Hermes => {
-            let config_path = crate::hermes_config::get_hermes_config_path();
+            let config_path = crate::live_config::hermes::get_hermes_config_path();
             let exists = config_path.exists();
-            let path = crate::hermes_config::get_hermes_dir()
+            let path = crate::live_config::hermes::get_hermes_dir()
                 .to_string_lossy()
                 .to_string();
 
-            Ok(ConfigStatus { exists, path })
+            Ok(ConfigStatus {
+                config_file_exists: exists,
+                config_file_path: path,
+                mcp_config_path: String::new(),
+            })
         }
     }
 }
@@ -137,15 +157,14 @@ pub async fn get_claude_code_config_path() -> Result<String, String> {
 #[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
     let dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
-        AppType::Claude => config::get_claude_config_dir(),
-        AppType::ClaudeDesktop => {
-            crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
-        }
-        AppType::Codex => codex_config::get_codex_config_dir(),
-        AppType::Gemini => crate::gemini_config::get_gemini_dir(),
-        AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
-        AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
-        AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Claude => crate::live_config::claude_code::get_claude_config_dir(),
+        AppType::ClaudeDesktop => crate::live_config::claude_desktop::get_config_library_path()
+            .map_err(|e| e.to_string())?,
+        AppType::Codex => codex::get_codex_config_dir(),
+        AppType::Gemini => crate::live_config::gemini::get_gemini_dir(),
+        AppType::OpenCode => crate::live_config::opencode::get_opencode_dir(),
+        AppType::OpenClaw => crate::live_config::openclaw::get_openclaw_dir(),
+        AppType::Hermes => crate::live_config::hermes::get_hermes_dir(),
     };
 
     Ok(dir.to_string_lossy().to_string())
@@ -154,15 +173,14 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, String> {
     let config_dir = match AppType::from_str(&app).map_err(|e| e.to_string())? {
-        AppType::Claude => config::get_claude_config_dir(),
-        AppType::ClaudeDesktop => {
-            crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
-        }
-        AppType::Codex => codex_config::get_codex_config_dir(),
-        AppType::Gemini => crate::gemini_config::get_gemini_dir(),
-        AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
-        AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
-        AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Claude => crate::live_config::claude_code::get_claude_config_dir(),
+        AppType::ClaudeDesktop => crate::live_config::claude_desktop::get_config_library_path()
+            .map_err(|e| e.to_string())?,
+        AppType::Codex => codex::get_codex_config_dir(),
+        AppType::Gemini => crate::live_config::gemini::get_gemini_dir(),
+        AppType::OpenCode => crate::live_config::opencode::get_opencode_dir(),
+        AppType::OpenClaw => crate::live_config::openclaw::get_openclaw_dir(),
+        AppType::Hermes => crate::live_config::hermes::get_hermes_dir(),
     };
 
     if !config_dir.exists() {
@@ -232,7 +250,7 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn get_claude_common_config_snippet(
-    state: tauri::State<'_, crate::store::AppState>,
+    state: tauri::State<'_, crate::app::AppState>,
 ) -> Result<Option<String>, String> {
     state
         .db
@@ -243,7 +261,7 @@ pub async fn get_claude_common_config_snippet(
 #[tauri::command]
 pub async fn set_claude_common_config_snippet(
     snippet: String,
-    state: tauri::State<'_, crate::store::AppState>,
+    state: tauri::State<'_, crate::app::AppState>,
 ) -> Result<(), String> {
     let is_cleared = snippet.trim().is_empty();
 
@@ -267,7 +285,7 @@ pub async fn set_claude_common_config_snippet(
 #[tauri::command]
 pub async fn get_common_config_snippet(
     app_type: String,
-    state: tauri::State<'_, crate::store::AppState>,
+    state: tauri::State<'_, crate::app::AppState>,
 ) -> Result<Option<String>, String> {
     state
         .db
@@ -296,7 +314,7 @@ pub async fn update_toml_common_config_snippet(
 pub async fn set_common_config_snippet(
     app_type: String,
     snippet: String,
-    state: tauri::State<'_, crate::store::AppState>,
+    state: tauri::State<'_, crate::app::AppState>,
 ) -> Result<(), String> {
     let is_cleared = snippet.trim().is_empty();
     let old_snippet = state
@@ -395,7 +413,7 @@ mod tests {
 pub async fn extract_common_config_snippet(
     appType: String,
     settingsConfig: Option<String>,
-    state: tauri::State<'_, crate::store::AppState>,
+    state: tauri::State<'_, crate::app::AppState>,
 ) -> Result<String, String> {
     let app = AppType::from_str(&appType).map_err(|e| e.to_string())?;
 

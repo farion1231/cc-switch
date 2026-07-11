@@ -60,7 +60,7 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
-    state: tauri::State<'_, crate::store::AppState>,
+    state: tauri::State<'_, crate::app::AppState>,
     settings: crate::settings::AppSettings,
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
@@ -95,7 +95,7 @@ pub async fn save_settings(
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
             // 失败时不写完成标记，下次启动自动重试。
             tauri::async_runtime::spawn_blocking(|| {
-                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+                match crate::session::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
                             log::debug!("○ Codex official history unify migration skipped: {reason}");
@@ -139,7 +139,7 @@ pub struct CodexUnifyHistoryRestoreResult {
 /// 是否存在统一会话开关的迁移备份（决定关闭弹窗里是否显示"恢复备份"勾选）。
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
-    Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
+    Ok(crate::session::codex_history_migration::has_codex_official_history_unify_backup())
 }
 
 /// 按迁移备份账本把当时迁入共享桶的官方会话还原回 "openai" 桶。
@@ -147,7 +147,7 @@ pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
 #[tauri::command]
 pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreResult, String> {
     let outcome = tauri::async_runtime::spawn_blocking(|| {
-        crate::codex_history_migration::restore_codex_official_history_from_backups()
+        crate::session::codex_history_migration::restore_codex_official_history_from_backups()
     })
     .await
     .map_err(|e| e.to_string())?
@@ -247,7 +247,7 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
                 "Windows 更新安装失败: {e}。已执行退出前清理，代理或 Live 接管可能已暂停；请重启应用或重新开启代理后再试。"
             )
         })?;
-        return Ok(true);
+        Ok(true)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -287,7 +287,7 @@ pub async fn check_app_update_available(app: AppHandle) -> Result<Option<String>
 /// 获取 app_config_dir 覆盖配置 (从 Store)
 #[tauri::command]
 pub async fn get_app_config_dir_override(app: AppHandle) -> Result<Option<String>, String> {
-    Ok(crate::app_store::refresh_app_config_dir_override(&app)
+    Ok(crate::app::app_store::refresh_app_config_dir_override(&app)
         .map(|p| p.to_string_lossy().to_string()))
 }
 
@@ -297,7 +297,7 @@ pub async fn set_app_config_dir_override(
     app: AppHandle,
     path: Option<String>,
 ) -> Result<bool, String> {
-    crate::app_store::set_app_config_dir_to_store(&app, path.as_deref())?;
+    crate::app::app_store::set_app_config_dir_to_store(&app, path.as_deref())?;
     Ok(true)
 }
 
@@ -305,9 +305,11 @@ pub async fn set_app_config_dir_override(
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {
-        crate::auto_launch::enable_auto_launch().map_err(|e| format!("启用开机自启失败: {e}"))?;
+        crate::platform::auto_launch::enable_auto_launch()
+            .map_err(|e| format!("启用开机自启失败: {e}"))?;
     } else {
-        crate::auto_launch::disable_auto_launch().map_err(|e| format!("禁用开机自启失败: {e}"))?;
+        crate::platform::auto_launch::disable_auto_launch()
+            .map_err(|e| format!("禁用开机自启失败: {e}"))?;
     }
     Ok(true)
 }
@@ -623,7 +625,8 @@ mod tests {
 /// 获取开机自启状态
 #[tauri::command]
 pub async fn get_auto_launch_status() -> Result<bool, String> {
-    crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
+    crate::platform::auto_launch::is_auto_launch_enabled()
+        .map_err(|e| format!("获取开机自启状态失败: {e}"))
 }
 
 /// 获取整流器配置

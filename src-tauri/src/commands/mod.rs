@@ -17,7 +17,7 @@ mod misc;
 mod model_fetch;
 mod omo;
 mod openclaw;
-mod plugin;
+pub mod plugin;
 mod profile;
 mod prompt;
 mod provider;

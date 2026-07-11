@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use crate::app_config::AppType;
-use crate::provider::UsageResult;
+use crate::app::app_config::AppType;
+use crate::app::UsageResult;
 use crate::services::subscription::SubscriptionQuota;
 
 #[derive(Default)]

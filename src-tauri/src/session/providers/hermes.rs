@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
-use crate::hermes_config::get_hermes_dir;
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::live_config::hermes::get_hermes_dir;
+use crate::session::manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, read_head_tail_lines, truncate_summary, TITLE_MAX_CHARS,

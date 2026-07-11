@@ -3,10 +3,10 @@ use std::str::FromStr;
 
 use tauri::State;
 
-use crate::app_config::AppType;
-use crate::prompt::Prompt;
+use crate::app::app_config::AppType;
+use crate::app::AppState;
+use crate::prompts::Prompt;
 use crate::services::PromptService;
-use crate::store::AppState;
 
 #[tauri::command]
 pub async fn get_prompts(

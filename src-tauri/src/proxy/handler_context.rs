@@ -2,8 +2,8 @@
 //!
 //! 提供请求生命周期的上下文管理，封装通用初始化逻辑
 
-use crate::app_config::AppType;
-use crate::provider::Provider;
+use crate::app::app_config::AppType;
+use crate::app::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
@@ -136,10 +136,10 @@ impl RequestContext {
             .select_providers(app_type_str)
             .await
             .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
+                crate::app::AppError::AllProvidersCircuitOpen => {
                     ProxyError::AllProvidersCircuitOpen
                 }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
+                crate::app::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 

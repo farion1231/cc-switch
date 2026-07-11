@@ -3,9 +3,9 @@
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 
+use crate::app::AppState;
 use crate::database::Profile;
 use crate::services::profile::{ProfilePayload, ProfileScope, ProfileService};
-use crate::store::AppState;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +89,7 @@ pub fn emit_profile_apply_events(
     ) {
         log::error!("发射 profile-applied 事件失败: {e}");
     }
-    crate::tray::refresh_tray_menu(app);
+    crate::platform::tray::refresh_tray_menu(app);
 }
 
 #[tauri::command]

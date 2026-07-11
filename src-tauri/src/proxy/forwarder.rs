@@ -22,13 +22,10 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
+use crate::app::{AppType, LocalProxyRequestOverrides, Provider};
 use crate::commands::{CodexOAuthState, CopilotAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
-use crate::{
-    app_config::AppType,
-    provider::{LocalProxyRequestOverrides, Provider},
-};
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
@@ -1134,7 +1131,7 @@ impl RequestForwarder {
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
-            crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
+            crate::live_config::claude_desktop::map_proxy_request_model(body.clone(), provider)
                 .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
         } else {
             let (mapped_body, _original_model, _mapped_model) =
@@ -3100,8 +3097,8 @@ fn value_for_log(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::LocalProxyRequestOverrides;
     use crate::database::Database;
-    use crate::provider::LocalProxyRequestOverrides;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -3120,7 +3117,7 @@ mod tests {
             created_at: None,
             sort_index: None,
             notes: None,
-            meta: provider_type.map(|value| crate::provider::ProviderMeta {
+            meta: provider_type.map(|value| crate::app::ProviderMeta {
                 provider_type: Some(value.to_string()),
                 ..Default::default()
             }),
@@ -3994,7 +3991,7 @@ mod tests {
     /// 验证 is_copilot 检测逻辑：通过 provider_type 判断
     #[test]
     fn copilot_detection_via_provider_type() {
-        use crate::provider::{Provider, ProviderMeta};
+        use crate::app::{Provider, ProviderMeta};
 
         let provider = Provider {
             id: "test".to_string(),
@@ -4038,7 +4035,7 @@ mod tests {
     /// 验证企业版 endpoint（不包含 githubcopilot.com）场景下 is_copilot 仍然正确
     #[test]
     fn copilot_detection_for_enterprise_endpoint() {
-        use crate::provider::{Provider, ProviderMeta};
+        use crate::app::{Provider, ProviderMeta};
 
         // 企业版场景：provider_type 是 github_copilot，但 base_url 可能是企业内部域名
         let provider = Provider {

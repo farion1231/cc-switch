@@ -4,14 +4,14 @@
 //! - 支持三应用开关（Claude/Codex/Gemini）
 //! - SSOT 存储在 ~/.cc-switch/skills/
 
-use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
-use crate::error::format_skill_error;
+use crate::app::app_config::{AppType, InstalledSkill, UnmanagedSkill};
+use crate::app::format_skill_error;
+use crate::app::AppState;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
     SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
     SkillsShSearchResult,
 };
-use crate::store::AppState;
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::State;

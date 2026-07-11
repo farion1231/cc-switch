@@ -3,13 +3,13 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::app::AppError;
+use crate::app::{ClaudeDesktopMode, Provider};
 #[cfg(any(target_os = "macos", windows))]
 use crate::config::get_home_dir;
 use crate::config::{atomic_write, delete_file, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::database::CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID;
-use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
 
 pub const PROFILE_ID: &str = "00000000-0000-4000-8000-000000157210";
 pub const PROFILE_NAME: &str = "CC Switch";
@@ -174,7 +174,7 @@ pub fn get_status(db: &Database, proxy_running: bool) -> Result<ClaudeDesktopSta
         .is_some_and(|token| !token.trim().is_empty());
     let current_provider = crate::settings::get_effective_current_provider(
         db,
-        &crate::app_config::AppType::ClaudeDesktop,
+        &crate::app::app_config::AppType::ClaudeDesktop,
     )
     .ok()
     .flatten()
@@ -1318,8 +1318,8 @@ fn unsupported_platform_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{ClaudeDesktopModelRoute, ProviderMeta};
     use crate::database::Database;
-    use crate::provider::{ClaudeDesktopModelRoute, ProviderMeta};
     use serde_json::json;
     use tempfile::TempDir;
 

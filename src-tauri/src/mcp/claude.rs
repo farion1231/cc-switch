@@ -3,15 +3,16 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
-use crate::error::AppError;
+use crate::app::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
 fn should_sync_claude_mcp() -> bool {
     // Claude 未安装/未初始化时：通常 ~/.claude 目录与 ~/.claude.json 都不存在。
     // 按用户偏好：此时跳过写入/删除，不创建任何文件或目录。
-    crate::config::get_claude_config_dir().exists() || crate::config::get_claude_mcp_path().exists()
+    crate::live_config::claude_code::get_claude_config_dir().exists()
+        || crate::live_config::claude_code::get_claude_mcp_path().exists()
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -43,13 +44,13 @@ pub fn sync_enabled_to_claude(config: &MultiAppConfig) -> Result<(), AppError> {
         return Ok(());
     }
     let enabled = collect_enabled_servers(&config.mcp.claude);
-    crate::claude_mcp::set_mcp_servers_map(&enabled)
+    crate::mcp::claude_mcp::set_mcp_servers_map(&enabled)
 }
 
 /// 从 ~/.claude.json 导入 mcpServers 到统一结构（v3.7.0+）
 /// 已存在的服务器将启用 Claude 应用，不覆盖其他字段和应用状态
 pub fn import_from_claude(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let text_opt = crate::claude_mcp::read_mcp_json()?;
+    let text_opt = crate::mcp::claude_mcp::read_mcp_json()?;
     let Some(text) = text_opt else { return Ok(0) };
 
     let v: Value = serde_json::from_str(&text)
@@ -122,14 +123,14 @@ pub fn sync_single_server_to_claude(
         return Ok(());
     }
     // 读取现有的 MCP 配置
-    let current = crate::claude_mcp::read_mcp_servers_map()?;
+    let current = crate::mcp::claude_mcp::read_mcp_servers_map()?;
 
     // 创建新的 HashMap，包含现有的所有服务器 + 当前要同步的服务器
     let mut updated = current;
     updated.insert(id.to_string(), server_spec.clone());
 
     // 写回
-    crate::claude_mcp::set_mcp_servers_map(&updated)
+    crate::mcp::claude_mcp::set_mcp_servers_map(&updated)
 }
 
 /// 从 Claude live 配置中移除单个 MCP 服务器
@@ -138,11 +139,11 @@ pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
         return Ok(());
     }
     // 读取现有的 MCP 配置
-    let mut current = crate::claude_mcp::read_mcp_servers_map()?;
+    let mut current = crate::mcp::claude_mcp::read_mcp_servers_map()?;
 
     // 移除指定服务器
     current.remove(id);
 
     // 写回
-    crate::claude_mcp::set_mcp_servers_map(&current)
+    crate::mcp::claude_mcp::set_mcp_servers_map(&current)
 }

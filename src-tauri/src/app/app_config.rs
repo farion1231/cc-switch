@@ -303,7 +303,7 @@ impl Default for McpRoot {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PromptConfig {
     #[serde(default)]
-    pub prompts: HashMap<String, crate::prompt::Prompt>,
+    pub prompts: HashMap<String, crate::prompts::Prompt>,
 }
 
 /// Prompt 根：按客户端分开维护
@@ -330,10 +330,10 @@ pub struct PromptRoot {
     pub hermes: PromptConfig,
 }
 
+use crate::app::AppError;
+use crate::app::ProviderManager;
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
-use crate::error::AppError;
-use crate::prompt_files::prompt_file_path;
-use crate::provider::ProviderManager;
+use crate::prompts::files::prompt_file_path;
 
 /// 应用类型
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -782,7 +782,7 @@ impl MultiAppConfig {
             });
 
         let id = format!("auto-imported-{timestamp}");
-        let prompt = crate::prompt::Prompt {
+        let prompt = crate::prompts::Prompt {
             id: id.clone(),
             name: format!(
                 "Auto-imported Prompt {}",
@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     fn write_prompt_file(app: AppType, content: &str) {
-        let path = crate::prompt_files::prompt_file_path(&app).expect("prompt path");
+        let path = crate::prompts::files::prompt_file_path(&app).expect("prompt path");
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("create parent dir");
         }

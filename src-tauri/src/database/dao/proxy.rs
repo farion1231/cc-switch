@@ -4,7 +4,7 @@
 
 use std::str::FromStr;
 
-use crate::error::AppError;
+use crate::app::AppError;
 use crate::proxy::types::*;
 use rust_decimal::Decimal;
 
@@ -891,8 +891,8 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use crate::app::AppError;
     use crate::database::Database;
-    use crate::error::AppError;
 
     #[tokio::test]
     async fn test_default_cost_multiplier_round_trip() -> Result<(), AppError> {

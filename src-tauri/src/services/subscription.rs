@@ -8,8 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::collections::HashMap;
 
-use crate::config;
-
 // ── 数据类型 ──────────────────────────────────────────────
 
 /// 凭据状态
@@ -155,7 +153,8 @@ fn read_claude_credentials_from_keychain(
 
 /// 从文件读取 Claude 凭据
 fn read_claude_credentials_from_file() -> (Option<String>, CredentialStatus, Option<String>) {
-    let cred_path = config::get_claude_config_dir().join(".credentials.json");
+    let cred_path =
+        crate::live_config::claude_code::get_claude_config_dir().join(".credentials.json");
 
     if !cred_path.exists() {
         return (None, CredentialStatus::NotFound, None);
@@ -515,7 +514,7 @@ fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
 
 /// 从文件读取 Codex 凭据
 fn read_codex_credentials_from_file() -> CodexCredentials {
-    let auth_path = crate::codex_config::get_codex_auth_path();
+    let auth_path = crate::live_config::codex::get_codex_auth_path();
 
     if !auth_path.exists() {
         return (None, None, CredentialStatus::NotFound, None);
@@ -888,7 +887,7 @@ fn parse_gemini_keychain_json(content: &str) -> GeminiCredentials {
 
 /// 从文件读取 Gemini 凭据
 fn read_gemini_credentials_from_file() -> GeminiCredentials {
-    let cred_path = crate::gemini_config::get_gemini_dir().join("oauth_creds.json");
+    let cred_path = crate::live_config::gemini::get_gemini_dir().join("oauth_creds.json");
     if !cred_path.exists() {
         return (None, None, CredentialStatus::NotFound, None);
     }

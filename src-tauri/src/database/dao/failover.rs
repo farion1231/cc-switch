@@ -2,9 +2,9 @@
 //!
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
+use crate::app::AppError;
+use crate::app::Provider;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
-use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 
 /// 故障转移队列条目（简化版，用于前端展示）

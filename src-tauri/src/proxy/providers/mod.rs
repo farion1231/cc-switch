@@ -36,8 +36,8 @@ pub mod transform_codex_chat;
 pub mod transform_gemini;
 pub mod transform_responses;
 
-use crate::app_config::AppType;
-use crate::provider::Provider;
+use crate::app::app_config::AppType;
+use crate::app::Provider;
 use serde::{Deserialize, Serialize};
 
 // 公开导出

@@ -2,8 +2,8 @@
 //!
 //! Aggregates proxy_request_logs into daily rollups and prunes old detail rows.
 
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
@@ -100,7 +100,7 @@ impl Database {
                     );
                     // 归档触发了表结构变化，前端 30 天前的统计可能跟着变，
                     // 通知一次让 UsageDashboard 重拉数据
-                    crate::usage_events::notify_log_recorded();
+                    crate::usage::events::notify_log_recorded();
                 }
                 Ok(deleted)
             }
@@ -182,8 +182,8 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::compute_local_midnight_cutoff;
+    use crate::app::AppError;
     use crate::database::Database;
-    use crate::error::AppError;
     use chrono::{Local, TimeZone};
 
     fn local_dt(

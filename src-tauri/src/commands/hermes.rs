@@ -2,8 +2,7 @@ use std::time::Duration;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::hermes_config;
-use crate::store::AppState;
+use crate::app::AppState;
 
 /// Error string returned when `open_hermes_web_ui` cannot reach the Hermes
 /// FastAPI server. Kept in sync with the `HERMES_WEB_OFFLINE_ERROR` constant
@@ -27,7 +26,7 @@ pub fn import_hermes_providers_from_live(state: State<'_, AppState>) -> Result<u
 /// Get provider names in the Hermes live config.
 #[tauri::command]
 pub fn get_hermes_live_provider_ids() -> Result<Vec<String>, String> {
-    hermes_config::get_providers()
+    crate::live_config::hermes::get_providers()
         .map(|providers| providers.keys().cloned().collect())
         .map_err(|e| e.to_string())
 }
@@ -37,7 +36,7 @@ pub fn get_hermes_live_provider_ids() -> Result<Vec<String>, String> {
 pub fn get_hermes_live_provider(
     #[allow(non_snake_case)] providerId: String,
 ) -> Result<Option<serde_json::Value>, String> {
-    hermes_config::get_provider(&providerId).map_err(|e| e.to_string())
+    crate::live_config::hermes::get_provider(&providerId).map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -47,8 +46,9 @@ pub fn get_hermes_live_provider(
 /// Get Hermes model config (model section of config.yaml). Read-only — writes
 /// happen implicitly through `apply_switch_defaults` when switching providers.
 #[tauri::command]
-pub fn get_hermes_model_config() -> Result<Option<hermes_config::HermesModelConfig>, String> {
-    hermes_config::get_model_config().map_err(|e| e.to_string())
+pub fn get_hermes_model_config(
+) -> Result<Option<crate::live_config::hermes::HermesModelConfig>, String> {
+    crate::live_config::hermes::get_model_config().map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -56,26 +56,30 @@ pub fn get_hermes_model_config() -> Result<Option<hermes_config::HermesModelConf
 // ============================================================================
 
 #[tauri::command]
-pub fn get_hermes_memory(kind: hermes_config::MemoryKind) -> Result<String, String> {
-    hermes_config::read_memory(kind).map_err(|e| e.to_string())
+pub fn get_hermes_memory(kind: crate::live_config::hermes::MemoryKind) -> Result<String, String> {
+    crate::live_config::hermes::read_memory(kind).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn set_hermes_memory(kind: hermes_config::MemoryKind, content: String) -> Result<(), String> {
-    hermes_config::write_memory(kind, &content).map_err(|e| e.to_string())
+pub fn set_hermes_memory(
+    kind: crate::live_config::hermes::MemoryKind,
+    content: String,
+) -> Result<(), String> {
+    crate::live_config::hermes::write_memory(kind, &content).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_hermes_memory_limits() -> Result<hermes_config::HermesMemoryLimits, String> {
-    hermes_config::read_memory_limits().map_err(|e| e.to_string())
+pub fn get_hermes_memory_limits() -> Result<crate::live_config::hermes::HermesMemoryLimits, String>
+{
+    crate::live_config::hermes::read_memory_limits().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_hermes_memory_enabled(
-    kind: hermes_config::MemoryKind,
+    kind: crate::live_config::hermes::MemoryKind,
     enabled: bool,
-) -> Result<hermes_config::HermesWriteOutcome, String> {
-    hermes_config::set_memory_enabled(kind, enabled).map_err(|e| e.to_string())
+) -> Result<crate::live_config::hermes::HermesWriteOutcome, String> {
+    crate::live_config::hermes::set_memory_enabled(kind, enabled).map_err(|e| e.to_string())
 }
 
 // ============================================================================

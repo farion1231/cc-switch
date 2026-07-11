@@ -17,11 +17,11 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::database::Profile;
-use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
-use crate::store::AppState;
 
 /// Profile 操作的应用分组：项目实体全应用共享，但快照/应用/当前指针按组进行。
 ///

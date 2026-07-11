@@ -812,9 +812,9 @@ fn format_headers(headers: &HeaderMap) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::AppError;
+    use crate::app::ProviderMeta;
     use crate::database::Database;
-    use crate::error::AppError;
-    use crate::provider::ProviderMeta;
     use crate::proxy::failover_switch::FailoverSwitchManager;
     use crate::proxy::provider_router::ProviderRouter;
     use crate::proxy::providers::{

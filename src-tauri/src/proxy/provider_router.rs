@@ -2,10 +2,10 @@
 //!
 //! 负责选择和管理代理目标供应商，实现智能故障转移
 
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::Provider;
 use crate::database::Database;
-use crate::error::AppError;
-use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
 use std::collections::HashMap;
 use std::str::FromStr;

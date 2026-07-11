@@ -1,8 +1,8 @@
+use crate::app::AppError;
+use crate::app::AppState;
+use crate::app::Provider;
 use crate::config::{atomic_write, write_json_file};
-use crate::error::AppError;
-use crate::opencode_config::get_opencode_dir;
-use crate::provider::Provider;
-use crate::store::AppState;
+use crate::live_config::opencode::get_opencode_dir;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -180,7 +180,7 @@ impl OmoService {
 
         let previous_contents = Self::snapshot_config_file(&config_path)?;
         write_json_file(&config_path, &merged)?;
-        if let Err(err) = crate::opencode_config::add_plugin(v.plugin_name) {
+        if let Err(err) = crate::live_config::opencode::add_plugin(v.plugin_name) {
             if let Err(rollback_err) =
                 Self::restore_config_file(&config_path, previous_contents.as_deref())
             {
@@ -210,7 +210,7 @@ impl OmoService {
         if !deleted_paths.is_empty() {
             log::info!("{} config files deleted: {deleted_paths:?}", v.label);
         }
-        crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
+        crate::live_config::opencode::remove_plugins_by_prefixes(v.plugin_prefixes)?;
         Ok(())
     }
 
@@ -245,7 +245,7 @@ impl OmoService {
     pub fn import_from_local(
         state: &AppState,
         v: &OmoVariant,
-    ) -> Result<crate::provider::Provider, AppError> {
+    ) -> Result<crate::app::Provider, AppError> {
         let actual_path = Self::resolve_local_config_path(v)?;
         let obj = Self::read_jsonc_object(&actual_path)?;
 
@@ -273,7 +273,7 @@ impl OmoService {
         let settings_config =
             serde_json::to_value(&settings).unwrap_or_else(|_| serde_json::json!({}));
 
-        let provider = crate::provider::Provider {
+        let provider = crate::app::Provider {
             id: provider_id,
             name,
             settings_config,

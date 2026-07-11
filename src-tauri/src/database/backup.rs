@@ -3,8 +3,8 @@
 //! 提供 SQL 导出/导入和二进制快照备份功能。
 
 use super::{lock_conn, Database};
+use crate::app::AppError;
 use crate::config::get_app_config_dir;
-use crate::error::AppError;
 use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
 use rusqlite::types::ValueRef;
@@ -690,7 +690,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::Database;
-    use crate::error::AppError;
+    use crate::app::AppError;
     use crate::settings::{update_settings, AppSettings};
     use serial_test::serial;
 

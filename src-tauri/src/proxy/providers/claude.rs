@@ -15,7 +15,7 @@
 //! - **GitHubCopilot**: GitHub Copilot (OAuth + Copilot Token)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
-use crate::provider::Provider;
+use crate::app::Provider;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
@@ -951,7 +951,7 @@ impl ProviderAdapter for ClaudeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderMeta;
+    use crate::app::ProviderMeta;
     use serde_json::json;
 
     fn create_provider(config: serde_json::Value) -> Provider {

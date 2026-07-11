@@ -2,7 +2,7 @@
 //!
 //! Common helpers for URL validation, Base64 decoding, etc.
 
-use crate::error::AppError;
+use crate::app::AppError;
 use base64::prelude::*;
 use url::Url;
 

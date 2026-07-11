@@ -2,8 +2,8 @@
 //!
 //! 提供键值对形式的通用设置存储。
 
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
 use rusqlite::params;
 
 impl Database {

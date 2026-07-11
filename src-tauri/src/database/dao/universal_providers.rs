@@ -2,9 +2,9 @@
 //!
 //! 提供统一供应商的 CRUD 操作。
 
+use crate::app::AppError;
+use crate::app::UniversalProvider;
 use crate::database::{lock_conn, to_json_string, Database};
-use crate::error::AppError;
-use crate::provider::UniversalProvider;
 use std::collections::HashMap;
 
 /// 统一供应商的 Settings Key

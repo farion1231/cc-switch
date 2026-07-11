@@ -5,14 +5,14 @@ use std::path::PathBuf;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::commands::sync_support::{
     post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
 };
 use crate::database::backup::BackupEntry;
 use crate::database::Database;
-use crate::error::AppError;
 use crate::services::provider::ProviderService;
-use crate::store::AppState;
 
 // ─── File import/export ──────────────────────────────────────
 

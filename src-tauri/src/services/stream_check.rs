@@ -21,9 +21,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-use crate::app_config::AppType;
-use crate::error::AppError;
-use crate::provider::Provider;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::Provider;
 use crate::proxy::providers::{get_adapter, ClaudeAdapter, ProviderAdapter};
 
 /// 健康状态枚举
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_merge_provider_config_override_and_default() {
-        use crate::provider::{ProviderMeta, ProviderTestConfig};
+        use crate::app::{ProviderMeta, ProviderTestConfig};
 
         let global = StreamCheckConfig::default();
 

@@ -9,7 +9,7 @@ use super::codex_chat_common::{
     response_function_call_item, response_function_call_item_with_namespace,
     split_leading_think_block,
 };
-use crate::provider::CodexChatReasoningConfig;
+use crate::app::CodexChatReasoningConfig;
 use crate::proxy::{
     error::ProxyError,
     json_canonical::{

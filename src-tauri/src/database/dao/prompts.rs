@@ -2,9 +2,9 @@
 //!
 //! 提供提示词（Prompt）的 CRUD 操作。
 
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
-use crate::prompt::Prompt;
+use crate::prompts::Prompt;
 use indexmap::IndexMap;
 use rusqlite::params;
 

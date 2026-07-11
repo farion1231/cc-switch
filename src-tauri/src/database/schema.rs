@@ -3,7 +3,7 @@
 //! 负责数据库表结构的创建和版本迁移。
 
 use super::{lock_conn, Database, SCHEMA_VERSION};
-use crate::error::AppError;
+use crate::app::AppError;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 

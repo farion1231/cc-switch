@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::session_manager;
+use crate::session::manager as session_manager;
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -45,7 +45,7 @@ pub async fn launch_session_terminal(
     };
 
     tauri::async_runtime::spawn_blocking(move || {
-        session_manager::terminal::launch_terminal(
+        crate::session::terminal::launch_terminal(
             &target,
             &command,
             cwd.as_deref(),

@@ -1,5 +1,5 @@
+use crate::app::AppError;
 use crate::config::{get_home_dir, write_text_file};
-use crate::error::AppError;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;

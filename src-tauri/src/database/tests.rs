@@ -3,8 +3,8 @@
 //! 包含 Schema 迁移和基本功能的测试。
 
 use super::*;
-use crate::app_config::MultiAppConfig;
-use crate::provider::{Provider, ProviderManager};
+use crate::app::app_config::MultiAppConfig;
+use crate::app::{Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;

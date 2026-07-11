@@ -1,14 +1,15 @@
 #![allow(non_snake_case)]
 
-use crate::config::ConfigStatus;
+use crate::live_config::claude_code::ConfigStatus;
 
 /// Claude 插件：获取 ~/.claude/config.json 状态
 #[tauri::command]
 pub async fn get_claude_plugin_status() -> Result<ConfigStatus, String> {
     crate::claude_plugin::claude_config_status()
         .map(|(exists, path)| ConfigStatus {
-            exists,
-            path: path.to_string_lossy().to_string(),
+            config_file_exists: exists,
+            config_file_path: path.to_string_lossy().to_string(),
+            mcp_config_path: String::new(),
         })
         .map_err(|e| e.to_string())
 }
@@ -38,11 +39,11 @@ pub async fn is_claude_plugin_applied() -> Result<bool, String> {
 /// Claude Code：跳过初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding=true）
 #[tauri::command]
 pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
-    crate::claude_mcp::set_has_completed_onboarding().map_err(|e| e.to_string())
+    crate::mcp::claude_mcp::set_has_completed_onboarding().map_err(|e| e.to_string())
 }
 
 /// Claude Code：恢复初次安装确认（删除 ~/.claude.json 的 hasCompletedOnboarding 字段）
 #[tauri::command]
 pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
-    crate::claude_mcp::clear_has_completed_onboarding().map_err(|e| e.to_string())
+    crate::mcp::claude_mcp::clear_has_completed_onboarding().map_err(|e| e.to_string())
 }

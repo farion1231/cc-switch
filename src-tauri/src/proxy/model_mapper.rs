@@ -2,8 +2,8 @@
 //!
 //! 在请求转发前，根据 Provider 配置替换请求中的模型名称
 
-use crate::claude_desktop_config::ONE_M_CONTEXT_MARKER;
-use crate::provider::Provider;
+use crate::app::Provider;
+use crate::live_config::claude_desktop::ONE_M_CONTEXT_MARKER;
 use serde_json::Value;
 
 /// 模型映射配置

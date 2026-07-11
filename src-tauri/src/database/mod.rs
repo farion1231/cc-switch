@@ -40,8 +40,8 @@ pub(crate) use dao::proxy::{
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
 
+use crate::app::AppError;
 use crate::config::get_app_config_dir;
-use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
 use std::sync::Mutex;

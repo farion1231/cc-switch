@@ -2,14 +2,14 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::session::manager::{SessionMessage, SessionMeta};
 
 use super::utils::{parse_timestamp_to_ms, truncate_summary};
 
 const PROVIDER_ID: &str = "gemini";
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let gemini_dir = crate::gemini_config::get_gemini_dir();
+    let gemini_dir = crate::live_config::gemini::get_gemini_dir();
     let tmp_dir = gemini_dir.join("tmp");
     if !tmp_dir.exists() {
         return Vec::new();

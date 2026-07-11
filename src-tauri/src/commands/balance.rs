@@ -1,4 +1,4 @@
-use crate::provider::UsageResult;
+use crate::app::UsageResult;
 
 #[tauri::command]
 pub async fn get_balance(base_url: String, api_key: String) -> Result<UsageResult, String> {

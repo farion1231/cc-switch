@@ -1,11 +1,11 @@
 use indexmap::IndexMap;
 
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::config::write_text_file;
-use crate::error::AppError;
-use crate::prompt::Prompt;
-use crate::prompt_files::prompt_file_path;
-use crate::store::AppState;
+use crate::prompts::files::prompt_file_path;
+use crate::prompts::Prompt;
 
 /// 安全地获取当前 Unix 时间戳
 fn get_unix_timestamp() -> Result<i64, AppError> {

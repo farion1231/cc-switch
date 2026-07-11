@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::error::AppError;
+use crate::app::AppError;
 use crate::services::s3::{self, S3Credentials};
 use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 

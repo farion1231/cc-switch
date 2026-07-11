@@ -30,8 +30,8 @@
 //!     args: ["-y", "@modelcontextprotocol/server-filesystem"]
 //! ```
 
+use crate::app::AppError;
 use crate::config::{atomic_write, get_app_config_dir};
-use crate::error::AppError;
 use crate::settings::{effective_backup_retain_count, get_hermes_override_dir};
 use chrono::Local;
 use serde::{Deserialize, Serialize};

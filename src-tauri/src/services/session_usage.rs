@@ -8,9 +8,9 @@
 //! ~/.claude/projects/*/*.jsonl → 增量解析 → 去重 → 费用计算 → proxy_request_logs 表
 //! ```
 
-use crate::config::get_claude_config_dir;
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
+use crate::live_config::claude_code::get_claude_config_dir;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
@@ -515,7 +515,7 @@ fn insert_session_log_entry(
 
     // 仅在确实写入新行时通知前端，避免 INSERT OR IGNORE 跳过时产生空刷新
     if inserted_rows > 0 {
-        crate::usage_events::notify_log_recorded();
+        crate::usage::events::notify_log_recorded();
     }
 
     Ok(true)

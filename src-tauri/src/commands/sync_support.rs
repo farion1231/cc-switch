@@ -1,11 +1,11 @@
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::database::Database;
-use crate::error::AppError;
 use crate::services::provider::ProviderService;
 use crate::settings;
-use crate::store::AppState;
 
 pub(crate) fn run_post_import_sync(db: Arc<Database>) -> Result<(), AppError> {
     let app_state = AppState::new(db);
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn post_sync_warning_from_result_returns_some_on_sync_error() {
         let warning =
-            post_sync_warning_from_result(Ok(Err(crate::error::AppError::Config("boom".into()))));
+            post_sync_warning_from_result(Ok(Err(crate::app::AppError::Config("boom".into()))));
         assert!(warning.is_some());
     }
 

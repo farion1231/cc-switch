@@ -2,9 +2,9 @@
 //!
 //! 提供 MCP 服务器的 CRUD 操作。
 
-use crate::app_config::{McpApps, McpServer};
+use crate::app::app_config::{McpApps, McpServer};
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
 use indexmap::IndexMap;
 use rusqlite::params;
 

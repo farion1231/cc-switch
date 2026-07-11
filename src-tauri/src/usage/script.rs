@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use url::{Host, Url};
 
-use crate::error::AppError;
+use crate::app::AppError;
 
 /// 执行用量查询脚本
 pub async fn execute_usage_script(

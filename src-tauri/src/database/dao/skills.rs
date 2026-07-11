@@ -6,9 +6,9 @@
 //! - Skills 使用统一的 id 主键，支持四应用启用标志
 //! - 实际文件存储在 ~/.cc-switch/skills/，同步到各应用目录
 
-use crate::app_config::{InstalledSkill, SkillApps};
+use crate::app::app_config::{InstalledSkill, SkillApps};
+use crate::app::AppError;
 use crate::database::{lock_conn, Database};
-use crate::error::AppError;
 use crate::services::skill::SkillRepo;
 use indexmap::IndexMap;
 use rusqlite::params;

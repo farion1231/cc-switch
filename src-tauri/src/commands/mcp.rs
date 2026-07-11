@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use serde::Serialize;
 use tauri::State;
 
-use crate::app_config::AppType;
-use crate::claude_mcp;
+use crate::app::app_config::AppType;
+use crate::app::AppState;
+use crate::mcp::claude_mcp;
 use crate::services::McpService;
-use crate::store::AppState;
 
 /// 获取 Claude MCP 状态
 #[tauri::command]
@@ -77,7 +77,7 @@ pub async fn upsert_mcp_server_in_config(
     spec: serde_json::Value,
     sync_other_side: Option<bool>,
 ) -> Result<bool, String> {
-    use crate::app_config::McpServer;
+    use crate::app::app_config::McpServer;
 
     let app_ty = AppType::from_str(&app).map_err(|e| e.to_string())?;
 
@@ -95,7 +95,7 @@ pub async fn upsert_mcp_server_in_config(
         existing
     } else {
         // 创建新服务器
-        let mut apps = crate::app_config::McpApps::default();
+        let mut apps = crate::app::app_config::McpApps::default();
         apps.set_enabled_for(&app_ty, true);
 
         // 尝试从 spec 中提取 name，否则使用 id
@@ -157,7 +157,7 @@ pub async fn set_mcp_enabled(
 // v3.7.0 新增：统一 MCP 管理命令
 // ============================================================================
 
-use crate::app_config::McpServer;
+use crate::app::app_config::McpServer;
 
 /// 获取所有 MCP 服务器（统一结构）
 #[tauri::command]

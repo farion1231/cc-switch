@@ -3,13 +3,13 @@
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
 };
-use crate::error::AppError;
 use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
-use crate::store::AppState;
 
 fn persist_sync_error(settings: &mut WebDavSyncSettings, error: &AppError, source: &str) {
     settings.status.last_error = Some(error.to_string());
@@ -174,7 +174,7 @@ mod tests {
         map_sync_result, persist_sync_error, require_enabled_webdav_settings,
         resolve_password_for_request, run_with_webdav_lock, webdav_sync_mutex,
     };
-    use crate::error::AppError;
+    use crate::app::AppError;
     use crate::settings::{AppSettings, WebDavSyncSettings};
     use serial_test::serial;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -284,7 +284,7 @@ mod tests {
 
         persist_sync_error(
             &mut current,
-            &crate::error::AppError::Config("boom".to_string()),
+            &crate::app::AppError::Config("boom".to_string()),
             "manual",
         );
 

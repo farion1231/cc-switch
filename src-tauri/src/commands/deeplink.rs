@@ -1,8 +1,8 @@
+use crate::app::AppState;
 use crate::deeplink::{
     import_mcp_from_deeplink, import_prompt_from_deeplink, import_provider_from_deeplink,
     import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest,
 };
-use crate::store::AppState;
 use tauri::State;
 
 /// Parse a deep link URL and return the parsed request for frontend confirmation

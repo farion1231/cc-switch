@@ -3,7 +3,7 @@ use reqwest::{Client, Url};
 use serde::Serialize;
 use std::time::Instant;
 
-use crate::error::AppError;
+use crate::app::AppError;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 8;
 const MAX_TIMEOUT_SECS: u64 = 30;

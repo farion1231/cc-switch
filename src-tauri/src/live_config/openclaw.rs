@@ -3,8 +3,8 @@
 //! 处理 `~/.openclaw/openclaw.json` 配置文件的读写操作（JSON5 格式）。
 //! OpenClaw 使用累加式供应商管理，所有供应商配置共存于同一配置文件中。
 
+use crate::app::AppError;
 use crate::config::{atomic_write, get_app_config_dir};
-use crate::error::AppError;
 use crate::settings::{effective_backup_retain_count, get_openclaw_override_dir};
 use chrono::Local;
 use indexmap::IndexMap;

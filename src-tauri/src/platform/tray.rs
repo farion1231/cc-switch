@@ -7,9 +7,9 @@ use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, Submenu, SubmenuBu
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::app_config::AppType;
-use crate::error::AppError;
-use crate::store::AppState;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const H_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_FIVE_HOUR];
@@ -208,14 +208,14 @@ fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
     parts
 }
 
-fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
+fn tier_pct(data: &crate::app::UsageData) -> Option<f64> {
     match (data.used, data.total) {
         (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
         _ => None,
     }
 }
 
-fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
+fn format_script_summary(result: &crate::app::UsageResult) -> Option<String> {
     if !result.success {
         return None;
     }
@@ -259,7 +259,7 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
     }
 }
 
-fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> bool {
+fn provider_uses_official_subscription(provider: &crate::app::Provider) -> bool {
     provider
         .meta
         .as_ref()
@@ -274,7 +274,7 @@ fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> 
 fn format_usage_suffix(
     app_state: &AppState,
     app_type: &AppType,
-    provider: &crate::provider::Provider,
+    provider: &crate::app::Provider,
     provider_id: &str,
 ) -> Option<String> {
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
@@ -313,8 +313,8 @@ fn format_usage_suffix(
 
 /// 对供应商列表排序：sort_index → created_at → name
 fn sort_providers(
-    providers: &indexmap::IndexMap<String, crate::provider::Provider>,
-) -> Vec<(&String, &crate::provider::Provider)> {
+    providers: &indexmap::IndexMap<String, crate::app::Provider>,
+) -> Vec<(&String, &crate::app::Provider)> {
     let mut sorted: Vec<_> = providers.iter().collect();
     sorted.sort_by(|(_, a), (_, b)| {
         match (a.sort_index, b.sort_index) {
@@ -676,7 +676,7 @@ pub fn create_tray_menu(
                 let is_official_blocked =
                     is_app_taken_over && provider.category.as_deref() == Some("official");
                 let label = if is_official_blocked {
-                    format!("{} \u{26D4}", &provider.name) // ⛔ emoji
+                    format!("{} \u{26D4}", provider.name) // ⛔ emoji
                 } else {
                     provider.name.clone()
                 };
@@ -793,7 +793,7 @@ pub fn create_tray_menu(
         "lightweight_mode",
         tray_texts.lightweight_mode,
         true,
-        crate::lightweight::is_lightweight_mode(),
+        crate::platform::lightweight::is_lightweight_mode(),
         None::<&str>,
     )
     .map_err(|e| AppError::Message(format!("创建轻量模式菜单失败: {e}")))?;
@@ -854,7 +854,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
 }
 
 pub fn refresh_tray_menu(app: &tauri::AppHandle) {
-    use crate::store::AppState;
+    use crate::app::AppState;
 
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(new_menu) = create_tray_menu(app, state.inner()) {
@@ -902,14 +902,14 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
                 let _ = window.set_focus();
                 #[cfg(target_os = "linux")]
                 {
-                    crate::linux_fix::nudge_main_window(window.clone());
+                    crate::platform::linux_fix::nudge_main_window(window.clone());
                 }
                 #[cfg(target_os = "macos")]
                 {
                     apply_tray_policy(app, true);
                 }
-            } else if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            } else if crate::platform::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::platform::lightweight::exit_lightweight_mode(app) {
                     log::error!("退出轻量模式重建窗口失败: {e}");
                 }
             }
@@ -920,11 +920,11 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             }
         }
         "lightweight_mode" => {
-            if crate::lightweight::is_lightweight_mode() {
-                if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
+            if crate::platform::lightweight::is_lightweight_mode() {
+                if let Err(e) = crate::platform::lightweight::exit_lightweight_mode(app) {
                     log::error!("退出轻量模式失败: {e}");
                 }
-            } else if let Err(e) = crate::lightweight::enter_lightweight_mode(app) {
+            } else if let Err(e) = crate::platform::lightweight::enter_lightweight_mode(app) {
                 log::error!("进入轻量模式失败: {e}");
             }
         }
@@ -1069,7 +1069,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{format_script_summary, format_subscription_summary, TRAY_ID};
-    use crate::provider::{UsageData, UsageResult};
+    use crate::app::{UsageData, UsageResult};
     use crate::services::subscription::{
         CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
         TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,

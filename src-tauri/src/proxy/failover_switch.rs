@@ -5,8 +5,8 @@
 //! - 托盘菜单更新
 //! - 前端事件发射
 
+use crate::app::AppError;
 use crate::database::Database;
-use crate::error::AppError;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -98,7 +98,7 @@ impl FailoverSwitchManager {
         let mut switched = false;
 
         if let Some(app) = app_handle {
-            if let Some(app_state) = app.try_state::<crate::store::AppState>() {
+            if let Some(app_state) = app.try_state::<crate::app::AppState>() {
                 switched = app_state
                     .proxy_service
                     .hot_switch_provider(app_type, provider_id)
@@ -110,8 +110,10 @@ impl FailoverSwitchManager {
                     return Ok(false);
                 }
 
-                if let Ok(new_menu) = crate::tray::create_tray_menu(app, app_state.inner()) {
-                    if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
+                if let Ok(new_menu) =
+                    crate::platform::tray::create_tray_menu(app, app_state.inner())
+                {
+                    if let Some(tray) = app.tray_by_id(crate::platform::tray::TRAY_ID) {
                         if let Err(e) = tray.set_menu(Some(new_menu)) {
                             log::error!("[Failover] 更新托盘菜单失败: {e}");
                         }

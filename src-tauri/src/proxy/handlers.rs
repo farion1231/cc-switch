@@ -42,7 +42,7 @@ use super::{
     usage::parser::TokenUsage,
     ProxyError,
 };
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
@@ -81,10 +81,10 @@ pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxySta
 /// cc-switch–owned `model_catalog_json`, using the same path ownership rules as
 /// Codex live-setting import.
 pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
-    let generated_path = crate::codex_config::get_codex_model_catalog_path();
-    let active_catalog_path = match crate::codex_config::read_codex_config_text() {
+    let generated_path = crate::live_config::codex::get_codex_model_catalog_path();
+    let active_catalog_path = match crate::live_config::codex::read_codex_config_text() {
         Ok(config_text) => {
-            crate::codex_config::resolve_cc_switch_catalog_path(&config_text, &generated_path)
+            crate::live_config::codex::resolve_cc_switch_catalog_path(&config_text, &generated_path)
         }
         Err(_) => None,
     };
@@ -148,7 +148,7 @@ pub async fn handle_claude_desktop_models(
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
-    let response = crate::claude_desktop_config::model_list_response(provider)
+    let response = crate::live_config::claude_desktop::model_list_response(provider)
         .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
     Ok(Json(response))
 }
@@ -257,8 +257,9 @@ fn validate_claude_desktop_gateway_auth(
     state: &ProxyState,
     headers: &axum::http::HeaderMap,
 ) -> Result<(), ProxyError> {
-    let expected = crate::claude_desktop_config::get_or_create_gateway_token(state.db.as_ref())
-        .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+    let expected =
+        crate::live_config::claude_desktop::get_or_create_gateway_token(state.db.as_ref())
+            .map_err(|e| ProxyError::AuthError(e.to_string()))?;
     let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Err(ProxyError::AuthError(
             "Claude Desktop gateway 缺少 Authorization 头".to_string(),

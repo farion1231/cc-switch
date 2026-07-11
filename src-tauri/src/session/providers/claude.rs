@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::config::get_claude_config_dir;
-use crate::session_manager::{SessionMessage, SessionMeta};
+use crate::live_config::claude_code::get_claude_config_dir;
+use crate::session::manager::{SessionMessage, SessionMeta};
 
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,

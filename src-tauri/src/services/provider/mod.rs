@@ -12,13 +12,13 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::AppState;
+use crate::app::{Provider, UsageResult};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
-use crate::error::AppError;
-use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
-use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
@@ -110,15 +110,16 @@ pub struct SwitchResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::AppState;
     #[cfg(any(target_os = "macos", windows))]
-    use crate::claude_desktop_config::PROFILE_ID;
-    use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
+    use crate::app::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
+    use crate::app::{ProviderMeta, UsageScript};
     use crate::database::Database;
     #[cfg(any(target_os = "macos", windows))]
-    use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::provider::{ProviderMeta, UsageScript};
+    use crate::live_config::claude_desktop::PROFILE_ID;
+    use crate::{get_claude_settings_path, read_json_file};
+    use crate::config::write_json_file;
     use crate::proxy::types::ProxyConfig;
-    use crate::store::AppState;
     use serde_json::json;
     use serial_test::serial;
     use std::env;
@@ -1296,7 +1297,7 @@ command = "legacy-cmd"
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
                 .expect("sync additive opencode providers");
 
-            let live_providers = crate::opencode_config::get_providers()
+            let live_providers = crate::live_config::opencode::get_providers()
                 .expect("read opencode providers after sync");
             assert!(
                 !live_providers.contains_key(&provider.id),
@@ -1316,7 +1317,7 @@ command = "legacy-cmd"
             ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
                 .expect("sync additive openclaw providers");
 
-            let live_providers = crate::openclaw_config::get_providers()
+            let live_providers = crate::live_config::openclaw::get_providers()
                 .expect("read openclaw providers after sync");
             assert!(
                 !live_providers.contains_key(&provider.id),
@@ -1330,8 +1331,11 @@ command = "legacy-cmd"
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");
-            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
-                .expect("seed opencode live provider");
+            crate::live_config::opencode::set_provider(
+                &provider.id,
+                provider.settings_config.clone(),
+            )
+            .expect("seed opencode live provider");
             state
                 .db
                 .save_provider(AppType::OpenCode.as_str(), &provider)
@@ -1348,7 +1352,7 @@ command = "legacy-cmd"
                 .expect("sync legacy opencode provider");
 
             let live_providers =
-                crate::opencode_config::get_providers().expect("read opencode providers");
+                crate::live_config::opencode::get_providers().expect("read opencode providers");
             assert_eq!(
                 live_providers
                     .get(&provider.id)
@@ -1374,7 +1378,7 @@ command = "legacy-cmd"
                 .expect("sync legacy opencode provider after reset");
 
             let live_providers =
-                crate::opencode_config::get_providers().expect("read opencode providers");
+                crate::live_config::opencode::get_providers().expect("read opencode providers");
             assert!(
                 live_providers.contains_key(&provider.id),
                 "legacy opencode provider should be restored when live config is reset"
@@ -1402,7 +1406,7 @@ command = "legacy-cmd"
                 .expect("sync legacy openclaw provider after reset");
 
             let live_providers =
-                crate::openclaw_config::get_providers().expect("read openclaw providers");
+                crate::live_config::openclaw::get_providers().expect("read openclaw providers");
             assert!(
                 live_providers.contains_key(&provider.id),
                 "legacy openclaw provider should be restored when live config is reset"
@@ -1415,8 +1419,11 @@ command = "legacy-cmd"
     fn import_opencode_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let provider = opencode_provider("imported-opencode");
-            crate::opencode_config::set_provider(&provider.id, provider.settings_config.clone())
-                .expect("seed opencode live provider");
+            crate::live_config::opencode::set_provider(
+                &provider.id,
+                provider.settings_config.clone(),
+            )
+            .expect("seed opencode live provider");
 
             let imported = import_opencode_providers_from_live(state)
                 .expect("import opencode providers from live");
@@ -1452,7 +1459,7 @@ command = "legacy-cmd"
             live_settings.as_object_mut().unwrap().remove("name");
             live_settings["npm"] = Value::String("@ai-sdk/anthropic".to_string());
             live_settings["models"]["gpt-4o"]["name"] = Value::String("Claude Sonnet".to_string());
-            crate::opencode_config::set_provider(&provider.id, live_settings)
+            crate::live_config::opencode::set_provider(&provider.id, live_settings)
                 .expect("seed edited live opencode provider");
 
             let updated = import_opencode_providers_from_live(state)
@@ -1483,8 +1490,11 @@ command = "legacy-cmd"
                     "name": "Claude Sonnet 4"
                 }
             ]);
-            crate::openclaw_config::set_provider(&provider.id, provider.settings_config.clone())
-                .expect("seed openclaw live provider");
+            crate::live_config::openclaw::set_provider(
+                &provider.id,
+                provider.settings_config.clone(),
+            )
+            .expect("seed openclaw live provider");
 
             let imported = import_openclaw_providers_from_live(state)
                 .expect("import openclaw providers from live");
@@ -1525,7 +1535,7 @@ command = "legacy-cmd"
             let mut live_settings = provider.settings_config.clone();
             live_settings["baseUrl"] = Value::String("https://api.example.com/v1".to_string());
             live_settings["models"][0]["name"] = Value::String("Claude Sonnet 4.1".to_string());
-            crate::openclaw_config::set_provider(&provider.id, live_settings)
+            crate::live_config::openclaw::set_provider(&provider.id, live_settings)
                 .expect("seed edited live openclaw provider");
 
             let updated = import_openclaw_providers_from_live(state)
@@ -1562,7 +1572,7 @@ command = "legacy-cmd"
             let mut live_settings = provider.settings_config.clone();
             live_settings["base_url"] = Value::String("https://api.hermes.example/v1".to_string());
             live_settings["models"]["gpt-4o"]["name"] = Value::String("GPT-4o Updated".to_string());
-            crate::hermes_config::set_provider(&provider.id, live_settings)
+            crate::live_config::hermes::set_provider(&provider.id, live_settings)
                 .expect("seed edited live hermes provider");
 
             let updated = import_hermes_providers_from_live(state)
@@ -2522,9 +2532,10 @@ impl ProviderService {
         // only shuffle entries in custom_providers[] while Hermes keeps using
         // whatever `model.provider` was set before.
         if matches!(app_type, AppType::Hermes) {
-            if let Err(e) =
-                crate::hermes_config::apply_switch_defaults(&provider.id, &provider.settings_config)
-            {
+            if let Err(e) = crate::live_config::hermes::apply_switch_defaults(
+                &provider.id,
+                &provider.settings_config,
+            ) {
                 log::warn!(
                     "Failed to update Hermes model defaults after switching to '{}': {e}",
                     provider.id
@@ -3035,11 +3046,11 @@ impl ProviderService {
         // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
         //   属于可共享偏好，保留。
         if root
-            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .get(crate::live_config::codex::CODEX_WEB_SEARCH_FIELD)
             .and_then(|item| item.as_str())
-            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+            == Some(crate::live_config::codex::CODEX_WEB_SEARCH_DISABLED)
         {
-            root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
+            root.remove(crate::live_config::codex::CODEX_WEB_SEARCH_FIELD);
         }
 
         // Clean up multiple empty lines (keep at most one blank line).
@@ -3267,7 +3278,7 @@ impl ProviderService {
                 }
             }
             AppType::ClaudeDesktop => {
-                crate::claude_desktop_config::validate_provider(provider)?;
+                crate::live_config::claude_desktop::validate_provider(provider)?;
             }
             AppType::Codex => {
                 let settings = provider.settings_config.as_object().ok_or_else(|| {
@@ -3305,12 +3316,12 @@ impl ProviderService {
                         ));
                     }
                     if let Some(cfg_text) = config_value.as_str() {
-                        crate::codex_config::validate_config_toml(cfg_text)?;
+                        crate::live_config::codex::validate_config_toml(cfg_text)?;
                     }
                 }
             }
             AppType::Gemini => {
-                use crate::gemini_config::validate_gemini_settings;
+                use crate::live_config::gemini::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
             AppType::OpenCode => {
@@ -3411,7 +3422,7 @@ impl ProviderService {
             }
             AppType::ClaudeDesktop => {
                 let credentials =
-                    crate::claude_desktop_config::direct_gateway_credentials(provider)?;
+                    crate::live_config::claude_desktop::direct_gateway_credentials(provider)?;
                 Ok((credentials.api_key, credentials.base_url))
             }
             AppType::Codex => {
@@ -3433,7 +3444,7 @@ impl ProviderService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                let api_key = crate::codex_config::extract_codex_api_key(
+                let api_key = crate::live_config::codex::extract_codex_api_key(
                     provider.settings_config.get("auth"),
                     Some(config_toml),
                 )
@@ -3474,7 +3485,7 @@ impl ProviderService {
                 Ok((api_key, base_url))
             }
             AppType::Gemini => {
-                use crate::gemini_config::json_to_env;
+                use crate::live_config::gemini::json_to_env;
 
                 let env_map = json_to_env(&provider.settings_config)?;
 
@@ -3640,7 +3651,7 @@ pub struct ProviderSortUpdate {
 // 统一供应商（Universal Provider）服务方法
 // ============================================================================
 
-use crate::provider::UniversalProvider;
+use crate::app::UniversalProvider;
 use std::collections::HashMap;
 
 impl ProviderService {

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
-use crate::error::AppError;
+use crate::app::AppError;
 
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{

@@ -1,7 +1,7 @@
 use super::provider::{sanitize_claude_settings_for_live, ProviderService};
-use crate::app_config::{AppType, MultiAppConfig};
-use crate::error::AppError;
-use crate::provider::Provider;
+use crate::app::app_config::{AppType, MultiAppConfig};
+use crate::app::AppError;
+use crate::app::Provider;
 use chrono::Utc;
 use serde_json::Value;
 use std::fs;
@@ -161,7 +161,7 @@ impl ConfigService {
 
         let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
-        crate::codex_config::write_codex_provider_live_with_catalog(
+        crate::live_config::codex::write_codex_provider_live_with_catalog(
             &provider.settings_config,
             provider.category.as_deref(),
             auth,
@@ -172,7 +172,7 @@ impl ConfigService {
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
         // MCP 的启用/禁用应通过 McpService::toggle_app 进行
 
-        let cfg_text_after = crate::codex_config::read_and_validate_codex_config_text()?;
+        let cfg_text_after = crate::live_config::codex::read_and_validate_codex_config_text()?;
         if let Some(manager) = config.get_manager_mut(&AppType::Codex) {
             if let Some(target) = manager.providers.get_mut(provider_id) {
                 if let Some(obj) = target.settings_config.as_object_mut() {
@@ -181,11 +181,11 @@ impl ConfigService {
                         "config": cfg_text_after,
                     });
                     let restore_provider_token =
-                        crate::codex_config::should_restore_codex_provider_token_for_backfill(
+                        crate::live_config::codex::should_restore_codex_provider_token_for_backfill(
                             provider.category.as_deref(),
                             &provider.settings_config,
                         );
-                    crate::codex_config::restore_codex_settings_for_backfill(
+                    crate::live_config::codex::restore_codex_settings_for_backfill(
                         &mut restored,
                         &provider.settings_config,
                         restore_provider_token,
@@ -214,7 +214,7 @@ impl ConfigService {
     ) -> Result<(), AppError> {
         use crate::config::{read_json_file, write_json_file};
 
-        let settings_path = crate::config::get_claude_settings_path();
+        let settings_path = crate::live_config::claude_code::get_claude_settings_path();
         if let Some(parent) = settings_path.parent() {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
@@ -237,13 +237,13 @@ impl ConfigService {
         provider_id: &str,
         provider: &Provider,
     ) -> Result<(), AppError> {
-        use crate::gemini_config::{env_to_json, read_gemini_env};
+        use crate::live_config::gemini::{env_to_json, read_gemini_env};
 
         ProviderService::write_gemini_live(provider)?;
 
         // 读回实际写入的内容并更新到配置中（包含 settings.json）
         let live_after_env = read_gemini_env()?;
-        let settings_path = crate::gemini_config::get_gemini_settings_path();
+        let settings_path = crate::live_config::gemini::get_gemini_settings_path();
         let live_after_config = if settings_path.exists() {
             crate::config::read_json_file(&settings_path)?
         } else {

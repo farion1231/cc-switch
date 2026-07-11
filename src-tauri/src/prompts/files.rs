@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use crate::app_config::AppType;
-use crate::codex_config::get_codex_auth_path;
-use crate::config::get_claude_settings_path;
-use crate::error::AppError;
-use crate::gemini_config::get_gemini_dir;
-use crate::openclaw_config::get_openclaw_dir;
-use crate::opencode_config::get_opencode_dir;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::live_config::claude_code::get_claude_settings_path;
+use crate::live_config::codex::get_codex_auth_path;
+use crate::live_config::gemini::get_gemini_dir;
+use crate::live_config::openclaw::get_openclaw_dir;
+use crate::live_config::opencode::get_opencode_dir;
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
@@ -24,7 +24,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => get_gemini_dir(),
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
-        AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Hermes => crate::live_config::hermes::get_hermes_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

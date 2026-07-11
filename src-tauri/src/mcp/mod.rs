@@ -12,8 +12,10 @@
 //! - `hermes` - Hermes MCP 同步和导入
 
 mod claude;
+pub mod claude_mcp;
 mod codex;
 mod gemini;
+mod gemini_mcp;
 mod hermes;
 mod opencode;
 mod validation;

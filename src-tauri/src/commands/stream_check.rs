@@ -3,13 +3,13 @@
 //! 注意：本检查只探测 base_url 是否可达，不发真实大模型请求，也不触碰故障转移
 //! 熔断器（熔断器由真实转发流量驱动）。详见 `services::stream_check`。
 
-use crate::app_config::AppType;
+use crate::app::app_config::AppType;
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::commands::copilot::CopilotAuthState;
-use crate::error::AppError;
 use crate::services::stream_check::{
     HealthStatus, StreamCheckConfig, StreamCheckResult, StreamCheckService,
 };
-use crate::store::AppState;
 use std::collections::HashSet;
 use tauri::State;
 
@@ -123,7 +123,7 @@ pub fn save_stream_check_config(
 /// Copilot 供应商的 base_url 需要从 OAuth 管理器动态解析（按账号或默认端点）。
 /// `is_full_url` 的供应商已是完整地址，无需解析。
 async fn resolve_copilot_base_url_override(
-    provider: &crate::provider::Provider,
+    provider: &crate::app::Provider,
     copilot_state: &State<'_, CopilotAuthState>,
 ) -> Result<Option<String>, AppError> {
     let is_copilot = is_copilot_provider(provider);
@@ -151,7 +151,7 @@ async fn resolve_copilot_base_url_override(
     Ok(Some(endpoint))
 }
 
-fn is_copilot_provider(provider: &crate::provider::Provider) -> bool {
+fn is_copilot_provider(provider: &crate::app::Provider) -> bool {
     provider
         .meta
         .as_ref()
@@ -168,7 +168,7 @@ fn is_copilot_provider(provider: &crate::provider::Provider) -> bool {
 #[cfg(test)]
 mod tests {
     use super::is_copilot_provider;
-    use crate::provider::{Provider, ProviderMeta};
+    use crate::app::{Provider, ProviderMeta};
     use serde_json::json;
 
     #[test]

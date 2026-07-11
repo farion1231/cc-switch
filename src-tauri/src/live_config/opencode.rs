@@ -1,6 +1,6 @@
+use crate::app::AppError;
+use crate::app::OpenCodeProviderConfig;
 use crate::config::write_json_file;
-use crate::error::AppError;
-use crate::provider::OpenCodeProviderConfig;
 use crate::settings::get_opencode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};

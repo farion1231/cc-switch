@@ -3,13 +3,13 @@
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
 };
-use crate::error::AppError;
 use crate::services::s3_sync as s3_sync_service;
 use crate::settings::{self, S3SyncSettings};
-use crate::store::AppState;
 
 fn persist_sync_error(settings: &mut S3SyncSettings, error: &AppError, source: &str) {
     settings.status.last_error = Some(error.to_string());
@@ -166,7 +166,7 @@ mod tests {
         map_sync_result, persist_sync_error, require_enabled_s3_settings,
         resolve_secret_for_request, run_with_s3_lock, s3_sync_mutex,
     };
-    use crate::error::AppError;
+    use crate::app::AppError;
     use crate::settings::{AppSettings, S3SyncSettings};
     use serial_test::serial;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -277,7 +277,7 @@ mod tests {
 
         persist_sync_error(
             &mut current,
-            &crate::error::AppError::Config("boom".to_string()),
+            &crate::app::AppError::Config("boom".to_string()),
             "manual",
         );
 

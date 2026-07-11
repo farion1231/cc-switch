@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
-use crate::error::AppError;
+use crate::app::AppError;
 use crate::services::s3_sync;
 use crate::settings::{self, S3SyncSettings};
 

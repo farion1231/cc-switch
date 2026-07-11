@@ -8,15 +8,15 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
-use crate::error::AppError;
+use crate::app::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app::AppError;
 
 use super::validation::{extract_server_spec, validate_server_spec};
 
 fn should_sync_codex_mcp() -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
-    crate::codex_config::get_codex_config_dir().exists()
+    crate::live_config::codex::get_codex_config_dir().exists()
 }
 
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
@@ -50,7 +50,7 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
 ///
 /// 已存在的服务器将启用 Codex 应用，不覆盖其他字段和应用状态
 pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError> {
-    let text = crate::codex_config::read_and_validate_codex_config_text()?;
+    let text = crate::live_config::codex::read_and_validate_codex_config_text()?;
     if text.trim().is_empty() {
         return Ok(0);
     }
@@ -290,7 +290,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     let enabled = collect_enabled_servers(&config.mcp.codex);
 
     // 2) 读取现有 config.toml 文本；保持无效 TOML 的错误返回（不覆盖文件）
-    let base_text = crate::codex_config::read_and_validate_codex_config_text()?;
+    let base_text = crate::live_config::codex::read_and_validate_codex_config_text()?;
 
     // 3) 使用 toml_edit 解析（允许空文件）
     let mut doc = if base_text.trim().is_empty() {
@@ -338,7 +338,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
 
     // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
     let new_text = doc.to_string();
-    let path = crate::codex_config::get_codex_config_path();
+    let path = crate::live_config::codex::get_codex_config_path();
     crate::config::write_text_file(&path, &new_text)?;
     Ok(())
 }
@@ -356,7 +356,7 @@ pub fn sync_single_server_to_codex(
     use toml_edit::Item;
 
     // 读取现有的 config.toml
-    let config_path = crate::codex_config::get_codex_config_path();
+    let config_path = crate::live_config::codex::get_codex_config_path();
 
     let mut doc = if config_path.exists() {
         let content =
@@ -404,7 +404,7 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    let config_path = crate::codex_config::get_codex_config_path();
+    let config_path = crate::live_config::codex::get_codex_config_path();
 
     if !config_path.exists() {
         return Ok(()); // 文件不存在，无需删除

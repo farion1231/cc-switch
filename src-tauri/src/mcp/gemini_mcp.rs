@@ -2,9 +2,9 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::app::AppError;
 use crate::config::atomic_write;
-use crate::error::AppError;
-use crate::gemini_config::get_gemini_settings_path;
+use crate::live_config::gemini::get_gemini_settings_path;
 
 /// 获取 Gemini MCP 配置文件路径（~/.gemini/settings.json）
 fn user_config_path() -> PathBuf {
@@ -49,7 +49,7 @@ pub fn read_mcp_servers_map() -> Result<std::collections::HashMap<String, Value>
         .unwrap_or_default();
 
     // 反向格式转换：Gemini 特有格式 → 统一 MCP 格式
-    for (_, spec) in servers.iter_mut() {
+    for spec in servers.values_mut() {
         if let Some(obj) = spec.as_object_mut() {
             // httpUrl → url + type: "http"
             if let Some(http_url) = obj.remove("httpUrl") {

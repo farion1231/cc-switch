@@ -1,10 +1,10 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
 
-use crate::app_config::{AppType, McpServer};
-use crate::error::AppError;
+use crate::app::app_config::{AppType, McpServer};
+use crate::app::AppError;
+use crate::app::AppState;
 use crate::mcp;
-use crate::store::AppState;
 
 /// MCP 相关业务逻辑（v3.7.0 统一结构）
 pub struct McpService;
@@ -282,7 +282,7 @@ impl McpService {
     /// 从 Claude 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_claude(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let mut temp_config = crate::app::app_config::MultiAppConfig::default();
 
         // 调用原有的导入逻辑（从 mcp.rs）
         let count = crate::mcp::import_from_claude(&mut temp_config)?;
@@ -320,7 +320,7 @@ impl McpService {
     /// 从 Codex 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_codex(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let mut temp_config = crate::app::app_config::MultiAppConfig::default();
 
         // 调用原有的导入逻辑（从 mcp.rs）
         let count = crate::mcp::import_from_codex(&mut temp_config)?;
@@ -358,7 +358,7 @@ impl McpService {
     /// 从 Gemini 导入 MCP（v3.7.0 已更新为统一结构）
     pub fn import_from_gemini(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let mut temp_config = crate::app::app_config::MultiAppConfig::default();
 
         // 调用原有的导入逻辑（从 mcp.rs）
         let count = crate::mcp::import_from_gemini(&mut temp_config)?;
@@ -396,7 +396,7 @@ impl McpService {
     /// 从 OpenCode 导入 MCP（v3.9.2+ 新增）
     pub fn import_from_opencode(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let mut temp_config = crate::app::app_config::MultiAppConfig::default();
 
         // 调用原有的导入逻辑（从 mcp/opencode.rs）
         let count = crate::mcp::import_from_opencode(&mut temp_config)?;
@@ -434,7 +434,7 @@ impl McpService {
     /// 从 Hermes 导入 MCP
     pub fn import_from_hermes(state: &AppState) -> Result<usize, AppError> {
         // 创建临时 MultiAppConfig 用于导入
-        let mut temp_config = crate::app_config::MultiAppConfig::default();
+        let mut temp_config = crate::app::app_config::MultiAppConfig::default();
 
         // 调用导入逻辑（从 mcp/hermes.rs）
         let count = crate::mcp::import_from_hermes(&mut temp_config)?;

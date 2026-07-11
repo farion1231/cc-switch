@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::app::AppError;
 use crate::config::{
     atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
     write_json_file, write_text_file,
 };
-use crate::error::AppError;
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
@@ -814,7 +814,7 @@ fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
 }
 
 fn load_codex_model_template_static() -> Option<Value> {
-    let text = include_str!("resources/gpt5_5_template.json");
+    let text = include_str!("../resources/gpt5_5_template.json");
     match serde_json::from_str(text) {
         Ok(template) => Some(template),
         Err(e) => {
@@ -832,7 +832,7 @@ fn load_codex_model_template_static() -> Option<Value> {
 /// fall back to `models_cache.json` here (that would reintroduce gpt-5.5's
 /// freeform apply_patch).
 fn load_codex_native_responses_template() -> Value {
-    let text = include_str!("resources/codex_native_responses_template.json");
+    let text = include_str!("../resources/codex_native_responses_template.json");
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 

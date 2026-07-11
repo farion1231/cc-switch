@@ -4,8 +4,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{atomic_write, get_claude_mcp_path};
-use crate::error::AppError;
+use crate::app::AppError;
+use crate::config::atomic_write;
+use crate::live_config::claude_code::get_claude_mcp_path;
 
 /// 需要在 Windows 上用 cmd /c 包装的命令
 /// 这些命令在 Windows 上实际是 .cmd 批处理文件，需要通过 cmd /c 来执行

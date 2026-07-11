@@ -2,9 +2,9 @@
 //!
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
+use crate::app::AppState;
+use crate::app::Provider;
 use crate::database::FailoverQueueItem;
-use crate::provider::Provider;
-use crate::store::AppState;
 use std::str::FromStr;
 use tauri::Emitter;
 
@@ -106,7 +106,7 @@ pub async fn set_auto_failover_enabled(
             .map_err(|e| e.to_string())?;
 
         if queue.is_empty() {
-            let app_enum = crate::app_config::AppType::from_str(&app_type)
+            let app_enum = crate::app::app_config::AppType::from_str(&app_type)
                 .map_err(|_| format!("无效的应用类型: {app_type}"))?;
 
             let current_id = crate::settings::get_effective_current_provider(&state.db, &app_enum)
@@ -172,8 +172,8 @@ pub async fn set_auto_failover_enabled(
     }
 
     // 刷新托盘菜单，确保状态同步
-    if let Ok(new_menu) = crate::tray::create_tray_menu(&app, &state) {
-        if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
+    if let Ok(new_menu) = crate::platform::tray::create_tray_menu(&app, &state) {
+        if let Some(tray) = app.tray_by_id(crate::platform::tray::TRAY_ID) {
             let _ = tray.set_menu(Some(new_menu));
         }
     }

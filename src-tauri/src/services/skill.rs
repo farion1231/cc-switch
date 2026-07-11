@@ -15,10 +15,10 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 
-use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
+use crate::app::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
+use crate::app::format_skill_error;
 use crate::config::get_app_config_dir;
 use crate::database::Database;
-use crate::error::format_skill_error;
 
 // ========== 数据结构 ==========
 
@@ -552,7 +552,7 @@ impl SkillService {
             AppType::Gemini => home.join(".gemini").join("skills"),
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
-            AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
+            AppType::Hermes => crate::live_config::hermes::get_hermes_dir().join("skills"),
         })
     }
 

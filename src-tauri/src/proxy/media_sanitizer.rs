@@ -1,4 +1,4 @@
-use crate::provider::Provider;
+use crate::app::Provider;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
 
@@ -380,7 +380,7 @@ fn normalize_model_id(value: &str) -> String {
         .trim()
         .to_ascii_lowercase();
     if let Some(stripped) =
-        normalized.strip_suffix(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+        normalized.strip_suffix(crate::live_config::claude_desktop::ONE_M_CONTEXT_MARKER)
     {
         normalized = stripped.trim().to_string();
     }
@@ -390,7 +390,7 @@ fn normalize_model_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::Provider;
+    use crate::app::Provider;
     use serde_json::json;
 
     fn provider(settings_config: Value) -> Provider {

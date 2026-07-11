@@ -1,8 +1,8 @@
 use tauri::State;
 
+use crate::app::AppState;
 use crate::services::omo::{OmoLocalFileData, SLIM, STANDARD};
 use crate::services::OmoService;
-use crate::store::AppState;
 
 #[tauri::command]
 pub async fn read_omo_local_file() -> Result<OmoLocalFileData, String> {
