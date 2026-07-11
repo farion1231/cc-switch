@@ -31,9 +31,6 @@ use std::time::SystemTime;
 
 const CODEX_SUBAGENT_USAGE_MIGRATION_KEY: &str = "codex_subagent_usage_thread_id_v1_migrated";
 const CODEX_SUBAGENT_SYNC_KEY_SUFFIX: &str = "#codex-thread-id-v1";
-/// fork/restore 与部分子代理日志会在文件创建时密集重放父线程历史。
-/// 这些 token_count 是基线快照，不是子线程的新请求。
-const FORK_HISTORY_SNAPSHOT_WINDOW_MS: i64 = 1_000;
 
 /// 累计 token 用量（跟踪 total_token_usage 字段）
 #[derive(Debug, Clone, Default)]
@@ -64,8 +61,7 @@ struct FileParseState {
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
     seen_session_meta: bool,
-    carries_history_snapshot: bool,
-    session_started_at_ms: Option<i64>,
+    history_replay_boundary: Option<i64>,
 }
 
 /// Codex 的现代子代理日志同时包含两个不同含义的 ID：
@@ -139,19 +135,6 @@ fn codex_sync_state_key(file_path: &str, identity: Option<&CodexSessionIdentity>
     }
 }
 
-fn parse_timestamp_millis(timestamp: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|datetime| datetime.timestamp_millis())
-}
-
-fn json_timestamp_millis(value: &serde_json::Value) -> Option<i64> {
-    value
-        .get("timestamp")
-        .and_then(|value| value.as_str())
-        .and_then(parse_timestamp_millis)
-}
-
 fn session_meta_carries_history_snapshot(payload: &serde_json::Value) -> bool {
     let has_fork_parent = payload
         .get("forked_from_id")
@@ -166,19 +149,54 @@ fn session_meta_carries_history_snapshot(payload: &serde_json::Value) -> bool {
     has_fork_parent || is_subagent
 }
 
-fn is_history_snapshot_event(state: &FileParseState, timestamp: Option<&str>) -> bool {
-    if !state.carries_history_snapshot {
-        return false;
+/// fork/restore 日志会先重放父线程历史，再以明确的接管事件开始子线程。
+/// 返回接管事件所在行；该行之前的 token_count 只用于恢复累计值基线。
+fn codex_history_replay_boundary(
+    file_path: &Path,
+    identity: Option<&CodexSessionIdentity>,
+) -> Option<i64> {
+    let file = fs::File::open(file_path).ok()?;
+    let reader = BufReader::new(file);
+    let mut carries_history_snapshot = identity.is_some_and(CodexSessionIdentity::is_subagent);
+
+    for (index, line) in reader.lines().enumerate() {
+        let line = line.ok()?;
+        if !line.contains("\"session_meta\"")
+            && !line.contains("\"thread_settings_applied\"")
+            && !line.contains("\"inter_agent_communication")
+        {
+            continue;
+        }
+
+        let value: serde_json::Value = serde_json::from_str(&line).ok()?;
+        let event_type = value.get("type").and_then(|value| value.as_str())?;
+
+        if event_type == "session_meta" {
+            if let Some(payload) = value.get("payload") {
+                carries_history_snapshot |= session_meta_carries_history_snapshot(payload);
+            }
+            continue;
+        }
+
+        let is_replay_boundary = event_type.starts_with("inter_agent_communication")
+            || (event_type == "event_msg"
+                && value
+                    .get("payload")
+                    .and_then(|payload| payload.get("type"))
+                    .and_then(|value| value.as_str())
+                    == Some("thread_settings_applied"));
+        if carries_history_snapshot && is_replay_boundary {
+            return Some(index as i64 + 1);
+        }
     }
 
-    let Some(session_started_at_ms) = state.session_started_at_ms else {
-        return false;
-    };
-    let Some(event_at_ms) = timestamp.and_then(parse_timestamp_millis) else {
-        return false;
-    };
+    None
+}
 
-    event_at_ms <= session_started_at_ms + FORK_HISTORY_SNAPSHOT_WINDOW_MS
+fn is_history_snapshot_event(state: &FileParseState, line_offset: i64) -> bool {
+    state
+        .history_replay_boundary
+        .is_some_and(|boundary| line_offset < boundary)
 }
 
 /// 归一化 Codex 模型名
@@ -349,6 +367,7 @@ fn repair_legacy_codex_subagent_usage(
         })
         .collect();
     let mut affected_session_ids = HashSet::new();
+    let mut orphaned_synced_subagent_paths = Vec::new();
 
     {
         let mut stmt = conn
@@ -364,9 +383,7 @@ fn repair_legacy_codex_subagent_usage(
             let Some(identity) = identity else {
                 continue;
             };
-            if !identity.is_subagent()
-                || !rebuildable_thread_ids.contains(identity.session_id.as_str())
-            {
+            if !identity.is_subagent() {
                 continue;
             }
 
@@ -377,7 +394,11 @@ fn repair_legacy_codex_subagent_usage(
                 })
                 .map_err(|e| AppError::Database(format!("查询 Codex 子代理旧同步状态失败: {e}")))?;
             if was_synced {
-                affected_session_ids.insert(identity.session_id.clone());
+                if rebuildable_thread_ids.contains(identity.session_id.as_str()) {
+                    affected_session_ids.insert(identity.session_id.clone());
+                } else {
+                    orphaned_synced_subagent_paths.push(path.into_owned());
+                }
             }
         }
     }
@@ -414,6 +435,21 @@ fn repair_legacy_codex_subagent_usage(
             )
             .map_err(|e| AppError::Database(format!("重置 Codex 子代理同步游标失败: {e}")))?;
         }
+    }
+
+    // 父日志已不存在时无法安全重建旧记录。保留旧行，并把旧游标复制到新的
+    // thread_id 同步键，避免升级后把整份子代理日志再次导入而重复计费。
+    for path in &orphaned_synced_subagent_paths {
+        let subagent_key = format!("{path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        tx.execute(
+            "INSERT OR IGNORE INTO session_log_sync (
+                file_path, last_modified, last_line_offset, last_synced_at
+             )
+             SELECT ?2, last_modified, last_line_offset, last_synced_at
+             FROM session_log_sync WHERE file_path = ?1",
+            rusqlite::params![path, subagent_key],
+        )
+        .map_err(|e| AppError::Database(format!("迁移孤立 Codex 子代理同步游标失败: {e}")))?;
     }
 
     tx.execute(
@@ -504,6 +540,7 @@ fn sync_single_codex_file(
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let reader = BufReader::new(file);
+    let history_replay_boundary = codex_history_replay_boundary(file_path, identity);
 
     let mut state = FileParseState {
         thread_id: identity.map(|identity| identity.thread_id.clone()),
@@ -511,8 +548,7 @@ fn sync_single_codex_file(
         prev_total: None,
         event_index: 0,
         seen_session_meta: false,
-        carries_history_snapshot: identity.is_some_and(CodexSessionIdentity::is_subagent),
-        session_started_at_ms: None,
+        history_replay_boundary,
     };
 
     let mut line_offset: i64 = 0;
@@ -556,9 +592,7 @@ fn sync_single_codex_file(
         match event_type {
             "session_meta" if !state.seen_session_meta => {
                 state.seen_session_meta = true;
-                state.session_started_at_ms = json_timestamp_millis(&value);
                 if let Some(payload) = value.get("payload") {
-                    state.carries_history_snapshot = session_meta_carries_history_snapshot(payload);
                     if state.thread_id.is_none() {
                         state.thread_id = parse_codex_session_identity(payload)
                             .map(|identity| identity.thread_id);
@@ -649,7 +683,7 @@ fn sync_single_codex_file(
                 // 子代理/fork 文件开头可能重放父线程累计 token 历史。这里仍然
                 // 保留上方 prev_total 的更新，用它作为后续真实调用的 delta 基线，
                 // 但不为快照本身生成消费记录。
-                if is_history_snapshot_event(&state, timestamp.as_deref()) {
+                if is_history_snapshot_event(&state, line_offset) {
                     if line_offset > last_offset {
                         skipped += 1;
                     }
@@ -873,6 +907,35 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
+    fn insert_legacy_codex_usage_row(db: &Database, session_id: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rusqlite::params![
+                format!("codex_session:{session_id}:1"),
+                "_codex_session",
+                "codex",
+                "gpt-5.6-sol",
+                "gpt-5.6-sol",
+                200,
+                20,
+                100,
+                0,
+                "0",
+                0,
+                200,
+                session_id,
+                1_752_116_402i64,
+                "codex_session"
+            ],
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn test_delta_first_event() {
         let prev = None;
@@ -1045,7 +1108,12 @@ mod tests {
                 }
             }),
             serde_json::json!({
-                "timestamp": "2026-07-10T03:00:02.000Z",
+                "timestamp": "2026-07-10T03:00:00.200Z",
+                "type": "event_msg",
+                "payload": { "type": "thread_settings_applied" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:00.300Z",
                 "type": "event_msg",
                 "payload": {
                     "type": "token_count",
@@ -1086,6 +1154,71 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(usage, (100, 50, 30));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fast_subagent_without_replay_boundary_counts_first_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("fast-child.jsonl");
+        let lines = [
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:00.000Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "fast-child",
+                    "session_id": "parent",
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": {
+                                "parent_thread_id": "parent",
+                                "depth": 1
+                            }
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:00.100Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 50,
+                        "output_tokens": 10
+                    }}
+                }
+            }),
+        ];
+        fs::write(
+            &child,
+            lines
+                .iter()
+                .map(serde_json::Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        let identity = read_codex_session_identity(&child).unwrap();
+        assert_eq!(codex_history_replay_boundary(&child, Some(&identity)), None);
+        assert_eq!(
+            sync_single_codex_file(&db, &child, Some(&identity))?,
+            (1, 0)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64) = conn.query_row(
+            "SELECT input_tokens, output_tokens FROM proxy_request_logs
+             WHERE request_id = 'codex_session:fast-child:1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(usage, (100, 10));
 
         Ok(())
     }
@@ -1145,33 +1278,7 @@ mod tests {
             (child.clone(), Some(child_identity.clone())),
         ];
 
-        {
-            let conn = lock_conn!(db.conn);
-            conn.execute(
-                "INSERT INTO proxy_request_logs (
-                    request_id, provider_id, app_type, model, request_model,
-                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    total_cost_usd, latency_ms, status_code, session_id, created_at, data_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    "codex_session:parent:1",
-                    "_codex_session",
-                    "codex",
-                    "gpt-5.6-sol",
-                    "gpt-5.6-sol",
-                    200,
-                    20,
-                    100,
-                    0,
-                    "0",
-                    0,
-                    200,
-                    "parent",
-                    1_752_116_402i64,
-                    "codex_session"
-                ],
-            )?;
-        }
+        insert_legacy_codex_usage_row(&db, "parent")?;
         let main_path = main.to_string_lossy().to_string();
         let child_path = child.to_string_lossy().to_string();
         update_sync_state(&db, &main_path, 1, 3)?;
@@ -1213,6 +1320,103 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_repair_preserves_orphan_usage_and_migrates_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("orphan-child.jsonl");
+        let lines = [
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child",
+                    "session_id": "missing-parent",
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": {
+                                "parent_thread_id": "missing-parent",
+                                "depth": 1
+                            }
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:01Z",
+                "type": "turn_context",
+                "payload": { "model": "gpt-5.6-sol" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 200,
+                        "cached_input_tokens": 100,
+                        "output_tokens": 20
+                    }}
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:03Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 300,
+                        "cached_input_tokens": 150,
+                        "output_tokens": 30
+                    }}
+                }
+            }),
+        ];
+        fs::write(
+            &child,
+            lines
+                .iter()
+                .map(serde_json::Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        let identity = read_codex_session_identity(&child).unwrap();
+        let files = vec![(child.clone(), Some(identity.clone()))];
+        insert_legacy_codex_usage_row(&db, "missing-parent")?;
+
+        let child_path = child.to_string_lossy().to_string();
+        update_sync_state(&db, &child_path, 1, 3)?;
+        repair_legacy_codex_subagent_usage(&db, &files)?;
+
+        let subagent_key = format!("{child_path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        assert_eq!(get_sync_state(&db, &subagent_key)?, (1, 3));
+        assert_eq!(
+            sync_single_codex_file(&db, &child, Some(&identity))?,
+            (1, 0)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let request_ids = conn
+            .prepare(
+                "SELECT request_id FROM proxy_request_logs
+                 WHERE data_source = 'codex_session' ORDER BY request_id",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            request_ids,
+            vec![
+                "codex_session:child:2".to_string(),
+                "codex_session:missing-parent:1".to_string()
+            ]
+        );
 
         Ok(())
     }
