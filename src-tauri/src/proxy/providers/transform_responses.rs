@@ -477,11 +477,7 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                                 .get("tool_use_id")
                                 .and_then(|i| i.as_str())
                                 .unwrap_or("");
-                            let output = match block.get("content") {
-                                Some(Value::String(s)) => s.clone(),
-                                Some(v) => canonical_json_string(v),
-                                None => String::new(),
-                            };
+                            let output = convert_tool_result_output(block.get("content"));
 
                             input.push(json!({
                                 "type": "function_call_output",
@@ -515,6 +511,55 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
     }
 
     Ok(input)
+}
+
+/// Convert Anthropic tool-result content without flattening multimodal blocks
+/// into JSON text. Responses API function outputs accept either a plain string
+/// or an array of input content items.
+fn convert_tool_result_output(content: Option<&Value>) -> Value {
+    match content {
+        Some(Value::String(text)) => Value::String(text.clone()),
+        Some(value @ Value::Array(blocks)) => {
+            let converted = blocks
+                .iter()
+                .map(convert_tool_result_content_block)
+                .collect::<Option<Vec<_>>>();
+
+            match converted {
+                Some(items) if !items.is_empty() => Value::Array(items),
+                _ => Value::String(canonical_json_string(value)),
+            }
+        }
+        Some(value) => Value::String(canonical_json_string(value)),
+        None => Value::String(String::new()),
+    }
+}
+
+fn convert_tool_result_content_block(block: &Value) -> Option<Value> {
+    match block.get("type").and_then(Value::as_str) {
+        Some("text") => block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|text| json!({ "type": "input_text", "text": text })),
+        Some("image") => {
+            let source = block.get("source")?;
+
+            if let Some(url) = source.get("url").and_then(Value::as_str) {
+                return Some(json!({ "type": "input_image", "image_url": url }));
+            }
+
+            let data = source.get("data").and_then(Value::as_str)?;
+            let media_type = source
+                .get("media_type")
+                .and_then(Value::as_str)
+                .unwrap_or("image/png");
+            Some(json!({
+                "type": "input_image",
+                "image_url": format!("data:{media_type};base64,{data}")
+            }))
+        }
+        _ => None,
+    }
 }
 
 /// OpenAI Responses 响应 → Anthropic 响应
@@ -894,6 +939,66 @@ mod tests {
         assert_eq!(input_arr[0]["type"], "function_call_output");
         assert_eq!(input_arr[0]["call_id"], "call_123");
         assert_eq!(input_arr[0]["output"], "Sunny, 25°C");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_tool_result_preserves_multimodal_output() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "call_read_image",
+                    "content": [
+                        {"type": "text", "text": "Rendered preview"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": "abc123"
+                            }
+                        }
+                    ]
+                }]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let output = result["input"][0]["output"].as_array().unwrap();
+
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0]["type"], "input_text");
+        assert_eq!(output[0]["text"], "Rendered preview");
+        assert_eq!(output[1]["type"], "input_image");
+        assert_eq!(output[1]["image_url"], "data:image/jpeg;base64,abc123");
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_tool_result_preserves_unknown_json_output() {
+        let content = json!([{
+            "kind": "custom",
+            "payload": {"ok": true}
+        }]);
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "call_custom",
+                    "content": content.clone()
+                }]
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let output = result["input"][0]["output"].as_str().unwrap();
+
+        assert_eq!(serde_json::from_str::<Value>(output).unwrap(), content);
     }
 
     #[test]
