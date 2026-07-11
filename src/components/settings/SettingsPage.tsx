@@ -355,6 +355,7 @@ export function SettingsPage({
                             opencodeDir={settings.opencodeConfigDir}
                             openclawDir={settings.openclawConfigDir}
                             hermesDir={settings.hermesConfigDir}
+                            mimocodeDir={settings.mimocodeConfigDir}
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}

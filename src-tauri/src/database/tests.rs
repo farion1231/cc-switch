@@ -653,11 +653,11 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
         "skills migration snapshot should preserve legacy app mapping"
     );
 
-    // v3.9+ 新增：proxy_config 三行 seed 必须存在（否则 UI 会查不到默认值）
+    // v3.9+ 新增：proxy_config 四行 seed 必须存在（否则 UI 会查不到默认值）
     let proxy_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 3);
+    assert_eq!(proxy_rows, 4);
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn

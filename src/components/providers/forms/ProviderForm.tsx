@@ -50,6 +50,11 @@ import {
   hermesProviderPresets,
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
+import {
+  mimocodeProviderPresets,
+  type MimoCodeProviderPreset,
+} from "@/config/mimocodeProviderPresets";
+import { MimoCodeFormFields } from "./MimoCodeFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -103,6 +108,7 @@ import {
   useOmoDraftState,
   useOpenclawFormState,
   useHermesFormState,
+  useMimocodeFormState,
   useCopilotAuth,
   useCodexOauth,
 } from "./hooks";
@@ -120,6 +126,7 @@ import { HERMES_DEFAULT_CONFIG } from "./hooks/useHermesFormState";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
+import { useMimocodeLiveProviderIds } from "@/hooks/useMimocode";
 
 type PresetEntry = {
   id: string;
@@ -129,7 +136,8 @@ type PresetEntry = {
     | GeminiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
-    | HermesProviderPreset;
+    | HermesProviderPreset
+    | MimoCodeProviderPreset;
 };
 
 export const normalizeCodexCatalogModelsForSave = (
@@ -391,7 +399,9 @@ function ProviderFormFull({
                 ? OPENCLAW_DEFAULT_CONFIG
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
-                  : CLAUDE_DEFAULT_CONFIG,
+                  : appId === "mimo"
+                    ? OPENCODE_DEFAULT_CONFIG
+                    : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
     }),
@@ -686,6 +696,11 @@ function ProviderFormFull({
         id: `hermes-${index}`,
         preset,
       }));
+    } else if (appId === "mimo") {
+      return mimocodeProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `mimo-${index}`,
+        preset,
+      }));
     }
     return providerPresets
       .filter((p) => !p.hidden)
@@ -893,6 +908,18 @@ function ProviderFormFull({
     isLoading: isHermesLiveProviderIdsLoading,
   } = useHermesLiveProviderIds(appId === "hermes");
 
+  const mimocodeForm = useMimocodeFormState({
+    initialData,
+    appId,
+    providerId,
+    onSettingsConfigChange: (config) => form.setValue("settingsConfig", config),
+    getSettingsConfig: () => form.getValues("settingsConfig"),
+  });
+  const {
+    data: mimocodeLiveProviderIds = [],
+    isLoading: isMimocodeLiveProviderIdsLoading,
+  } = useMimocodeLiveProviderIds(appId === "mimo");
+
   const additiveExistingProviderKeys = useMemo(() => {
     if (appId === "opencode" && !isAnyOmoCategory) {
       return Array.from(
@@ -925,6 +952,17 @@ function ProviderFormFull({
       );
     }
 
+    if (appId === "mimo") {
+      return Array.from(
+        new Set(
+          [
+            ...mimocodeForm.existingMimocodeKeys,
+            ...mimocodeLiveProviderIds,
+          ].filter((key) => key !== providerId),
+        ),
+      );
+    }
+
     return [];
   }, [
     appId,
@@ -935,6 +973,8 @@ function ProviderFormFull({
     openclawForm.existingOpenclawKeys,
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
+    mimocodeForm.existingMimocodeKeys,
+    mimocodeLiveProviderIds,
     providerId,
   ]);
 
@@ -949,6 +989,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return isHermesLiveProviderIdsLoading;
     }
+    if (appId === "mimo") {
+      return isMimocodeLiveProviderIdsLoading;
+    }
     return false;
   }, [
     appId,
@@ -957,6 +1000,7 @@ function ProviderFormFull({
     isHermesLiveProviderIdsLoading,
     isOpenclawLiveProviderIdsLoading,
     isOpencodeLiveProviderIdsLoading,
+    isMimocodeLiveProviderIdsLoading,
   ]);
 
   const isProviderKeyLocked = useMemo(() => {
@@ -970,6 +1014,9 @@ function ProviderFormFull({
     if (appId === "hermes") {
       return hermesLiveProviderIds.includes(providerId);
     }
+    if (appId === "mimo") {
+      return mimocodeLiveProviderIds.includes(providerId);
+    }
     return false;
   }, [
     appId,
@@ -978,6 +1025,7 @@ function ProviderFormFull({
     isEditMode,
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
+    mimocodeLiveProviderIds,
     providerId,
   ]);
 
@@ -1045,6 +1093,12 @@ function ProviderFormFull({
     // opencode / openclaw / hermes: providerKey 相关
     // A 类（空）归到 issues；B 类（正则不合法 / 重复 / 状态加载中）仍硬拒绝
     const keyPattern = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+    // Copilot 供应商检测（提前定义，供 Provider Key 校验和 API Key 校验使用）
+    const isCopilotProviderEarly =
+      templatePreset?.providerType === "github_copilot" ||
+      initialData?.meta?.providerType === "github_copilot" ||
+      baseUrl.includes("githubcopilot.com");
 
     if (appId === "opencode" && !isAnyOmoCategory) {
       // providerKey 是 opencode / openclaw / hermes 的主键 ID，空或格式不合法
@@ -1129,11 +1183,34 @@ function ProviderFormFull({
       }
     }
 
+    if (appId === "mimo" && !isCopilotProviderEarly) {
+      if (!mimocodeForm.mimocodeProviderKey.trim()) {
+        toast.error(t("mimo.form.providerKeyRequired"));
+        return;
+      }
+      if (!keyPattern.test(mimocodeForm.mimocodeProviderKey)) {
+        toast.error(t("mimo.form.providerKeyInvalid"));
+        return;
+      }
+      if (isProviderKeyLockStateLoading) {
+        toast.error(
+          t("providerForm.providerKeyStatusLoading", {
+            defaultValue: "正在加载供应商标识状态，请稍后再试",
+          }),
+        );
+        return;
+      }
+      if (
+        !isProviderKeyLocked &&
+        additiveExistingProviderKeys.includes(mimocodeForm.mimocodeProviderKey)
+      ) {
+        toast.error(t("mimo.form.providerKeyDuplicate"));
+        return;
+      }
+    }
+
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
+    const isCopilotProvider = isCopilotProviderEarly;
     const isCodexOauthProvider =
       templatePreset?.providerType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
@@ -1368,6 +1445,8 @@ function ProviderFormFull({
       payload.providerKey = openclawForm.openclawProviderKey;
     } else if (appId === "hermes") {
       payload.providerKey = hermesForm.hermesProviderKey;
+    } else if (appId === "mimo") {
+      payload.providerKey = mimocodeForm.mimocodeProviderKey;
     }
 
     if (isAnyOmoCategory && !payload.presetCategory) {
@@ -1629,6 +1708,20 @@ function ProviderFormFull({
     formWebsiteUrl: form.watch("websiteUrl") || "",
   });
 
+  // 使用 API Key 链接 hook (MimoCode)
+  const {
+    shouldShowApiKeyLink: shouldShowMimocodeApiKeyLink,
+    websiteUrl: mimocodeWebsiteUrl,
+    isPartner: isMimocodePartner,
+    partnerPromotionKey: mimocodePartnerPromotionKey,
+  } = useApiKeyLink({
+    appId: "mimo",
+    category,
+    selectedPresetId,
+    presetEntries,
+    formWebsiteUrl: form.watch("websiteUrl") || "",
+  });
+
   // 使用端点测速候选 hook
   const speedTestEndpoints = useSpeedTestEndpoints({
     appId,
@@ -1667,6 +1760,9 @@ function ProviderFormFull({
       }
       if (appId === "hermes") {
         hermesForm.resetHermesState();
+      }
+      if (appId === "mimo") {
+        mimocodeForm.resetMimocodeState();
       }
       return;
     }
@@ -1784,6 +1880,23 @@ function ProviderFormFull({
       const config = preset.settingsConfig;
 
       hermesForm.resetHermesState(config);
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    // MimoCode preset handling
+    if (appId === "mimo") {
+      const preset = entry.preset as MimoCodeProviderPreset;
+      const config = preset.settingsConfig;
+
+      mimocodeForm.resetMimocodeState(config);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2059,6 +2172,79 @@ function ProviderFormFull({
                       </p>
                     )}
                 </div>
+              ) : appId === "mimo" ? (
+                <div className="space-y-2">
+                  <Label htmlFor="mimo-key">
+                    {t("mimo.form.providerKey", {
+                      defaultValue: "Provider Key",
+                    })}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    id="mimo-key"
+                    value={mimocodeForm.mimocodeProviderKey}
+                    onChange={(e) =>
+                      mimocodeForm.setMimocodeProviderKey(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                      )
+                    }
+                    placeholder={t("mimo.form.providerKeyPlaceholder", {
+                      defaultValue: "my-provider",
+                    })}
+                    disabled={
+                      isProviderKeyLocked || isProviderKeyLockStateLoading
+                    }
+                    className={
+                      (additiveExistingProviderKeys.includes(
+                        mimocodeForm.mimocodeProviderKey,
+                      ) &&
+                        !isProviderKeyLocked) ||
+                      (mimocodeForm.mimocodeProviderKey.trim() !== "" &&
+                        !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                          mimocodeForm.mimocodeProviderKey,
+                        ))
+                        ? "border-destructive"
+                        : ""
+                    }
+                  />
+                  {additiveExistingProviderKeys.includes(
+                    mimocodeForm.mimocodeProviderKey,
+                  ) &&
+                    !isProviderKeyLocked && (
+                      <p className="text-xs text-destructive">
+                        {t("mimo.form.providerKeyDuplicate")}
+                      </p>
+                    )}
+                  {mimocodeForm.mimocodeProviderKey.trim() !== "" &&
+                    !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                      mimocodeForm.mimocodeProviderKey,
+                    ) && (
+                      <p className="text-xs text-destructive">
+                        {t("mimo.form.providerKeyInvalid")}
+                      </p>
+                    )}
+                  {!(
+                    additiveExistingProviderKeys.includes(
+                      mimocodeForm.mimocodeProviderKey,
+                    ) && !isProviderKeyLocked
+                  ) &&
+                    (mimocodeForm.mimocodeProviderKey.trim() === "" ||
+                      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(
+                        mimocodeForm.mimocodeProviderKey,
+                      )) && (
+                      <p className="text-xs text-muted-foreground">
+                        {isProviderKeyLocked
+                          ? t("mimo.form.providerKeyLockedHint", {
+                              defaultValue:
+                                "This provider is in MimoCode config; key is locked.",
+                            })
+                          : t("mimo.form.providerKeyHint", {
+                              defaultValue:
+                                "Lowercase letters, numbers, and hyphens only.",
+                            })}
+                      </p>
+                    )}
+                </div>
               ) : undefined
             }
           />
@@ -2305,6 +2491,31 @@ function ProviderFormFull({
             />
           )}
 
+          {/* MimoCode 专属字段 */}
+          {appId === "mimo" && (
+            <>
+              <MimoCodeFormFields
+                npm={mimocodeForm.mimocodeNpm}
+                onNpmChange={mimocodeForm.handleMimocodeNpmChange}
+                apiKey={mimocodeForm.mimocodeApiKey}
+                onApiKeyChange={mimocodeForm.handleMimocodeApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowMimocodeApiKeyLink}
+                websiteUrl={mimocodeWebsiteUrl}
+                isPartner={isMimocodePartner}
+                partnerPromotionKey={mimocodePartnerPromotionKey}
+                baseUrl={mimocodeForm.mimocodeBaseUrl}
+                onBaseUrlChange={mimocodeForm.handleMimocodeBaseUrlChange}
+                models={mimocodeForm.mimocodeModels}
+                onModelsChange={mimocodeForm.handleMimocodeModelsChange}
+                extraOptions={mimocodeForm.mimocodeExtraOptions}
+                onExtraOptionsChange={
+                  mimocodeForm.handleMimocodeExtraOptionsChange
+                }
+              />
+            </>
+          )}
+
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {appId === "codex" ? (
             <>
@@ -2393,7 +2604,7 @@ function ProviderFormFull({
               </div>
               {settingsConfigErrorField}
             </>
-          ) : appId === "openclaw" || appId === "hermes" ? (
+          ) : appId === "openclaw" || appId === "hermes" || appId === "mimo" ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="settingsConfig">
@@ -2455,7 +2666,8 @@ function ProviderFormFull({
           {!isAnyOmoCategory &&
             appId !== "opencode" &&
             appId !== "openclaw" &&
-            appId !== "hermes" && (
+            appId !== "hermes" &&
+            appId !== "mimo" && (
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}

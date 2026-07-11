@@ -16,6 +16,7 @@ GEMINI.md
 /.cc-switch
 /.idea
 /.vscode
+/.mimocode
 vitest-report.json
 nul
 

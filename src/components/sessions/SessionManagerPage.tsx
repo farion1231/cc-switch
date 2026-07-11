@@ -87,7 +87,8 @@ type ProviderFilter =
   | "opencode"
   | "openclaw"
   | "gemini"
-  | "hermes";
+  | "hermes"
+  | "mimo";
 
 type SessionListViewMode = "flat" | "grouped";
 
@@ -1115,6 +1116,26 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   size={14}
                                 />
                                 <span>Gemini CLI</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="hermes">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="hermes"
+                                  name="hermes"
+                                  size={14}
+                                />
+                                <span>Hermes</span>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="mimo">
+                              <div className="flex items-center gap-2">
+                                <ProviderIcon
+                                  icon="mimo"
+                                  name="mimo"
+                                  size={14}
+                                />
+                                <span>MimoCode</span>
                               </div>
                             </SelectItem>
                           </SelectContent>

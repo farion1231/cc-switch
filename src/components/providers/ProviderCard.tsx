@@ -25,6 +25,7 @@ import {
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
+import { isCopilotProvider } from "@/utils/providerRoutingUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -113,6 +114,13 @@ const extractApiUrl = (provider: Provider, fallbackText: string) => {
   const config = provider.settingsConfig;
 
   if (config && typeof config === "object") {
+    const optionsBase =
+      (config as Record<string, any>)?.options?.baseURL ||
+      (config as Record<string, any>)?.options?.baseUrl;
+    if (typeof optionsBase === "string" && optionsBase.trim()) {
+      return optionsBase;
+    }
+
     const envBase =
       (config as Record<string, any>)?.env?.ANTHROPIC_BASE_URL ||
       (config as Record<string, any>)?.env?.GOOGLE_GEMINI_BASE_URL;
@@ -210,9 +218,7 @@ export function ProviderCard({
   // 真官方就该有显式 category；手动新建官方应引导标注，而不是靠空字段猜。
   const isOfficialBlockedByProxy =
     isProxyTakeover && provider.category === "official";
-  const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
+  const isCopilot = isCopilotProvider(provider);
   // Hermes v12+ overlay entries live under the `providers:` dict and are
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
@@ -241,7 +247,10 @@ export function ProviderCard({
   // 获取用量数据以判断是否有多套餐
   // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
   const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes"
+    appId === "opencode" ||
+    appId === "openclaw" ||
+    appId === "hermes" ||
+    appId === "mimo"
       ? isInConfig
       : isCurrent;
   const autoQueryInterval = shouldAutoQuery
@@ -392,6 +401,14 @@ export function ProviderCard({
               {codexNeedsRouting && (
                 <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
                   {t("codex.needsRouting", {
+                    defaultValue: "需要路由",
+                  })}
+                </span>
+              )}
+
+              {appId === "mimo" && isCopilot && (
+                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  {t("mimo.needsRouting", {
                     defaultValue: "需要路由",
                   })}
                 </span>

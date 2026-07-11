@@ -337,6 +337,9 @@ export const handlers = [
       claude: false,
       codex: false,
       gemini: false,
+      opencode: false,
+      openclaw: false,
+      mimo: false,
     }),
   ),
 

@@ -17,6 +17,7 @@ pub mod s3_sync;
 pub mod session_usage;
 pub mod session_usage_codex;
 pub mod session_usage_gemini;
+pub mod session_usage_mimocode;
 pub mod session_usage_opencode;
 pub mod skill;
 pub mod speedtest;

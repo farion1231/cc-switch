@@ -175,7 +175,7 @@ impl Provider {
                 str_at(settings.get("apiKey")),
             ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
-            AppType::OpenCode => {
+            AppType::OpenCode | AppType::MimoCode => {
                 let options = settings.get("options");
                 (
                     str_at(options.and_then(|o| o.get("baseURL"))),
@@ -912,6 +912,95 @@ pub struct OpenCodeProviderConfig {
     /// 模型定义映射
     #[serde(default)]
     pub models: HashMap<String, OpenCodeModel>,
+}
+
+/// MimoCode 供应商配置
+/// 配置示例：
+/// ```json
+/// {
+///   "npm": "@ai-sdk/openai-compatible",
+///   "options": { "baseURL": "https://api.example.com/v1", "apiKey": "sk-xxx" },
+///   "models": { "gpt-4o": { "name": "GPT-4o" } }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiMoCodeProviderConfig {
+    /// AI SDK 包名，如 "@ai-sdk/openai-compatible", "@ai-sdk/anthropic"
+    pub npm: String,
+
+    /// 供应商名称（可选，用于显示）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// 供应商选项（API 密钥、基础 URL 等）
+    #[serde(default)]
+    pub options: MiMoCodeProviderOptions,
+
+    /// 模型定义映射
+    #[serde(default)]
+    pub models: HashMap<String, MiMoCodeModel>,
+}
+
+impl Default for MiMoCodeProviderConfig {
+    fn default() -> Self {
+        Self {
+            npm: "@ai-sdk/openai-compatible".to_string(),
+            name: None,
+            options: MiMoCodeProviderOptions::default(),
+            models: HashMap::new(),
+        }
+    }
+}
+
+/// MimoCode 供应商选项
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MiMoCodeProviderOptions {
+    /// API 基础 URL
+    #[serde(rename = "baseURL", skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    /// API 密钥（支持环境变量引用，如 "{env:API_KEY}"）
+    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+
+    /// 自定义请求头
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+
+    /// 额外选项（timeout, setCacheKey 等）
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// MimoCode 模型定义
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiMoCodeModel {
+    /// 模型显示名称
+    pub name: String,
+
+    /// 模型限制（上下文和输出 token 数）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<MiMoCodeModelLimit>,
+
+    /// 模型额外选项（provider 路由等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<HashMap<String, Value>>,
+
+    /// 额外字段（cost、modalities、thinking、variants 等）
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// MimoCode 模型限制
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MiMoCodeModelLimit {
+    /// 上下文 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+
+    /// 输出 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
 }
 
 impl Default for OpenCodeProviderConfig {

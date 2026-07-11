@@ -87,7 +87,8 @@ export function useApiKeyLink({
       appId === "gemini" ||
       appId === "opencode" ||
       appId === "openclaw" ||
-      appId === "hermes"
+      appId === "hermes" ||
+      appId === "mimo"
         ? shouldShowApiKeyLink
         : false,
     websiteUrl: getWebsiteUrl,

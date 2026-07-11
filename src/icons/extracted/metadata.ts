@@ -397,6 +397,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  mimo: {
+    name: "mimo",
+    displayName: "MimoCode",
+    category: "ai-provider",
+    keywords: ["mimo", "xiaomimimo", "xiaomi", "mimo"],
+    defaultColor: "#000000",
+  },
   minimax: {
     name: "minimax",
     displayName: "MiniMax",

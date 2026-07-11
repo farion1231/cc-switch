@@ -320,6 +320,19 @@ pub fn sync_session_usage(
         }
     }
 
+    // 同步 MimoCode 使用数据
+    match crate::services::session_usage_mimocode::sync_mimocode_usage(&state.db) {
+        Ok(mimocode_result) => {
+            result.imported += mimocode_result.imported;
+            result.skipped += mimocode_result.skipped;
+            result.files_scanned += mimocode_result.files_scanned;
+            result.errors.extend(mimocode_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("MimoCode 同步失败: {e}"));
+        }
+    }
+
     Ok(result)
 }
 

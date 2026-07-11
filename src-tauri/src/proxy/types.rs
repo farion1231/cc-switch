@@ -115,6 +115,8 @@ pub struct ProxyTakeoverStatus {
     pub gemini: bool,
     pub opencode: bool,
     pub openclaw: bool,
+    pub hermes: bool,
+    pub mimo: bool,
 }
 
 /// API 格式类型（预留，当前不需要格式转换）

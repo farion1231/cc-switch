@@ -29,6 +29,7 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
+import { useMimocodeLiveProviderIds } from "@/hooks/useMimocode";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -111,6 +112,11 @@ export function ProviderList({
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
 
+  // MimoCode: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: mimocodeLiveIds } = useMimocodeLiveProviderIds(
+    appId === "mimo",
+  );
+
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
@@ -127,9 +133,12 @@ export function ProviderList({
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "mimo") {
+        return mimocodeLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, mimocodeLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -220,6 +229,10 @@ export function ProviderList({
       }
       if (appId === "hermes") {
         const count = await providersApi.importHermesFromLive();
+        return count > 0;
+      }
+      if (appId === "mimo") {
+        const count = await providersApi.importMiMoCodeFromLive();
         return count > 0;
       }
       if (appId === "claude-desktop") {

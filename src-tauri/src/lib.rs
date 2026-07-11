@@ -20,6 +20,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod mimocode_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -702,6 +703,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
+            match crate::services::provider::import_mimocode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} MimoCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No MimoCode provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import MimoCode providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -796,6 +804,14 @@ pub fn run() {
                     }
                     Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_mimocode(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from MimoCode");
+                    }
+                    Ok(_) => log::debug!("○ No MimoCode MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import MimoCode MCP: {e}"),
                 }
             }
 
@@ -1110,6 +1126,10 @@ pub fn run() {
                         "OpenCode usage initial sync",
                         crate::services::session_usage_opencode::sync_opencode_usage(db),
                     );
+                    run_step(
+                        "MimoCode usage initial sync",
+                        crate::services::session_usage_mimocode::sync_mimocode_usage(db),
+                    );
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1133,6 +1153,10 @@ pub fn run() {
                         run_step(
                             "OpenCode usage periodic sync",
                             crate::services::session_usage_opencode::sync_opencode_usage(db),
+                        );
+                        run_step(
+                            "MimoCode usage periodic sync",
+                            crate::services::session_usage_mimocode::sync_mimocode_usage(db),
                         );
                     }
                 });
@@ -1445,6 +1469,9 @@ pub fn run() {
             commands::set_openclaw_env,
             commands::get_openclaw_tools,
             commands::set_openclaw_tools,
+            // MimoCode specific
+            commands::import_mimocode_providers_from_live,
+            commands::get_mimocode_live_provider_ids,
             // Hermes specific
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
@@ -1741,7 +1768,7 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let mut apps_to_restore = Vec::new();
-    for app_type in ["claude", "codex", "gemini"] {
+    for app_type in ["claude", "codex", "gemini", "mimo"] {
         if let Ok(config) = state.db.get_proxy_config_for_app(app_type).await {
             if config.enabled {
                 apps_to_restore.push(app_type);

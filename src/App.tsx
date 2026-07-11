@@ -40,6 +40,7 @@ import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+import { mimocodeKeys } from "@/hooks/useMimocode";
 import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
@@ -110,7 +111,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "mimocodeMemory";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -130,6 +132,7 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "mimo",
 ];
 
 const getInitialApp = (): AppId => {
@@ -156,6 +159,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "mimocodeMemory",
 ];
 
 const getInitialView = (): View => {
@@ -197,6 +201,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    mimo: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -207,6 +212,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.mimo) return "mimo";
     return "claude"; // fallback
   };
 
@@ -225,7 +231,8 @@ function App() {
       sharedFeatureApp !== "opencode" &&
       sharedFeatureApp !== "openclaw" &&
       sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes"
+      sharedFeatureApp !== "hermes" &&
+      sharedFeatureApp !== "mimo"
     ) {
       setCurrentView("providers");
     }
@@ -294,7 +301,8 @@ function App() {
     sharedFeatureApp === "opencode" ||
     sharedFeatureApp === "openclaw" ||
     sharedFeatureApp === "gemini" ||
-    sharedFeatureApp === "hermes";
+    sharedFeatureApp === "hermes" ||
+    sharedFeatureApp === "mimo";
 
   const {
     addProvider,
@@ -672,6 +680,10 @@ function App() {
         await queryClient.invalidateQueries({
           queryKey: hermesKeys.liveProviderIds,
         });
+      } else if (activeApp === "mimo") {
+        await queryClient.invalidateQueries({
+          queryKey: mimocodeKeys.liveProviderIds,
+        });
       }
       toast.success(
         t("notifications.removeFromConfigSuccess", {
@@ -723,7 +735,8 @@ function App() {
     if (
       activeApp === "opencode" ||
       activeApp === "openclaw" ||
-      activeApp === "hermes"
+      activeApp === "hermes" ||
+      activeApp === "mimo"
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -738,10 +751,15 @@ function App() {
                   queryKey: openclawKeys.liveProviderIds,
                   queryFn: () => providersApi.getOpenClawLiveProviderIds(),
                 })
-              : await queryClient.ensureQueryData({
-                  queryKey: hermesKeys.liveProviderIds,
-                  queryFn: () => providersApi.getHermesLiveProviderIds(),
-                });
+              : activeApp === "mimo"
+                ? await queryClient.ensureQueryData({
+                    queryKey: mimocodeKeys.liveProviderIds,
+                    queryFn: () => providersApi.getMiMoCodeLiveProviderIds(),
+                  })
+                : await queryClient.ensureQueryData({
+                    queryKey: hermesKeys.liveProviderIds,
+                    queryFn: () => providersApi.getHermesLiveProviderIds(),
+                  });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -995,7 +1013,8 @@ function App() {
                       onRemoveFromConfig={
                         activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        activeApp === "hermes" ||
+                        activeApp === "mimo"
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
@@ -1018,7 +1037,7 @@ function App() {
                       onSetAsDefault={
                         activeApp === "openclaw"
                           ? setAsDefaultModel
-                          : activeApp === "hermes"
+                          : activeApp === "hermes" || activeApp === "mimo"
                             ? switchProvider
                             : undefined
                       }
@@ -1184,6 +1203,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "mimocodeMemory" && t("mimo.memory.title")}
                 </h1>
               </div>
             ) : (
@@ -1245,7 +1265,8 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "mimo" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1404,7 +1425,9 @@ function App() {
                               ? "openclaw"
                               : activeApp === "hermes"
                                 ? "hermes"
-                                : "default"
+                                : activeApp === "mimo"
+                                  ? "mimo"
+                                  : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1440,6 +1463,36 @@ function App() {
                                 title={t("hermes.webui.open")}
                               >
                                 <LayoutDashboard className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("mcp")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("mcp.title")}
+                              >
+                                <McpIcon size={16} />
+                              </Button>
+                            </>
+                          ) : activeApp === "mimo" ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("skills")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("skills.manage")}
+                              >
+                                <Wrench className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("sessions")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("sessionManager.title")}
+                              >
+                                <History className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

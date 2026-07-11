@@ -183,6 +183,10 @@
     "needsRouting": "需要路由",
     "noRoutingSupport": "不支持路由"
   },
+  "mimo": {
+    "needsRouting": "需要路由",
+    "noRoutingSupport": "不支持路由"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
     "mode": "模型处理方式",
@@ -252,6 +256,7 @@
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
     "proxyReasonCopilot": "使用 GitHub Copilot 作为 Claude 供应商",
+    "proxyReasonCopilotMimo": "使用 GitHub Copilot 作为 MimoCode 供应商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat 接口格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
@@ -697,7 +702,8 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "mimocodeDesc": "MimoCode CLI"
     },
     "skillStorage": {
       "title": "Skills 存储位置",
@@ -765,12 +771,15 @@
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
+    "mimocodeConfigDir": "MimoCode 配置目录",
+    "mimocodeConfigDirDescription": "覆盖 MimoCode 配置目录。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
+    "browsePlaceholderMimocode": "例如：/home/<你的用户名>/.mimocode",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -880,11 +889,12 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "mimo": "MimoCode"
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 与 Gemini CLI 会话记录",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes、MimoCode 与 Gemini CLI 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -1457,7 +1467,8 @@
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
+      "opencode_session": "OpenCode 会话日志",
+      "mimocode_session": "MimoCode 会话日志"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
@@ -1709,7 +1720,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mimo": "MimoCode"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",

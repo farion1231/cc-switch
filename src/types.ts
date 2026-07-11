@@ -289,6 +289,7 @@ export interface VisibleApps {
   "claude-desktop": boolean;
   codex: boolean;
   gemini: boolean;
+  mimo: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
@@ -409,6 +410,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 MimoCode 配置目录（可选）
+  mimocodeConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -497,6 +500,7 @@ export interface McpApps {
   "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
+  mimo: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
@@ -739,4 +743,49 @@ export interface HermesMemoryLimits {
   user: number;
   memoryEnabled: boolean;
   userEnabled: boolean;
+}
+
+// ============================================================================
+// MimoCode 专属配置（基于 OpenCode，配置格式完全相同）
+// ============================================================================
+
+export interface MimoCodeModel {
+  name: string;
+  limit?: {
+    context?: number;
+    output?: number;
+  };
+  options?: Record<string, unknown>; // 模型级别额外选项（provider 路由等）
+  // 支持任意额外字段（cost、modalities、thinking、variants 等）
+  [key: string]: unknown;
+}
+
+// MimoCode 供应商选项
+export interface MimoCodeProviderOptions {
+  baseURL?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+  // 支持额外选项（timeout, setCacheKey 等）
+  [key: string]: unknown;
+}
+
+// MimoCode 供应商配置（settings_config 结构）
+export interface MimoCodeProviderConfig {
+  npm: string; // AI SDK 包名，如 "@ai-sdk/openai-compatible"
+  name?: string; // 供应商显示名称
+  options: MimoCodeProviderOptions;
+  models: Record<string, MimoCodeModel>;
+}
+
+// MimoCode MCP 服务器配置（与统一格式不同）
+export interface MimoCodeMcpServerSpec {
+  type: "local" | "remote";
+  // local 类型字段
+  command?: string[]; // 与统一格式不同：命令和参数合并为数组
+  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
+  // remote 类型字段
+  url?: string;
+  headers?: Record<string, string>;
+  // 通用字段
+  enabled?: boolean;
 }

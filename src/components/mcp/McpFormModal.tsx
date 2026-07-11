@@ -68,6 +68,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
+    mimo: boolean;
   }>(() => {
     if (initialData?.apps) {
       return { ...initialData.apps };
@@ -79,6 +80,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
+      mimo: defaultEnabledApps.includes("mimo"),
     };
   });
 
@@ -595,6 +597,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.hermes")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-mimo"
+                    checked={enabledApps.mimo}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, mimo: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-mimo"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.mimo")}
                   </label>
                 </div>
               </div>

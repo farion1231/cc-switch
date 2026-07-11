@@ -183,6 +183,10 @@
     "needsRouting": "需要路由",
     "noRoutingSupport": "不支援路由"
   },
+  "mimo": {
+    "needsRouting": "需要路由",
+    "noRoutingSupport": "不支援路由"
+  },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供應商使用應用程式內建的 1P 登入，無需設定 API Key 和 API 位址。",
     "mode": "模型處理方式",
@@ -252,6 +256,7 @@
     "settingsSaveFailed": "儲存設定失敗：{{error}}",
     "proxyRequiredForSwitch": "此供應商 {{reason}}，需要路由服務才能正常使用，請先啟動路由",
     "proxyReasonCopilot": "使用 GitHub Copilot 作為 Claude 供應商",
+    "proxyReasonCopilotMimo": "使用 GitHub Copilot 作為 MimoCode 供應商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat API 格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses API 格式",
     "proxyReasonFullUrl": "開啟了完整 URL 連線模式",
@@ -697,7 +702,8 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "mimocodeDesc": "MimoCode CLI"
     },
     "skillStorage": {
       "title": "Skills 儲存位置",
@@ -765,12 +771,15 @@
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
+    "mimocodeConfigDir": "MimoCode 設定目錄",
+    "mimocodeConfigDirDescription": "覆寫 MimoCode 設定目錄。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
+    "browsePlaceholderMimocode": "例如：/home/<您的帳號>/.mimocode",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -851,11 +860,12 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "mimo": "MimoCode"
   },
   "sessionManager": {
     "title": "工作階段管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 與 Gemini CLI 工作階段紀錄",
+    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes、MimoCode 與 Gemini CLI 工作階段紀錄",
     "searchPlaceholder": "搜尋對話內容、目錄或 ID",
     "searchSessions": "搜尋工作階段",
     "providerFilterAll": "全部",
@@ -1429,7 +1439,8 @@
       "codex_db": "Codex 資料庫",
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌"
+      "opencode_session": "OpenCode 工作階段日誌",
+      "mimocode_session": "MimoCode 工作階段日誌"
     },
     "sessionSync": {
       "trigger": "同步工作階段日誌",
@@ -1681,7 +1692,8 @@
         "gemini": "Gemini",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "mimo": "MimoCode"
       }
     },
     "userLevelPath": "使用者級 MCP 設定路徑",

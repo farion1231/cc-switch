@@ -20,6 +20,7 @@ import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProvider
 import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { OpenClawProviderPreset } from "@/config/openclawProviderPresets";
 import type { HermesProviderPreset } from "@/config/hermesProviderPresets";
+import type { MimoCodeProviderPreset } from "@/config/mimocodeProviderPresets";
 import type { ProviderCategory } from "@/types";
 import {
   universalProviderPresets,
@@ -44,7 +45,8 @@ export type AnyPreset =
   | ClaudeDesktopProviderPreset
   | OpenCodeProviderPreset
   | OpenClawProviderPreset
-  | HermesProviderPreset;
+  | HermesProviderPreset
+  | MimoCodeProviderPreset;
 
 export type PresetEntry = {
   id: string;

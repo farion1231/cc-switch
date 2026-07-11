@@ -66,7 +66,7 @@ impl Database {
             description TEXT, homepage TEXT, docs TEXT, tags TEXT NOT NULL DEFAULT '[]',
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0, enabled_mimocode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -95,6 +95,7 @@ impl Database {
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_mimocode BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
             updated_at INTEGER NOT NULL DEFAULT 0
@@ -122,7 +123,7 @@ impl Database {
 
         // 8. Proxy Config 表（三行结构，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','mimo')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -166,6 +167,15 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests)
                 VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                [],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests)
+                VALUES ('mimo', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -795,7 +805,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','mimo')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1304,8 +1314,12 @@ impl Database {
         Ok(())
     }
 
-    /// v11 -> v12 迁移：添加项目 Profiles 表
-    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
+    /// v11 -> v12 迁移：添加项目 Profiles 表与 MimoCode 支持。
+    ///
+    /// 包含：
+    /// 1) 新增 profiles 表；
+    /// 2) 为 mcp_servers / skills 添加 enabled_mimocode 列；
+    /// 3) 重建 proxy_config 表并确保包含 mimo app_type。
     fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
@@ -1319,6 +1333,115 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+
+        // 为 mcp_servers 表添加 enabled_mimocode 列
+        if Self::table_exists(conn, "mcp_servers")? {
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_mimocode",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        // 为 skills 表添加 enabled_mimocode 列
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(
+                conn,
+                "skills",
+                "enabled_mimocode",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+        }
+
+        // 重建 proxy_config 表：将 mimocode 加入 CHECK 约束
+        if Self::table_exists(conn, "proxy_config")? {
+            // 查询旧表的实际列名（兼容不同版本的旧表结构）
+            let existing_columns: Vec<String> = {
+                let mut stmt = conn
+                    .prepare("PRAGMA table_info(proxy_config)")
+                    .map_err(|e| AppError::Database(format!("PRAGMA table_info 失败: {e}")))?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .map_err(|e| AppError::Database(format!("查询列信息失败: {e}")))?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
+            conn.execute(
+                "CREATE TABLE proxy_config_new (
+                    app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini','mimo')),
+                    proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                    listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
+                    enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                    max_retries INTEGER NOT NULL DEFAULT 3, streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                    streaming_idle_timeout INTEGER NOT NULL DEFAULT 120, non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                    circuit_failure_threshold INTEGER NOT NULL DEFAULT 4, circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                    circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60, circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                    circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                    default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                    pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )",
+                [],
+            )?;
+
+            // 动态构建 INSERT：只复制旧表中实际存在的列
+            let all_new_cols = [
+                "app_type",
+                "proxy_enabled",
+                "listen_address",
+                "listen_port",
+                "enable_logging",
+                "enabled",
+                "auto_failover_enabled",
+                "max_retries",
+                "streaming_first_byte_timeout",
+                "streaming_idle_timeout",
+                "non_streaming_timeout",
+                "circuit_failure_threshold",
+                "circuit_success_threshold",
+                "circuit_timeout_seconds",
+                "circuit_error_rate_threshold",
+                "circuit_min_requests",
+                "default_cost_multiplier",
+                "pricing_model_source",
+                "created_at",
+                "updated_at",
+            ];
+            let copy_cols: Vec<&str> = all_new_cols
+                .iter()
+                .filter(|c| existing_columns.contains(&c.to_string()))
+                .copied()
+                .collect();
+
+            if copy_cols.is_empty() {
+                log::warn!("v11 -> v12：旧 proxy_config 表无已知列，跳过数据复制");
+            } else {
+                let cols_str = copy_cols.join(", ");
+                let select_sql = format!(
+                    "INSERT INTO proxy_config_new ({cols_str}) SELECT {} FROM proxy_config",
+                    cols_str
+                );
+                conn.execute(&select_sql, [])
+                    .map_err(|e| AppError::Database(format!("复制 proxy_config 数据失败: {e}")))?;
+            }
+
+            conn.execute("DROP TABLE proxy_config", [])?;
+            conn.execute("ALTER TABLE proxy_config_new RENAME TO proxy_config", [])?;
+
+            // 插入 mimocode 行（如果不存在）
+            conn.execute(
+                "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                    streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                    circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                    circuit_error_rate_threshold, circuit_min_requests)
+                 VALUES ('mimo', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                [],
+            )?;
+        }
+
+        log::info!("v11 -> v12 迁移完成：已添加项目 Profiles 表与 MimoCode 支持");
         Ok(())
     }
 

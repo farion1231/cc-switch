@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 6] = [
-    "claude", "codex", "gemini", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 7] = [
+    "claude", "codex", "gemini", "opencode", "openclaw", "hermes", "mimo",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -427,6 +427,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
+        "mimo" => "MimoCode",
         _ => "Unknown",
     }
 }
@@ -494,6 +495,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
+        "mimo" => Some("npm i -g @mimo-ai/cli@latest"),
         _ => None,
     }
 }
@@ -502,7 +504,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
-        "opencode" => Some("upgrade"),
+        "opencode" | "mimo" => Some("upgrade"),
         _ => None,
     }
 }
@@ -773,6 +775,7 @@ async fn get_single_tool_version_impl(
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "mimo" => fetch_npm_latest_for_tool(&client, "@mimo-ai/cli", tool, local).await,
         _ => None,
     };
 
@@ -1938,6 +1941,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "gemini" => Some("@google/gemini-cli"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
+        "mimo" => Some("@mimo-ai/cli"),
         _ => None,
     }
 }
@@ -2121,7 +2125,7 @@ fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw")
+            matches!(tool, "claude" | "opencode" | "openclaw" | "mimo")
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -2130,7 +2134,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw"
+                "claude" | "openclaw" | "mimo"
             )
         }
     }
@@ -2256,6 +2260,9 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     if tool == "hermes" {
         return anchored_official_update_command(tool, bin_path);
     }
+    if tool == "mimo" {
+        return anchored_official_update_command(tool, bin_path);
+    }
     if tool == "claude"
         && (real_lower.contains("/.local/share/claude/")
             || real_lower.contains("/claude/versions/"))
@@ -2337,6 +2344,9 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 #[cfg(target_os = "windows")]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, _real_target: &str) -> Option<String> {
     if tool == "hermes" {
+        return anchored_official_update_command(tool, bin_path);
+    }
+    if tool == "mimo" {
         return anchored_official_update_command(tool, bin_path);
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
@@ -2436,6 +2446,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "mimo" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -2547,6 +2558,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
+        "mimo" => crate::settings::get_mimocode_override_dir(),
         _ => None,
     }?;
 

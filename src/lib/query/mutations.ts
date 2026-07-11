@@ -9,6 +9,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
+import { invalidateMimocodeProviderCaches } from "@/hooks/useMimocode";
 import { usageKeys } from "@/lib/query/usage";
 
 export const useAddProviderMutation = (appId: AppId) => {
@@ -42,7 +43,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "mimo"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -95,6 +101,10 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "mimo") {
+        await invalidateMimocodeProviderCaches(queryClient);
       }
 
       try {
@@ -160,6 +170,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "mimo") {
+        await invalidateMimocodeProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -215,6 +228,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "mimo") {
+        await invalidateMimocodeProviderCaches(queryClient);
       }
 
       try {
@@ -289,6 +306,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "mimo") {
+        await invalidateMimocodeProviderCaches(queryClient);
       }
 
       try {

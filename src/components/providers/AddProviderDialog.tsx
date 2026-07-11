@@ -47,6 +47,7 @@ export function AddProviderDialog({
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
+    appId !== "mimo" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
     "app-specific",
@@ -139,7 +140,10 @@ export function AddProviderDialog({
 
       // OpenCode/OpenClaw: pass providerKey for ID generation
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
+        (appId === "opencode" ||
+          appId === "openclaw" ||
+          appId === "hermes" ||
+          appId === "mimo") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -258,6 +262,10 @@ export function AddProviderDialog({
             addUrl(parsedConfig.baseUrl as string);
           }
         } else if (appId === "hermes") {
+          if (parsedConfig.base_url) {
+            addUrl(parsedConfig.base_url as string);
+          }
+        } else if (appId === "mimo") {
           if (parsedConfig.base_url) {
             addUrl(parsedConfig.base_url as string);
           }

@@ -20,6 +20,7 @@ interface DirectorySettingsProps {
   opencodeDir?: string;
   openclawDir?: string;
   hermesDir?: string;
+  mimocodeDir?: string;
   onDirectoryChange: (app: DirectoryAppId, value?: string) => void;
   onBrowseDirectory: (app: DirectoryAppId) => Promise<void>;
   onResetDirectory: (app: DirectoryAppId) => Promise<void>;
@@ -37,6 +38,7 @@ export function DirectorySettings({
   opencodeDir,
   openclawDir,
   hermesDir,
+  mimocodeDir,
   onDirectoryChange,
   onBrowseDirectory,
   onResetDirectory,
@@ -157,6 +159,17 @@ export function DirectorySettings({
           onChange={(val) => onDirectoryChange("hermes", val)}
           onBrowse={() => onBrowseDirectory("hermes")}
           onReset={() => onResetDirectory("hermes")}
+        />
+
+        <DirectoryInput
+          label={t("settings.mimocodeConfigDir")}
+          description={undefined}
+          value={mimocodeDir}
+          resolvedValue={resolvedDirs.mimo}
+          placeholder={t("settings.browsePlaceholderMimocode")}
+          onChange={(val) => onDirectoryChange("mimo", val)}
+          onBrowse={() => onBrowseDirectory("mimo")}
+          onReset={() => onResetDirectory("mimo")}
         />
       </section>
     </div>

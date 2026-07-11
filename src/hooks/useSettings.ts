@@ -113,6 +113,7 @@ export function useSettings(): UseSettingsResult {
       opencode: sanitizeDir(data?.opencodeConfigDir),
       openclaw: sanitizeDir(data?.openclawConfigDir),
       hermes: sanitizeDir(data?.hermesConfigDir),
+      mimo: sanitizeDir(data?.mimocodeConfigDir),
     });
     setRequiresRestart(false);
   }, [

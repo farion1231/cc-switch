@@ -145,7 +145,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
-        AppType::OpenCode => build_opencode_settings(request),
+        AppType::OpenCode | AppType::MimoCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
     };
@@ -601,7 +601,7 @@ pub fn parse_and_merge_config(
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" => {
+        "openclaw" | "opencode" | "hermes" | "mimo" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {

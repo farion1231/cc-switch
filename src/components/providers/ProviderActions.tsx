@@ -88,7 +88,8 @@ export function ProviderActions({
   const isAdditiveMode =
     (appId === "opencode" && !isOmo) ||
     appId === "openclaw" ||
-    appId === "hermes";
+    appId === "hermes" ||
+    appId === "mimo";
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =

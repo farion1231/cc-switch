@@ -25,6 +25,7 @@ import {
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
+import { isCopilotProvider as isCopilotProviderConfig } from "@/utils/providerRoutingUtils";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -83,6 +84,24 @@ export function useProviderActions(
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
       await addProviderMutation.mutateAsync(enhanced);
 
+      if (
+        activeApp === "mimo" &&
+        !isProxyRunning &&
+        provider.category !== "official" &&
+        isCopilotProviderConfig(provider)
+      ) {
+        const reason = t("notifications.proxyReasonCopilotMimo", {
+          defaultValue: "使用 GitHub Copilot 作为 MimoCode 供应商",
+        });
+        toast.warning(
+          t("notifications.proxyRequiredForSwitch", {
+            reason,
+            defaultValue:
+              "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
+          }),
+        );
+      }
+
       // OpenClaw: register models to allowlist after adding provider
       if (activeApp === "openclaw" && provider.suggestedDefaults) {
         const { model, modelCatalog } = provider.suggestedDefaults;
@@ -129,7 +148,7 @@ export function useProviderActions(
         }
       }
     },
-    [addProviderMutation, activeApp, queryClient, t],
+    [addProviderMutation, activeApp, isProxyRunning, queryClient, t],
   );
 
   // 更新供应商
@@ -154,8 +173,8 @@ export function useProviderActions(
   const switchProvider = useCallback(
     async (provider: Provider) => {
       const isCopilotProvider =
-        activeApp === "claude" &&
-        provider.meta?.providerType === "github_copilot";
+        (activeApp === "claude" || activeApp === "mimo") &&
+        isCopilotProviderConfig(provider);
       const isCodexChatFormat =
         activeApp === "codex" &&
         (provider.meta?.apiFormat === "openai_chat" ||
@@ -181,9 +200,14 @@ export function useProviderActions(
       let proxyRequiredReason: string | null = null;
       if (!isProxyRunning && provider.category !== "official") {
         if (isCopilotProvider) {
-          proxyRequiredReason = t("notifications.proxyReasonCopilot", {
-            defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
-          });
+          proxyRequiredReason =
+            activeApp === "mimo"
+              ? t("notifications.proxyReasonCopilotMimo", {
+                  defaultValue: "使用 GitHub Copilot 作为 MimoCode 供应商",
+                })
+              : t("notifications.proxyReasonCopilot", {
+                  defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
+                });
         } else if (
           provider.meta?.apiFormat === "openai_chat" &&
           activeApp === "claude"
@@ -279,7 +303,11 @@ export function useProviderActions(
               messageKey = "notifications.claudeDesktopRestartRequired";
               defaultMessage = "切换成功，重启 Claude Desktop 后生效";
             }
-          } else if (activeApp === "opencode" || activeApp === "openclaw") {
+          } else if (
+            activeApp === "opencode" ||
+            activeApp === "openclaw" ||
+            activeApp === "mimo"
+          ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
           }

@@ -7,6 +7,7 @@ export type AppType =
   | "claude-desktop"
   | "codex"
   | "gemini"
+  | "mimo"
   | "opencode"
   | "openclaw"
   | "hermes";
@@ -17,6 +18,7 @@ export interface SkillApps {
   "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
+  mimo: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
