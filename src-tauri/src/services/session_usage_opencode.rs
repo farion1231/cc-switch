@@ -82,9 +82,9 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     }
 
     // 打开 opencode 的 SQLite 数据库（只读）
-    let opencode_conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
+    // 使用 sqlite_readonly helper 统一处理 UNC 路径的锁问题
+    let opencode_conn = crate::session_manager::sqlite_readonly::open_readonly(&db_path)
+        .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
 
     let mut result = SessionSyncResult {
         imported: 0,
