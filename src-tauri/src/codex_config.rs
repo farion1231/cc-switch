@@ -1255,6 +1255,7 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
             .and_then(|item| item.as_table_mut())
         {
             provider_table["experimental_bearer_token"] = toml_edit::value(token);
+            provider_table["requires_openai_auth"] = toml_edit::value(false);
             return Ok(doc.to_string());
         }
     }
@@ -1998,6 +1999,41 @@ model = "gpt-5"
         assert!(
             parsed.get("model_providers").is_none(),
             "reserved provider tables should not be synthesized"
+        );
+    }
+
+    #[test]
+    fn prepare_provider_live_config_disables_chatgpt_auth_for_custom_provider() {
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let output =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom provider");
+
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(|value| value.as_str()),
+            Some("sk-test")
+        );
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|value| value.as_bool()),
+            Some(false),
+            "Codex 0.144+ must not select ChatGPT auth for a third-party bearer token"
         );
     }
 
