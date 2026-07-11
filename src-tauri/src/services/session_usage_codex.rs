@@ -30,6 +30,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const CODEX_SUBAGENT_USAGE_MIGRATION_KEY: &str = "codex_subagent_usage_thread_id_v1_migrated";
+const CODEX_SUBAGENT_REBUILT_SESSION_KEY_PREFIX: &str =
+    "codex_subagent_usage_thread_id_v1_rebuilt:";
 const CODEX_SUBAGENT_SYNC_KEY_SUFFIX: &str = "#codex-thread-id-v1";
 
 /// 累计 token 用量（跟踪 total_token_usage 字段）
@@ -582,7 +584,24 @@ fn repair_legacy_codex_subagent_usage(
         .iter()
         .map(|(_, session_id)| session_id.as_str())
         .collect();
+    let rebuilt_session_ids = {
+        let mut stmt = tx
+            .prepare("SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1 AND value = 'true')")
+            .map_err(|e| AppError::Database(format!("准备 Codex 已重建会话查询失败: {e}")))?;
+        let mut rebuilt = HashSet::new();
+        for session_id in &synced_session_ids {
+            let key = format!("{CODEX_SUBAGENT_REBUILT_SESSION_KEY_PREFIX}{session_id}");
+            let was_rebuilt = stmt
+                .query_row([key], |row| row.get::<_, bool>(0))
+                .map_err(|e| AppError::Database(format!("查询 Codex 已重建会话失败: {e}")))?;
+            if was_rebuilt {
+                rebuilt.insert((*session_id).to_string());
+            }
+        }
+        rebuilt
+    };
     let mut affected_session_ids = HashSet::new();
+    let mut late_rebuild_subagent_paths = HashSet::new();
     let mut preserved_session_ids = HashSet::new();
     let mut preserved_synced_subagent_paths = HashSet::new();
 
@@ -607,7 +626,12 @@ fn repair_legacy_codex_subagent_usage(
     }
 
     for (path, session_id) in active_synced_subagent_paths {
-        if !affected_session_ids.contains(&session_id) {
+        if affected_session_ids.contains(&session_id) {
+            continue;
+        }
+        if rebuilt_session_ids.contains(&session_id) {
+            late_rebuild_subagent_paths.insert(path);
+        } else {
             preserved_session_ids.insert(session_id);
             preserved_synced_subagent_paths.insert(path);
         }
@@ -655,6 +679,26 @@ fn repair_legacy_codex_subagent_usage(
             )
             .map_err(|e| AppError::Database(format!("重置 Codex 子代理同步游标失败: {e}")))?;
         }
+
+        for session_id in &affected_session_ids {
+            let key = format!("{CODEX_SUBAGENT_REBUILT_SESSION_KEY_PREFIX}{session_id}");
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+                [key],
+            )
+            .map_err(|e| AppError::Database(format!("记录 Codex 已重建会话失败: {e}")))?;
+        }
+    }
+
+    // 同一父会话已完成精确重建时，迟到的兄弟子代理旧记录已随父命名空间
+    // 一并删除。清除该文件的新旧游标，让它从头按唯一 thread_id 补回历史。
+    for path in &late_rebuild_subagent_paths {
+        let subagent_key = format!("{path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        tx.execute(
+            "DELETE FROM session_log_sync WHERE file_path = ?1 OR file_path = ?2",
+            rusqlite::params![path, subagent_key],
+        )
+        .map_err(|e| AppError::Database(format!("重置迟到 Codex 子代理同步游标失败: {e}")))?;
     }
 
     // 父日志已不存在，或历史已进入无 session 维度的 rollup 时，无法安全重建
@@ -698,6 +742,12 @@ fn repair_legacy_codex_subagent_usage(
         log::info!(
             "[CODEX-SYNC] 检测到历史汇总，已保留旧统计并迁移 {} 个子代理同步游标",
             preserved_synced_subagent_paths.len()
+        );
+    }
+    if !late_rebuild_subagent_paths.is_empty() {
+        log::info!(
+            "[CODEX-SYNC] 已重置 {} 个迟到子代理游标以补回历史用量",
+            late_rebuild_subagent_paths.len()
         );
     }
 
@@ -1728,6 +1778,75 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_repair_reimports_late_sibling_after_parent_rebuild() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let main = temp.path().join("main.jsonl");
+        let child_a = temp.path().join("child-a.jsonl");
+        let child_b = temp.path().join("child-b.jsonl");
+        write_codex_usage_log(&main, "parent", "parent", 100, 10);
+        write_codex_usage_log(&child_a, "child-a", "parent", 200, 20);
+        write_codex_usage_log(&child_b, "child-b", "parent", 300, 30);
+
+        let main_identity = read_codex_session_identity(&main).unwrap();
+        let child_a_identity = read_codex_session_identity(&child_a).unwrap();
+        let child_b_identity = read_codex_session_identity(&child_b).unwrap();
+        insert_legacy_codex_usage_row(&db, "parent")?;
+
+        let main_path = main.to_string_lossy().to_string();
+        let child_a_path = child_a.to_string_lossy().to_string();
+        let child_b_path = child_b.to_string_lossy().to_string();
+        update_sync_state(&db, &main_path, 1, 3)?;
+        update_sync_state(&db, &child_a_path, 1, 3)?;
+        update_sync_state(&db, &child_b_path, 1, 3)?;
+
+        let first_files = vec![
+            (main.clone(), Some(main_identity.clone())),
+            (child_a.clone(), Some(child_a_identity.clone())),
+        ];
+        repair_legacy_codex_subagent_usage(&db, &first_files)?;
+        assert_eq!(
+            sync_single_codex_file(&db, &main, Some(&main_identity))?,
+            (1, 0)
+        );
+        assert_eq!(
+            sync_single_codex_file(&db, &child_a, Some(&child_a_identity))?,
+            (1, 0)
+        );
+
+        let all_files = vec![
+            (main, Some(main_identity)),
+            (child_a, Some(child_a_identity)),
+            (child_b.clone(), Some(child_b_identity.clone())),
+        ];
+        repair_legacy_codex_subagent_usage(&db, &all_files)?;
+        assert_eq!(get_sync_state(&db, &child_b_path)?, (0, 0));
+        assert_eq!(
+            sync_single_codex_file(&db, &child_b, Some(&child_b_identity))?,
+            (1, 0)
+        );
+
+        let conn = lock_conn!(db.conn);
+        let request_ids = conn
+            .prepare(
+                "SELECT request_id FROM proxy_request_logs
+                 WHERE data_source = 'codex_session' ORDER BY request_id",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            request_ids,
+            vec![
+                "codex_session:child-a:1".to_string(),
+                "codex_session:child-b:1".to_string(),
+                "codex_session:parent:1".to_string(),
+            ]
+        );
 
         Ok(())
     }
