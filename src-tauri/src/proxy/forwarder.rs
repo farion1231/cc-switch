@@ -1450,7 +1450,7 @@ impl RequestForwarder {
             // configured TTL rather than silently forcing 5m on this conversion path.
             // otherwise system/tools/history are re-sent at full price every round,
             // inflating cost and first-token latency. The injector handles the
-            // string→array `system` conversion and the 4-breakpoint cap.
+            // string→array `system` conversion and the new-breakpoint budget.
             super::cache_injector::inject(
                 &mut anthropic_body,
                 &super::types::OptimizerConfig {

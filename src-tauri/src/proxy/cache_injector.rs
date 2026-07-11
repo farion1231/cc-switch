@@ -13,6 +13,15 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
 
     let existing = count_existing(body);
 
+    if existing > 4 {
+        // Existing markers are caller-owned. Do not silently delete or reorder
+        // them; surface the invalid/unsupported total and leave validation to
+        // the upstream provider.
+        log::warn!(
+            "[OPT] cache: existing breakpoint count {existing} exceeds the supported total of 4; preserving caller input"
+        );
+    }
+
     // 升级已有断点的 TTL
     upgrade_existing_ttl(body, &config.cache_ttl);
 
@@ -286,6 +295,32 @@ mod tests {
         assert!(body["messages"][0]["content"][0]
             .get("cache_control")
             .is_some());
+    }
+
+    #[test]
+    fn test_more_than_four_existing_breakpoints_are_preserved() {
+        let mut body = json!({
+            "model": "test",
+            "tools": [
+                {"name": "t1", "cache_control": {"type": "ephemeral"}},
+                {"name": "t2", "cache_control": {"type": "ephemeral"}}
+            ],
+            "system": [
+                {"type": "text", "text": "s1", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "s2", "cache_control": {"type": "ephemeral"}}
+            ],
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "m1", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "m2"}
+            ]}]
+        });
+
+        inject(&mut body, &default_config());
+
+        assert_eq!(count_existing(&body), 5);
+        assert!(body["messages"][0]["content"][1]
+            .get("cache_control")
+            .is_none());
     }
 
     #[test]
