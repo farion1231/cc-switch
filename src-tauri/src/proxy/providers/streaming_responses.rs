@@ -8,6 +8,7 @@
 //!
 //! 与 Chat Completions 的 delta chunk 模型完全不同，需要独立的状态机处理。
 
+use super::reasoning_bridge::{encode_openai_reasoning_item, reasoning_summary_text};
 use super::transform_responses::{
     build_anthropic_usage_from_responses, map_responses_stop_reason,
     sanitize_anthropic_tool_use_input_json,
@@ -65,6 +66,20 @@ fn tool_item_key_from_event(data: &Value) -> Option<String> {
     None
 }
 
+#[inline]
+fn reasoning_item_key(data: &Value, item: Option<&Value>) -> Option<String> {
+    if let Some(item_id) = item
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+        .or_else(|| data.get("item_id").and_then(Value::as_str))
+    {
+        return Some(format!("reasoning:{item_id}"));
+    }
+    data.get("output_index")
+        .and_then(Value::as_u64)
+        .map(|index| format!("reasoning:out:{index}"))
+}
+
 /// Resolve content index for a text/refusal content part event.
 ///
 /// Uses `content_part_key` to look up or assign a stable index, falling back to
@@ -117,7 +132,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
         let mut tool_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut tool_name_by_index: HashMap<u32, String> = HashMap::new();
         let mut tool_args_by_index: HashMap<u32, String> = HashMap::new();
+        let mut tool_had_delta: HashSet<u32> = HashSet::new();
         let mut last_tool_index: Option<u32> = None;
+        let mut reasoning_index_by_item_id: HashMap<String, u32> = HashMap::new();
+        let mut reasoning_item_by_index: HashMap<u32, Value> = HashMap::new();
+        let mut reasoning_text_by_index: HashMap<u32, String> = HashMap::new();
+        let mut legacy_reasoning_index: Option<u32> = None;
 
         tokio::pin!(stream);
 
@@ -440,6 +460,47 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                             serde_json::to_string(&event).unwrap_or_default());
                                         yield Ok(Bytes::from(sse));
                                         open_indices.insert(index);
+                                    } else if item_type == "reasoning" {
+                                        if !has_sent_message_start {
+                                            let start_event = json!({
+                                                "type": "message_start",
+                                                "message": {
+                                                    "id": message_id.clone().unwrap_or_default(),
+                                                    "type": "message",
+                                                    "role": "assistant",
+                                                    "model": current_model.clone().unwrap_or_default(),
+                                                    "usage": { "input_tokens": 0, "output_tokens": 0 }
+                                                }
+                                            });
+                                            let sse = format!("event: message_start\ndata: {}\n\n",
+                                                serde_json::to_string(&start_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse));
+                                            has_sent_message_start = true;
+                                        }
+
+                                        let index = if let Some(key) = reasoning_item_key(&data, Some(item)) {
+                                            if let Some(existing) = index_by_key.get(&key).copied() {
+                                                existing
+                                            } else {
+                                                let assigned = next_content_index;
+                                                next_content_index += 1;
+                                                index_by_key.insert(key, assigned);
+                                                assigned
+                                            }
+                                        } else {
+                                            let assigned = next_content_index;
+                                            next_content_index += 1;
+                                            assigned
+                                        };
+                                        if let Some(item_id) = item
+                                            .get("id")
+                                            .and_then(Value::as_str)
+                                            .or_else(|| data.get("item_id").and_then(Value::as_str))
+                                        {
+                                            reasoning_index_by_item_id.insert(item_id.to_string(), index);
+                                        }
+                                        reasoning_item_by_index.insert(index, item.clone());
+                                        reasoning_text_by_index.entry(index).or_default();
                                     }
                                     // message type output_item.added is handled via content_part.added
                                 }
@@ -490,11 +551,13 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                         open_indices.insert(index);
                                     }
 
+                                    tool_args_by_index
+                                        .entry(index)
+                                        .or_default()
+                                        .push_str(delta);
+                                    tool_had_delta.insert(index);
+
                                     if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
-                                        tool_args_by_index
-                                            .entry(index)
-                                            .or_default()
-                                            .push_str(delta);
                                         continue;
                                     }
 
@@ -534,6 +597,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
                                         let raw = data
                                             .get("arguments")
+                                            .or_else(|| data.pointer("/item/arguments"))
                                             .and_then(|v| v.as_str())
                                             .map(str::to_string)
                                             .unwrap_or_else(|| {
@@ -556,6 +620,27 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                                 serde_json::to_string(&event).unwrap_or_default());
                                             yield Ok(Bytes::from(sse));
                                         }
+                                    } else if !tool_had_delta.contains(&index) {
+                                        // Some compatible gateways skip delta events and only
+                                        // provide the complete arguments on the done event.
+                                        if let Some(arguments) = data
+                                            .get("arguments")
+                                            .or_else(|| data.pointer("/item/arguments"))
+                                            .and_then(Value::as_str)
+                                            .filter(|value| !value.is_empty())
+                                        {
+                                            let event = json!({
+                                                "type": "content_block_delta",
+                                                "index": index,
+                                                "delta": {
+                                                    "type": "input_json_delta",
+                                                    "partial_json": arguments
+                                                }
+                                            });
+                                            let sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse));
+                                        }
                                     }
                                     let event = json!({
                                         "type": "content_block_stop",
@@ -569,6 +654,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     }
                                     tool_name_by_index.remove(&index);
                                     tool_args_by_index.remove(&index);
+                                    tool_had_delta.remove(&index);
                                 }
                             }
 
@@ -602,9 +688,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             }
 
                             // ================================================
-                            // response.reasoning.delta → content_block_delta (thinking_delta)
+                            // Official reasoning text events → thinking_delta.
+                            // response.reasoning.delta is kept as a compatibility alias.
                             // ================================================
-                            "response.reasoning.delta" => {
+                            "response.reasoning_summary_text.delta"
+                            | "response.reasoning_text.delta"
+                            | "response.reasoning.delta" => {
                                 if let Some(delta) = data
                                     .get("delta")
                                     .or_else(|| data.get("text"))
@@ -624,12 +713,35 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                             fallback_open_index = None;
                                         }
                                     }
-                                    let index = resolve_content_index(
-                                        &data,
-                                        &mut next_content_index,
-                                        &mut index_by_key,
-                                        &mut fallback_open_index,
-                                    );
+                                    let item_id = data.get("item_id").and_then(Value::as_str);
+                                    let item_key = reasoning_item_key(&data, None);
+                                    let is_keyless = item_id.is_none() && item_key.is_none();
+                                    let index = item_id
+                                        .and_then(|id| reasoning_index_by_item_id.get(id).copied())
+                                        .or_else(|| {
+                                            item_key
+                                                .as_ref()
+                                                .and_then(|key| index_by_key.get(key).copied())
+                                        })
+                                        .or_else(|| {
+                                            is_keyless
+                                                .then_some(legacy_reasoning_index)
+                                                .flatten()
+                                        })
+                                        .unwrap_or_else(|| {
+                                            let assigned = next_content_index;
+                                            next_content_index += 1;
+                                            if let Some(key) = item_key {
+                                                index_by_key.insert(key, assigned);
+                                            }
+                                            if let Some(id) = item_id {
+                                                reasoning_index_by_item_id
+                                                    .insert(id.to_string(), assigned);
+                                            } else if is_keyless {
+                                                legacy_reasoning_index = Some(assigned);
+                                            }
+                                            assigned
+                                        });
 
                                     if !open_indices.contains(&index) {
                                         let start_event = json!({
@@ -646,6 +758,11 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                         open_indices.insert(index);
                                     }
 
+                                    reasoning_text_by_index
+                                        .entry(index)
+                                        .or_default()
+                                        .push_str(delta);
+
                                     let event = json!({
                                         "type": "content_block_delta",
                                         "index": index,
@@ -661,28 +778,90 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             }
 
                             // ================================================
-                            // response.reasoning.done → content_block_stop
+                            // Official done events carry the complete visible text. If a
+                            // gateway omitted deltas, emit the text here. The block stays
+                            // open until output_item.done supplies encrypted_content.
                             // ================================================
-                            "response.reasoning.done" => {
-                                let key = content_part_key(&data);
-                                let index = if let Some(k) = key {
-                                    index_by_key.get(&k).copied()
-                                } else {
-                                    fallback_open_index
-                                };
-                                if let Some(index) = index {
-                                    if !open_indices.remove(&index) {
-                                        continue;
-                                    }
-                                    let event = json!({
-                                        "type": "content_block_stop",
-                                        "index": index
+                            "response.reasoning_summary_text.done"
+                            | "response.reasoning_text.done" => {
+                                let item_id = data.get("item_id").and_then(Value::as_str);
+                                let item_key = reasoning_item_key(&data, None);
+                                let index = item_id
+                                    .and_then(|id| reasoning_index_by_item_id.get(id).copied())
+                                    .or_else(|| {
+                                        item_key
+                                            .as_ref()
+                                            .and_then(|key| index_by_key.get(key).copied())
+                                    })
+                                    .or_else(|| {
+                                        (item_id.is_none() && item_key.is_none())
+                                            .then_some(legacy_reasoning_index)
+                                            .flatten()
                                     });
-                                    let sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                    if fallback_open_index == Some(index) {
-                                        fallback_open_index = None;
+                                if let Some(index) = index {
+                                    let already_emitted = reasoning_text_by_index
+                                        .get(&index)
+                                        .is_some_and(|value| !value.is_empty());
+                                    if !already_emitted {
+                                        if let Some(text) = data
+                                            .get("text")
+                                            .and_then(Value::as_str)
+                                            .filter(|value| !value.is_empty())
+                                        {
+                                            if !open_indices.contains(&index) {
+                                                let start_event = json!({
+                                                    "type": "content_block_start",
+                                                    "index": index,
+                                                    "content_block": {"type": "thinking", "thinking": ""}
+                                                });
+                                                let start_sse = format!("event: content_block_start\ndata: {}\n\n",
+                                                    serde_json::to_string(&start_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(start_sse));
+                                                open_indices.insert(index);
+                                            }
+                                            reasoning_text_by_index
+                                                .entry(index)
+                                                .or_default()
+                                                .push_str(text);
+                                            let event = json!({
+                                                "type": "content_block_delta",
+                                                "index": index,
+                                                "delta": {"type": "thinking_delta", "thinking": text}
+                                            });
+                                            let sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse));
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Legacy gateways do not emit output_item.done, so retain the
+                            // old close behavior for their non-standard done event.
+                            "response.reasoning.done" => {
+                                let item_id = data.get("item_id").and_then(Value::as_str);
+                                let item_key = reasoning_item_key(&data, None);
+                                let index = item_id
+                                    .and_then(|id| reasoning_index_by_item_id.get(id).copied())
+                                    .or_else(|| {
+                                        item_key
+                                            .as_ref()
+                                            .and_then(|key| index_by_key.get(key).copied())
+                                    })
+                                    .or_else(|| {
+                                        (item_id.is_none() && item_key.is_none())
+                                            .then_some(legacy_reasoning_index)
+                                            .flatten()
+                                    });
+                                if let Some(index) = index {
+                                    if open_indices.remove(&index) {
+                                        let event = json!({"type": "content_block_stop", "index": index});
+                                        let sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                            serde_json::to_string(&event).unwrap_or_default());
+                                        yield Ok(Bytes::from(sse));
+                                    }
+                                    if legacy_reasoning_index == Some(index) {
+                                        legacy_reasoning_index = None;
                                     }
                                 }
                             }
@@ -764,7 +943,170 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     }
                                 }
                             }
-                            "response.output_item.done"
+                            "response.output_item.done" => {
+                                let Some(item) = data.get("item") else {
+                                    continue;
+                                };
+                                match item.get("type").and_then(Value::as_str) {
+                                    Some("function_call") => {
+                                        let item_id = item
+                                            .get("id")
+                                            .and_then(Value::as_str)
+                                            .or_else(|| data.get("item_id").and_then(Value::as_str));
+                                        let index = item_id
+                                            .and_then(|id| tool_index_by_item_id.get(id).copied())
+                                            .or_else(|| {
+                                                tool_item_key_from_event(&data)
+                                                    .and_then(|key| index_by_key.get(&key).copied())
+                                            })
+                                            .or(last_tool_index);
+                                        if let Some(index) = index.filter(|value| open_indices.contains(value)) {
+                                            let name = tool_name_by_index
+                                                .get(&index)
+                                                .map(String::as_str)
+                                                .unwrap_or("");
+                                            if !tool_had_delta.contains(&index) || name == "Read" {
+                                                let raw = item
+                                                    .get("arguments")
+                                                    .and_then(Value::as_str)
+                                                    .filter(|value| !value.is_empty())
+                                                    .map(str::to_string)
+                                                    .unwrap_or_else(|| {
+                                                        tool_args_by_index
+                                                            .get(&index)
+                                                            .cloned()
+                                                            .unwrap_or_default()
+                                                    });
+                                                let arguments = if name == "Read" {
+                                                    sanitize_anthropic_tool_use_input_json(name, &raw)
+                                                } else {
+                                                    raw
+                                                };
+                                                if !arguments.is_empty() {
+                                                    let event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": index,
+                                                        "delta": {
+                                                            "type": "input_json_delta",
+                                                            "partial_json": arguments
+                                                        }
+                                                    });
+                                                    let sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                        serde_json::to_string(&event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(sse));
+                                                }
+                                            }
+                                            open_indices.remove(&index);
+                                            let event = json!({"type": "content_block_stop", "index": index});
+                                            let sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse));
+                                            if let Some(id) = item_id {
+                                                tool_index_by_item_id.remove(id);
+                                            }
+                                            tool_name_by_index.remove(&index);
+                                            tool_args_by_index.remove(&index);
+                                            tool_had_delta.remove(&index);
+                                        }
+                                    }
+                                    Some("reasoning") => {
+                                        let item_id = item
+                                            .get("id")
+                                            .and_then(Value::as_str)
+                                            .or_else(|| data.get("item_id").and_then(Value::as_str));
+                                        let index = item_id
+                                            .and_then(|id| reasoning_index_by_item_id.get(id).copied())
+                                            .or_else(|| {
+                                                reasoning_item_key(&data, Some(item))
+                                                    .and_then(|key| index_by_key.get(&key).copied())
+                                            })
+                                            .unwrap_or_else(|| {
+                                                let assigned = next_content_index;
+                                                next_content_index += 1;
+                                                assigned
+                                            });
+                                        reasoning_item_by_index.insert(index, item.clone());
+
+                                        let final_item = reasoning_item_by_index
+                                            .get(&index)
+                                            .cloned()
+                                            .unwrap_or_else(|| item.clone());
+                                        let full_text = reasoning_summary_text(&final_item);
+                                        let emitted_text = reasoning_text_by_index
+                                            .get(&index)
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        if emitted_text.is_empty() && !full_text.is_empty() {
+                                            let start_event = json!({
+                                                "type": "content_block_start",
+                                                "index": index,
+                                                "content_block": {"type": "thinking", "thinking": ""}
+                                            });
+                                            let start_sse = format!("event: content_block_start\ndata: {}\n\n",
+                                                serde_json::to_string(&start_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(start_sse));
+                                            open_indices.insert(index);
+                                            let delta_event = json!({
+                                                "type": "content_block_delta",
+                                                "index": index,
+                                                "delta": {"type": "thinking_delta", "thinking": full_text}
+                                            });
+                                            let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                serde_json::to_string(&delta_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(delta_sse));
+                                        }
+
+                                        let encrypted = final_item
+                                            .get("encrypted_content")
+                                            .and_then(Value::as_str)
+                                            .is_some_and(|value| !value.is_empty());
+                                        if encrypted {
+                                            if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
+                                                if open_indices.contains(&index) {
+                                                    let signature_event = json!({
+                                                        "type": "content_block_delta",
+                                                        "index": index,
+                                                        "delta": {
+                                                            "type": "signature_delta",
+                                                            "signature": envelope
+                                                        }
+                                                    });
+                                                    let signature_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                        serde_json::to_string(&signature_event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(signature_sse));
+                                                } else {
+                                                    let start_event = json!({
+                                                        "type": "content_block_start",
+                                                        "index": index,
+                                                        "content_block": {
+                                                            "type": "redacted_thinking",
+                                                            "data": envelope
+                                                        }
+                                                    });
+                                                    let start_sse = format!("event: content_block_start\ndata: {}\n\n",
+                                                        serde_json::to_string(&start_event).unwrap_or_default());
+                                                    yield Ok(Bytes::from(start_sse));
+                                                    open_indices.insert(index);
+                                                }
+                                            }
+                                        }
+                                        if open_indices.remove(&index) {
+                                            let stop_event = json!({"type": "content_block_stop", "index": index});
+                                            let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
+                                                serde_json::to_string(&stop_event).unwrap_or_default());
+                                            yield Ok(Bytes::from(stop_sse));
+                                        }
+                                        if let Some(id) = item_id {
+                                            reasoning_index_by_item_id.remove(id);
+                                        }
+                                        reasoning_item_by_index.remove(&index);
+                                        reasoning_text_by_index.remove(&index);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            "response.reasoning_summary_part.added"
+                            | "response.reasoning_summary_part.done"
                             | "response.in_progress" => {}
 
                             // Any other unknown/future events — silently skip.
@@ -1011,12 +1353,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_streaming_tool_done_arguments_fallback_without_deltas() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_done\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_done\",\"type\":\"function_call\",\"call_id\":\"call_done\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n",
+            "event: response.function_call_arguments.done\n",
+            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_done\",\"output_index\":0,\"item\":{\"id\":\"fc_done\",\"type\":\"function_call\",\"arguments\":\"{\\\"q\\\":\\\"rust\\\"}\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let merged = create_anthropic_sse_stream_from_responses(upstream)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert!(merged.contains("\"partial_json\":\"{\\\"q\\\":\\\"rust\\\"}\""));
+        assert_eq!(merged.matches("event: content_block_stop").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_official_reasoning_events_emit_signature_before_stop() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_reason\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            "event: response.reasoning_summary_part.added\n",
+            "data: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"\"}}\n\n",
+            "event: response.reasoning_summary_text.delta\n",
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Need a tool.\"}\n\n",
+            "event: response.reasoning_summary_text.done\n",
+            "data: {\"type\":\"response.reasoning_summary_text.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"text\":\"Need a tool.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}],\"encrypted_content\":\"opaque\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
+        let merged = create_anthropic_sse_stream_from_responses(upstream)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect::<String>();
+
+        assert!(merged.contains("\"type\":\"thinking_delta\""));
+        assert!(merged.contains("\"type\":\"signature_delta\""));
+        let signature_position = merged.find("signature_delta").unwrap();
+        let stop_position = merged.find("event: content_block_stop").unwrap();
+        assert!(signature_position < stop_position);
+        assert!(!merged[stop_position..].contains("content_block_delta"));
+    }
+
+    #[tokio::test]
     async fn test_streaming_reasoning_delta_emits_thinking_blocks() {
         let input = concat!(
             "event: response.created\n",
             "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_r\",\"model\":\"o3\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n",
             "event: response.reasoning.delta\n",
-            "data: {\"type\":\"response.reasoning.delta\",\"delta\":\"Let me think...\"}\n\n",
+            "data: {\"type\":\"response.reasoning.delta\",\"delta\":\"Let me \"}\n\n",
+            "event: response.reasoning.delta\n",
+            "data: {\"type\":\"response.reasoning.delta\",\"delta\":\"think...\"}\n\n",
             "event: response.reasoning.done\n",
             "data: {\"type\":\"response.reasoning.done\"}\n\n",
             "event: response.content_part.added\n",
@@ -1049,8 +1451,9 @@ mod tests {
             "should emit thinking_delta"
         );
         assert!(
-            merged.contains("\"thinking\":\"Let me think...\""),
-            "should contain thinking text"
+            merged.contains("\"thinking\":\"Let me \"")
+                && merged.contains("\"thinking\":\"think...\""),
+            "should contain both thinking deltas"
         );
         assert!(
             merged.contains("\"type\":\"text_delta\""),
@@ -1061,6 +1464,57 @@ mod tests {
             "should contain text delta"
         );
         assert!(merged.contains("\"stop_reason\":\"end_turn\""));
+
+        let events: Vec<Value> = merged
+            .split("\n\n")
+            .filter_map(|block| {
+                block
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "))
+                    .and_then(|data| serde_json::from_str(data).ok())
+            })
+            .collect();
+        let thinking_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event.get("type").and_then(Value::as_str) == Some("content_block_start")
+                    && event.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("thinking")
+            })
+            .collect();
+        assert_eq!(
+            thinking_starts.len(),
+            1,
+            "keyless deltas must share one block"
+        );
+        let thinking_index = thinking_starts[0]
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap();
+        let thinking_delta_indices: Vec<u64> = events
+            .iter()
+            .filter(|event| {
+                event.pointer("/delta/type").and_then(Value::as_str) == Some("thinking_delta")
+            })
+            .filter_map(|event| event.get("index").and_then(Value::as_u64))
+            .collect();
+        assert_eq!(thinking_delta_indices, vec![thinking_index, thinking_index]);
+
+        let stop_position = events
+            .iter()
+            .position(|event| {
+                event.get("type").and_then(Value::as_str) == Some("content_block_stop")
+                    && event.get("index").and_then(Value::as_u64) == Some(thinking_index)
+            })
+            .expect("legacy reasoning done must close the thinking block");
+        let text_start_position = events
+            .iter()
+            .position(|event| {
+                event.get("type").and_then(Value::as_str) == Some("content_block_start")
+                    && event.pointer("/content_block/type").and_then(Value::as_str) == Some("text")
+            })
+            .expect("text block must start");
+        assert!(stop_position < text_start_position);
     }
 
     #[tokio::test]
