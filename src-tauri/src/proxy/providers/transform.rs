@@ -490,9 +490,21 @@ fn convert_message_to_openai(
     Ok(result)
 }
 
-/// 清理 JSON schema（移除不支持的 format）
-pub fn clean_schema(mut schema: Value) -> Value {
+/// 清理工具参数的 JSON schema，并为根 schema 补齐 OpenAI 要求的 object 类型。
+pub fn clean_schema(schema: Value) -> Value {
+    clean_schema_inner(schema, true)
+}
+
+fn clean_schema_inner(mut schema: Value, is_root: bool) -> Value {
     if let Some(obj) = schema.as_object_mut() {
+        let missing_type = is_root && !obj.contains_key("type");
+        if missing_type {
+            obj.insert("type".to_string(), json!("object"));
+        }
+        if missing_type && !obj.contains_key("properties") {
+            obj.insert("properties".to_string(), json!({}));
+        }
+
         // 移除 "format": "uri"
         if obj.get("format").and_then(|v| v.as_str()) == Some("uri") {
             obj.remove("format");
@@ -501,12 +513,12 @@ pub fn clean_schema(mut schema: Value) -> Value {
         // 递归清理嵌套 schema
         if let Some(properties) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
             for (_, value) in properties.iter_mut() {
-                *value = clean_schema(value.clone());
+                *value = clean_schema_inner(value.clone(), false);
             }
         }
 
         if let Some(items) = obj.get_mut("items") {
-            *items = clean_schema(items.clone());
+            *items = clean_schema_inner(items.clone(), false);
         }
     }
     schema
@@ -831,6 +843,75 @@ mod tests {
         let result = anthropic_to_openai(input).unwrap();
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["function"]["name"], "get_weather");
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["type"],
+            json!("object")
+        );
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["properties"]["location"]["type"],
+            json!("string")
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_defaults_missing_tool_schema_type() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "What's the weather?"}],
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get weather info",
+                "input_schema": {"properties": {"location": {"type": "string"}}}
+            }]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(parameters["type"], json!("object"));
+        assert_eq!(
+            parameters["properties"]["location"]["type"],
+            json!("string")
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_defaults_empty_tool_schema() {
+        let input = json!({
+            "model": "claude-3-opus",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Do work"}],
+            "tools": [{"name": "do_work", "input_schema": {}}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(parameters, &json!({"type": "object", "properties": {}}));
+    }
+
+    #[test]
+    fn test_clean_schema_only_defaults_root_to_object() {
+        let schema = json!({
+            "properties": {
+                "nullable_value": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}]
+                },
+                "list": {
+                    "items": {"type": "string"}
+                }
+            }
+        });
+
+        let result = clean_schema(schema);
+        assert_eq!(result["type"], json!("object"));
+        assert_eq!(
+            result["properties"]["nullable_value"],
+            json!({"anyOf": [{"type": "string"}, {"type": "null"}]})
+        );
+        assert_eq!(
+            result["properties"]["list"],
+            json!({"items": {"type": "string"}})
+        );
     }
 
     #[test]

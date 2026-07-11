@@ -770,8 +770,49 @@ mod tests {
         assert_eq!(result["tools"][0]["type"], "function");
         assert_eq!(result["tools"][0]["name"], "get_weather");
         assert!(result["tools"][0].get("parameters").is_some());
+        assert_eq!(result["tools"][0]["parameters"]["type"], json!("object"));
+        assert_eq!(
+            result["tools"][0]["parameters"]["properties"]["location"]["type"],
+            json!("string")
+        );
         // input_schema should not appear
         assert!(result["tools"][0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_defaults_missing_tool_schema_type() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Weather?"}],
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get weather info",
+                "input_schema": {"properties": {"location": {"type": "string"}}}
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let parameters = &result["tools"][0]["parameters"];
+        assert_eq!(parameters["type"], json!("object"));
+        assert_eq!(
+            parameters["properties"]["location"]["type"],
+            json!("string")
+        );
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_defaults_empty_tool_schema() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Do work"}],
+            "tools": [{"name": "do_work", "input_schema": {}}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        let parameters = &result["tools"][0]["parameters"];
+        assert_eq!(parameters, &json!({"type": "object", "properties": {}}));
     }
 
     #[test]
