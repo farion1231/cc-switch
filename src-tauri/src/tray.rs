@@ -11,6 +11,34 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::store::AppState;
 
+const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
+const H_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_FIVE_HOUR];
+const W_TIER_NAMES: &[&str] = &[
+    crate::services::subscription::TIER_WEEKLY_LIMIT,
+    crate::services::subscription::TIER_SEVEN_DAY,
+    crate::services::subscription::TIER_SEVEN_DAY_OPUS,
+    crate::services::subscription::TIER_SEVEN_DAY_SONNET,
+];
+// 月窗口分组：火山方舟 Agent/Coding Plan 的月窗口（5h/周/月 三档），
+// 以及 Codex 免费方案的 30 天窗口（#3651）——两者都归入 "m" 档，避免免费
+// Codex 账号在托盘里空白（前端 footer 能看到、托盘却不显示的不对称）。
+const M_TIER_NAMES: &[&str] = &[
+    crate::services::subscription::TIER_MONTHLY,
+    crate::services::subscription::TIER_THIRTY_DAY,
+];
+const GEMINI_PRO_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_PRO];
+const GEMINI_FLASH_TIER_NAMES: &[&str] = &[crate::services::subscription::TIER_GEMINI_FLASH];
+const GEMINI_FLASH_LITE_TIER_NAMES: &[&str] =
+    &[crate::services::subscription::TIER_GEMINI_FLASH_LITE];
+const TIER_LABEL_GROUPS: &[(&str, &[&str])] = &[
+    ("h", H_TIER_NAMES),
+    ("w", W_TIER_NAMES),
+    ("m", M_TIER_NAMES),
+    ("p", GEMINI_PRO_TIER_NAMES),
+    ("f", GEMINI_FLASH_TIER_NAMES),
+    ("l", GEMINI_FLASH_LITE_TIER_NAMES),
+];
+
 /// 每个 app 分区的子菜单句柄，用于 usage 更新时就地改 label 而非整菜单重建。
 /// `create_tray_menu` 每次重建都会整表覆盖写入，保证句柄始终指向当前活跃菜单。
 static TRAY_SECTION_SUBMENUS: Lazy<
@@ -26,6 +54,8 @@ pub struct TrayTexts {
     pub lightweight_mode: &'static str,
     pub quit: &'static str,
     pub _auto_label: &'static str,
+    pub projects_label: &'static str,
+    pub no_project_label: &'static str,
 }
 
 impl TrayTexts {
@@ -38,6 +68,8 @@ impl TrayTexts {
                 lightweight_mode: "Lightweight Mode",
                 quit: "Quit",
                 _auto_label: "Auto (Failover)",
+                projects_label: "Projects",
+                no_project_label: "No project",
             },
             "ja" => Self {
                 show_main: "メインウィンドウを開く",
@@ -46,6 +78,8 @@ impl TrayTexts {
                 lightweight_mode: "軽量モード",
                 quit: "終了",
                 _auto_label: "自動 (フェイルオーバー)",
+                projects_label: "プロジェクト",
+                no_project_label: "プロジェクトを使用しない",
             },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
@@ -54,6 +88,8 @@ impl TrayTexts {
                 lightweight_mode: "輕量模式",
                 quit: "退出",
                 _auto_label: "自動 (故障轉移)",
+                projects_label: "專案",
+                no_project_label: "不使用專案",
             },
             _ => Self {
                 show_main: "打开主界面",
@@ -62,6 +98,8 @@ impl TrayTexts {
                 lightweight_mode: "轻量模式",
                 quit: "退出",
                 _auto_label: "自动 (故障转移)",
+                projects_label: "项目",
+                no_project_label: "不使用项目",
             },
         }
     }
@@ -121,47 +159,16 @@ fn emoji_for_utilization(pct: f64) -> &'static str {
 fn format_subscription_summary(
     quota: &crate::services::subscription::SubscriptionQuota,
 ) -> Option<String> {
-    use crate::services::subscription::{
-        TIER_FIVE_HOUR, TIER_GEMINI_FLASH, TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_SEVEN_DAY,
-    };
     if !quota.success {
         return None;
     }
 
-    // 按 tool 选取主卡槽 tier 并映射到短 label：
-    //   Claude / Codex 沿用时间窗口（h=5 小时，w=7 天）；
-    //   Gemini 用模型维度（p=pro，f=flash，l=flash-lite）——Gemini 后端 tier
-    //   命名是 gemini_pro / gemini_flash / gemini_flash_lite，与时间窗口不同命名空间。
-    //   flash_lite 必须纳入：否则 lite 利用率最高时色标偏低，与前端 footer 行为不一致。
-    let parts: Vec<(&'static str, f64)> = match quota.tool.as_str() {
-        "gemini" => {
-            let mut v = Vec::new();
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_PRO) {
-                v.push(("p", t.utilization));
-            }
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_GEMINI_FLASH) {
-                v.push(("f", t.utilization));
-            }
-            if let Some(t) = quota
-                .tiers
-                .iter()
-                .find(|t| t.name == TIER_GEMINI_FLASH_LITE)
-            {
-                v.push(("l", t.utilization));
-            }
-            v
-        }
-        _ => {
-            let mut v = Vec::new();
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_FIVE_HOUR) {
-                v.push(("h", t.utilization));
-            }
-            if let Some(t) = quota.tiers.iter().find(|t| t.name == TIER_SEVEN_DAY) {
-                v.push(("w", t.utilization));
-            }
-            v
-        }
-    };
+    let entries: Vec<(&str, f64)> = quota
+        .tiers
+        .iter()
+        .map(|tier| (tier.name.as_str(), tier.utilization))
+        .collect();
+    let parts = labeled_tier_parts(&entries);
 
     if parts.is_empty() {
         return None;
@@ -185,6 +192,22 @@ fn format_subscription_summary(
     Some(format!("{emoji} {body}"))
 }
 
+fn labeled_tier_parts(entries: &[(&str, f64)]) -> Vec<(&'static str, f64)> {
+    let mut parts = Vec::new();
+    for &(label, tier_names) in TIER_LABEL_GROUPS {
+        let max_utilization = entries
+            .iter()
+            .filter(|(name, _)| tier_names.contains(name))
+            .map(|(_, utilization)| *utilization)
+            .filter(|utilization| utilization.is_finite())
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        if let Some(utilization) = max_utilization {
+            parts.push((label, utilization));
+        }
+    }
+    parts
+}
+
 fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
     match (data.used, data.total) {
         (Some(used), Some(total)) if total > 0.0 => Some(used / total * 100.0),
@@ -193,8 +216,6 @@ fn tier_pct(data: &crate::provider::UsageData) -> Option<f64> {
 }
 
 fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String> {
-    use crate::services::subscription::{TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT};
-
     if !result.success {
         return None;
     }
@@ -203,23 +224,15 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
         return None;
     }
 
-    // commands::provider 的 token_plan 分支把 SubscriptionQuota 的每个 tier
-    // 扁平化为一条 UsageData（plan_name 承载 tier 名），所以这里按 plan_name
-    // 识别双桶形态，其余 usage 结果（Copilot / balance / 自定义脚本）走 fallback。
-    const TOKEN_PLAN_LABELS: &[(&str, &str)] = &[(TIER_FIVE_HOUR, "h"), (TIER_WEEKLY_LIMIT, "w")];
-
-    let mut parts: Vec<(&'static str, f64)> = Vec::new();
-    for &(tier_name, label) in TOKEN_PLAN_LABELS {
-        let Some(d) = data
-            .iter()
-            .find(|d| d.plan_name.as_deref() == Some(tier_name))
-        else {
-            continue;
-        };
-        if let Some(u) = tier_pct(d) {
-            parts.push((label, u));
-        }
-    }
+    // commands::provider 的 token_plan / official_subscription 分支都会把
+    // SubscriptionQuota 的每个 tier 扁平化为一条 UsageData（plan_name 承载
+    // tier 名），所以这里按 plan_name 恢复托盘短标签。其余 usage 结果
+    //（Copilot / balance / 自定义脚本）走 fallback。
+    let entries: Vec<(&str, f64)> = data
+        .iter()
+        .filter_map(|d| Some((d.plan_name.as_deref()?, tier_pct(d)?)))
+        .collect();
+    let parts = labeled_tier_parts(&entries);
     if !parts.is_empty() {
         let worst = parts
             .iter()
@@ -246,6 +259,18 @@ fn format_script_summary(result: &crate::provider::UsageResult) -> Option<String
     }
 }
 
+fn provider_uses_official_subscription(provider: &crate::provider::Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|m| m.usage_script.as_ref())
+        .map(|script| {
+            script.enabled
+                && script.template_type.as_deref() == Some(TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION)
+        })
+        .unwrap_or(false)
+}
+
 fn format_usage_suffix(
     app_state: &AppState,
     app_type: &AppType,
@@ -254,7 +279,10 @@ fn format_usage_suffix(
 ) -> Option<String> {
     // 当前脚本是否启用：禁用/删除时不再沿用旧 UsageCache 结果，
     // 并顺手 invalidate，防止后续重建继续命中过期数据。
-    if provider.has_usage_script_enabled() {
+    let is_official_provider = provider.category.as_deref() == Some("official");
+    let can_use_script = provider.has_usage_script_enabled()
+        && (!is_official_provider || provider_uses_official_subscription(provider));
+    if can_use_script {
         // 脚本缓存优先（覆盖 Copilot/coding_plan/balance/自定义脚本），借用访问避免克隆整条 UsageResult。
         if let Some(Some(s)) =
             app_state
@@ -263,19 +291,22 @@ fn format_usage_suffix(
         {
             return Some(format!(" · {s}"));
         }
+        if provider_uses_official_subscription(provider) {
+            if let Some(Some(s)) = app_state
+                .usage_cache
+                .with_subscription(app_type, format_subscription_summary)
+            {
+                return Some(format!(" · {s}"));
+            }
+        }
     } else {
         app_state
             .usage_cache
             .invalidate_script(app_type, provider_id);
     }
 
-    if provider.category.as_deref() == Some("official") {
-        if let Some(Some(s)) = app_state
-            .usage_cache
-            .with_subscription(app_type, format_subscription_summary)
-        {
-            return Some(format!(" · {s}"));
-        }
+    if !provider_uses_official_subscription(provider) {
+        app_state.usage_cache.invalidate_subscription(app_type);
     }
     None
 }
@@ -303,6 +334,95 @@ fn sort_providers(
         a.name.cmp(&b.name)
     });
     sorted
+}
+
+/// 处理项目 Profile 托盘事件，返回是否已处理
+///
+/// 事件 id 形如 `profile_<scope>_<uuid>`（同一项目在各分组子菜单里各有一项，
+/// 应用时只作用于该分组）；`profile_none_<scope>` 表示某分组"不使用项目"
+/// （只清该分组标记，不动配置）。
+pub fn handle_profile_tray_event(app: &tauri::AppHandle, event_id: &str) -> bool {
+    let Some(suffix) = event_id.strip_prefix("profile_") else {
+        return false;
+    };
+
+    if let Some(scope_str) = suffix.strip_prefix("none_") {
+        let Ok(scope) = crate::services::profile::ProfileScope::parse(scope_str) else {
+            log::error!("未知的项目分组托盘事件: {event_id}");
+            return true;
+        };
+        if let Some(app_state) = app.try_state::<AppState>() {
+            if let Err(e) = app_state.db.set_current_profile_id(scope.as_str(), None) {
+                log::error!("清除当前项目失败: {e}");
+            }
+        }
+        // 通知主窗口刷新（profileId=null 表示该分组已清除当前项目）
+        if let Err(e) = app.emit(
+            "profile-applied",
+            serde_json::json!({ "profileId": null, "scope": scope.as_str() }),
+        ) {
+            log::error!("发射 profile-applied 事件失败: {e}");
+        }
+        refresh_tray_menu(app);
+        return true;
+    }
+
+    // scope 是固定枚举字符串（不含下划线），uuid 只含连字符，首个下划线即分界
+    let Some((scope_str, profile_id)) = suffix.split_once('_') else {
+        log::error!("无法解析项目托盘事件: {event_id}");
+        return true;
+    };
+    let Ok(scope) = crate::services::profile::ProfileScope::parse(scope_str) else {
+        log::error!("未知的项目分组托盘事件: {event_id}");
+        return true;
+    };
+
+    log::info!("应用项目: {profile_id}（{scope_str} 组）");
+    let app_handle = app.clone();
+    let profile_id = profile_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(app_state) = app_handle.try_state::<AppState>() else {
+            return;
+        };
+        match crate::services::profile::ProfileService::apply(app_state.inner(), &profile_id, scope)
+        {
+            Ok((warnings, should_stop_proxy)) => {
+                for warning in &warnings {
+                    log::warn!("[Profile] 应用项目 {profile_id} 警告: {warning}");
+                }
+
+                if should_stop_proxy {
+                    let app_handle2 = app_handle.clone();
+                    let proxy_service = app_state.proxy_service.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = proxy_service.stop().await {
+                            log::warn!("托盘切换项目后停止代理服务失败: {e}");
+                        }
+                        if let Some(state) = app_handle2.try_state::<AppState>() {
+                            crate::commands::emit_profile_apply_events(
+                                &app_handle2,
+                                state.inner(),
+                                &profile_id,
+                                scope,
+                            );
+                        }
+                    });
+                } else {
+                    crate::commands::emit_profile_apply_events(
+                        &app_handle,
+                        app_state.inner(),
+                        &profile_id,
+                        scope,
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("应用项目 {profile_id} 失败: {e}");
+                refresh_tray_menu(&app_handle);
+            }
+        }
+    });
+    true
 }
 
 /// 处理供应商托盘事件
@@ -584,6 +704,90 @@ pub fn create_tray_menu(
         menu_builder = menu_builder.separator();
     }
 
+    // 项目 Profile 子菜单：项目列表全应用共享，按分组嵌套子菜单各自勾选/应用
+    // （组内应用可见且存在项目时才显示该组）
+    {
+        use crate::services::profile::ProfileScope;
+
+        let any_scope_visible = ProfileScope::ALL.iter().any(|scope| {
+            scope
+                .apps()
+                .iter()
+                .any(|app_type| visible_apps.is_visible(app_type))
+        });
+        let profiles = if any_scope_visible {
+            app_state.db.get_all_profiles()?
+        } else {
+            Vec::new()
+        };
+
+        let mut scope_submenus = Vec::new();
+        for scope in ProfileScope::ALL {
+            if profiles.is_empty()
+                || !scope
+                    .apps()
+                    .iter()
+                    .any(|app_type| visible_apps.is_visible(app_type))
+            {
+                continue;
+            }
+            let current_profile_id = app_state
+                .db
+                .get_current_profile_id(scope.as_str())?
+                .unwrap_or_default();
+            // 分组标签用产品名，不进 i18n
+            let scope_label = match scope {
+                ProfileScope::Claude => "Claude Code",
+                ProfileScope::ClaudeDesktop => "Claude Desktop",
+                ProfileScope::Codex => "Codex",
+            };
+            let mut scope_builder = SubmenuBuilder::with_id(
+                app,
+                format!("submenu_profiles_{}", scope.as_str()),
+                scope_label,
+            );
+            for profile in &profiles {
+                let item = CheckMenuItem::with_id(
+                    app,
+                    format!("profile_{}_{}", scope.as_str(), profile.id),
+                    &profile.name,
+                    true,
+                    current_profile_id == profile.id,
+                    None::<&str>,
+                )
+                .map_err(|e| AppError::Message(format!("创建项目菜单项失败: {e}")))?;
+                scope_builder = scope_builder.item(&item);
+            }
+            let none_item = CheckMenuItem::with_id(
+                app,
+                format!("profile_none_{}", scope.as_str()),
+                tray_texts.no_project_label,
+                true,
+                current_profile_id.is_empty(),
+                None::<&str>,
+            )
+            .map_err(|e| AppError::Message(format!("创建不使用项目菜单项失败: {e}")))?;
+            let scope_submenu = scope_builder
+                .separator()
+                .item(&none_item)
+                .build()
+                .map_err(|e| AppError::Message(format!("构建项目分组子菜单失败: {e}")))?;
+            scope_submenus.push(scope_submenu);
+        }
+
+        if !scope_submenus.is_empty() {
+            let mut profiles_builder =
+                SubmenuBuilder::with_id(app, "submenu_profiles", tray_texts.projects_label);
+            for scope_submenu in &scope_submenus {
+                profiles_builder = profiles_builder.item(scope_submenu);
+            }
+            let profiles_submenu = profiles_builder
+                .build()
+                .map_err(|e| AppError::Message(format!("构建项目子菜单失败: {e}")))?;
+            menu_builder = menu_builder.item(&profiles_submenu).separator();
+        }
+    }
+
     let lightweight_item = CheckMenuItem::with_id(
         app,
         "lightweight_mode",
@@ -729,6 +933,9 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             app.exit(0);
         }
         _ => {
+            if handle_profile_tray_event(app, event_id) {
+                return;
+            }
             if handle_provider_tray_event(app, event_id) {
                 return;
             }
@@ -768,8 +975,8 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 /// 雪崩请求；互斥锁被毒化时以上次状态为准继续推进，不会永久阻塞。
 ///
 /// 刷新面与 `format_usage_suffix` 的展示面严格对齐 —— 每次悬停最多发
-/// `TRAY_SECTIONS.len()` 次外部请求，script 优先（覆盖 coding_plan / balance /
-/// Copilot / 自定义脚本），否则当前 provider 必须是 `official` 才查订阅。
+/// `TRAY_SECTIONS.len()` 次外部请求；只有显式启用的用量查询（含官方订阅、
+/// coding_plan / balance / Copilot / 自定义脚本）才会发请求。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -797,7 +1004,6 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         .visible_apps
         .unwrap_or_default();
 
-    let mut subscription_futures = Vec::new();
     let mut script_futures = Vec::new();
 
     for section in TRAY_SECTIONS.iter() {
@@ -831,9 +1037,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
             }
         };
 
-        // 与 format_usage_suffix 同一优先级：脚本启用 → 查脚本；
-        // 否则当前 provider 是 official → 查订阅；其它情况不发请求。
-        if current.has_usage_script_enabled() {
+        // 与 format_usage_suffix 同一优先级：只有显式启用的用量查询才发请求。
+        let is_official_provider = current.category.as_deref() == Some("official");
+        if current.has_usage_script_enabled()
+            && (!is_official_provider || provider_uses_official_subscription(&current))
+        {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
@@ -852,22 +1060,10 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                     log::debug!("[Tray] 刷新{log_name}供应商 {provider_id} 用量失败: {e}");
                 }
             });
-        } else if current.category.as_deref() == Some("official") {
-            let app_clone = app.clone();
-            let state = app.state::<AppState>();
-            let tool = app_type_str.to_string();
-            subscription_futures.push(async move {
-                if let Err(e) =
-                    crate::commands::get_subscription_quota(app_clone, state, tool).await
-                {
-                    log::debug!("[Tray] 刷新{log_name}订阅用量失败（可能未登录）: {e}");
-                }
-            });
         }
     }
 
-    // 两组并行启动，整体等待 —— 订阅/脚本互不依赖，没必要串行。
-    futures::future::join(join_all(subscription_futures), join_all(script_futures)).await;
+    join_all(script_futures).await;
 }
 
 #[cfg(test)]
@@ -875,7 +1071,9 @@ mod tests {
     use super::{format_script_summary, format_subscription_summary, TRAY_ID};
     use crate::provider::{UsageData, UsageResult};
     use crate::services::subscription::{
-        CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
+        CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_GEMINI_FLASH,
+        TIER_GEMINI_FLASH_LITE, TIER_GEMINI_PRO, TIER_MONTHLY, TIER_SEVEN_DAY, TIER_SEVEN_DAY_OPUS,
+        TIER_SEVEN_DAY_SONNET, TIER_THIRTY_DAY, TIER_WEEKLY_LIMIT,
     };
 
     #[test]
@@ -902,6 +1100,8 @@ mod tests {
             name: name.to_string(),
             utilization,
             resets_at: None,
+            used_value_usd: None,
+            max_value_usd: None,
         }
     }
 
@@ -956,6 +1156,16 @@ mod tests {
     }
 
     #[test]
+    fn codex_summary_thirty_day_only_still_renders() {
+        // Codex 免费方案的唯一 tier 是 30 天窗口。前端 footer 已能显示（TIER_I18N_KEYS
+        // 有 "30_day"），托盘也必须能显示——否则就是这条不变量要防的非对称：footer
+        // 能看到、托盘却空白。30_day 归入 "m" 月分组。见 #3651。
+        let quota = make_quota("codex", true, vec![tier(TIER_THIRTY_DAY, 85.0)]);
+        let s = format_subscription_summary(&quota).expect("should format");
+        assert!(s.contains("m85%"), "expected m85% in {s}");
+    }
+
+    #[test]
     fn gemini_summary_emoji_reflects_highest_tier_including_lite() {
         // lite 是利用率最高的那条 → emoji 必须是红色，不能被 pro/flash 掩盖。
         let quota = make_quota(
@@ -983,6 +1193,22 @@ mod tests {
             vec![tier("five_hour", 10.0), tier("seven_day", 95.0)],
         );
         let s = format_subscription_summary(&quota).unwrap();
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn subscription_summary_week_aliases_use_highest_utilization() {
+        let quota = make_quota(
+            "claude",
+            true,
+            vec![
+                tier(TIER_FIVE_HOUR, 10.0),
+                tier(TIER_SEVEN_DAY_OPUS, 20.0),
+                tier(TIER_SEVEN_DAY_SONNET, 95.0),
+            ],
+        );
+        let s = format_subscription_summary(&quota).unwrap();
+        assert!(s.contains("w95%"), "expected w95% in {s}");
         assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
     }
 
@@ -1070,6 +1296,89 @@ mod tests {
         let r = usage_result(true, vec![usage_data(Some(TIER_WEEKLY_LIMIT), 50.0)]);
         let s = format_script_summary(&r).expect("should format");
         assert!(s.contains("w50%"), "expected w50% in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_volcengine_three_tiers_with_monthly() {
+        // 火山方舟 Agent Plan 回 5h/周/月三档，托盘应包含 m（月）窗口，
+        // 不再静默丢弃。
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 25.0),
+                usage_data(Some(TIER_WEEKLY_LIMIT), 30.0),
+                usage_data(Some(TIER_MONTHLY), 42.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h25%"), "expected h25% in {s}");
+        assert!(s.contains("w30%"), "expected w30% in {s}");
+        assert!(s.contains("m42%"), "expected m42% in {s}");
+    }
+
+    #[test]
+    fn script_summary_token_plan_monthly_only_renders_label_not_raw_name() {
+        // 仅月窗口激活时不应回落到原始 "monthly" 机器名，而是走 m 标签。
+        let r = usage_result(true, vec![usage_data(Some(TIER_MONTHLY), 60.0)]);
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("m60%"), "expected m60% in {s}");
+        assert!(
+            !s.contains("monthly"),
+            "raw tier name should not leak into label: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_official_subscription_claude_uses_h_and_w_labels() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 12.0),
+                usage_data(Some(TIER_SEVEN_DAY), 80.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("h12%"), "expected h12% in {s}");
+        assert!(s.contains("w80%"), "expected w80% in {s}");
+        assert!(
+            !s.contains(TIER_SEVEN_DAY),
+            "tier machine name should not leak into label: {s}"
+        );
+    }
+
+    #[test]
+    fn script_summary_week_aliases_use_highest_utilization() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 10.0),
+                usage_data(Some(TIER_SEVEN_DAY_OPUS), 20.0),
+                usage_data(Some(TIER_SEVEN_DAY_SONNET), 95.0),
+            ],
+        );
+        let s = format_script_summary(&r).unwrap();
+        assert!(s.contains("w95%"), "expected w95% in {s}");
+        assert!(s.starts_with("\u{1F534}"), "expected red emoji in {s}");
+    }
+
+    #[test]
+    fn script_summary_official_subscription_gemini_uses_short_labels() {
+        let r = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_GEMINI_PRO), 15.0),
+                usage_data(Some(TIER_GEMINI_FLASH), 42.0),
+                usage_data(Some(TIER_GEMINI_FLASH_LITE), 80.0),
+            ],
+        );
+        let s = format_script_summary(&r).expect("should format");
+        assert!(s.contains("p15%"), "expected p15% in {s}");
+        assert!(s.contains("f42%"), "expected f42% in {s}");
+        assert!(s.contains("l80%"), "expected l80% in {s}");
+        assert!(
+            !s.contains("gemini_"),
+            "Gemini tier machine names should not leak into label: {s}"
+        );
     }
 
     #[test]

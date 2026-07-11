@@ -69,7 +69,7 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
             className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
           />
           {t("geminiConfig.writeCommonConfig", {
-            defaultValue: "写入通用配置",
+            defaultValue: "应用通用配置",
           })}
         </label>
       </div>
@@ -97,7 +97,7 @@ export const GeminiEnvSection: React.FC<GeminiEnvSectionProps> = ({
         onChange={handleChange}
         placeholder={`GOOGLE_GEMINI_BASE_URL=https://your-api-endpoint.com/
 GEMINI_API_KEY=sk-your-api-key-here
-GEMINI_MODEL=gemini-3-pro-preview`}
+GEMINI_MODEL=gemini-3.5-flash`}
         darkMode={isDarkMode}
         rows={6}
         showValidation={false}

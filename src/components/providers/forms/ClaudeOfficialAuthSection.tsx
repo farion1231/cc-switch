@@ -77,7 +77,12 @@ function getProgressTone(utilization: number): string {
 
 function getPrimaryQuotaTiers(account: ClaudeOfficialAccount) {
   const tiers = account.quota?.tiers ?? [];
-  const preferred = ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"];
+  const preferred = [
+    "five_hour",
+    "seven_day",
+    "seven_day_sonnet",
+    "seven_day_opus",
+  ];
 
   return preferred
     .map((name) => tiers.find((tier) => tier.name === name))
@@ -86,8 +91,12 @@ function getPrimaryQuotaTiers(account: ClaudeOfficialAccount) {
 }
 
 function getSecondaryQuotaTiers(account: ClaudeOfficialAccount) {
-  const primaryNames = new Set(getPrimaryQuotaTiers(account).map((tier) => tier.name));
-  return (account.quota?.tiers ?? []).filter((tier) => !primaryNames.has(tier.name));
+  const primaryNames = new Set(
+    getPrimaryQuotaTiers(account).map((tier) => tier.name),
+  );
+  return (account.quota?.tiers ?? []).filter(
+    (tier) => !primaryNames.has(tier.name),
+  );
 }
 
 function formatQuotaSummary(account: ClaudeOfficialAccount): string | null {
@@ -97,7 +106,10 @@ function formatQuotaSummary(account: ClaudeOfficialAccount): string | null {
   }
 
   return quota.tiers
-    .map((tier) => `${formatQuotaTierName(tier.name)} ${tier.utilization.toFixed(0)}%`)
+    .map(
+      (tier) =>
+        `${formatQuotaTierName(tier.name)} ${tier.utilization.toFixed(0)}%`,
+    )
     .join(" / ");
 }
 
@@ -125,7 +137,8 @@ export function ClaudeOfficialAuthSection({
     onSuccess: () => {
       toast.success(
         t("claudeOfficial.loginStarted", {
-          defaultValue: "已打开终端并发送 Claude /login，登录完成后再保存当前登录。",
+          defaultValue:
+            "已打开终端并发送 Claude /login，登录完成后再保存当前登录。",
         }),
       );
     },
@@ -241,98 +254,104 @@ export function ClaudeOfficialAuthSection({
           const secondaryTiers = getSecondaryQuotaTiers(account);
 
           return (
-          <div
-            key={account.id}
-            className="group rounded-lg border bg-background/90 p-3 shadow-sm transition-colors hover:bg-background"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 space-y-2">
-                <div>
-                  <div className="truncate text-sm font-semibold text-foreground">
-                    {account.email || account.label}
+            <div
+              key={account.id}
+              className="group rounded-lg border bg-background/90 p-3 shadow-sm transition-colors hover:bg-background"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-2">
+                  <div>
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {account.email || account.label}
+                    </div>
+                    {account.email &&
+                      account.label &&
+                      account.label !== account.email && (
+                        <div className="truncate text-xs text-muted-foreground">
+                          {account.label}
+                        </div>
+                      )}
                   </div>
-                  {account.email && account.label && account.label !== account.email && (
-                    <div className="truncate text-xs text-muted-foreground">
-                      {account.label}
+
+                  {primaryTiers.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {primaryTiers.map((tier) => (
+                        <div
+                          key={tier.name}
+                          className={`min-w-[104px] rounded-md border px-2 py-1 ${getTierTone(
+                            tier.utilization,
+                          )}`}
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
+                            <span>{formatQuotaTierName(tier.name)}</span>
+                            <span>{tier.utilization.toFixed(0)}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-current/15">
+                            <div
+                              className={`h-full rounded-full ${getProgressTone(
+                                tier.utilization,
+                              )}`}
+                              style={{
+                                width: `${Math.min(Math.max(tier.utilization, 0), 100)}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      {t("claudeOfficial.noQuota", {
+                        defaultValue: "尚未查询用量",
+                      })}
+                    </div>
+                  )}
+
+                  {secondaryTiers.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                      {secondaryTiers.map((tier) => (
+                        <span
+                          key={tier.name}
+                          className="rounded-full bg-muted px-2 py-0.5"
+                        >
+                          {formatQuotaTierName(tier.name)}{" "}
+                          {tier.utilization.toFixed(0)}%
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
 
-                {primaryTiers.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {primaryTiers.map((tier) => (
-                      <div
-                        key={tier.name}
-                        className={`min-w-[104px] rounded-md border px-2 py-1 ${getTierTone(
-                          tier.utilization,
-                        )}`}
-                      >
-                        <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
-                          <span>{formatQuotaTierName(tier.name)}</span>
-                          <span>{tier.utilization.toFixed(0)}%</span>
-                        </div>
-                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-current/15">
-                          <div
-                            className={`h-full rounded-full ${getProgressTone(
-                              tier.utilization,
-                            )}`}
-                            style={{
-                              width: `${Math.min(Math.max(tier.utilization, 0), 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">
-                    {t("claudeOfficial.noQuota", {
-                      defaultValue: "尚未查询用量",
-                    })}
-                  </div>
-                )}
-
-                {secondaryTiers.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-                    {secondaryTiers.map((tier) => (
-                      <span key={tier.name} className="rounded-full bg-muted px-2 py-0.5">
-                        {formatQuotaTierName(tier.name)} {tier.utilization.toFixed(0)}%
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex shrink-0 items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={refreshMutation.isPending}
-                  onClick={() => refreshMutation.mutate(account.id)}
-                  className="h-8 gap-1.5 px-2.5"
-                >
-                  {refreshMutation.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  {t("claudeOfficial.query", { defaultValue: "查询" })}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  disabled={removeMutation.isPending}
-                  onClick={() => removeMutation.mutate(account.id)}
-                  title={t("claudeOfficial.remove", { defaultValue: "删除" })}
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={refreshMutation.isPending}
+                    onClick={() => refreshMutation.mutate(account.id)}
+                    className="h-8 gap-1.5 px-2.5"
+                  >
+                    {refreshMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    {t("claudeOfficial.query", { defaultValue: "查询" })}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    disabled={removeMutation.isPending}
+                    onClick={() => removeMutation.mutate(account.id)}
+                    title={t("claudeOfficial.remove", { defaultValue: "删除" })}
+                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
           );
         })
       )}
@@ -422,7 +441,9 @@ export function ClaudeOfficialAuthSection({
               {accounts.map((account) => (
                 <SelectItem key={account.id} value={account.id}>
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate">{formatAccountDisplay(account)}</span>
+                    <span className="truncate">
+                      {formatAccountDisplay(account)}
+                    </span>
                     {formatQuotaSummary(account) && (
                       <span className="truncate text-xs text-muted-foreground">
                         {formatQuotaSummary(account)}

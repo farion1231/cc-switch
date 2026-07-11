@@ -173,9 +173,12 @@ export async function claudeOfficialActivateAccount(
 export async function claudeOfficialRefreshAccountQuota(
   accountId: string,
 ): Promise<ClaudeOfficialAccount> {
-  return invoke<ClaudeOfficialAccount>("claude_official_refresh_account_quota", {
-    accountId,
-  });
+  return invoke<ClaudeOfficialAccount>(
+    "claude_official_refresh_account_quota",
+    {
+      accountId,
+    },
+  );
 }
 
 export async function claudeOfficialRemoveAccount(

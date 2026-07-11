@@ -17,10 +17,12 @@ import {
   useDeleteProviderMutation,
   useSwitchProviderMutation,
 } from "@/lib/query";
+import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import {
   extractCodexWireApi,
+  isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
 
@@ -75,6 +77,7 @@ export function useProviderActions(
         providerKey?: string;
         suggestedDefaults?: OpenClawSuggestedDefaults;
         addToLive?: boolean;
+        ensureClaudeDesktopOfficialSeed?: boolean;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
@@ -163,6 +166,16 @@ export function useProviderActions(
                 (provider.settingsConfig as Record<string, any>).config,
               ),
             )));
+      const isCodexAnthropicFormat =
+        activeApp === "codex" &&
+        (provider.meta?.apiFormat === "anthropic" ||
+          (typeof (provider.settingsConfig as Record<string, any>)?.config ===
+            "string" &&
+            isCodexAnthropicWireApi(
+              extractCodexWireApi(
+                (provider.settingsConfig as Record<string, any>).config,
+              ),
+            )));
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
@@ -189,6 +202,13 @@ export function useProviderActions(
           proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
             defaultValue: "使用 OpenAI Chat 接口格式",
           });
+        } else if (isCodexAnthropicFormat) {
+          proxyRequiredReason = t(
+            "notifications.proxyReasonAnthropicMessages",
+            {
+              defaultValue: "使用 Anthropic Messages 接口格式",
+            },
+          );
         } else if (
           activeApp === "claude-desktop" &&
           provider.meta?.claudeDesktopMode === "proxy"
@@ -247,7 +267,10 @@ export function useProviderActions(
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
-          if (activeApp === "claude-desktop") {
+          if (activeApp === "codex") {
+            messageKey = "notifications.codexRestartRequired";
+            defaultMessage = "切换成功，请重启客户端以生效";
+          } else if (activeApp === "claude-desktop") {
             if (provider.meta?.claudeDesktopMode === "proxy") {
               messageKey = "notifications.claudeDesktopProxyRestartRequired";
               defaultMessage =
@@ -305,7 +328,10 @@ export function useProviderActions(
         // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
         // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
         await queryClient.invalidateQueries({
-          queryKey: ["usage", provider.id, activeApp],
+          queryKey: usageKeys.script(provider.id, activeApp),
+        });
+        await queryClient.invalidateQueries({
+          queryKey: ["subscription", "quota", activeApp],
         });
         toast.success(
           t("provider.usageSaved", {

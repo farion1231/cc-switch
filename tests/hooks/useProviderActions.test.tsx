@@ -192,6 +192,10 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启客户端以生效",
+      { closeButton: true },
+    );
   });
 
   it("warns but still switches providers that require proxy when proxy is not running", async () => {
@@ -235,6 +239,28 @@ describe("useProviderActions", () => {
     });
 
     expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("warns when switching a Codex Anthropic-format provider without proxy", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { apiFormat: "anthropic" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Anthropic Messages"),
+    );
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 

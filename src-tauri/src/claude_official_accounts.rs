@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -109,7 +110,7 @@ pub fn list_accounts() -> Result<Vec<ClaudeOfficialAccount>, AppError> {
         }
     }
 
-    accounts.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    accounts.sort_by_key(|account| std::cmp::Reverse(account.updated_at));
     Ok(accounts)
 }
 
@@ -218,7 +219,9 @@ end tell"#;
 }
 
 async fn query_claude_quota_for_token(access_token: &str) -> Result<SubscriptionQuota, AppError> {
-    let quota = crate::services::subscription::query_claude_quota(access_token).await;
+    let quota = crate::services::subscription::query_claude_quota(access_token)
+        .await
+        .map_err(AppError::Message)?;
     if !quota.success {
         return Err(AppError::Message(
             quota
@@ -251,7 +254,13 @@ fn activate_best_available_account(preferred_account_id: &str) -> Result<Vec<Str
             log::warn!(
                 "Preferred Claude official account {preferred_account_id} unavailable, trying fallback accounts: {err}"
             );
-            None
+            match read_stored_account(preferred_account_id) {
+                Ok(stored) if stored.account.quota.is_none() => {
+                    return activate_account(&stored.account.id);
+                }
+                Ok(stored) => Some(stored.account),
+                Err(_) => None,
+            }
         }
     };
 
@@ -361,7 +370,7 @@ async fn query_oauth_profile(access_token: &str) -> Result<Value, AppError> {
 }
 
 pub fn remove_account(account_id: &str) -> Result<(), AppError> {
-    let path = account_path(account_id);
+    let path = account_path(validate_account_id(account_id)?);
     if path.exists() {
         fs::remove_file(&path).map_err(|e| AppError::io(&path, e))?;
     }
@@ -369,36 +378,28 @@ pub fn remove_account(account_id: &str) -> Result<(), AppError> {
 }
 
 pub fn activate_account(account_id: &str) -> Result<Vec<String>, AppError> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return Err(AppError::Message(
-            "Claude Official 账号 ID 为空。请先保存并选择一个官方账号快照。".to_string(),
-        ));
-    }
-
+    let account_id = validate_account_id(account_id)?;
     let stored = read_stored_account(account_id)?;
     let credentials_path = credentials_file_path();
     write_json_file(&credentials_path, &stored.credentials)?;
     restrict_owner_read_write(&credentials_path);
 
-    let mut warnings = Vec::new();
     #[cfg(target_os = "macos")]
-    if let Err(err) = write_macos_keychain_credentials(&stored.credentials) {
-        log::warn!("Failed to update Claude Code keychain credentials: {err}");
-        warnings.push("macos_keychain_update_failed".to_string());
-    }
+    write_macos_keychain_credentials(&stored.credentials)?;
 
-    Ok(warnings)
+    Ok(Vec::new())
 }
 
 fn read_stored_account(account_id: &str) -> Result<StoredClaudeOfficialAccount, AppError> {
-    let account_id = account_id.trim();
-    if account_id.is_empty() {
-        return Err(AppError::Message(
-            "Claude Official 账号 ID 为空。请先保存并选择一个官方账号快照。".to_string(),
-        ));
-    }
+    let account_id = validate_account_id(account_id)?;
     read_json_file::<StoredClaudeOfficialAccount>(&account_path(account_id))
+}
+
+fn validate_account_id(account_id: &str) -> Result<&str, AppError> {
+    let account_id = account_id.trim();
+    uuid::Uuid::parse_str(account_id)
+        .map(|_| account_id)
+        .map_err(|_| AppError::Message("Invalid Claude Official account ID".to_string()))
 }
 
 fn accounts_dir() -> PathBuf {
@@ -566,6 +567,7 @@ fn write_macos_keychain_credentials(credentials: &Value) -> Result<(), AppError>
 }
 
 fn restrict_owner_read_write(path: &Path) {
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -633,5 +635,11 @@ mod tests {
             extract_access_token(&credentials).as_deref(),
             Some("token-123")
         );
+    }
+
+    #[test]
+    fn account_id_must_be_a_uuid() {
+        assert!(validate_account_id("../credentials").is_err());
+        assert!(validate_account_id("550e8400-e29b-41d4-a716-446655440000").is_ok());
     }
 }

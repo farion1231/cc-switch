@@ -159,11 +159,14 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
+        let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+
         crate::codex_config::write_codex_provider_live_with_catalog(
             &provider.settings_config,
             provider.category.as_deref(),
             auth,
             cfg_text,
+            profile,
         )?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空
@@ -187,8 +190,8 @@ impl ConfigService {
                         &provider.settings_config,
                         restore_provider_token,
                     )?;
-                    // 必须同时写回 auth 和 config: backfill 会恢复 stored provider id，
-                    // 并把 live 的 experimental_bearer_token 移到 restored.auth.OPENAI_API_KEY。
+                    // 必须同时写回 auth 和 config: backfill 会把 live 的
+                    // experimental_bearer_token 移到 restored.auth.OPENAI_API_KEY。
                     if let Some(restored_obj) = restored.as_object() {
                         if let Some(auth_value) = restored_obj.get("auth") {
                             obj.insert("auth".to_string(), auth_value.clone());
