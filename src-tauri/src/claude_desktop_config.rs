@@ -213,6 +213,18 @@ pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
 }
 
+/// Claude Desktop 应用数据根目录（`.../Claude`，存放 `claude-code-sessions/`、
+/// `config.json` 等运行时数据）。复用 `current_platform_paths` 的按平台解析逻辑，
+/// 保证与配置写入路径一致；Linux 等无 Claude Desktop 的平台返回 unsupported 错误。
+pub fn get_claude_desktop_data_dir() -> Result<PathBuf, AppError> {
+    let paths = current_platform_paths()?;
+    paths
+        .normal_config_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| AppError::Config("无法定位 Claude Desktop 数据目录".into()))
+}
+
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {
     DEFAULT_PROXY_ROUTES.to_vec()
 }

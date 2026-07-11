@@ -329,6 +329,23 @@
       "copilotDescription": "Manage GitHub Copilot accounts",
       "codexOauthDescription": "Manage ChatGPT accounts"
     },
+    "desktopSessionMigration": {
+      "title": "Claude Desktop Session Migration",
+      "description": "After switching accounts, the previous account's sessions \"disappear\" — they just live in a different folder. Copy them into the target account to see them again. History only, not usage quota; the source is left untouched.",
+      "detecting": "Detecting…",
+      "unavailable": "No Claude Desktop session data found.",
+      "nothingToMigrate": "Only one account's sessions were found — nothing to migrate.",
+      "fromLabel": "Source account",
+      "toLabel": "Target account",
+      "sessionCount": "{{count}} sessions",
+      "currentTag": "current",
+      "sameSelection": "Source and target can't be the same account.",
+      "previewBtn": "Preview",
+      "migrateBtn": "Migrate",
+      "previewResult": "Will add {{count}} sessions to the target account.",
+      "migratedResult": "Copied {{copied}}; the target account now has {{total}} sessions.",
+      "migrateDone": "Migrated {{count}} sessions — reopen Claude Desktop to see them"
+    },
     "advanced": {
       "configDir": {
         "title": "Configuration Directory",
