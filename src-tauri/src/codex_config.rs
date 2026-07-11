@@ -108,14 +108,27 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 pub enum CodexCatalogToolProfile {
     ProxyChat,
     NativeResponses,
+    /// Codex talks (through cc-switch's proxy) to a native Anthropic Messages
+    /// gateway. Like `NativeResponses` it must suppress Codex's freeform custom
+    /// tools — the Responses→Anthropic transform keeps only `function` tools.
+    /// Additionally the Codex `web_search` hosted tool is unusable on this path
+    /// (the transform drops it), so it is always disabled — see
+    /// `prepare_codex_config_text_with_model_catalog`.
+    Anthropic,
 }
 
 impl CodexCatalogToolProfile {
     /// Pick the catalog tool profile from a provider's `apiFormat` meta value.
-    /// Native (direct) Responses providers must suppress the custom apply_patch
-    /// tool; everything else keeps the proxy-chat behavior.
+    ///
+    /// Prefer [`crate::proxy::providers::codex::resolve_codex_catalog_tool_profile`],
+    /// which also honors settings-level `apiFormat` and the TOML `wire_api` (matching
+    /// the proxy router). This string-only mapping is the fallback for non-Anthropic
+    /// cases.
     pub fn from_api_format(api_format: Option<&str>) -> Self {
         match api_format {
+            Some("anthropic") => CodexCatalogToolProfile::Anthropic,
+            // Native (direct) Responses gateways reject Codex's freeform custom
+            // tools (apply_patch, etc.); strip them via the NativeResponses profile.
             Some("openai_responses") => CodexCatalogToolProfile::NativeResponses,
             _ => CodexCatalogToolProfile::ProxyChat,
         }
@@ -440,10 +453,10 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
-    if profile == CodexCatalogToolProfile::NativeResponses {
-        // Native `/responses` gateways reject Codex's freeform `apply_patch`
-        // (type=="custom") tool. Strip any key that would make Codex emit a
-        // custom/freeform tool, and rely on shell_type="shell_command" for
+    if profile != CodexCatalogToolProfile::ProxyChat {
+        // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
+        // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
+        // emit a custom/freeform tool, and rely on shell_type="shell_command" for
         // edits. Defensive even though the native template is already clean
         // (guards against template drift / an accidental gpt-5.5 clone).
         //
@@ -870,7 +883,9 @@ fn codex_model_catalog_from_settings(
     // no cache dependency); proxy-chat providers keep cloning Codex's gpt-5.5
     // entry so the proxy can rewrite custom<->function tools as before.
     let template = match profile {
-        CodexCatalogToolProfile::NativeResponses => load_codex_native_responses_template(),
+        CodexCatalogToolProfile::NativeResponses | CodexCatalogToolProfile::Anthropic => {
+            load_codex_native_responses_template()
+        }
         CodexCatalogToolProfile::ProxyChat => load_codex_model_catalog_template()?,
     };
     Ok(Some(codex_model_catalog_from_specs(
@@ -954,14 +969,25 @@ pub fn prepare_codex_config_text_with_model_catalog(
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
         // Everything else — relays, DouBao, web-search-capable Qwen models,
         // unknown providers — keeps Codex's default.
-        let disable_web_search = profile == CodexCatalogToolProfile::NativeResponses
-            && codex_native_gateway_rejects_web_search(&config_text);
+        let disable_web_search = match profile {
+            // The Responses→Anthropic transform silently drops the Codex web_search
+            // hosted tool, so always disable it here rather than present a dead tool.
+            CodexCatalogToolProfile::Anthropic => true,
+            CodexCatalogToolProfile::NativeResponses => {
+                codex_native_gateway_rejects_web_search(&config_text)
+            }
+            CodexCatalogToolProfile::ProxyChat => false,
+        };
         let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
         write_json_file(&catalog_path, &catalog)?;
         Ok(config_text)
     } else {
         let config_text = set_codex_model_catalog_json_field(config_text, None)?;
-        set_codex_native_web_search_field(&config_text, false)
+        // Even without a generated catalog, the Responses→Anthropic transform drops the
+        // Codex web_search hosted tool, so keep the invariant that an Anthropic provider
+        // never presents it as a dead tool.
+        let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
+        set_codex_native_web_search_field(&config_text, disable_web_search)
     }
 }
 
@@ -1738,6 +1764,26 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn catalog_tool_profile_from_api_format() {
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(Some("anthropic")),
+            CodexCatalogToolProfile::Anthropic
+        );
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(Some("openai_responses")),
+            CodexCatalogToolProfile::NativeResponses
+        );
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(Some("openai_chat")),
+            CodexCatalogToolProfile::ProxyChat
+        );
+        assert_eq!(
+            CodexCatalogToolProfile::from_api_format(None),
+            CodexCatalogToolProfile::ProxyChat
+        );
+    }
 
     #[test]
     fn unified_session_bucket_injects_for_empty_official_config() {
@@ -2669,6 +2715,42 @@ web_search = "disabled"
             parsed.get("web_search").and_then(|value| value.as_str()),
             Some("enabled"),
             "a user-set web_search value must be preserved"
+        );
+    }
+
+    #[test]
+    fn anthropic_profile_disables_web_search_without_catalog() {
+        // Regression: even when no model catalog is generated (empty/absent
+        // modelCatalog), an Anthropic provider must still disable web_search — the
+        // Responses→Anthropic transform drops the hosted tool, so leaving it on
+        // exposes a dead tool. The None-catalog branch previously always left it on.
+        let config = "model = \"claude-sonnet-4-6\"\n";
+        let settings = serde_json::json!({});
+
+        let anthropic = prepare_codex_config_text_with_model_catalog(
+            &settings,
+            config,
+            CodexCatalogToolProfile::Anthropic,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&anthropic).unwrap();
+        assert_eq!(
+            parsed.get("web_search").and_then(|v| v.as_str()),
+            Some("disabled"),
+            "Anthropic profile must disable web_search even with no catalog"
+        );
+
+        // ProxyChat on the same no-catalog path must NOT add a disable line.
+        let proxy = prepare_codex_config_text_with_model_catalog(
+            &settings,
+            config,
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&proxy).unwrap();
+        assert!(
+            parsed.get("web_search").is_none(),
+            "ProxyChat profile must not disable web_search on the no-catalog path"
         );
     }
 

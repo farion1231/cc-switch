@@ -26,7 +26,7 @@ const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 /// 原因：接管模式下 `*_MODEL` 必须由 CC Switch 写成稳定的 Claude 角色别名，
 /// 再由本地代理映射到当前供应商真实模型；`*_MODEL_NAME` 也需要同步接管，
 /// 否则 Claude Code 模型菜单会残留上一个供应商的显示名称。
-const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 10] = [
+const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 12] = [
     "ANTHROPIC_MODEL",
     "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -35,6 +35,8 @@ const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 10] = [
     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
     "ANTHROPIC_SMALL_FAST_MODEL", // Legacy key (已废弃)：历史版本使用该字段区分 small/fast 模型
     "CLAUDE_CODE_SUBAGENT_MODEL",
 ];
@@ -42,6 +44,7 @@ const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 10] = [
 const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
 const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-8";
+const CLAUDE_TAKEOVER_FABLE_MODEL: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
 const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
 
@@ -221,10 +224,12 @@ impl ProxyService {
         let opus_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")
             .or(default_model)
             .or(small_fast_model);
+        // Fable 未配置时不写稳定别名；映射侧会 fable→opus 降级（与官方一致）。
+        let fable_model = Self::claude_env_string(env, "ANTHROPIC_DEFAULT_FABLE_MODEL");
 
         let subagent_model = Self::claude_env_string(env, "CLAUDE_CODE_SUBAGENT_MODEL");
 
-        let mut fields = Vec::with_capacity(7);
+        let mut fields = Vec::with_capacity(9);
         Self::push_claude_takeover_role_fields(
             &mut fields,
             env,
@@ -251,6 +256,15 @@ impl ProxyService {
             CLAUDE_TAKEOVER_OPUS_MODEL,
             true,
             opus_model,
+        );
+        Self::push_claude_takeover_role_fields(
+            &mut fields,
+            env,
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            CLAUDE_TAKEOVER_FABLE_MODEL,
+            true,
+            fable_model,
         );
         if let Some(subagent_model) = subagent_model {
             fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.to_string()));
@@ -2190,9 +2204,7 @@ impl ProxyService {
                 .get("auth")
                 .ok_or_else(|| "Codex 供应商缺少 auth 配置".to_string())?;
             let config_str = effective_settings.get("config").and_then(|v| v.as_str());
-            let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-                provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-            );
+            let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&provider);
 
             crate::codex_config::write_codex_provider_live_with_catalog(
                 &effective_settings,
@@ -2459,9 +2471,7 @@ impl ProxyService {
             .get("auth")
             .ok_or_else(|| "Codex 配置缺少 auth 字段".to_string())?;
         let config_str = config.get("config").and_then(|v| v.as_str());
-        let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-            provider.meta.as_ref().and_then(|m| m.api_format.as_deref()),
-        );
+        let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
 
         crate::codex_config::write_codex_provider_live_with_catalog(
             config,
@@ -2488,9 +2498,9 @@ impl ProxyService {
                 .filter(|auth| Self::codex_auth_has_proxy_placeholder(auth))
             {
                 let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
-                let profile = crate::codex_config::CodexCatalogToolProfile::from_api_format(
-                    provider.and_then(|p| p.meta.as_ref()?.api_format.as_deref()),
-                );
+                let profile = provider
+                    .map(crate::proxy::providers::resolve_codex_catalog_tool_profile)
+                    .unwrap_or(crate::codex_config::CodexCatalogToolProfile::ProxyChat);
                 let prepared_config =
                     crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
                         config, config_str, profile,

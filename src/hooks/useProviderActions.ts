@@ -22,6 +22,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import {
   extractCodexWireApi,
+  isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
 
@@ -165,6 +166,16 @@ export function useProviderActions(
                 (provider.settingsConfig as Record<string, any>).config,
               ),
             )));
+      const isCodexAnthropicFormat =
+        activeApp === "codex" &&
+        (provider.meta?.apiFormat === "anthropic" ||
+          (typeof (provider.settingsConfig as Record<string, any>)?.config ===
+            "string" &&
+            isCodexAnthropicWireApi(
+              extractCodexWireApi(
+                (provider.settingsConfig as Record<string, any>).config,
+              ),
+            )));
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
@@ -191,6 +202,13 @@ export function useProviderActions(
           proxyRequiredReason = t("notifications.proxyReasonOpenAIChat", {
             defaultValue: "使用 OpenAI Chat 接口格式",
           });
+        } else if (isCodexAnthropicFormat) {
+          proxyRequiredReason = t(
+            "notifications.proxyReasonAnthropicMessages",
+            {
+              defaultValue: "使用 Anthropic Messages 接口格式",
+            },
+          );
         } else if (
           activeApp === "claude-desktop" &&
           provider.meta?.claudeDesktopMode === "proxy"
