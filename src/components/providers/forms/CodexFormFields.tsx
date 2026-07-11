@@ -104,7 +104,28 @@ interface CodexFormFieldsProps {
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
 
+const normalizeCatalogInputModalities = (
+  inputModalities?: CodexCatalogModel["inputModalities"],
+): NonNullable<CodexCatalogModel["inputModalities"]> => {
+  const normalized: NonNullable<CodexCatalogModel["inputModalities"]> = [];
+  for (const modality of inputModalities ?? []) {
+    if (typeof modality !== "string") continue;
+    const value = modality.trim().toLowerCase();
+    if (
+      (value === "text" || value === "image") &&
+      !normalized.includes(value)
+    ) {
+      normalized.push(value);
+    }
+  }
+  return normalized;
+};
+
 function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
+  const inputModalities = normalizeCatalogInputModalities(
+    seed?.inputModalities,
+  );
+
   return {
     rowId: crypto.randomUUID(),
     model: seed?.model ?? "",
@@ -115,12 +136,24 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.supportsParallelToolCalls !== undefined
       ? { supportsParallelToolCalls: seed.supportsParallelToolCalls }
       : {}),
-    ...(seed?.inputModalities ? { inputModalities: seed.inputModalities } : {}),
+    inputModalities: inputModalities.length > 0 ? inputModalities : ["text"],
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
       : {}),
   };
 }
+
+const catalogInputModeValue = (
+  row: CodexCatalogModel,
+): "text" | "text-image" =>
+  normalizeCatalogInputModalities(row.inputModalities).includes("image")
+    ? "text-image"
+    : "text";
+
+const catalogInputModalitiesForMode = (
+  mode: string,
+): CodexCatalogModel["inputModalities"] =>
+  mode === "text-image" ? ["text", "image"] : ["text"];
 
 // Compares rows (with rowId) to incoming models (without) by data fields only,
 // so both sync effects can use the same equality definition. Hidden native-profile
@@ -145,6 +178,38 @@ function catalogRowsMatchModels(
         JSON.stringify(incoming.inputModalities ?? [])
     );
   });
+}
+
+function applyFetchedModelModalitiesToCatalogRows(
+  rows: CodexCatalogRow[],
+  models: FetchedModel[],
+): CodexCatalogRow[] {
+  const modelsById = new Map(models.map((model) => [model.id, model]));
+  let changed = false;
+
+  const nextRows = rows.map((row) => {
+    const modelId = row.model.trim();
+    if (!modelId) return row;
+
+    const inputModalities = normalizeCatalogInputModalities(
+      modelsById.get(modelId)?.inputModalities,
+    );
+    if (inputModalities.length === 0) return row;
+
+    const currentInputModalities = normalizeCatalogInputModalities(
+      row.inputModalities,
+    );
+    if (
+      JSON.stringify(currentInputModalities) === JSON.stringify(inputModalities)
+    ) {
+      return row;
+    }
+
+    changed = true;
+    return { ...row, inputModalities };
+  });
+
+  return changed ? nextRows : rows;
 }
 
 export function CodexFormFields({
@@ -300,6 +365,9 @@ export function CodexFormFields({
     )
       .then((models) => {
         setFetchedModels(models);
+        setCatalogRows((rows) =>
+          applyFetchedModelModalitiesToCatalogRows(rows, models),
+        );
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
         } else {
@@ -680,7 +748,7 @@ export function CodexFormFields({
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     {t("codexConfig.modelMappingHint", {
                       defaultValue:
-                        "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；菜单显示名可以填 DeepSeek、Kimi 等品牌模型，实际请求模型按右侧填写内容发送。",
+                        "选择模型角色后，CC Switch 会自动生成 Codex 兼容路由；输入类型会写入 Codex catalog，并影响图片请求是否按不支持图片降级。",
                     })}
                   </p>
                 </div>
@@ -688,7 +756,7 @@ export function CodexFormFields({
                 {catalogRows.length > 0 && (
                   <div className="space-y-2">
                     {/* 列头：md+ 显示 */}
-                    <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                    <div className="hidden grid-cols-[1fr_1fr_140px_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                       <span>
                         {t("codexConfig.catalogColumnDisplay", {
                           defaultValue: "菜单显示名",
@@ -704,13 +772,18 @@ export function CodexFormFields({
                           defaultValue: "上下文窗口",
                         })}
                       </span>
+                      <span>
+                        {t("codexConfig.catalogColumnInput", {
+                          defaultValue: "输入类型",
+                        })}
+                      </span>
                       <span />
                     </div>
 
                     {catalogRows.map((row, index) => (
                       <div
                         key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_140px_36px]"
                       >
                         <Input
                           value={row.displayName ?? ""}
@@ -751,14 +824,22 @@ export function CodexFormFields({
                           {fetchedModels.length > 0 && (
                             <ModelDropdown
                               models={fetchedModels}
-                              onSelect={(id) =>
+                              onSelect={(id, selected) => {
+                                const inputModalities =
+                                  normalizeCatalogInputModalities(
+                                    selected?.inputModalities,
+                                  );
                                 handleUpdateCatalogRow(index, {
                                   model: id,
                                   displayName: row.displayName?.trim()
                                     ? row.displayName
                                     : id,
-                                })
-                              }
+                                  inputModalities:
+                                    inputModalities.length > 0
+                                      ? inputModalities
+                                      : ["text"],
+                                });
+                              }}
                             />
                           )}
                         </div>
@@ -785,6 +866,39 @@ export function CodexFormFields({
                             defaultValue: "上下文窗口",
                           })}
                         />
+                        <Select
+                          value={catalogInputModeValue(row)}
+                          onValueChange={(value) =>
+                            handleUpdateCatalogRow(index, {
+                              inputModalities:
+                                catalogInputModalitiesForMode(value),
+                            })
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label={t("codexConfig.catalogColumnInput", {
+                              defaultValue: "输入类型",
+                            })}
+                            title={t("codexConfig.catalogInputHelp", {
+                              defaultValue:
+                                "影响 Codex catalog 的 input_modalities，并决定图片请求是否按不支持图片降级。",
+                            })}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="text">
+                              {t("codexConfig.catalogInputText", {
+                                defaultValue: "文本",
+                              })}
+                            </SelectItem>
+                            <SelectItem value="text-image">
+                              {t("codexConfig.catalogInputTextImage", {
+                                defaultValue: "文本 + 图片",
+                              })}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Button
                           type="button"
                           variant="ghost"

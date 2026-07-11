@@ -16,6 +16,28 @@ describe("ProviderForm Codex catalog helpers", () => {
     ]);
   });
 
+  it("sanitizes input modalities before saving", () => {
+    expect(
+      normalizeCodexCatalogModelsForSave([
+        {
+          model: "vision-model",
+          inputModalities: [
+            " Text ",
+            "IMAGE",
+            "audio",
+            "image",
+            " ",
+            "text",
+          ],
+        },
+        { model: "text-model", inputModalities: ["audio", " "] },
+      ]),
+    ).toEqual([
+      { model: "vision-model", inputModalities: ["text", "image"] },
+      { model: "text-model" },
+    ]);
+  });
+
   it("preserves native-profile overrides (parallel tool calls + input modalities + base instructions)", () => {
     expect(
       normalizeCodexCatalogModelsForSave([
