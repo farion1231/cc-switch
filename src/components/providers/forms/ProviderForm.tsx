@@ -2232,6 +2232,8 @@ function ProviderFormFull({
               partnerPromotionKey={opencodePartnerPromotionKey}
               baseUrl={opencodeForm.opencodeBaseUrl}
               onBaseUrlChange={opencodeForm.handleOpencodeBaseUrlChange}
+              headers={opencodeForm.opencodeHeaders}
+              onHeadersChange={opencodeForm.handleOpencodeHeadersChange}
               models={opencodeForm.opencodeModels}
               onModelsChange={opencodeForm.handleOpencodeModelsChange}
               extraOptions={opencodeForm.opencodeExtraOptions}
