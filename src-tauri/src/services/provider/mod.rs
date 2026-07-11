@@ -25,6 +25,7 @@ pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
+    update_toml_common_config_snippet,
 };
 
 // Internal re-exports (pub(crate))
@@ -81,6 +82,18 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     }
 
     live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
+    // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
+    // sync_all_enabled：后者按 AppType::all() 顺序逐应用短路，排在 Codex
+    // 前面的无关应用 live 损坏（如 ~/.claude.json 坏 JSON）会阻断 Codex
+    // 的重投影，让刚被清掉的 [mcp_servers] 无人补回。
+    // 投影失败降级为警告：走到这里 live 已按新开关状态落盘，开关事实上
+    // 已生效；若把错误上抛，save_settings 会回滚开关设置，制造"设置=旧值、
+    // live=新桶"的会话分裂——正是该回滚要防止的状态。MCP 投影可自愈
+    // （下次切换 / 任一 MCP 启停操作都会重新投影）。
+    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Codex) {
+        log::warn!("统一会话开关重写 live 后重投影 Codex MCP 失败（将在下次同步时自愈）: {err}");
+    }
     Ok(true)
 }
 
@@ -260,6 +273,8 @@ mod tests {
             coding_plan_provider: None,
             access_key_id: Some("ak-test".to_string()),
             secret_access_key: Some("sk-test".to_string()),
+            team_organization_id: None,
+            team_project_id: None,
         }
     }
 
@@ -760,6 +775,56 @@ mod tests {
         assert_eq!(value.get("includeCoAuthoredBy"), Some(&json!(false)));
     }
 
+    /// Regression for issue #4272: Fable tier env keys must not enter the shared
+    /// Claude common-config snippet (same class as haiku/sonnet/opus model pins).
+    #[test]
+    fn extract_claude_common_config_strips_fable_model_env_keys() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku Mapped",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet Mapped",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus Mapped",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-flash[1M]",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "deepseek-v4-flash",
+                "ANTHROPIC_MODEL": "default-mapped",
+                "ENABLE_TOOL_SEARCH": "true"
+            },
+            "theme": "dark"
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+        let env = value.get("env");
+
+        for stripped in [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "ANTHROPIC_MODEL",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(stripped)).is_none(),
+                "provider-specific model key {stripped} must not enter common config"
+            );
+        }
+
+        assert_eq!(
+            env.and_then(|e| e.get("ENABLE_TOOL_SEARCH"))
+                .and_then(|v| v.as_str()),
+            Some("true")
+        );
+        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
+    }
+
     #[test]
     fn validate_provider_settings_rejects_negative_cost_multiplier() {
         let mut provider = Provider::with_id(
@@ -809,10 +874,18 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+    fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
+        // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
+        // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
+        // 顶层 wire_api 模拟无 model_provider 时的 fallback 写法；
+        // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+wire_api = "chat"
 disable_response_storage = true
+experimental_bearer_token = "sk-live-secret"
+model_catalog_json = "cc-switch-model-catalog.json"
+web_search = "disabled"
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -821,6 +894,9 @@ wire_api = "responses"
 
 [mcp_servers.my_server]
 base_url = "http://localhost:8080"
+
+[mcp.servers.legacy_server]
+command = "legacy-cmd"
 "#;
 
         let settings = json!({ "config": config_toml });
@@ -843,9 +919,51 @@ base_url = "http://localhost:8080"
             !extracted.contains("[model_providers"),
             "should remove entire model_providers table"
         );
+        // MCP 归 DB mcp_servers 表所有，不得进共享片段（含历史错误格式 [mcp.servers]）
         assert!(
-            extracted.contains("http://localhost:8080"),
-            "should keep mcp_servers.* base_url"
+            !extracted.contains("mcp_servers") && !extracted.contains("http://localhost:8080"),
+            "should strip mcp_servers from the shared snippet, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("[mcp") && !extracted.contains("legacy-cmd"),
+            "should strip the legacy [mcp.servers] form from the shared snippet, got: {extracted}"
+        );
+        // 顶层 wire_api 是供应商路由语义（model_providers 整表已剥，
+        // 剩余任何 wire_api 都意味着泄漏）
+        assert!(
+            !extracted.contains("wire_api"),
+            "should strip top-level wire_api from the shared snippet, got: {extracted}"
+        );
+        // 注入产物不得进共享片段（bearer token 泄漏为密钥级问题）
+        assert!(
+            !extracted.contains("experimental_bearer_token")
+                && !extracted.contains("sk-live-secret"),
+            "should strip top-level fallback bearer token, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("model_catalog_json"),
+            "should strip catalog projection pointer, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("web_search"),
+            "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
+        );
+        // 真正可共享的键保留
+        assert!(
+            extracted.contains("disable_response_storage = true"),
+            "shareable keys must survive extraction, got: {extracted}"
+        );
+    }
+
+    #[test]
+    fn extract_codex_common_config_keeps_user_set_web_search() {
+        let config_toml = "web_search = \"enabled\"\ndisable_response_storage = true\n";
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract should succeed");
+        assert!(
+            extracted.contains("web_search = \"enabled\""),
+            "a user-set web_search value is a shareable preference, got: {extracted}"
         );
     }
 
@@ -2069,8 +2187,16 @@ impl ProviderService {
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // Sync MCP
-                McpService::sync_all_enabled(state)?;
+                // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
+                // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
+                // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
+                // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
+                // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+                if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                    log::warn!(
+                        "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
+                    );
+                }
             }
         }
 
@@ -2444,8 +2570,16 @@ impl ProviderService {
             }
         }
 
-        // Sync MCP
-        McpService::sync_all_enabled(state)?;
+        // 切换重写了目标应用的 live，只重投影该应用的 MCP（Codex 的
+        // [mcp_servers] 与 live 同文件，整体替换后必须补回；其余应用的
+        // MCP 文件独立于 live，投影是幂等维护）。不用全量 sync_all_enabled：
+        // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）不该阻断切换。
+        // 走到这里 DB is_current 与 live 都已落盘，切换事实上已成功；
+        // 投影失败上抛会让前端报"切换失败"制造分裂假象，故降级为警告
+        // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+        if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+            log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+        }
 
         Ok(result)
     }
@@ -2591,9 +2725,12 @@ impl ProviderService {
     /// 读到的 live 一定是"片段 + 本地改动"的超集，重提取只会丢掉用户真正删掉的键，
     /// 不会误删其它供应商共享的内容。
     ///
-    /// **作用域**：仅 Claude。Codex 的 live 是 TOML 且端点藏在 `[model_providers]`
-    /// 表里（现有提取器不剥），自动同步会泄漏端点并与 modelCatalog / 统一会话桶 /
-    /// auth 还原逻辑冲突；Gemini 暂未纳入。两者如需支持应各自单独验证后再加。
+    /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
+    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
+    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
+    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
+    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
+    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
@@ -2605,8 +2742,8 @@ impl ProviderService {
         live_config: &Value,
         result: &mut SwitchResult,
     ) {
-        // 作用域限定 Claude（见函数文档）。
-        if !matches!(app_type, AppType::Claude) {
+        // 作用域限定 Claude + Codex（见函数文档）。
+        if !matches!(app_type, AppType::Claude | AppType::Codex) {
             return;
         }
 
@@ -2782,6 +2919,10 @@ impl ProviderService {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            // Fable 是 v3.16.3 新增的第四档模型映射，与 haiku/sonnet/opus 同属供应商专属，
+            // 不得进入通用配置片段，否则会污染其它供应商（issue #4272）。
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
             "CLAUDE_CODE_SUBAGENT_MODEL",
             "ANTHROPIC_BASE_URL",
         ];
@@ -2859,9 +3000,47 @@ impl ProviderService {
         root.remove("model_provider");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
+        // wire_api 与 base_url 同属供应商路由语义：无 model_provider 时
+        // update_codex_toml_field / 前端 setCodexWireApi 都会把它落在顶层，
+        // 进了片段会改写其它供应商的协议选择（chat vs responses）。
+        root.remove("wire_api");
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+
+        // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
+        // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
+        // 显示为一份"重复"的 MCP 配置。
+        root.remove("mcp_servers");
+        // 历史错误格式 [mcp.servers] 一并剥离（与 strip_codex_mcp_servers_from_settings
+        // 一致）：sync_all_enabled 只管理 [mcp_servers.*]，legacy 形态一旦进了
+        // 片段就会被合并进所有供应商，且没有任何同步路径能清掉这个孤儿。
+        if let Some(mcp_tbl) = root
+            .get_mut("mcp")
+            .and_then(|item| item.as_table_like_mut())
+        {
+            mcp_tbl.remove("servers");
+            if mcp_tbl.is_empty() {
+                root.remove("mcp");
+            }
+        }
+
+        // cc-switch 写 live 时注入的产物一律不进共享片段：
+        // - experimental_bearer_token 正常写在 [model_providers.<id>] 内（上面
+        //   整表已剥），但无活跃路由 / 内建保留 id / 路由表缺失三种 fallback
+        //   会落在顶层——不剥等于把 API 密钥写进共享片段。
+        root.remove("experimental_bearer_token");
+        // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
+        root.remove("model_catalog_json");
+        // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
+        //   属于可共享偏好，保留。
+        if root
+            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .and_then(|item| item.as_str())
+            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+        {
+            root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
+        }
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();

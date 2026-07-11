@@ -64,6 +64,8 @@ export interface UsageScript {
   userId?: string; // 用户ID（NewAPI 模板使用）
   accessKeyId?: string; // 火山方舟 AccessKey ID（用量查询签名用，与推理 Key 分离）
   secretAccessKey?: string; // 火山方舟 SecretAccessKey
+  teamOrganizationId?: string; // 智谱团队套餐组织 ID（请求头 bigmodel-organization）
+  teamProjectId?: string; // 智谱团队套餐项目 ID（请求头 bigmodel-project）
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
@@ -222,6 +224,14 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
+  impersonateClaudeCode?: boolean;
+  // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
+  // Codex does not forward model_max_output_tokens in the request body; without
+  // this the path falls back to a conservative 8192 default, which can truncate
+  // long/thinking-heavy responses. When set (>0) it takes precedence over the
+  // request value and the default.
+  maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
@@ -252,7 +262,8 @@ export type ClaudeApiFormat =
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
-export type CodexApiFormat = "openai_responses" | "openai_chat";
+// - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
+export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
 
 export interface CodexCatalogModel {
   model: string;
@@ -359,6 +370,7 @@ export interface Settings {
   proxyConfirmed?: boolean;
   // User has confirmed the usage query first-run notice
   usageConfirmed?: boolean;
+  usageDashboardRefreshIntervalMs?: number;
   // User has confirmed the stream check first-run notice
   streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page

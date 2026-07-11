@@ -67,7 +67,9 @@ export function useImportMcpFromApps() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => mcpApi.importFromApps(),
-    onSuccess: () => {
+    // 后端是 best-effort 导入：部分应用失败会返回错误，但其余应用的
+    // 服务器已经入库，失败时也要刷新列表。
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
     },
   });

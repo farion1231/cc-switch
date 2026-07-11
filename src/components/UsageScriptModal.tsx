@@ -39,6 +39,8 @@ import { formatUsageDataSummary } from "@/utils/usageDisplay";
  */
 const VOLCENGINE_KEY_CONSOLE_URL =
   "https://console.volcengine.com/iam/keymanage";
+// 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
+const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -553,6 +555,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         // 另用账号 AK/SK 签名查询控制面用量。
         const isZenMux = script.codingPlanProvider === "zenmux";
         const isVolcengine = script.codingPlanProvider === "volcengine";
+        const isZhipuTeam = script.codingPlanProvider === "zhipu_team";
         const baseUrl = isZenMux
           ? (script.baseUrl ?? "")
           : (providerCredentials.baseUrl ?? "");
@@ -565,6 +568,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           apiKey,
           isVolcengine ? script.accessKeyId : undefined,
           isVolcengine ? script.secretAccessKey : undefined,
+          isZhipuTeam ? script.codingPlanProvider : undefined,
+          isZhipuTeam ? script.teamOrganizationId : undefined,
+          isZhipuTeam ? script.teamProjectId : undefined,
         );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
@@ -746,9 +752,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           providerCredentials.baseUrl,
         );
         const provider = script.codingPlanProvider || autoDetected || "kimi";
-        // ZenMux 保留手填 baseUrl/apiKey；火山保留账号 AK/SK；其余清除。
+        // ZenMux 保留手填 baseUrl/apiKey；火山保留账号 AK/SK；智谱团队保留组织/项目 ID；其余清除。
         const isZenMux = provider === "zenmux";
         const isVolcengine = provider === "volcengine";
+        const isZhipuTeam = provider === "zhipu_team";
         setScript({
           ...script,
           code: "",
@@ -758,6 +765,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           userId: undefined,
           accessKeyId: isVolcengine ? script.accessKeyId : undefined,
           secretAccessKey: isVolcengine ? script.secretAccessKey : undefined,
+          teamOrganizationId: isZhipuTeam
+            ? script.teamOrganizationId
+            : undefined,
+          teamProjectId: isZhipuTeam ? script.teamProjectId : undefined,
           codingPlanProvider: provider,
         });
       } else if (presetName === TEMPLATE_TYPES.BALANCE) {
@@ -1354,6 +1365,76 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           </button>
                         )}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            {/* 智谱团队套餐：需组织 ID + 项目 ID（api_key 沿用供应商推理凭据） */}
+            {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+              script.codingPlanProvider === "zhipu_team" && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      {t("usageScript.credentialsConfig")}
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {t("usageScript.zhipuTeamHint")}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {t("usageScript.zhipuTeamConsoleLink")}{" "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          settingsApi.openExternal(ZHIPU_TEAM_USAGE_URL)
+                        }
+                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                      >
+                        {ZHIPU_TEAM_USAGE_URL}
+                        <ExternalLink size={12} className="shrink-0" />
+                      </button>
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-zhipu-team-org">
+                        {t("usageScript.organizationId")}
+                      </Label>
+                      <Input
+                        id="usage-zhipu-team-org"
+                        type="text"
+                        value={script.teamOrganizationId || ""}
+                        onChange={(e) =>
+                          setScript({
+                            ...script,
+                            teamOrganizationId: e.target.value,
+                          })
+                        }
+                        placeholder={t("usageScript.organizationIdPlaceholder")}
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-zhipu-team-project">
+                        {t("usageScript.projectId")}
+                      </Label>
+                      <Input
+                        id="usage-zhipu-team-project"
+                        type="text"
+                        value={script.teamProjectId || ""}
+                        onChange={(e) =>
+                          setScript({
+                            ...script,
+                            teamProjectId: e.target.value,
+                          })
+                        }
+                        placeholder={t("usageScript.projectIdPlaceholder")}
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
                     </div>
                   </div>
                 </div>

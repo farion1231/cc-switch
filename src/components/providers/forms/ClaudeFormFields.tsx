@@ -247,6 +247,7 @@ export function ClaudeFormFields({
   const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
+  const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -985,12 +986,35 @@ export function ClaudeFormFields({
                   defaultValue: "默认兜底模型",
                 })}
               </FormLabel>
-              {renderModelInput(
-                "claudeModel",
-                claudeModel,
-                "ANTHROPIC_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
-              )}
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
+                {renderModelInput(
+                  "claudeModel",
+                  stripClaudeOneMMarker(claudeModel),
+                  "ANTHROPIC_MODEL",
+                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                  (value) =>
+                    onModelChange(
+                      "ANTHROPIC_MODEL",
+                      setClaudeOneMMarker(value, fallbackUsesOneM),
+                    ),
+                )}
+                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox
+                    checked={fallbackUsesOneM}
+                    onCheckedChange={(checked) => {
+                      const base = stripClaudeOneMMarker(claudeModel).trim();
+                      if (!base) return;
+                      onModelChange(
+                        "ANTHROPIC_MODEL",
+                        setClaudeOneMMarker(base, checked === true),
+                      );
+                    }}
+                  />
+                  {t("providerForm.modelOneMLabel", {
+                    defaultValue: "1M",
+                  })}
+                </label>
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.fallbackModelHint", {
                   defaultValue:
