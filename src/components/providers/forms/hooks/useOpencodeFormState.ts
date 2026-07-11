@@ -3,6 +3,7 @@ import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
 import {
   OPENCODE_DEFAULT_NPM,
   OPENCODE_DEFAULT_CONFIG,
+  OPENCODE_HEADER_DRAFT_PREFIX,
   isKnownOpencodeOptionKey,
   parseOpencodeConfig,
   toOpencodeExtraOptions,
@@ -149,7 +150,7 @@ export function useOpencodeFormState({
         const nextHeaders: Record<string, string> = {};
         for (const [key, value] of Object.entries(headers)) {
           const trimmedKey = key.trim();
-          if (trimmedKey && !trimmedKey.startsWith("header-")) {
+          if (trimmedKey && !key.startsWith(OPENCODE_HEADER_DRAFT_PREFIX)) {
             nextHeaders[trimmedKey] = value;
           }
         }

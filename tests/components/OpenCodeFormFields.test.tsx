@@ -95,7 +95,7 @@ describe("OpenCodeFormFields", () => {
 
     const nextHeaders = onHeadersChange.mock.calls[0][0];
     const headerKey = Object.keys(nextHeaders)[0];
-    expect(headerKey).toMatch(/^header-/);
+    expect(headerKey).toMatch(/^draft-header:/);
 
     rerender(
       <FormShell>
@@ -116,6 +116,21 @@ describe("OpenCodeFormFields", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove header" }));
 
     expect(onHeadersChange).toHaveBeenCalledWith({});
+  });
+
+  it("rejects case-insensitive duplicate header names and restores the input", () => {
+    const onHeadersChange = vi.fn();
+    renderOpenCodeForm({
+      headers: { "X-A": "A", "X-B": "B" },
+      onHeadersChange,
+    });
+
+    const keyInput = screen.getByDisplayValue("X-B");
+    fireEvent.change(keyInput, { target: { value: "x-a" } });
+    fireEvent.blur(keyInput);
+
+    expect(onHeadersChange).not.toHaveBeenCalled();
+    expect(keyInput).toHaveValue("X-B");
   });
 
   it("surfaces existing model token limits", () => {

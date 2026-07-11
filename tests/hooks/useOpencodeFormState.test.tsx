@@ -80,4 +80,29 @@ describe("useOpencodeFormState", () => {
 
     expect(JSON.parse(getSettingsConfig()).options.headers).toBeUndefined();
   });
+
+  it("preserves legitimate headers whose names start with header-", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai-compatible",
+      options: {
+        headers: {
+          "header-version": "v1",
+          "X-Title": "Old",
+        },
+      },
+      models: {},
+    });
+
+    act(() => {
+      result.current.handleOpencodeHeadersChange({
+        "header-version": "v1",
+        "X-Title": "New",
+      });
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options.headers).toEqual({
+      "header-version": "v1",
+      "X-Title": "New",
+    });
+  });
 });

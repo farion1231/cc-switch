@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import {
   getModelExtraFields,
   isKnownModelKey,
+  OPENCODE_HEADER_DRAFT_PREFIX,
 } from "./helpers/opencodeFormUtils";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
 
@@ -80,7 +81,7 @@ function ExtraOptionKeyInput({
   placeholderPrefixes = ["option-"],
 }: {
   optionKey: string;
-  onChange: (newKey: string) => void;
+  onChange: (newKey: string) => boolean | void;
   placeholder?: string;
   placeholderPrefixes?: string[];
 }) {
@@ -102,7 +103,10 @@ function ExtraOptionKeyInput({
       onBlur={() => {
         const trimmed = localValue.trim();
         if (trimmed && trimmed !== optionKey) {
-          onChange(trimmed);
+          const accepted = onChange(trimmed);
+          if (accepted === false) {
+            setLocalValue(displayValue);
+          }
         }
       }}
       placeholder={placeholder}
@@ -340,7 +344,7 @@ export function OpenCodeFormFields({
 
   // Header handlers
   const handleAddHeader = () => {
-    const newKey = `header-${Date.now()}`;
+    const newKey = `${OPENCODE_HEADER_DRAFT_PREFIX}${Date.now()}`;
     onHeadersChange({
       ...headers,
       [newKey]: "",
@@ -353,9 +357,15 @@ export function OpenCodeFormFields({
     onHeadersChange(newHeaders);
   };
 
-  const handleHeaderKeyChange = (oldKey: string, newKey: string) => {
+  const handleHeaderKeyChange = (oldKey: string, newKey: string): boolean => {
     const trimmedKey = newKey.trim();
-    if (!trimmedKey || oldKey === trimmedKey || trimmedKey in headers) return;
+    if (!trimmedKey || oldKey === trimmedKey) return false;
+
+    const normalizedKey = trimmedKey.toLowerCase();
+    const hasDuplicate = Object.keys(headers).some(
+      (key) => key !== oldKey && key.toLowerCase() === normalizedKey,
+    );
+    if (hasDuplicate) return false;
 
     const newHeaders: Record<string, string> = {};
     for (const [key, value] of Object.entries(headers)) {
@@ -363,6 +373,7 @@ export function OpenCodeFormFields({
       else newHeaders[key] = value;
     }
     onHeadersChange(newHeaders);
+    return true;
   };
 
   const handleHeaderValueChange = (key: string, value: string) => {
@@ -647,7 +658,7 @@ export function OpenCodeFormFields({
                     placeholder={t("opencode.headerNamePlaceholder", {
                       defaultValue: "X-Title",
                     })}
-                    placeholderPrefixes={["header-"]}
+                    placeholderPrefixes={[OPENCODE_HEADER_DRAFT_PREFIX]}
                   />
                   <Input
                     value={value}
