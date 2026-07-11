@@ -1795,10 +1795,12 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
-/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
-/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的命令入口路径。
+///
+/// 这里刻意保留符号链接本身：npm 入口常是位于用户级 bin 目录的链接，而其真实脚本
+/// 位于 `lib/node_modules`；执行时需要前者的同级 node，而不是后者的父目录。
 #[cfg(not(target_os = "windows"))]
-fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
+fn resolve_login_shell_command_path(tool: &str) -> Option<std::path::PathBuf> {
     use std::process::Command;
     let shell = std::env::var("SHELL")
         .ok()
@@ -1817,7 +1819,60 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
     // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
     let first = first_abs_path_line(&raw)?;
-    std::fs::canonicalize(first).ok()
+    Some(std::path::PathBuf::from(first))
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+#[cfg(not(target_os = "windows"))]
+fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
+    std::fs::canonicalize(resolve_login_shell_command_path(tool)?).ok()
+}
+
+/// 返回 GUI 进程可直接执行的 npm 安装命令。
+///
+/// 从 Finder / launchd 启动时，应用的 PATH 往往缺少用户级 node 管理器目录；即使
+/// npm 用绝对路径调用，它的 `#!/usr/bin/env node` 入口仍需要在 PATH 中找到同级 node。
+/// 因此这里同时锚定 npm 本身，并把它所在的 bin 目录前置。优先使用登录 shell 的
+/// 默认 npm；shell 未配置时再复用 CLI 扫描目录，最后保留裸 npm 的历史回退。
+#[cfg(not(target_os = "windows"))]
+fn npm_install_command_for_path(tool: &str, npm_path: Option<&Path>) -> Option<String> {
+    let fallback = npm_install_command_for(tool)?.to_string();
+    let Some(npm_path) = npm_path else {
+        return Some(fallback);
+    };
+    let Some(npm_dir) = npm_path.parent().filter(|path| !path.as_os_str().is_empty()) else {
+        return Some(fallback);
+    };
+    let package = npm_package_for(tool)?;
+    let npm = shell_single_quote(&npm_path.to_string_lossy());
+    let npm_dir = shell_single_quote(&npm_dir.to_string_lossy());
+    Some(format!("PATH={npm_dir}:$PATH {npm} i -g {package}@latest"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_npm_executable() -> Option<std::path::PathBuf> {
+    resolve_login_shell_command_path("npm")
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            build_tool_search_paths("codex").into_iter().find_map(|dir| {
+                let npm = dir.join("npm");
+                npm.is_file().then_some(npm)
+            })
+        })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolved_npm_install_command_for(tool: &str) -> Option<String> {
+    let npm = resolve_npm_executable();
+    npm_install_command_for_path(tool, npm.as_deref())
+}
+
+// Windows 原生安装仍在 cmd.exe 中执行，WSL 分支则由 wsl.exe 在发行版内解析 npm；
+// 两者都不能使用主机上的 POSIX 路径，因此保持原有命令。
+#[cfg(target_os = "windows")]
+fn resolved_npm_install_command_for(tool: &str) -> Option<String> {
+    npm_install_command_for(tool).map(str::to_owned)
 }
 
 #[cfg(target_os = "windows")]
@@ -2421,10 +2476,10 @@ fn static_fallback_command(tool: &str) -> String {
 ///   Windows 原生继续走 `tool_action_shell_command` 的 npm/PowerShell 命令;WSL 作为
 ///   Linux 环境复用这套 POSIX 安装优先级。
 fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
-    match npm_install_command_for(tool) {
+    match resolved_npm_install_command_for(tool) {
         Some(npm) => chain_update_commands(
             installer.to_string(),
-            npm.to_string(),
+            npm,
             LifecycleCommandShell::Posix,
         ),
         None => installer.to_string(),
@@ -2436,7 +2491,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
-        _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
+        _ => resolved_npm_install_command_for(tool).unwrap_or_default(),
     }
 }
 
@@ -4808,26 +4863,40 @@ mod tests {
         }
 
         #[test]
-        fn codex_install_keeps_static_npm() {
-            // OpenAI 暂无独立 native installer,保持原裸 npm,不引入兜底链(无东西可兜底)。
-            let cmd = install_command_for("codex");
-            assert_eq!(cmd, "npm i -g @openai/codex@latest");
-            assert!(!cmd.contains("||"));
+        fn npm_install_anchors_npm_and_its_node_bin() {
+            let cmd = npm_install_command_for_path(
+                "codex",
+                Some(Path::new("/Users/me/.local/node/bin/npm")),
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "PATH='/Users/me/.local/node/bin':$PATH '/Users/me/.local/node/bin/npm' i -g @openai/codex@latest"
+                )
+            );
         }
 
         #[test]
-        fn gemini_install_keeps_static_npm() {
+        fn npm_install_keeps_bare_command_when_npm_cannot_be_resolved() {
+            let cmd = npm_install_command_for_path("codex", None);
+            assert_eq!(cmd.as_deref(), Some("npm i -g @openai/codex@latest"));
+        }
+
+        #[test]
+        fn gemini_install_uses_npm() {
             // Google 文档同时支持 brew/npm,但本表保持与 update fallback 一致的 npm。
             // 用户若已装 brew gemini-cli,update 路径的锚定会识别 formula → brew upgrade,
             // 所以 install 端不强行替用户决策"用 brew 还是 npm"。
             let cmd = install_command_for("gemini");
-            assert_eq!(cmd, "npm i -g @google/gemini-cli@latest");
+            assert!(cmd.ends_with("i -g @google/gemini-cli@latest"));
+            assert!(!cmd.contains("||"));
         }
 
         #[test]
-        fn openclaw_install_keeps_static_npm() {
+        fn openclaw_install_uses_npm() {
             let cmd = install_command_for("openclaw");
-            assert_eq!(cmd, "npm i -g openclaw@latest");
+            assert!(cmd.ends_with("i -g openclaw@latest"));
+            assert!(!cmd.contains("||"));
         }
 
         #[test]
