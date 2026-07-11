@@ -251,48 +251,71 @@ fn s3_transport_error(
     key: &'static str,
     op_zh: &str,
     op_en: &str,
+    op_ru: &str,
     err: &reqwest::Error,
 ) -> AppError {
-    let (zh_reason, en_reason) = if err.is_timeout() {
-        ("请求超时", "request timed out")
+    let (zh_reason, en_reason, ru_reason) = if err.is_timeout() {
+        ("请求超时", "request timed out", "превышено время ожидания")
     } else if err.is_connect() {
-        ("连接失败", "connection failed")
+        ("连接失败", "connection failed", "не удалось подключиться")
     } else if err.is_request() {
-        ("请求构造失败", "request build failed")
+        (
+            "请求构造失败",
+            "request build failed",
+            "не удалось сформировать запрос",
+        )
     } else {
-        ("网络请求失败", "network request failed")
+        ("网络请求失败", "network request failed", "сетевая ошибка")
     };
 
-    AppError::localized(
+    AppError::localized_ru(
         key,
         format!("S3 {op_zh}失败（{zh_reason}）"),
         format!("S3 {op_en} failed ({en_reason})"),
+        format!("Не удалось выполнить S3 {op_ru} ({ru_reason})"),
     )
+}
+
+fn s3_op_ru(op: &str) -> &str {
+    match op {
+        "HEAD bucket" => "проверка бакета",
+        "PUT" => "загрузка объекта",
+        "GET" => "скачивание объекта",
+        _ => op,
+    }
 }
 
 fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
     let safe_url = redact_url(url);
     let mut zh = format!("S3 {op} 失败: {status} ({safe_url})");
     let mut en = format!("S3 {op} failed: {status} ({safe_url})");
+    let mut ru = format!("S3 {} не выполнена: {status} ({safe_url})", s3_op_ru(op));
 
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         zh.push_str("。请检查 Access Key ID 和 Secret Access Key。");
         en.push_str(". Please verify your Access Key ID and Secret Access Key.");
+        ru.push_str(". Проверьте Access Key ID и Secret Access Key.");
     } else if status == StatusCode::NOT_FOUND && op == "HEAD bucket" {
         zh.push_str("。请检查存储桶名称和区域是否正确。");
         en.push_str(". Please check the bucket name and region.");
+        ru.push_str(". Проверьте имя бакета и region.");
     }
 
-    AppError::localized("s3.http.status", zh, en)
+    AppError::localized_ru("s3.http.status", zh, en, ru)
 }
 
 fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {
     let max_mb = max_bytes / 1024 / 1024;
-    AppError::localized(
+    AppError::localized_ru(
         "s3.response_too_large",
         format!("S3 响应体超过上限（{} MB）: {}", max_mb, redact_url(url)),
         format!(
             "S3 response body exceeds limit ({} MB): {}",
+            max_mb,
+            redact_url(url)
+        ),
+        format!(
+            "Тело ответа S3 превышает лимит ({} MB): {}",
             max_mb,
             redact_url(url)
         ),
@@ -325,10 +348,11 @@ fn ensure_content_length_within_limit(
 pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
     let url_str = build_bucket_url(creds);
     let url = Url::parse(&url_str).map_err(|e| {
-        AppError::localized(
+        AppError::localized_ru(
             "s3.url.invalid",
             format!("S3 URL 无效: {e}"),
             format!("Invalid S3 URL: {e}"),
+            format!("Недопустимый S3 URL: {e}"),
         )
     })?;
 
@@ -350,7 +374,15 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", &e))?;
+        .map_err(|e| {
+            s3_transport_error(
+                "s3.connection_failed",
+                "连接",
+                "connection",
+                "подключение",
+                &e,
+            )
+        })?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -367,10 +399,11 @@ pub(crate) async fn put_object(
 ) -> Result<(), AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
-        AppError::localized(
+        AppError::localized_ru(
             "s3.url.invalid",
             format!("S3 URL 无效: {e}"),
             format!("Invalid S3 URL: {e}"),
+            format!("Недопустимый S3 URL: {e}"),
         )
     })?;
 
@@ -394,7 +427,9 @@ pub(crate) async fn put_object(
         .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
+        .map_err(|e| {
+            s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", "PUT-запрос", &e)
+        })?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -412,10 +447,11 @@ pub(crate) async fn get_object(
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
-        AppError::localized(
+        AppError::localized_ru(
             "s3.url.invalid",
             format!("S3 URL 无效: {e}"),
             format!("Invalid S3 URL: {e}"),
+            format!("Недопустимый S3 URL: {e}"),
         )
     })?;
 
@@ -437,7 +473,9 @@ pub(crate) async fn get_object(
         .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", &e))?;
+        .map_err(|e| {
+            s3_transport_error("s3.get_failed", "GET 请求", "GET request", "GET-запрос", &e)
+        })?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -457,10 +495,11 @@ pub(crate) async fn get_object(
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| {
-            AppError::localized(
+            AppError::localized_ru(
                 "s3.response_read_failed",
                 format!("读取 S3 响应失败: {e}"),
                 format!("Failed to read S3 response: {e}"),
+                format!("Не удалось прочитать ответ S3: {e}"),
             )
         })?;
         if bytes.len().saturating_add(chunk.len()) > max_bytes {
@@ -478,10 +517,11 @@ pub(crate) async fn head_object(
 ) -> Result<Option<String>, AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
-        AppError::localized(
+        AppError::localized_ru(
             "s3.url.invalid",
             format!("S3 URL 无效: {e}"),
             format!("Invalid S3 URL: {e}"),
+            format!("Недопустимый S3 URL: {e}"),
         )
     })?;
 
@@ -503,7 +543,15 @@ pub(crate) async fn head_object(
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", &e))?;
+        .map_err(|e| {
+            s3_transport_error(
+                "s3.head_failed",
+                "HEAD 请求",
+                "HEAD request",
+                "HEAD-запрос",
+                &e,
+            )
+        })?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);

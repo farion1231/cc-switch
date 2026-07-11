@@ -51,6 +51,7 @@ pub enum AppError {
         key: &'static str,
         zh: String,
         en: String,
+        ru: Option<String>,
     },
     #[error("数据库错误: {0}")]
     Database(String),
@@ -89,6 +90,36 @@ impl AppError {
             key,
             zh: zh.into(),
             en: en.into(),
+            ru: None,
+        }
+    }
+
+    pub fn localized_ru(
+        key: &'static str,
+        zh: impl Into<String>,
+        en: impl Into<String>,
+        ru: impl Into<String>,
+    ) -> Self {
+        Self::Localized {
+            key,
+            zh: zh.into(),
+            en: en.into(),
+            ru: Some(ru.into()),
+        }
+    }
+
+    pub fn localized_message(&self, language: &str) -> String {
+        match self {
+            Self::Localized { zh, en, ru, .. } => {
+                if language.starts_with("zh") {
+                    zh.clone()
+                } else if language.starts_with("ru") {
+                    ru.clone().unwrap_or_else(|| en.clone())
+                } else {
+                    en.clone()
+                }
+            }
+            other => other.to_string(),
         }
     }
 }
@@ -143,4 +174,28 @@ pub fn format_skill_error(
         // 如果 JSON 序列化失败，返回简单格式
         format!("ERROR:{code}")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+
+    #[test]
+    fn localized_message_uses_requested_language() {
+        let err = AppError::localized_ru("sample", "中文", "English", "Русский");
+
+        assert_eq!(err.localized_message("zh"), "中文");
+        assert_eq!(err.localized_message("zh-TW"), "中文");
+        assert_eq!(err.localized_message("ru"), "Русский");
+        assert_eq!(err.localized_message("ru-RU"), "Русский");
+        assert_eq!(err.localized_message("en-US"), "English");
+        assert_eq!(err.localized_message("ja-JP"), "English");
+    }
+
+    #[test]
+    fn localized_message_falls_back_to_english_when_ru_is_missing() {
+        let err = AppError::localized("sample", "中文", "English");
+
+        assert_eq!(err.localized_message("ru"), "English");
+    }
 }

@@ -81,6 +81,16 @@ impl TrayTexts {
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
             },
+            "ru" => Self {
+                show_main: "Открыть главное окно",
+                open_website: "Открыть официальный сайт",
+                no_providers_label: "(нет провайдеров)",
+                lightweight_mode: "Облегченный режим",
+                quit: "Выход",
+                _auto_label: "Авто (аварийное переключение)",
+                projects_label: "Проекты",
+                no_project_label: "Без проекта",
+            },
             "zh-TW" => Self {
                 show_main: "開啟主介面",
                 open_website: "開啟官方網站",

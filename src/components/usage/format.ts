@@ -1,3 +1,5 @@
+import { getLocaleFromLanguage as getLocaleFromAppLanguage } from "@/lib/locale";
+
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -45,15 +47,7 @@ function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
 }
 
 export function getLocaleFromLanguage(language: string): string {
-  if (!language) return "en-US";
-  const normalized = normalizeLanguageTag(language);
-  if (normalized === "zh") return "zh-CN";
-  if (isTraditionalChineseLanguage(normalized)) {
-    return "zh-TW";
-  }
-  if (normalized.startsWith("zh")) return "zh-CN";
-  if (normalized.startsWith("ja")) return "ja-JP";
-  return "en-US";
+  return getLocaleFromAppLanguage(language);
 }
 
 interface I18nLike {

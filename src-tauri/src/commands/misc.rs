@@ -18,6 +18,22 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+fn current_language() -> String {
+    crate::settings::get_settings()
+        .language
+        .unwrap_or_else(|| "zh".to_string())
+        .to_lowercase()
+}
+
+fn localized_text(zh: &str, en: &str, ja: &str, ru: &str) -> String {
+    match current_language().as_str() {
+        l if l.starts_with("en") => en.to_string(),
+        l if l.starts_with("ja") => ja.to_string(),
+        l if l.starts_with("ru") => ru.to_string(),
+        _ => zh.to_string(),
+    }
+}
+
 /// 打开外部链接
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
@@ -186,7 +202,12 @@ pub async fn run_tool_lifecycle_action(
     let action = ToolLifecycleAction::from_str(&action)?;
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
-        return Err("No supported tools selected".to_string());
+        return Err(localized_text(
+            "未选择支持的工具",
+            "No supported tools selected",
+            "対応しているツールが選択されていません",
+            "Не выбраны поддерживаемые инструменты",
+        ));
     }
 
     let label = match action {
@@ -202,7 +223,14 @@ pub async fn run_tool_lifecycle_action(
         run_tool_lifecycle_silently(&command_line, label)
     })
     .await
-    .map_err(|e| format!("tool lifecycle task join error: {e}"))?
+    .map_err(|e| {
+        localized_text(
+            &format!("工具安装/更新任务执行失败: {e}"),
+            &format!("tool lifecycle task join error: {e}"),
+            &format!("ツールのインストール/更新タスク実行エラー: {e}"),
+            &format!("Ошибка выполнения задачи установки/обновления инструмента: {e}"),
+        )
+    })?
 }
 
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
@@ -218,7 +246,14 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
         .arg("-c")
         .arg(command_line)
         .output()
-        .map_err(|e| format!("启动安装进程失败: {e}"))?;
+        .map_err(|e| {
+            localized_text(
+                &format!("启动安装进程失败: {e}"),
+                &format!("Failed to start install process: {e}"),
+                &format!("インストールプロセスの起動に失敗しました: {e}"),
+                &format!("Не удалось запустить процесс установки: {e}"),
+            )
+        })?;
     finish_lifecycle_output(&output)
 }
 
@@ -231,7 +266,14 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
 
     let bat_file =
         std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
-    std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    std::fs::write(&bat_file, command_line).map_err(|e| {
+        localized_text(
+            &format!("写入批处理文件失败: {e}"),
+            &format!("Failed to write batch file: {e}"),
+            &format!("バッチファイルの書き込みに失敗しました: {e}"),
+            &format!("Не удалось записать batch-файл: {e}"),
+        )
+    })?;
 
     let output = Command::new("cmd")
         .arg("/C")
@@ -240,7 +282,14 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
         .output();
     let _ = std::fs::remove_file(&bat_file);
 
-    finish_lifecycle_output(&output.map_err(|e| format!("启动安装进程失败: {e}"))?)
+    finish_lifecycle_output(&output.map_err(|e| {
+        localized_text(
+            &format!("启动安装进程失败: {e}"),
+            &format!("Failed to start install process: {e}"),
+            &format!("インストールプロセスの起動に失敗しました: {e}"),
+            &format!("Не удалось запустить процесс установки: {e}"),
+        )
+    })?)
 }
 
 /// 把子进程退出结果转成 `Result`：成功返回 `Ok`；失败提取 stderr（空则回退 stdout）
@@ -258,7 +307,18 @@ fn finish_lifecycle_output(output: &std::process::Output) -> Result<(), String> 
     };
     let detail = last_lines(raw, 8);
     Err(if detail.is_empty() {
-        format!("命令执行失败 (exit code: {:?})", output.status.code())
+        localized_text(
+            &format!("命令执行失败 (exit code: {:?})", output.status.code()),
+            &format!("Command failed (exit code: {:?})", output.status.code()),
+            &format!(
+                "コマンドの実行に失敗しました (終了コード: {:?})",
+                output.status.code()
+            ),
+            &format!(
+                "Команда завершилась с ошибкой (код выхода: {:?})",
+                output.status.code()
+            ),
+        )
     } else {
         detail
     })
@@ -368,7 +428,12 @@ impl FromStr for ToolLifecycleAction {
         match value {
             "install" => Ok(Self::Install),
             "update" => Ok(Self::Update),
-            _ => Err(format!("Unsupported tool action: {value}")),
+            _ => Err(localized_text(
+                &format!("不支持的工具操作: {value}"),
+                &format!("Unsupported tool action: {value}"),
+                &format!("サポートされていないツール操作: {value}"),
+                &format!("Неподдерживаемое действие для инструмента: {value}"),
+            )),
         }
     }
 }
@@ -611,8 +676,14 @@ fn build_tool_action_line(
         //    后者在 Windows target 给 hermes 返回 PowerShell installer,且 Windows batch
         //    语义也不适合跨 wsl.exe;这里统一替换为 POSIX 版安装/更新命令。
         if let Some(distro) = wsl_distro_for_tool(tool) {
-            let command = wsl_tool_action_shell_command(tool, action)
-                .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
+            let command = wsl_tool_action_shell_command(tool, action).ok_or_else(|| {
+                localized_text(
+                    &format!("不支持的工具操作目标: {tool}"),
+                    &format!("Unsupported tool action target: {tool}"),
+                    &format!("サポートされていないツール操作対象: {tool}"),
+                    &format!("Неподдерживаемый инструмент для этого действия: {tool}"),
+                )
+            })?;
             return build_wsl_tool_action_line(&distro, &command, wsl_shell, wsl_shell_flag);
         }
         // ② Windows 原生 update 锚定;install 走静态(install.sh 是 bash 脚本,Windows
@@ -631,7 +702,12 @@ fn build_tool_action_line(
             }
         };
         if command.is_empty() {
-            return Err(format!("Unsupported tool action target: {tool}"));
+            return Err(localized_text(
+                &format!("不支持的工具操作目标: {tool}"),
+                &format!("Unsupported tool action target: {tool}"),
+                &format!("サポートされていないツール操作対象: {tool}"),
+                &format!("Неподдерживаемый инструмент для этого действия: {tool}"),
+            ));
         }
         // .bat 调用 .cmd/.bat 必须用 `call` 否则当前脚本被替换、后续 `if errorlevel`
         // 行被跳过;对 .exe 加 call 无害(等同直接调用)。锚定命令头部可能是 .cmd
@@ -656,7 +732,12 @@ fn build_tool_action_line(
             ToolLifecycleAction::Install => install_command_for(tool),
         };
         if command.is_empty() {
-            return Err(format!("Unsupported tool action target: {tool}"));
+            return Err(localized_text(
+                &format!("不支持的工具操作目标: {tool}"),
+                &format!("Unsupported tool action target: {tool}"),
+                &format!("サポートされていないツール操作対象: {tool}"),
+                &format!("Неподдерживаемый инструмент для этого действия: {tool}"),
+            ));
         }
         Ok(command)
     }
@@ -670,19 +751,34 @@ fn build_wsl_tool_action_line(
     force_shell_flag: Option<&str>,
 ) -> Result<String, String> {
     if !is_valid_wsl_distro_name(distro) {
-        return Err(format!("Invalid WSL distro name: {distro}"));
+        return Err(localized_text(
+            &format!("无效的 WSL 发行版名称: {distro}"),
+            &format!("Invalid WSL distro name: {distro}"),
+            &format!("WSL ディストリビューション名が無効です: {distro}"),
+            &format!("Недопустимое имя дистрибутива WSL: {distro}"),
+        ));
     }
 
     let shell = force_shell
         .map(|s| s.rsplit('/').next().unwrap_or(s))
         .unwrap_or("sh");
     if !is_valid_shell(shell) {
-        return Err(format!("Invalid WSL shell: {shell}"));
+        return Err(localized_text(
+            &format!("无效的 WSL shell: {shell}"),
+            &format!("Invalid WSL shell: {shell}"),
+            &format!("WSL シェルが無効です: {shell}"),
+            &format!("Недопустимая оболочка WSL: {shell}"),
+        ));
     }
 
     let flag = if let Some(flag) = force_shell_flag {
         if !is_valid_shell_flag(flag) {
-            return Err(format!("Invalid WSL shell flag: {flag}"));
+            return Err(localized_text(
+                &format!("无效的 WSL shell 参数: {flag}"),
+                &format!("Invalid WSL shell flag: {flag}"),
+                &format!("WSL シェルフラグが無効です: {flag}"),
+                &format!("Недопустимый флаг оболочки WSL: {flag}"),
+            ));
         }
         flag
     } else {
@@ -2514,7 +2610,12 @@ pub async fn probe_tool_installations(
 ) -> Result<Vec<ToolInstallationReport>, String> {
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
-        return Err("No supported tools selected".to_string());
+        return Err(localized_text(
+            "未选择支持的工具",
+            "No supported tools selected",
+            "対応しているツールが選択されていません",
+            "Не выбраны поддерживаемые инструменты",
+        ));
     }
     tokio::task::spawn_blocking(move || {
         requested
