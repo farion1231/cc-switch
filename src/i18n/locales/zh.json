@@ -1279,6 +1279,7 @@
     "openBrowser": "请在浏览器中完成登录。",
     "copyCode": "复制代码",
     "retry": "重试",
+    "callbackPortInUse": "xAI 登录回调端口已被占用。请取消上一次登录或关闭占用该端口的应用，然后重试。",
     "loginRequired": "使用此供应商前请先登录 xAI。"
   },
   "codexConfig": {

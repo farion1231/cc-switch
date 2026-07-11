@@ -1279,6 +1279,7 @@
     "openBrowser": "Complete sign-in in your browser.",
     "copyCode": "Copy code",
     "retry": "Retry",
+    "callbackPortInUse": "The xAI sign-in callback port is already in use. Cancel the previous sign-in or close the conflicting app, then retry.",
     "loginRequired": "Sign in with xAI before using this provider."
   },
   "codexConfig": {

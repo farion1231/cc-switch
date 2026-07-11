@@ -25,6 +25,11 @@ use url::Url;
 
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
+// Public xAI OAuth client registration used by community Grok integrations.
+// This is not a secret, but it is an external compatibility dependency: if
+// xAI retires the client or its registered loopback redirect, every login will
+// fail. Source and last verification notes live in
+// docs/research/xai-grok-oauth-contract.md.
 const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_AUTH_URL: &str = "https://auth.x.ai/oauth2/authorize";
 const XAI_TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
@@ -62,6 +67,11 @@ pub enum XaiOAuthError {
 
     #[error("IO error: {0}")]
     IoError(String),
+
+    #[error(
+        "xAI OAuth callback port 56121 is already in use. Cancel the previous sign-in or close the conflicting app, then retry."
+    )]
+    CallbackPortInUse,
 
     #[error("xAI OAuth account not found: {0}")]
     AccountNotFound(String),
@@ -164,7 +174,6 @@ impl CachedAccessToken {
 struct PendingXaiLogin {
     authorization_url: String,
     code_verifier: String,
-    code_challenge: String,
     expires_at_ms: i64,
     completion: Option<PendingXaiLoginCompletion>,
 }
@@ -205,6 +214,7 @@ pub struct XaiOAuthManager {
     access_tokens: Arc<RwLock<HashMap<String, CachedAccessToken>>>,
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     pending_logins: Arc<RwLock<HashMap<String, PendingXaiLogin>>>,
+    loopback_listener: Arc<Mutex<Option<(String, tokio::task::AbortHandle)>>>,
     http_client: Client,
     storage_path: PathBuf,
 }
@@ -218,6 +228,7 @@ impl XaiOAuthManager {
             access_tokens: Arc::new(RwLock::new(HashMap::new())),
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             pending_logins: Arc::new(RwLock::new(HashMap::new())),
+            loopback_listener: Arc::new(Mutex::new(None)),
             http_client: Client::new(),
             storage_path,
         };
@@ -230,8 +241,22 @@ impl XaiOAuthManager {
     }
 
     pub async fn start_device_flow(&self) -> Result<GitHubDeviceCodeResponse, XaiOAuthError> {
+        // Only one listener can own the registered fixed callback port. A new
+        // login supersedes any abandoned/cancelled flow and releases its port
+        // before binding the next listener.
+        self.cancel_login(None).await;
+        tokio::task::yield_now().await;
+
         #[cfg(not(test))]
-        let loopback_listener = TcpListener::bind("127.0.0.1:56121").await?;
+        let loopback_listener = TcpListener::bind("127.0.0.1:56121")
+            .await
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AddrInUse {
+                    XaiOAuthError::CallbackPortInUse
+                } else {
+                    XaiOAuthError::from(error)
+                }
+            })?;
 
         let state = generate_pkce_value("state");
         let nonce = generate_pkce_value("nonce");
@@ -250,7 +275,6 @@ impl XaiOAuthManager {
                 PendingXaiLogin {
                     authorization_url: authorization_url.clone(),
                     code_verifier,
-                    code_challenge,
                     expires_at_ms,
                     completion: None,
                 },
@@ -258,11 +282,12 @@ impl XaiOAuthManager {
         }
 
         #[cfg(not(test))]
-        self.start_loopback_callback_listener(loopback_listener);
+        self.start_loopback_callback_listener(loopback_listener, state.clone())
+            .await;
 
         Ok(GitHubDeviceCodeResponse {
             device_code: state,
-            user_code: "browser-oauth".to_string(),
+            user_code: String::new(),
             verification_uri: authorization_url,
             expires_in: DEFAULT_LOGIN_EXPIRES_IN,
             interval: DEFAULT_LOGIN_INTERVAL,
@@ -307,19 +332,24 @@ impl XaiOAuthManager {
         .ok_or(XaiOAuthError::ExpiredToken)?;
 
         let tokens = self
-            .exchange_code_for_tokens(code, &pending.code_verifier, &pending.code_challenge)
+            .exchange_code_for_tokens(code, &pending.code_verifier)
             .await?;
         self.complete_pending_login_with_tokens(state, tokens).await
     }
 
     #[cfg(not(test))]
-    fn start_loopback_callback_listener(&self, listener: TcpListener) {
+    async fn start_loopback_callback_listener(&self, listener: TcpListener, state: String) {
         let manager = self.clone();
-        tokio::spawn(async move {
+        let task_state = state.clone();
+        let handle = tokio::spawn(async move {
             if let Err(err) = manager.run_loopback_callback_listener(listener).await {
                 log::warn!("[XaiOAuth] loopback callback listener stopped: {err}");
             }
+            manager
+                .clear_loopback_listener_registration(&task_state)
+                .await;
         });
+        *self.loopback_listener.lock().await = Some((state, handle.abort_handle()));
     }
 
     #[cfg(not(test))]
@@ -340,17 +370,75 @@ impl XaiOAuthManager {
 
             let handled = self.handle_loopback_callback_url(path).await;
             let success = handled.is_ok();
+            let terminal = success || self.callback_has_terminal_completion(path).await;
             if let Err(err) = &handled {
                 log::warn!("[XaiOAuth] loopback callback failed: {err}");
             }
             write_loopback_response(&mut stream, success).await?;
 
-            if success {
+            if terminal {
                 return Ok(());
             }
         }
 
         Ok(())
+    }
+
+    #[cfg(not(test))]
+    async fn callback_has_terminal_completion(&self, path_or_url: &str) -> bool {
+        let callback_url =
+            if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
+                Url::parse(path_or_url)
+            } else {
+                Url::parse(&format!("http://127.0.0.1:56121{path_or_url}"))
+            };
+        let Ok(callback_url) = callback_url else {
+            return false;
+        };
+        let state = callback_url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "state").then(|| value.into_owned()));
+        let Some(state) = state else {
+            return false;
+        };
+        self.pending_logins
+            .read()
+            .await
+            .get(&state)
+            .is_some_and(|entry| entry.completion.is_some())
+    }
+
+    #[cfg(not(test))]
+    async fn clear_loopback_listener_registration(&self, state: &str) {
+        let mut listener = self.loopback_listener.lock().await;
+        if listener
+            .as_ref()
+            .is_some_and(|(registered_state, _)| registered_state == state)
+        {
+            listener.take();
+        }
+    }
+
+    pub async fn cancel_login(&self, state: Option<&str>) {
+        {
+            let mut pending = self.pending_logins.write().await;
+            match state {
+                Some(state) => {
+                    pending.remove(state);
+                }
+                None => pending.clear(),
+            }
+        }
+
+        let mut listener = self.loopback_listener.lock().await;
+        let should_abort = listener.as_ref().is_some_and(|(registered_state, _)| {
+            state.is_none() || state == Some(registered_state.as_str())
+        });
+        if should_abort {
+            if let Some((_, abort_handle)) = listener.take() {
+                abort_handle.abort();
+            }
+        }
     }
 
     async fn handle_loopback_callback_url(&self, path_or_url: &str) -> Result<(), XaiOAuthError> {
@@ -407,15 +495,15 @@ impl XaiOAuthManager {
         state: &str,
         tokens: XaiOAuthTokenResponse,
     ) -> Result<GitHubAccount, XaiOAuthError> {
-        {
-            let pending = self.pending_logins.read().await;
-            if !pending.contains_key(state) {
-                return Err(XaiOAuthError::ExpiredToken);
-            }
+        let mut pending = self.pending_logins.write().await;
+        if !pending.contains_key(state) {
+            return Err(XaiOAuthError::ExpiredToken);
         }
 
+        // Keep the pending entry locked through persistence so cancellation or
+        // expiry polling cannot remove it after the account is stored but
+        // before completion is published.
         let account = self.persist_tokens(tokens).await?;
-        let mut pending = self.pending_logins.write().await;
         let entry = pending.get_mut(state).ok_or(XaiOAuthError::ExpiredToken)?;
         entry.completion = Some(PendingXaiLoginCompletion::Account(account.clone()));
         Ok(account)
@@ -436,7 +524,6 @@ impl XaiOAuthManager {
         &self,
         code: &str,
         code_verifier: &str,
-        code_challenge: &str,
     ) -> Result<XaiOAuthTokenResponse, XaiOAuthError> {
         let response = self
             .http_client
@@ -448,8 +535,6 @@ impl XaiOAuthManager {
                 ("client_id", XAI_CLIENT_ID),
                 ("code", code),
                 ("code_verifier", code_verifier),
-                ("code_challenge", code_challenge),
-                ("code_challenge_method", "S256"),
                 ("redirect_uri", XAI_REDIRECT_URI),
             ])
             .send()
@@ -612,11 +697,11 @@ impl XaiOAuthManager {
     }
 
     pub async fn clear_auth(&self) -> Result<(), XaiOAuthError> {
+        self.cancel_login(None).await;
         self.accounts.write().await.clear();
         *self.default_account_id.write().await = None;
         self.access_tokens.write().await.clear();
         self.refresh_locks.write().await.clear();
-        self.pending_logins.write().await.clear();
 
         if self.storage_path.exists() {
             fs::remove_file(&self.storage_path)?;
@@ -1141,6 +1226,27 @@ mod tests {
         assert_eq!(account.id, "sub-123");
         assert_eq!(account.provider_login(), "user@example.com");
         assert!(manager.is_authenticated().await);
+    }
+
+    #[tokio::test]
+    async fn xai_oauth_cancel_removes_pending_login_and_allows_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(temp.path().to_path_buf());
+        let first = manager.start_device_flow().await.unwrap();
+
+        assert!(first.user_code.is_empty());
+        manager.cancel_login(Some(&first.device_code)).await;
+        assert!(matches!(
+            manager.poll_for_token(&first.device_code).await,
+            Err(XaiOAuthError::ExpiredToken)
+        ));
+
+        let second = manager.start_device_flow().await.unwrap();
+        assert_ne!(first.device_code, second.device_code);
+        assert!(matches!(
+            manager.poll_for_token(&second.device_code).await,
+            Err(XaiOAuthError::AuthorizationPending)
+        ));
     }
 
     #[tokio::test]

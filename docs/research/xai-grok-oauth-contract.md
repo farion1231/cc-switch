@@ -13,6 +13,8 @@ to CC Switch as a separate provider change.
   https://opencode.ai/docs/providers/
 - xAI Grok Build 0.1 announcement:
   https://x.ai/news/grok-build-0-1
+- Hermes Agent public xAI OAuth client registration (last verified 2026-07-11):
+  https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/auth.py
 
 ## Provider Contract
 
@@ -26,6 +28,11 @@ to CC Switch as a separate provider change.
 - Auth server family: xAI account OAuth, modeled as managed account auth in
   CC Switch rather than a static API key in provider config.
 - Persistent store name: `xai_oauth_auth.json` under the app config directory.
+- OAuth client id: `b1a00492-073a-47ea-816f-4c329264a828`; this is a public
+  client identifier, not a secret. CC Switch depends on xAI continuing to
+  accept this client and the registered `http://127.0.0.1:56121/callback`
+  redirect. If either is retired, all browser logins fail and the constants
+  and compatibility notes must be revalidated.
 - Static API-key fallback remains the normal xAI API-key provider path, not
   this managed OAuth provider.
 
@@ -36,6 +43,11 @@ local loopback callback, following the same user expectation as Hermes Agent
 and OpenCode. The managed auth command layer should expose login/poll/status,
 list, default-account, remove-account, and logout behavior in the same shape as
 the existing managed auth providers.
+
+Because the loopback redirect uses a fixed registered port, only one browser
+flow may be active. Cancelling, denying, logging out, or starting a replacement
+flow must abort the old listener and release the port immediately. A port owned
+by another process must fail before the authorization URL is returned.
 
 Remote/headless behavior should be explicit in the UI and docs. The planned
 fallback is to either print/copy the authorization URL for manual opening or
@@ -81,8 +93,7 @@ the API-key path when OAuth access is not enabled for the account.
 - Tests and docs:
   - targeted Rust unit/integration tests for auth storage and proxy injection
   - targeted frontend tests for presets and OAuth-required UI
-  - `docs/guides/xai-grok-oauth-provider-guide-en.md`
-  - `docs/pull-requests/xai-grok-oauth-pr.md`
+  - localized xAI OAuth guides under `docs/guides/`
 
 ## Surfaces Not To Change
 

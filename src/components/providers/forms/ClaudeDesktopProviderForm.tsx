@@ -45,6 +45,7 @@ import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
+import { useXaiOauth } from "./hooks/useXaiOauth";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
   ClaudeApiFormat,
@@ -257,6 +258,8 @@ export function ClaudeDesktopProviderForm({
   showButtons = true,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
+  const { accounts: xaiAccounts, isAuthenticated: isXaiOauthAuthenticated } =
+    useXaiOauth();
   const initialMode = initialData?.meta?.claudeDesktopMode ?? "direct";
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
   const needsModelMapping = mode === "proxy";
@@ -577,6 +580,20 @@ export function ClaudeDesktopProviderForm({
       toast.error(
         t("providerForm.fetchModelsNeedEndpoint", {
           defaultValue: "请先填写接口地址",
+        }),
+      );
+      return;
+    }
+    if (
+      activeProviderType === "xai_oauth" &&
+      (!isXaiOauthAuthenticated ||
+        (selectedXaiAccountId !== null &&
+          !xaiAccounts.some((account) => account.id === selectedXaiAccountId)))
+    ) {
+      toast.error(
+        t("xaiOauth.loginRequired", {
+          defaultValue:
+            "Please sign in with xAI and select an available account",
         }),
       );
       return;

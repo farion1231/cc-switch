@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { authApi, settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import type {
@@ -14,6 +15,7 @@ export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
 ) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const queryKey = ["managed-auth-status", authProvider];
 
@@ -61,10 +63,12 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
-      try {
-        await copyText(response.user_code);
-      } catch (e) {
-        console.debug("[ManagedAuth] Failed to copy user code:", e);
+      if (response.user_code.trim()) {
+        try {
+          await copyText(response.user_code);
+        } catch (e) {
+          console.debug("[ManagedAuth] Failed to copy user code:", e);
+        }
       }
 
       try {
@@ -123,7 +127,16 @@ export function useManagedAuth(
     },
     onError: (e) => {
       setPollingState("error");
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(
+        authProvider === "xai_oauth" &&
+          message.includes("callback port 56121 is already in use")
+          ? t("xaiOauth.callbackPortInUse", {
+              defaultValue:
+                "The xAI sign-in callback port is already in use. Cancel the previous sign-in or close the conflicting app, then retry.",
+            })
+          : message,
+      );
     },
   });
 
@@ -186,11 +199,19 @@ export function useManagedAuth(
   }, [startLoginMutation, stopPolling]);
 
   const cancelAuth = useCallback(() => {
+    const activeDeviceCode = deviceCode?.device_code;
     stopPolling();
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
-  }, [stopPolling]);
+    if (activeDeviceCode) {
+      void authApi
+        .authCancelLogin(authProvider, activeDeviceCode)
+        .catch((e) =>
+          console.debug("[ManagedAuth] Failed to cancel login:", e),
+        );
+    }
+  }, [authProvider, deviceCode?.device_code, stopPolling]);
 
   const logout = useCallback(() => {
     logoutMutation.mutate();

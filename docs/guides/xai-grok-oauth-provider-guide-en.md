@@ -50,13 +50,17 @@ When the provider is enabled for Claude, CC Switch writes Claude-compatible live
 - `ANTHROPIC_BASE_URL` points to the configured xAI route/base URL.
 - `ANTHROPIC_MODEL` defaults to `grok-build-0.1`.
 - `ANTHROPIC_API_KEY` and, for non-Copilot managed auth, `ANTHROPIC_AUTH_TOKEN` use `PROXY_MANAGED`.
-- Real OAuth tokens are read from the encrypted managed-auth store only at forwarding time.
+- Real OAuth tokens are read from the local managed-auth store only at forwarding time. The store is a JSON file in the app config directory; on Unix it is written with owner-only (`0600`) permissions, but it is not application-level encrypted.
+
+Writing a managed-auth Claude provider also normalizes the live auth environment for the existing GitHub Copilot and Codex OAuth providers: stale API-key variables are removed and replaced with `PROXY_MANAGED` sentinels. This keeps real credentials out of live config and makes all managed providers follow the same takeover contract.
 
 The proxy only injects an xAI OAuth bearer token when the resolved upstream is `https://api.x.ai`. Requests to any other host keep the placeholder guard and fail before a managed token can be sent.
 
 ## Storage and refresh
 
 The xAI OAuth manager stores account metadata and refresh material in `xai_oauth_auth.json` in the CC Switch app config directory. Debug output redacts access tokens, refresh tokens, ID tokens, auth codes, and token endpoint responses.
+
+The browser flow owns the fixed loopback callback `127.0.0.1:56121` while sign-in is active. Cancelling sign-in releases the listener immediately; starting a new sign-in also replaces an abandoned listener. If another application owns the port, CC Switch reports a callback-port conflict before opening the authorization URL.
 
 Before forwarding a request, CC Switch checks whether the selected account has a usable access token. If the token is close to expiry, the manager refreshes it with the stored refresh token. If no managed account exists, or the selected account has been removed, forwarding returns a managed-auth error instead of sending a placeholder upstream.
 
@@ -81,6 +85,7 @@ The implementation adds these safeguards:
 - xAI token injection is host-pinned to `https://api.x.ai`.
 - Existing providers are preserved when adding, saving, or switching the xAI OAuth provider.
 - Frontend validation requires a logged-in xAI managed account before saving the preset.
+- Cancelling or denying browser authorization releases the fixed callback listener so sign-in can be retried immediately.
 
 ## Manual validation checklist
 
@@ -93,6 +98,7 @@ Use this checklist before publishing a release or confirming access for a real a
 - Confirm Claude live config contains `PROXY_MANAGED` placeholders and no real xAI bearer token.
 - Send a small Claude Code request and confirm the proxy forwards to `https://api.x.ai/v1/responses`.
 - Confirm a missing or removed xAI account returns a managed-auth error before any upstream request.
+- Cancel an in-progress login and confirm a new login can bind the callback port immediately.
 - If xAI returns `403`, verify the account entitlement before treating it as a CC Switch routing bug.
 - Switch away from the provider and confirm other Claude providers are still present.
 

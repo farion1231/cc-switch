@@ -1251,6 +1251,7 @@
     "openBrowser": "請在瀏覽器中完成登入。",
     "copyCode": "複製代碼",
     "retry": "重試",
+    "callbackPortInUse": "xAI 登入回呼連接埠已被占用。請取消上一次登入或關閉占用該連接埠的應用程式，然後重試。",
     "loginRequired": "使用此供應商前請先登入 xAI。"
   },
   "codexConfig": {

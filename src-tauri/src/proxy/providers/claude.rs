@@ -806,11 +806,6 @@ impl ProviderAdapter for ClaudeAdapter {
             return "https://chatgpt.com/backend-api/codex/responses".to_string();
         }
 
-        if base_url == "https://api.x.ai/v1" {
-            let _ = endpoint;
-            return "https://api.x.ai/v1/responses".to_string();
-        }
-
         // NOTE:
         // 过去 OpenRouter 只有 OpenAI Chat Completions 兼容接口，需要把 Claude 的 `/v1/messages`
         // 映射到 `/v1/chat/completions`，并做 Anthropic ↔ OpenAI 的格式转换。
@@ -1405,10 +1400,16 @@ mod tests {
     }
 
     #[test]
-    fn test_build_url_xai_oauth_uses_responses_endpoint() {
+    fn test_build_url_xai_does_not_override_the_requested_api_format() {
         let adapter = ClaudeAdapter::new();
-        let url = adapter.build_url("https://api.x.ai/v1", "/v1/messages");
-        assert_eq!(url, "https://api.x.ai/v1/responses");
+        assert_eq!(
+            adapter.build_url("https://api.x.ai/v1", "/v1/messages"),
+            "https://api.x.ai/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://api.x.ai/v1", "/v1/responses"),
+            "https://api.x.ai/v1/responses"
+        );
     }
 
     #[test]

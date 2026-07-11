@@ -5,7 +5,7 @@
 use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::Provider;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
@@ -2644,16 +2644,6 @@ impl ProxyService {
             .await
             .map_err(|e| format!("保存代理配置失败: {e}"))?;
 
-        let endpoint_changed = new_config.listen_address != previous.listen_address
-            || new_config.listen_port != previous.listen_port;
-        if endpoint_changed {
-            match self.sync_claude_desktop_proxy_profile() {
-                Ok(true) => log::info!("已同步更新 Claude Desktop 3P 网关地址"),
-                Ok(false) => {}
-                Err(e) => log::warn!("同步 Claude Desktop 3P 网关地址失败: {e}"),
-            }
-        }
-
         // 检查服务器当前状态
         let mut server_guard = self.server.write().await;
         if server_guard.is_none() {
@@ -2661,7 +2651,8 @@ impl ProxyService {
         }
 
         // 判断是否需要重启（地址或端口变更）
-        let require_restart = endpoint_changed;
+        let require_restart = new_config.listen_address != previous.listen_address
+            || new_config.listen_port != previous.listen_port;
 
         if require_restart {
             if let Some(server) = server_guard.take() {
@@ -2721,39 +2712,6 @@ impl ProxyService {
         }
 
         Ok(())
-    }
-
-    fn sync_claude_desktop_proxy_profile(&self) -> Result<bool, String> {
-        let current_id = match crate::settings::get_effective_current_provider(
-            &self.db,
-            &AppType::ClaudeDesktop,
-        )
-        .map_err(|e| format!("读取 Claude Desktop 当前 provider 失败: {e}"))?
-        {
-            Some(id) => id,
-            None => return Ok(false),
-        };
-
-        let provider = match self
-            .db
-            .get_provider_by_id(&current_id, AppType::ClaudeDesktop.as_str())
-            .map_err(|e| format!("读取 Claude Desktop provider '{current_id}' 失败: {e}"))?
-        {
-            Some(provider) => provider,
-            None => return Ok(false),
-        };
-
-        if !matches!(
-            crate::claude_desktop_config::provider_mode(&provider),
-            ClaudeDesktopMode::Proxy
-        ) {
-            return Ok(false);
-        }
-
-        write_live_with_common_config(&self.db, &AppType::ClaudeDesktop, &provider)
-            .map_err(|e| format!("写入 Claude Desktop 3P profile 失败: {e}"))?;
-
-        Ok(true)
     }
 
     /// 检查服务器是否正在运行

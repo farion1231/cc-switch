@@ -182,6 +182,20 @@ pub async fn auth_poll_for_account(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn auth_cancel_login(
+    auth_provider: String,
+    device_code: Option<String>,
+    xai_state: State<'_, XaiOAuthState>,
+) -> Result<(), String> {
+    let auth_provider = ensure_auth_provider(&auth_provider)?;
+    if auth_provider == AUTH_PROVIDER_XAI_OAUTH {
+        let auth_manager = xai_state.0.read().await;
+        auth_manager.cancel_login(device_code.as_deref()).await;
+    }
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn auth_list_accounts(
     auth_provider: String,
     copilot_state: State<'_, CopilotAuthState>,

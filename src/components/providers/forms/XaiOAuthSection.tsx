@@ -227,24 +227,26 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
               <ExternalLink className="h-3 w-3" />
             </a>
           </div>
-          <div className="flex items-center justify-center gap-2">
-            <code className="rounded border bg-background px-3 py-1 font-mono text-sm">
-              {deviceCode.user_code}
-            </code>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              onClick={copyUserCode}
-              title={t("xaiOauth.copyCode", "Copy code")}
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-green-500" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
+          {deviceCode.user_code.trim() && (
+            <div className="flex items-center justify-center gap-2">
+              <code className="rounded border bg-background px-3 py-1 font-mono text-sm">
+                {deviceCode.user_code}
+              </code>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={copyUserCode}
+                title={t("xaiOauth.copyCode", "Copy code")}
+              >
+                {copied ? (
+                  <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+          )}
           <div className="text-center">
             <Button
               type="button"

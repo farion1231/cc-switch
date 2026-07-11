@@ -54,6 +54,16 @@ export async function authPollForAccount(
   });
 }
 
+export async function authCancelLogin(
+  authProvider: ManagedAuthProvider,
+  deviceCode?: string | null,
+): Promise<void> {
+  return invoke("auth_cancel_login", {
+    authProvider,
+    deviceCode: deviceCode || null,
+  });
+}
+
 export async function authListAccounts(
   authProvider: ManagedAuthProvider,
 ): Promise<ManagedAuthAccount[]> {
@@ -101,6 +111,7 @@ export async function authLogout(
 export const authApi = {
   authStartLogin,
   authPollForAccount,
+  authCancelLogin,
   authListAccounts,
   authGetStatus,
   authRemoveAccount,
