@@ -54,6 +54,7 @@ export const OPENCODE_KNOWN_OPTION_KEYS = [
 // Contains ":", which is not valid in an HTTP field name, so it cannot
 // collide with a legitimate custom header from an existing configuration.
 export const OPENCODE_HEADER_DRAFT_PREFIX = "draft-header:";
+export const OPENCODE_EXTRA_OPTION_DRAFT_PREFIX = "draft-option:";
 
 export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   {

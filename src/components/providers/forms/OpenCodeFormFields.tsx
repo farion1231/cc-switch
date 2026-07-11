@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import {
   getModelExtraFields,
   isKnownModelKey,
+  OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
   OPENCODE_HEADER_DRAFT_PREFIX,
 } from "./helpers/opencodeFormUtils";
 import type { ProviderCategory, OpenCodeModel } from "@/types";
@@ -78,7 +79,7 @@ function ExtraOptionKeyInput({
   optionKey,
   onChange,
   placeholder,
-  placeholderPrefixes = ["option-"],
+  placeholderPrefixes = [OPENCODE_EXTRA_OPTION_DRAFT_PREFIX],
 }: {
   optionKey: string;
   onChange: (newKey: string) => boolean | void;
@@ -509,7 +510,7 @@ export function OpenCodeFormFields({
 
   // Extra Options handlers
   const handleAddExtraOption = () => {
-    const newKey = `option-${Date.now()}`;
+    const newKey = `${OPENCODE_EXTRA_OPTION_DRAFT_PREFIX}${Date.now()}`;
     onExtraOptionsChange({
       ...extraOptions,
       [newKey]: "",

@@ -105,4 +105,28 @@ describe("useOpencodeFormState", () => {
       "X-Title": "New",
     });
   });
+
+  it("preserves legitimate options whose names start with option-", () => {
+    const { result, getSettingsConfig } = renderOpencodeFormState({
+      npm: "@ai-sdk/openai-compatible",
+      options: {
+        "option-mode": "legacy",
+        timeout: 100,
+      },
+      models: {},
+    });
+
+    act(() => {
+      result.current.handleOpencodeExtraOptionsChange({
+        "option-mode": "legacy",
+        timeout: "200",
+        "draft-option:123": "",
+      });
+    });
+
+    expect(JSON.parse(getSettingsConfig()).options).toEqual({
+      "option-mode": "legacy",
+      timeout: 200,
+    });
+  });
 });

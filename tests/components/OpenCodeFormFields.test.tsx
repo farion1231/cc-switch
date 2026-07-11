@@ -133,6 +133,15 @@ describe("OpenCodeFormFields", () => {
     expect(keyInput).toHaveValue("X-B");
   });
 
+  it("surfaces provider options whose names start with option-", () => {
+    renderOpenCodeForm({
+      extraOptions: { "option-mode": "legacy" },
+    });
+
+    expect(screen.getByDisplayValue("option-mode")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("legacy")).toBeInTheDocument();
+  });
+
   it("surfaces existing model token limits", () => {
     renderOpenCodeForm();
 

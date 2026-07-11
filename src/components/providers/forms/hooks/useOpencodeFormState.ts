@@ -3,6 +3,7 @@ import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
 import {
   OPENCODE_DEFAULT_NPM,
   OPENCODE_DEFAULT_CONFIG,
+  OPENCODE_EXTRA_OPTION_DRAFT_PREFIX,
   OPENCODE_HEADER_DRAFT_PREFIX,
   isKnownOpencodeOptionKey,
   parseOpencodeConfig,
@@ -189,7 +190,7 @@ export function useOpencodeFormState({
 
         for (const [k, v] of Object.entries(options)) {
           const trimmedKey = k.trim();
-          if (trimmedKey && !trimmedKey.startsWith("option-")) {
+          if (trimmedKey && !k.startsWith(OPENCODE_EXTRA_OPTION_DRAFT_PREFIX)) {
             try {
               config.options[trimmedKey] = JSON.parse(v);
             } catch {
