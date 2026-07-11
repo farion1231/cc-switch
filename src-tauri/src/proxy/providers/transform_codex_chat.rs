@@ -1095,6 +1095,23 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     // storage order.
     canonical_json_string(tool)
 }
+/// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
+///
+/// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
+/// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+fn normalize_function_parameters(params: Option<&Value>) -> Value {
+    let mut params = params.cloned().unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+    if let Some(obj) = params.as_object_mut() {
+        // Ensure type is "object" — fix null/missing/incorrect type values
+        match obj.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {}  // already correct
+            _ => {
+                obj.insert("type".to_string(), json!("object"));
+            }
+        }
+    }
+    params
+}
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
     if tool.get("type").and_then(|v| v.as_str()) != Some("function") {
@@ -1121,7 +1138,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     let mut function = json!({
         "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
+        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
