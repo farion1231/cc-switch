@@ -125,9 +125,9 @@ fn normalize_provider_config(config: &Value) -> Result<Value, AppError> {
 
     let mut output = source.clone();
 
-    if let Some(base_url) = first_string(source, &["baseURL", "baseUrl"]) {
-        output.insert("baseURL".to_string(), Value::String(base_url.to_string()));
-        output.remove("baseUrl");
+    if let Some(base_url) = first_string(source, &["baseUrl", "baseURL"]) {
+        output.insert("baseUrl".to_string(), Value::String(base_url.to_string()));
+        output.remove("baseURL");
     }
 
     if let Some(models) = normalized_models_from_config(config) {
@@ -242,4 +242,30 @@ pub fn read_pi_live_settings() -> Result<Value, AppError> {
         "defaultModel": settings_root.get("defaultModel").cloned().unwrap_or(Value::Null),
         "providerConfig": form_config
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_provider_config_writes_pi_base_url_key() {
+        let config = json!({
+            "baseURL": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "api": "openai-completions",
+            "models": []
+        });
+
+        let normalized = normalize_provider_config(&config).unwrap();
+
+        assert_eq!(
+            normalized.get("baseUrl"),
+            Some(&json!("https://api.example.com/v1"))
+        );
+        assert!(
+            normalized.get("baseURL").is_none(),
+            "Pi models.json must use baseUrl, not baseURL"
+        );
+    }
 }

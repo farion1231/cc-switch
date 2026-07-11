@@ -518,7 +518,7 @@ fn build_pi_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
 
     config
         .entry("api".to_string())
-        .or_insert_with(|| json!("openai-chat"));
+        .or_insert_with(|| json!("openai-completions"));
 
     if let Some(model) = &request.model {
         config.insert(
@@ -1023,7 +1023,7 @@ mod tests {
 
         assert_eq!(obj.get("baseUrl").unwrap(), "https://api.example.com/v1");
         assert_eq!(obj.get("apiKey").unwrap(), "sk-pi");
-        assert_eq!(obj.get("api").unwrap(), "openai-chat");
+        assert_eq!(obj.get("api").unwrap(), "openai-completions");
         assert_eq!(
             provider.settings_config.pointer("/models/0/id"),
             Some(&json!("gpt-5.5"))

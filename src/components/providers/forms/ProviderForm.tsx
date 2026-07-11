@@ -2427,7 +2427,7 @@ function ProviderFormFull({
                         ? `{
   "baseUrl": "https://api.example.com/v1",
   "apiKey": "your-api-key-here",
-  "api": "openai-chat",
+  "api": "openai-completions",
   "models": [
     { "id": "gpt-5.5", "name": "GPT 5.5" }
   ],

@@ -33,7 +33,7 @@ interface PiFormFieldsProps {
 }
 
 const PI_API_PROTOCOLS = [
-  { value: "openai-chat", label: "OpenAI Chat Completions" },
+  { value: "openai-completions", label: "OpenAI Chat Completions" },
   { value: "anthropic-messages", label: "Anthropic Messages" },
 ];
 

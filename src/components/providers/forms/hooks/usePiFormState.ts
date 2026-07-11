@@ -65,8 +65,8 @@ export function usePiFormState({
     return initial.apiKey || "";
   });
   const [piApi, setPiApi] = useState(() => {
-    if (appId !== "pi") return "openai-chat";
-    return initial.api || "openai-chat";
+    if (appId !== "pi") return "openai-completions";
+    return initial.api || "openai-completions";
   });
   const [piModels, setPiModels] = useState<OpenClawModel[]>(() => {
     if (appId !== "pi") return [];
