@@ -1384,6 +1384,10 @@ impl RequestForwarder {
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
+            let explicit_prompt_cache_key = mapped_body
+                .get("prompt_cache_key")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
                 .enrich_request(&mut mapped_body)
@@ -1396,10 +1400,18 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
-            )?
+            )?;
+            super::providers::inject_codex_chat_prompt_cache_key(
+                provider,
+                &mut chat_body,
+                explicit_prompt_cache_key.as_deref(),
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+            );
+            chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);

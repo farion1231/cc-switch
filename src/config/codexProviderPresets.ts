@@ -6,6 +6,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  PromptCacheRoutingMode,
 } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
@@ -36,6 +37,8 @@ export interface CodexProviderPreset {
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
+  // Session-based prompt-cache routing override for Chat Completions upstreams
+  promptCacheRouting?: PromptCacheRoutingMode;
 }
 
 /**
@@ -604,6 +607,7 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.kimi.com/coding/v1"],
     apiFormat: "openai_chat",
+    promptCacheRouting: "enabled",
     modelCatalog: modelCatalog([
       {
         model: "kimi-for-coding",

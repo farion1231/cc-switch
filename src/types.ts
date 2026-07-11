@@ -161,6 +161,8 @@ export interface CodexChatReasoning {
   outputFormat?: CodexChatReasoningOutputFormat;
 }
 
+export type PromptCacheRoutingMode = "auto" | "enabled" | "disabled";
+
 export interface LocalProxyRequestOverrides {
   headers?: Record<string, string>;
   body?: Record<string, unknown>;
@@ -206,6 +208,9 @@ export interface ProviderMeta {
   isFullUrl?: boolean;
   // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
+  // Session-based prompt-cache routing for Codex Responses -> Chat conversions.
+  // auto enables only for known-compatible upstreams; enabled/disabled are user overrides.
+  promptCacheRouting?: PromptCacheRoutingMode;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata

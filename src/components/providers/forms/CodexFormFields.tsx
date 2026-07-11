@@ -40,6 +40,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  PromptCacheRoutingMode,
   ProviderCategory,
 } from "@/types";
 
@@ -89,6 +90,8 @@ interface CodexFormFieldsProps {
   onMaxOutputTokensChange: (value: string) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
+  promptCacheRouting: PromptCacheRoutingMode;
+  onPromptCacheRoutingChange: (value: PromptCacheRoutingMode) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -182,6 +185,8 @@ export function CodexFormFields({
   onMaxOutputTokensChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
+  promptCacheRouting,
+  onPromptCacheRoutingChange,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -229,6 +234,7 @@ export function CodexFormFields({
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
+    promptCacheRouting !== "auto" ||
     !!maxOutputTokens;
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
@@ -716,6 +722,49 @@ export function CodexFormFields({
                   shouldShowSpeedTest && "border-t border-border-default pt-3",
                 )}
               >
+                <div className="space-y-2">
+                  <FormLabel>
+                    {t("codexConfig.promptCacheRoutingLabel", {
+                      defaultValue: "提示词缓存路由",
+                    })}
+                  </FormLabel>
+                  <Select
+                    value={promptCacheRouting}
+                    onValueChange={(value) =>
+                      onPromptCacheRoutingChange(
+                        value as PromptCacheRoutingMode,
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        {t("codexConfig.promptCacheRoutingAuto", {
+                          defaultValue: "自动（推荐）",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="enabled">
+                        {t("codexConfig.promptCacheRoutingEnabled", {
+                          defaultValue: "开启",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="disabled">
+                        {t("codexConfig.promptCacheRoutingDisabled", {
+                          defaultValue: "关闭",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("codexConfig.promptCacheRoutingHint", {
+                      defaultValue:
+                        "自动模式仅对已确认兼容的上游发送 prompt_cache_key；开启可用于其他兼容网关，关闭可避免严格网关因未知字段返回 400。只使用客户端提供的稳定会话 ID。",
+                    })}
+                  </p>
+                </div>
+
                 <div className="space-y-1">
                   <FormLabel>
                     {t("codexConfig.reasoningGroupTitle", {
