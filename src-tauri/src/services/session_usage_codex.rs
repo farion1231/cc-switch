@@ -61,11 +61,25 @@ struct FileParseState {
     history_replay_boundary: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexHistoryReplay {
+    NoReplay,
+    Pending,
+    Boundary(i64),
+}
+
 /// Codex 子代理日志中的 `id` 是当前线程的唯一 ID，`session_id` 则指向父线程。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexSessionIdentity {
     thread_id: String,
+    is_subagent: bool,
     carries_history_snapshot: bool,
+}
+
+impl CodexSessionIdentity {
+    fn is_subagent(&self) -> bool {
+        self.is_subagent
+    }
 }
 
 fn parse_codex_session_identity(payload: &serde_json::Value) -> Option<CodexSessionIdentity> {
@@ -81,18 +95,19 @@ fn parse_codex_session_identity(payload: &serde_json::Value) -> Option<CodexSess
         .get("session_id")
         .or_else(|| payload.get("sessionId"))
         .and_then(|value| value.as_str());
+    let is_subagent = payload
+        .get("source")
+        .and_then(|source| source.get("subagent"))
+        .is_some()
+        || session_id.is_some_and(|session_id| session_id != thread_id);
     let carries_history_snapshot = payload
         .get("forked_from_id")
         .and_then(|value| value.as_str())
-        .is_some_and(|value| !value.is_empty())
-        || payload
-            .get("source")
-            .and_then(|source| source.get("subagent"))
-            .is_some()
-        || session_id.is_some_and(|session_id| session_id != thread_id);
+        .is_some_and(|value| !value.is_empty());
 
     Some(CodexSessionIdentity {
         thread_id,
+        is_subagent,
         carries_history_snapshot,
     })
 }
@@ -121,24 +136,25 @@ fn read_codex_session_identity(file_path: &Path) -> Option<CodexSessionIdentity>
     None
 }
 
-/// fork/子代理日志会先重放父线程历史，再以接管事件开始当前线程。
-/// 返回接管事件所在行；此前的 token_count 只用于恢复累计值基线。
-fn codex_history_replay_boundary(
+/// 带 `forked_from_id` 的 fork/子代理日志会先重放父线程历史，再以接管事件开始当前线程。
+/// marker 尚未写入时必须等待，避免把父历史永久计入当前线程。
+fn codex_history_replay_state(
     file_path: &Path,
-    identity: Option<&CodexSessionIdentity>,
-) -> Option<i64> {
-    if !identity.is_some_and(|identity| identity.carries_history_snapshot) {
-        return None;
+    identity: &CodexSessionIdentity,
+) -> CodexHistoryReplay {
+    if !identity.carries_history_snapshot {
+        return CodexHistoryReplay::NoReplay;
     }
 
-    let file = fs::File::open(file_path).ok()?;
+    let Ok(file) = fs::File::open(file_path) else {
+        return CodexHistoryReplay::Pending;
+    };
+    let mut seen_current_meta = false;
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let Ok(line) = line else {
             continue;
         };
-        if !line.contains("\"thread_settings_applied\"")
-            && !line.contains("\"inter_agent_communication")
-        {
+        if !line.contains("\"session_meta\"") && !line.contains("\"inter_agent_communication") {
             continue;
         }
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -147,19 +163,35 @@ fn codex_history_replay_boundary(
         let Some(event_type) = value.get("type").and_then(|value| value.as_str()) else {
             continue;
         };
-        let is_replay_boundary = event_type.starts_with("inter_agent_communication")
-            || (event_type == "event_msg"
-                && value
-                    .get("payload")
-                    .and_then(|payload| payload.get("type"))
-                    .and_then(|value| value.as_str())
-                    == Some("thread_settings_applied"));
-        if is_replay_boundary {
-            return Some(index as i64 + 1);
+
+        if event_type == "session_meta" {
+            let current_meta = value
+                .get("payload")
+                .and_then(parse_codex_session_identity)
+                .is_some_and(|meta_identity| meta_identity.thread_id == identity.thread_id);
+            if !identity.is_subagent() && current_meta {
+                if seen_current_meta {
+                    return CodexHistoryReplay::Boundary(index as i64 + 1);
+                }
+                seen_current_meta = true;
+            }
+            continue;
+        }
+
+        let triggers_turn = value
+            .get("payload")
+            .and_then(|payload| payload.get("trigger_turn"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        if identity.is_subagent()
+            && event_type.starts_with("inter_agent_communication")
+            && triggers_turn
+        {
+            return CodexHistoryReplay::Boundary(index as i64 + 1);
         }
     }
 
-    None
+    CodexHistoryReplay::Pending
 }
 
 fn is_history_snapshot_event(state: &FileParseState, line_offset: i64) -> bool {
@@ -399,16 +431,33 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         return Ok((0, 0));
     }
 
-    let identity = read_codex_session_identity(file_path);
+    let Some(identity) = read_codex_session_identity(file_path) else {
+        log::debug!(
+            "[CODEX-SYNC] 日志尚无可用 thread identity，等待后续重试: {}",
+            file_path.display()
+        );
+        return Ok((0, 0));
+    };
+
+    let history_replay_boundary = match codex_history_replay_state(file_path, &identity) {
+        CodexHistoryReplay::NoReplay => None,
+        CodexHistoryReplay::Boundary(line) => Some(line),
+        CodexHistoryReplay::Pending => {
+            log::debug!(
+                "[CODEX-SYNC] fork/子代理日志尚未写入历史接管边界，等待后续重试: {}",
+                file_path.display()
+            );
+            return Ok((0, 0));
+        }
+    };
 
     // 打开文件逐行解析
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let reader = BufReader::new(file);
-    let history_replay_boundary = codex_history_replay_boundary(file_path, identity.as_ref());
 
     let mut state = FileParseState {
-        thread_id: identity.map(|identity| identity.thread_id),
+        thread_id: Some(identity.thread_id),
         current_model: "unknown".to_string(),
         prev_total: None,
         event_index: 0,
@@ -742,6 +791,50 @@ mod tests {
         })
     }
 
+    fn source_only_subagent_meta(thread_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": "2026-07-10T03:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": thread_id,
+                "source": { "subagent": "review" }
+            }
+        })
+    }
+
+    fn forked_subagent_meta(thread_id: &str, parent_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": "2026-07-10T03:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": thread_id,
+                "session_id": parent_id,
+                "forked_from_id": parent_id,
+                "source": { "subagent": "review" }
+            }
+        })
+    }
+
+    fn fork_session_meta(thread_id: &str, parent_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": "2026-07-10T03:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": thread_id,
+                "forked_from_id": parent_id,
+                "source": "vscode"
+            }
+        })
+    }
+
+    fn trigger_turn(trigger: bool) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": "2026-07-10T03:00:03Z",
+            "type": "inter_agent_communication_metadata",
+            "payload": { "trigger_turn": trigger }
+        })
+    }
+
     fn turn_context() -> serde_json::Value {
         serde_json::json!({
             "timestamp": "2026-07-10T03:00:01Z",
@@ -875,13 +968,40 @@ mod tests {
     }
 
     #[test]
-    fn test_subagent_identity_prefers_unique_thread_id() {
-        let identity =
-            parse_codex_session_identity(session_meta("child", "parent").get("payload").unwrap())
-                .unwrap();
+    fn test_subagent_identity_uses_source_when_session_id_is_missing() {
+        let event = source_only_subagent_meta("child");
+        let identity = parse_codex_session_identity(event.get("payload").unwrap()).unwrap();
 
         assert_eq!(identity.thread_id, "child");
-        assert!(identity.carries_history_snapshot);
+        assert!(identity.is_subagent());
+        assert!(!identity.carries_history_snapshot);
+    }
+
+    #[test]
+    fn test_fresh_subagent_without_trigger_counts_usage() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("fresh-child.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                source_only_subagent_meta("fresh-child"),
+                turn_context(),
+                token_count(100, 50, 10),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 0));
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64) = conn.query_row(
+            "SELECT input_tokens, output_tokens FROM proxy_request_logs
+             WHERE request_id = 'codex_session:thread-v1:fresh-child:1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(usage, (100, 10));
+
+        Ok(())
     }
 
     #[test]
@@ -892,15 +1012,17 @@ mod tests {
         write_jsonl(
             &child,
             &[
-                session_meta("child", "parent"),
+                forked_subagent_meta("child", "parent"),
                 turn_context(),
                 token_count(1_000, 900, 100),
-                token_count(1_200, 1_000, 120),
                 serde_json::json!({
                     "timestamp": "2026-07-10T03:00:03Z",
                     "type": "event_msg",
                     "payload": { "type": "thread_settings_applied" }
                 }),
+                trigger_turn(false),
+                token_count(1_200, 1_000, 120),
+                trigger_turn(true),
                 token_count(1_300, 1_050, 150),
             ],
         );
@@ -966,6 +1088,126 @@ mod tests {
     }
 
     #[test]
+    fn test_fork_replay_waits_for_repeated_current_session_meta() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let fork = temp.path().join("fork.jsonl");
+        write_jsonl(
+            &fork,
+            &[
+                fork_session_meta("fork", "parent"),
+                session_meta("parent", "parent"),
+                token_count(100, 50, 10),
+                serde_json::json!({
+                    "timestamp": "2026-07-10T03:00:03Z",
+                    "type": "event_msg",
+                    "payload": { "type": "thread_settings_applied" }
+                }),
+                token_count(200, 100, 20),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &fork)?, (0, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            let cursor_rows: i64 =
+                conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(cursor_rows, 0);
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let appended = [
+            fork_session_meta("fork", "parent"),
+            token_count(300, 150, 30),
+        ]
+        .iter()
+        .map(serde_json::Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+            + "\n";
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&fork)
+            .unwrap()
+            .write_all(appended.as_bytes())
+            .unwrap();
+
+        assert_eq!(sync_single_codex_file(&db, &fork)?, (1, 2));
+
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs
+             WHERE request_id = 'codex_session:thread-v1:fork:3'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(usage, (100, 50, 10));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_subagent_without_trigger_waits_without_advancing_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("pending-child.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                forked_subagent_meta("pending-child", "parent"),
+                token_count(100, 50, 10),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (0, 0));
+        {
+            let conn = lock_conn!(db.conn);
+            let usage_rows: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+                [],
+                |row| row.get(0),
+            )?;
+            let cursor_rows: i64 =
+                conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(usage_rows, 0);
+            assert_eq!(cursor_rows, 0);
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let appended = [trigger_turn(true), token_count(130, 60, 20)]
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&child)
+            .unwrap()
+            .write_all(appended.as_bytes())
+            .unwrap();
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 1));
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64) = conn.query_row(
+            "SELECT input_tokens, output_tokens FROM proxy_request_logs
+             WHERE request_id = 'codex_session:thread-v1:pending-child:2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(usage, (30, 10));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_archived_log_inherits_cursor_and_only_imports_appended_usage() -> Result<(), AppError> {
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
@@ -1023,6 +1265,30 @@ mod tests {
         assert_eq!(usage, (100, 50, 10));
         drop(conn);
         assert_eq!(get_sync_state(&db, &archived_file.to_string_lossy())?.1, 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_missing_identity_does_not_write_usage_or_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("missing-identity.jsonl");
+        write_jsonl(&path, &[turn_context(), token_count(100, 50, 10)]);
+
+        assert_eq!(sync_single_codex_file(&db, &path)?, (0, 0));
+        let conn = lock_conn!(db.conn);
+        let usage_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        let cursor_rows: i64 =
+            conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(usage_rows, 0);
+        assert_eq!(cursor_rows, 0);
 
         Ok(())
     }
