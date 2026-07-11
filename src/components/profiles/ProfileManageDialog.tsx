@@ -117,6 +117,7 @@ export function ProfileManageDialog({
                       size="icon"
                       className="h-7 w-7"
                       title={t("common.confirm")}
+                      aria-label={t("common.confirm")}
                       onClick={saveRename}
                       disabled={!editingName.trim() || updateMutation.isPending}
                     >
@@ -127,6 +128,7 @@ export function ProfileManageDialog({
                       size="icon"
                       className="h-7 w-7"
                       title={t("common.cancel")}
+                      aria-label={t("common.cancel")}
                       onClick={cancelRename}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -142,6 +144,7 @@ export function ProfileManageDialog({
                       size="icon"
                       className="h-7 w-7"
                       title={t("profiles.rename")}
+                      aria-label={t("profiles.rename")}
                       onClick={() => startRename(profile.id, profile.name)}
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -151,6 +154,7 @@ export function ProfileManageDialog({
                       size="icon"
                       className="h-7 w-7"
                       title={t("profiles.delete")}
+                      aria-label={t("profiles.delete")}
                       onClick={() =>
                         setConfirm({
                           id: profile.id,

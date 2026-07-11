@@ -138,7 +138,9 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
             setDeploymentType(v as "github.com" | "enterprise")
           }
         >
-          <SelectTrigger>
+          <SelectTrigger
+            aria-label={t("copilot.deploymentType", "GitHub 部署类型")}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -181,7 +183,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
             value={selectedAccountId || "none"}
             onValueChange={handleAccountSelect}
           >
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("copilot.selectAccount", "选择账号")}>
               <SelectValue
                 placeholder={t(
                   "copilot.selectAccountPlaceholder",
@@ -261,6 +263,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                     onClick={(e) => handleRemoveAccount(account.id, e)}
                     disabled={isRemovingAccount}
                     title={t("copilot.removeAccount", "移除账号")}
+                    aria-label={t("copilot.removeAccount", "移除账号")}
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -325,6 +328,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
                 variant="ghost"
                 onClick={copyUserCode}
                 title={t("copilot.copyCode", "复制代码")}
+                aria-label={t("copilot.copyCode", "复制代码")}
               >
                 {copied ? (
                   <Check className="h-4 w-4 text-green-500" />

@@ -783,6 +783,7 @@ export function OpenCodeFormFields({
                     size="icon"
                     onClick={() => handleRemoveExtraOption(key)}
                     className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                    aria-label={t("common.delete")}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -896,6 +897,7 @@ export function OpenCodeFormFields({
                     size="icon"
                     onClick={() => handleRemoveModel(key)}
                     className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                    aria-label={t("common.delete")}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -979,6 +981,7 @@ export function OpenCodeFormFields({
                           size="sm"
                           onClick={() => handleAddModelExtraField(key)}
                           className="h-6 px-2 gap-1"
+                          aria-label={t("common.add")}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
@@ -1035,6 +1038,7 @@ export function OpenCodeFormFields({
                                   handleRemoveModelExtraField(key, fKey)
                                 }
                                 className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                aria-label={t("common.delete")}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
@@ -1058,6 +1062,7 @@ export function OpenCodeFormFields({
                           size="sm"
                           onClick={() => handleAddModelOption(key)}
                           className="h-6 px-2 gap-1"
+                          aria-label={t("common.add")}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
@@ -1120,6 +1125,7 @@ export function OpenCodeFormFields({
                                   handleRemoveModelOption(key, optKey)
                                 }
                                 className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                aria-label={t("common.delete")}
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>

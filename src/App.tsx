@@ -1068,6 +1068,7 @@ function App() {
                 size="icon"
                 onClick={() => void handleWindowMinimize()}
                 title={t("header.windowMinimize")}
+                aria-label={t("header.windowMinimize")}
                 className="h-7 w-7"
               >
                 <Minus className="w-4 h-4" />
@@ -1077,6 +1078,11 @@ function App() {
                 size="icon"
                 onClick={() => void handleWindowToggleMaximize()}
                 title={
+                  isWindowMaximized
+                    ? t("header.windowRestore")
+                    : t("header.windowMaximize")
+                }
+                aria-label={
                   isWindowMaximized
                     ? t("header.windowRestore")
                     : t("header.windowMaximize")
@@ -1094,6 +1100,7 @@ function App() {
                 size="icon"
                 onClick={() => void handleWindowClose()}
                 title={t("header.windowClose")}
+                aria-label={t("header.windowClose")}
                 className="h-7 w-7 hover:bg-red-500/15 hover:text-red-500"
               >
                 <X className="w-4 h-4" />
@@ -1160,6 +1167,7 @@ function App() {
                     )
                   }
                   className="mr-2 rounded-lg"
+                  aria-label={t("common.back")}
                 >
                   <ArrowLeft className="w-4 h-4" />
                 </Button>
@@ -1211,6 +1219,7 @@ function App() {
                     setCurrentView("settings");
                   }}
                   title={t("common.settings")}
+                  aria-label={t("common.settings")}
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
                   <Settings className="w-4 h-4" />
@@ -1230,6 +1239,9 @@ function App() {
                       setCurrentView("settings");
                     }}
                     title={t("usage.title", {
+                      defaultValue: "使用统计",
+                    })}
+                    aria-label={t("usage.title", {
                       defaultValue: "使用统计",
                     })}
                     className="hover:bg-black/5 dark:hover:bg-white/5"
@@ -1420,6 +1432,7 @@ function App() {
                                 onClick={() => setCurrentView("skills")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("skills.manage")}
+                                aria-label={t("skills.manage")}
                               >
                                 <Wrench className="w-4 h-4" />
                               </Button>
@@ -1429,6 +1442,7 @@ function App() {
                                 onClick={() => setCurrentView("hermesMemory")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("hermes.memory.title")}
+                                aria-label={t("hermes.memory.title")}
                               >
                                 <Brain className="w-4 h-4" />
                               </Button>
@@ -1438,6 +1452,7 @@ function App() {
                                 onClick={() => void openHermesWebUI()}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("hermes.webui.open")}
+                                aria-label={t("hermes.webui.open")}
                               >
                                 <LayoutDashboard className="w-4 h-4" />
                               </Button>
@@ -1447,6 +1462,7 @@ function App() {
                                 onClick={() => setCurrentView("mcp")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("mcp.title")}
+                                aria-label={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
                               </Button>
@@ -1459,6 +1475,7 @@ function App() {
                                 onClick={() => setCurrentView("workspace")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("workspace.manage")}
+                                aria-label={t("workspace.manage")}
                               >
                                 <FolderOpen className="w-4 h-4" />
                               </Button>
@@ -1468,6 +1485,7 @@ function App() {
                                 onClick={() => setCurrentView("openclawEnv")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("openclaw.env.title")}
+                                aria-label={t("openclaw.env.title")}
                               >
                                 <KeyRound className="w-4 h-4" />
                               </Button>
@@ -1477,6 +1495,7 @@ function App() {
                                 onClick={() => setCurrentView("openclawTools")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("openclaw.tools.title")}
+                                aria-label={t("openclaw.tools.title")}
                               >
                                 <Shield className="w-4 h-4" />
                               </Button>
@@ -1486,6 +1505,7 @@ function App() {
                                 onClick={() => setCurrentView("openclawAgents")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("openclaw.agents.title")}
+                                aria-label={t("openclaw.agents.title")}
                               >
                                 <Cpu className="w-4 h-4" />
                               </Button>
@@ -1495,6 +1515,7 @@ function App() {
                                 onClick={() => setCurrentView("sessions")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("sessionManager.title")}
+                                aria-label={t("sessionManager.title")}
                               >
                                 <History className="w-4 h-4" />
                               </Button>
@@ -1513,6 +1534,7 @@ function App() {
                                     : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
                                 )}
                                 title={t("skills.manage")}
+                                aria-label={t("skills.manage")}
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
@@ -1522,6 +1544,7 @@ function App() {
                                 onClick={() => setCurrentView("prompts")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("prompts.manage")}
+                                aria-label={t("prompts.manage")}
                               >
                                 <Book className="w-4 h-4" />
                               </Button>
@@ -1537,6 +1560,7 @@ function App() {
                                     : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
                                 )}
                                 title={t("sessionManager.title")}
+                                aria-label={t("sessionManager.title")}
                               >
                                 <History className="flex-shrink-0 w-4 h-4" />
                               </Button>
@@ -1546,6 +1570,7 @@ function App() {
                                 onClick={() => setCurrentView("mcp")}
                                 className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("mcp.title")}
+                                aria-label={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
                               </Button>
@@ -1559,6 +1584,7 @@ function App() {
                       onClick={() => setIsAddOpen(true)}
                       size="icon"
                       className={`ml-2 ${addActionButtonClass}`}
+                      aria-label={t("provider.addNewProvider")}
                     >
                       <Plus className="w-5 h-5" />
                     </Button>

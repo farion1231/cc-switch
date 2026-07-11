@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,6 +18,7 @@ export function ModelDropdown({
   models: FetchedModel[];
   onSelect: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const grouped: Record<string, FetchedModel[]> = {};
   for (const model of models) {
     const vendor = model.ownedBy || "Other";
@@ -28,7 +30,12 @@ export function ModelDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="icon" className="shrink-0">
+        <Button
+          variant="outline"
+          size="icon"
+          className="shrink-0"
+          aria-label={t("providerForm.selectModelFromList")}
+        >
           <ChevronDown className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>

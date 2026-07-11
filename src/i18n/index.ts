@@ -8,7 +8,7 @@ import zhTW from "./locales/zh-TW.json";
 
 type Language = "zh" | "zh-TW" | "en" | "ja";
 
-const DEFAULT_LANGUAGE: Language = "zh";
+const DEFAULT_LANGUAGE: Language = "en";
 
 const getInitialLanguage = (): Language => {
   if (typeof window !== "undefined") {
@@ -76,6 +76,20 @@ const resources = {
   },
 };
 
+// HTML lang 属性用的 BCP 47 标签，供屏幕阅读器选择正确的发音规则
+const HTML_LANG_MAP: Record<Language, string> = {
+  zh: "zh-CN",
+  "zh-TW": "zh-TW",
+  en: "en",
+  ja: "ja",
+};
+
+const applyHtmlLang = (language: string) => {
+  if (typeof document === "undefined") return;
+  document.documentElement.lang =
+    HTML_LANG_MAP[language as Language] ?? language;
+};
+
 i18n.use(initReactI18next).init({
   resources,
   lng: getInitialLanguage(), // 根据本地存储或系统语言选择默认语言
@@ -88,5 +102,8 @@ i18n.use(initReactI18next).init({
   // 开发模式下显示调试信息
   debug: false,
 });
+
+applyHtmlLang(i18n.language);
+i18n.on("languageChanged", applyHtmlLang);
 
 export default i18n;

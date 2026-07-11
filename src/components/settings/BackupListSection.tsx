@@ -181,7 +181,12 @@ export function BackupListSection({
               onSettingsChange({ backupIntervalHours: Number(v) })
             }
           >
-            <SelectTrigger className="h-9">
+            <SelectTrigger
+              className="h-9"
+              aria-label={t("settings.backupManager.intervalLabel", {
+                defaultValue: "Auto-backup Interval",
+              })}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -236,7 +241,12 @@ export function BackupListSection({
               onSettingsChange({ backupRetainCount: Number(v) })
             }
           >
-            <SelectTrigger className="h-9">
+            <SelectTrigger
+              className="h-9"
+              aria-label={t("settings.backupManager.retainLabel", {
+                defaultValue: "Backup Retention",
+              })}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -331,6 +341,7 @@ export function BackupListSection({
                         className="h-6 w-6 shrink-0"
                         onClick={handleConfirmRename}
                         disabled={isRenaming || !editValue.trim()}
+                        aria-label={t("common.confirm")}
                       >
                         <Check className="h-3.5 w-3.5" />
                       </Button>
@@ -340,6 +351,7 @@ export function BackupListSection({
                         className="h-6 w-6 shrink-0"
                         onClick={handleCancelRename}
                         disabled={isRenaming}
+                        aria-label={t("common.cancel")}
                       >
                         <X className="h-3.5 w-3.5" />
                       </Button>
@@ -367,6 +379,9 @@ export function BackupListSection({
                       title={t("settings.backupManager.rename", {
                         defaultValue: "Rename",
                       })}
+                      aria-label={t("settings.backupManager.rename", {
+                        defaultValue: "Rename",
+                      })}
                     >
                       <Pencil className="h-3 w-3" />
                     </Button>
@@ -377,6 +392,9 @@ export function BackupListSection({
                       onClick={() => setDeleteFilename(backup.filename)}
                       disabled={isRestoring || isDeleting}
                       title={t("settings.backupManager.delete", {
+                        defaultValue: "Delete",
+                      })}
+                      aria-label={t("settings.backupManager.delete", {
                         defaultValue: "Delete",
                       })}
                     >

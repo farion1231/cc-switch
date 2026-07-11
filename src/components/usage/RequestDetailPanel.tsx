@@ -32,6 +32,9 @@ export function RequestDetailPanel({
     return (
       <Dialog open onOpenChange={onClose}>
         <DialogContent className="max-w-2xl">
+          <DialogTitle className="sr-only">
+            {t("usage.requestDetail", "请求详情")}
+          </DialogTitle>
           <div className="h-[400px] animate-pulse rounded bg-gray-100" />
         </DialogContent>
       </Dialog>

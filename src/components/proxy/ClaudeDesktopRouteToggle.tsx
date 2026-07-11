@@ -90,6 +90,7 @@ export function ClaudeDesktopRouteToggle({
         checked={isRunning}
         onCheckedChange={handleToggle}
         disabled={isBusy}
+        aria-label={tooltipText}
       />
     </div>
   );

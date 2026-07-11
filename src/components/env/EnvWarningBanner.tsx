@@ -152,6 +152,7 @@ export function EnvWarningBanner({
                     size="icon"
                     onClick={onDismiss}
                     className="text-yellow-900 dark:text-yellow-100 hover:bg-yellow-100 dark:hover:bg-yellow-900/50"
+                    aria-label={t("common.close")}
                   >
                     <X className="h-4 w-4" />
                   </Button>

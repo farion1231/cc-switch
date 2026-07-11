@@ -936,6 +936,7 @@ export function OmoFormFields({
             className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
             onClick={() => toggleAdvancedEditor(scope, key, advStr, isExpanded)}
             title={t("omo.advancedLabel", { defaultValue: "Advanced" })}
+            aria-label={t("omo.advancedLabel", { defaultValue: "Advanced" })}
           >
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -1022,6 +1023,7 @@ export function OmoFormFields({
             className={cn("h-7 w-7 shrink-0", advStr && "text-primary")}
             onClick={() => toggleAdvancedEditor(scope, key, advStr, isExpanded)}
             title={t("omo.advancedLabel", { defaultValue: "Advanced" })}
+            aria-label={t("omo.advancedLabel", { defaultValue: "Advanced" })}
           >
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -1036,6 +1038,7 @@ export function OmoFormFields({
               syncCustoms(next);
               removeAdvancedDraft(scope, key);
             }}
+            aria-label={t("common.delete")}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -1067,10 +1070,19 @@ export function OmoFormFields({
     badge?: React.ReactNode | string;
     action?: React.ReactNode;
   }) => (
-    <button
-      type="button"
+    // 使用 role="button" 的 div 而非 <button>：action 插槽可能渲染真实按钮，
+    // 按钮嵌按钮在 HTML 中非法，会导致内层控件无法被键盘单独聚焦。
+    <div
+      role="button"
+      tabIndex={0}
       className="flex items-center justify-between w-full py-2 px-3 text-left"
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
     >
       <div className="flex items-center gap-2">
         {isOpen ? (
@@ -1088,7 +1100,7 @@ export function OmoFormFields({
         )}
       </div>
       {action && <div onClick={(e) => e.stopPropagation()}>{action}</div>}
-    </button>
+    </div>
   );
 
   const renderModelSection = ({

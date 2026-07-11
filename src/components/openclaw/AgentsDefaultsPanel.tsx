@@ -245,7 +245,10 @@ const AgentsDefaultsPanel: React.FC = () => {
                   setPrimaryModel(v === UNSET_SENTINEL ? "" : v)
                 }
               >
-                <SelectTrigger className="font-mono text-xs">
+                <SelectTrigger
+                  className="font-mono text-xs"
+                  aria-label={t("openclaw.agents.primaryModel")}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -291,7 +294,10 @@ const AgentsDefaultsPanel: React.FC = () => {
                         )
                       }
                     >
-                      <SelectTrigger className="font-mono text-xs flex-1">
+                      <SelectTrigger
+                        className="font-mono text-xs flex-1"
+                        aria-label={`${t("openclaw.agents.fallbackModels")} ${index + 1}`}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -310,6 +316,7 @@ const AgentsDefaultsPanel: React.FC = () => {
                       size="icon"
                       className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
                       onClick={() => handleRemoveFallback(index)}
+                      aria-label={t("common.delete")}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

@@ -287,6 +287,7 @@ export function ProviderActions({
           onClick={isReadOnly ? undefined : onEdit}
           disabled={isReadOnly}
           title={isReadOnly ? readOnlyHint : t("common.edit")}
+          aria-label={isReadOnly ? readOnlyHint : t("common.edit")}
           className={cn(
             iconButtonClass,
             isReadOnly && "opacity-40 cursor-not-allowed text-muted-foreground",
@@ -300,6 +301,7 @@ export function ProviderActions({
           variant="ghost"
           onClick={onDuplicate}
           title={t("provider.duplicate")}
+          aria-label={t("provider.duplicate")}
           className={iconButtonClass}
         >
           <Copy className="h-4 w-4" />
@@ -311,6 +313,7 @@ export function ProviderActions({
           onClick={onTest || undefined}
           disabled={isTesting}
           title={t("provider.connectivityCheck", "检测连通")}
+          aria-label={t("provider.connectivityCheck", "检测连通")}
           className={cn(
             iconButtonClass,
             !onTest && "opacity-40 cursor-not-allowed text-muted-foreground",
@@ -328,6 +331,7 @@ export function ProviderActions({
           variant="ghost"
           onClick={onConfigureUsage || undefined}
           title={t("provider.configureUsage")}
+          aria-label={t("provider.configureUsage")}
           className={cn(
             iconButtonClass,
             !onConfigureUsage &&
@@ -343,6 +347,7 @@ export function ProviderActions({
             variant="ghost"
             onClick={onOpenTerminal}
             title={t("provider.openTerminal", "打开终端")}
+            aria-label={t("provider.openTerminal", "打开终端")}
             className={cn(
               iconButtonClass,
               "hover:text-emerald-600 dark:hover:text-emerald-400",
@@ -357,6 +362,7 @@ export function ProviderActions({
           variant="ghost"
           onClick={canDelete ? onDelete : undefined}
           title={isReadOnly ? readOnlyHint : t("common.delete")}
+          aria-label={isReadOnly ? readOnlyHint : t("common.delete")}
           className={cn(
             iconButtonClass,
             canDelete && "hover:text-red-500 dark:hover:text-red-400",

@@ -72,6 +72,7 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("subscription.refresh")}
+            aria-label={t("subscription.refresh")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
@@ -107,6 +108,7 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
             title={t("subscription.refresh")}
+            aria-label={t("subscription.refresh")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
@@ -140,6 +142,7 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
             title={t("subscription.refresh")}
+            aria-label={t("subscription.refresh")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>

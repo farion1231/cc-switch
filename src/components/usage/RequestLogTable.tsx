@@ -328,6 +328,7 @@ export function RequestLogTable({
                 variant="outline"
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
+                aria-label={t("common.previousPage")}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -366,6 +367,7 @@ export function RequestLogTable({
                       size="sm"
                       className="h-8 w-8 p-0"
                       onClick={() => setPage(p)}
+                      aria-current={p === page ? "page" : undefined}
                     >
                       {p + 1}
                     </Button>
@@ -377,6 +379,7 @@ export function RequestLogTable({
                 variant="outline"
                 disabled={page >= totalPages - 1}
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                aria-label={t("common.nextPage")}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>

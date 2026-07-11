@@ -64,8 +64,11 @@ export const SessionMessageItem = memo(function SessionMessageItem({
           <Button
             variant="ghost"
             size="icon"
-            className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute top-2 right-2 size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
             onClick={() => onCopy(message.content)}
+            aria-label={t("sessionManager.copyMessage", {
+              defaultValue: "复制内容",
+            })}
           >
             <Copy className="size-3" />
           </Button>

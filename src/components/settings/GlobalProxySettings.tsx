@@ -172,6 +172,7 @@ export function GlobalProxySettings() {
           disabled={scanMutation.isPending}
           onClick={handleScan}
           title={t("settings.globalProxy.scan")}
+          aria-label={t("settings.globalProxy.scan")}
         >
           {scanMutation.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -185,6 +186,7 @@ export function GlobalProxySettings() {
           disabled={!fullUrl || testMutation.isPending}
           onClick={handleTest}
           title={t("settings.globalProxy.test")}
+          aria-label={t("settings.globalProxy.test")}
         >
           {testMutation.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -198,6 +200,7 @@ export function GlobalProxySettings() {
           disabled={!url && !username && !password}
           onClick={handleClear}
           title={t("settings.globalProxy.clear")}
+          aria-label={t("settings.globalProxy.clear")}
         >
           <X className="h-4 w-4" />
         </Button>
@@ -243,7 +246,9 @@ export function GlobalProxySettings() {
             size="icon"
             className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
             onClick={() => setShowPassword(!showPassword)}
-            tabIndex={-1}
+            aria-label={
+              showPassword ? t("common.hidePassword") : t("common.showPassword")
+            }
           >
             {showPassword ? (
               <EyeOff className="h-4 w-4 text-muted-foreground" />

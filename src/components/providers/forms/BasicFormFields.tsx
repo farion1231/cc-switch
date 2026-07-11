@@ -16,6 +16,7 @@ import {
   DialogContent,
   DialogTrigger,
   DialogClose,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { IconPicker } from "@/components/IconPicker";
@@ -67,6 +68,15 @@ export function BasicFormFields({
                       defaultValue: "点击选择图标",
                     })
               }
+              aria-label={
+                currentIcon
+                  ? t("providerIcon.clickToChange", {
+                      defaultValue: "点击更换图标",
+                    })
+                  : t("providerIcon.clickToSelect", {
+                      defaultValue: "点击选择图标",
+                    })
+              }
             >
               <ProviderIcon
                 icon={currentIcon}
@@ -86,15 +96,22 @@ export function BasicFormFields({
               <div className="flex-shrink-0 py-4 border-b border-border-default bg-muted/40">
                 <div className="px-6 flex items-center gap-4">
                   <DialogClose asChild>
-                    <Button type="button" variant="outline" size="icon">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t("common.back")}
+                    >
                       <ArrowLeft className="h-4 w-4" />
                     </Button>
                   </DialogClose>
-                  <p className="text-lg font-semibold leading-tight">
-                    {t("providerIcon.selectIcon", {
-                      defaultValue: "选择图标",
-                    })}
-                  </p>
+                  <DialogTitle asChild>
+                    <p className="text-lg font-semibold leading-tight">
+                      {t("providerIcon.selectIcon", {
+                        defaultValue: "选择图标",
+                      })}
+                    </p>
+                  </DialogTitle>
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto">

@@ -263,6 +263,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
               onClick={openDocs}
               className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
               title={t("mcp.presets.docs")}
+              aria-label={t("mcp.presets.docs")}
             >
               <ExternalLink size={12} />
             </button>
@@ -297,6 +298,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
           className="h-7 w-7"
           onClick={() => onEdit(id)}
           title={t("common.edit")}
+          aria-label={t("common.edit")}
         >
           <Edit3 size={14} />
         </Button>
@@ -307,6 +309,7 @@ const UnifiedMcpListItem: React.FC<UnifiedMcpListItemProps> = ({
           className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={() => onDelete(id)}
           title={t("common.delete")}
+          aria-label={t("common.delete")}
         >
           <Trash2 size={14} />
         </Button>

@@ -52,6 +52,9 @@ export function UniversalProviderCard({
             className="h-8 w-8"
             onClick={() => onSync(provider.id)}
             title={t("universalProvider.sync", { defaultValue: "同步到应用" })}
+            aria-label={t("universalProvider.sync", {
+              defaultValue: "同步到应用",
+            })}
           >
             <RefreshCw className="h-4 w-4" />
           </Button>
@@ -61,6 +64,9 @@ export function UniversalProviderCard({
             className="h-8 w-8"
             onClick={() => onDuplicate(provider)}
             title={t("universalProvider.duplicate", { defaultValue: "复制" })}
+            aria-label={t("universalProvider.duplicate", {
+              defaultValue: "复制",
+            })}
           >
             <Copy className="h-4 w-4" />
           </Button>
@@ -70,6 +76,7 @@ export function UniversalProviderCard({
             className="h-8 w-8"
             onClick={() => onEdit(provider)}
             title={t("common.edit", { defaultValue: "编辑" })}
+            aria-label={t("common.edit", { defaultValue: "编辑" })}
           >
             <Edit2 className="h-4 w-4" />
           </Button>
@@ -79,6 +86,7 @@ export function UniversalProviderCard({
             className="h-8 w-8 text-destructive hover:text-destructive"
             onClick={() => onDelete(provider.id)}
             title={t("common.delete", { defaultValue: "删除" })}
+            aria-label={t("common.delete", { defaultValue: "删除" })}
           >
             <Trash2 className="h-4 w-4" />
           </Button>

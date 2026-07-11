@@ -120,7 +120,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
             value={selectedAccountId || "none"}
             onValueChange={handleAccountSelect}
           >
-            <SelectTrigger>
+            <SelectTrigger
+              aria-label={t("codexOauth.selectAccount", "选择账号")}
+            >
               <SelectValue
                 placeholder={t(
                   "codexOauth.selectAccountPlaceholder",
@@ -215,6 +217,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                     onClick={(e) => handleRemoveAccount(account.id, e)}
                     disabled={isRemovingAccount}
                     title={t("codexOauth.removeAccount", "移除账号")}
+                    aria-label={t("codexOauth.removeAccount", "移除账号")}
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -274,6 +277,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                 variant="ghost"
                 onClick={copyUserCode}
                 title={t("codexOauth.copyCode", "复制代码")}
+                aria-label={t("codexOauth.copyCode", "复制代码")}
               >
                 {copied ? (
                   <Check className="h-4 w-4 text-green-500" />

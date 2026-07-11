@@ -428,6 +428,7 @@ export function HermesFormFields({
                               variant="outline"
                               size="icon"
                               className="shrink-0"
+                              aria-label={t("providerForm.selectModelFromList")}
                             >
                               <ChevronDown className="h-4 w-4" />
                             </Button>
@@ -483,6 +484,7 @@ export function HermesFormFields({
                     size="icon"
                     onClick={() => handleRemoveModel(index)}
                     className="h-9 w-9 mt-5 text-muted-foreground hover:text-destructive"
+                    aria-label={t("common.delete")}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

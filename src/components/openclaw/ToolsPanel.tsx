@@ -159,7 +159,10 @@ const ToolsPanel: React.FC = () => {
             setConfig((prev) => ({ ...prev, profile: value }));
           }}
         >
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger
+            className="w-[220px]"
+            aria-label={t("openclaw.tools.profile")}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -206,6 +209,7 @@ const ToolsPanel: React.FC = () => {
                 size="icon"
                 className="flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-destructive"
                 onClick={() => removeListItem(setAllowList, index)}
+                aria-label={t("common.delete")}
               >
                 <Trash2 className="w-4 h-4" />
               </Button>
@@ -245,6 +249,7 @@ const ToolsPanel: React.FC = () => {
                 size="icon"
                 className="flex-shrink-0 h-9 w-9 text-muted-foreground hover:text-destructive"
                 onClick={() => removeListItem(setDenyList, index)}
+                aria-label={t("common.delete")}
               >
                 <Trash2 className="w-4 h-4" />
               </Button>

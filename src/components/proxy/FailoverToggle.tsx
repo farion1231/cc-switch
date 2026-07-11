@@ -79,6 +79,7 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
         checked={isEnabled}
         onCheckedChange={handleToggle}
         disabled={setEnabled.isPending || isLoading || !takeoverEnabled}
+        aria-label={tooltipText}
       />
     </div>
   );
