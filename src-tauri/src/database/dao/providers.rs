@@ -705,10 +705,88 @@ impl Database {
 
         Ok(true)
     }
+
+    /// 跨所有 app_type 查找 provider（含 UniversalProvider）
+    ///
+    /// 查找顺序：
+    /// 1. providers 表（覆盖所有 per-app 供应商）
+    /// 2. universal providers settings（延迟转换）
+    pub fn get_provider_by_id_global(
+        &self,
+        id: &str,
+        context_app_type: &str,
+    ) -> Result<Option<(Provider, String)>, AppError> {
+        // Step 1: providers 表（跨所有 app_type）
+        let conn = lock_conn!(self.conn);
+        let result = conn.query_row(
+            "SELECT app_type, name, settings_config, website_url, category,
+                    created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+             FROM providers WHERE id = ?1 LIMIT 1",
+            params![id],
+            |row| {
+                let app_type: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let settings_config_str: String = row.get(2)?;
+                let website_url: Option<String> = row.get(3)?;
+                let category: Option<String> = row.get(4)?;
+                let created_at: Option<i64> = row.get(5)?;
+                let sort_index: Option<usize> = row.get(6)?;
+                let notes: Option<String> = row.get(7)?;
+                let icon: Option<String> = row.get(8)?;
+                let icon_color: Option<String> = row.get(9)?;
+                let meta_str: String = row.get(10)?;
+                let in_failover_queue: bool = row.get(11)?;
+
+                let settings_config =
+                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
+                let meta: crate::provider::ProviderMeta =
+                    serde_json::from_str(&meta_str).unwrap_or_default();
+
+                Ok((
+                    app_type,
+                    Provider {
+                        id: id.to_string(),
+                        name,
+                        settings_config,
+                        website_url,
+                        category,
+                        created_at,
+                        sort_index,
+                        notes,
+                        meta: Some(meta),
+                        icon,
+                        icon_color,
+                        in_failover_queue,
+                    },
+                ))
+            },
+        );
+
+        match result {
+            Ok((app_type, provider)) => return Ok(Some((provider, app_type))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => { /* fall through */ }
+            Err(e) => return Err(AppError::Database(e.to_string())),
+        }
+
+        // Step 2: UniversalProvider
+        if let Some(universal) = self.get_universal_provider(id)? {
+            let converted = match context_app_type {
+                "claude" => universal.to_claude_provider(),
+                "codex" => universal.to_codex_provider(),
+                "gemini" => universal.to_gemini_provider(),
+                _ => None,
+            };
+            if let Some(provider) = converted {
+                return Ok(Some((provider, context_app_type.to_string())));
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
-mod ensure_official_seed_tests {
+mod provider_tests {
     use crate::app_config::AppType;
     use crate::database::{Database, CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID};
 

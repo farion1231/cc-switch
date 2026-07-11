@@ -7,6 +7,7 @@ use crate::provider::Provider;
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
+    model_router::ModelRouter,
     server::ProxyState,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
@@ -129,24 +130,72 @@ impl RequestContext {
             session_result.client_provided
         );
 
-        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        // ─── Step 1: 尝试 UniversalProvider 路由 ───
+        let universal_providers = state
+            .db
+            .get_all_universal_providers()
+            .unwrap_or_default();
+        let universal_selected = if !universal_providers.is_empty() {
+            ModelRouter::match_model(&request_model, &universal_providers, app_type_str)
+                .and_then(|matched_up| {
+                    let converted = match app_type_str {
+                        "claude" => matched_up.to_claude_provider(),
+                        "codex" => matched_up.to_codex_provider(),
+                        "gemini" => matched_up.to_gemini_provider(),
+                        _ => None,
+                    };
+                    if converted.is_some() {
+                        log::info!(
+                            "[{tag}] Universal route: {model} → {name} ({id})",
+                            tag = tag,
+                            model = request_model,
+                            name = matched_up.name,
+                            id = matched_up.id,
+                        );
+                    }
+                    converted
+                })
+        } else {
+            None
+        };
 
-        let provider = providers
-            .first()
-            .cloned()
-            .ok_or(ProxyError::NoAvailableProvider)?;
+        // ─── Step 2: 选择 provider（UniversalProvider > per-app）───
+        let (provider, providers) = if let Some(up_provider) = universal_selected {
+            let per_app_providers = state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .unwrap_or_default();
+            let mut chain = vec![up_provider];
+            chain.extend(
+                per_app_providers
+                    .iter()
+                    .filter(|p| p.id != up_provider.id)
+                    .cloned(),
+            );
+            (up_provider, chain)
+        } else {
+            // 走现有 per-app 逻辑
+            let providers = state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?;
+
+            let provider = providers
+                .first()
+                .cloned()
+                .ok_or(ProxyError::NoAvailableProvider)?;
+            (provider, providers)
+        };
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
