@@ -23,7 +23,7 @@ use crate::services::session_usage::{
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -75,6 +75,7 @@ struct FileParseState {
 struct CodexSessionIdentity {
     thread_id: String,
     session_id: String,
+    carries_history_snapshot: bool,
 }
 
 impl CodexSessionIdentity {
@@ -99,10 +100,20 @@ fn parse_codex_session_identity(payload: &serde_json::Value) -> Option<CodexSess
         .and_then(|value| value.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| thread_id.clone());
+    let carries_history_snapshot = payload
+        .get("forked_from_id")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| !value.is_empty())
+        || payload
+            .get("source")
+            .and_then(|source| source.get("subagent"))
+            .is_some()
+        || thread_id != session_id;
 
     Some(CodexSessionIdentity {
         thread_id,
         session_id,
+        carries_history_snapshot,
     })
 }
 
@@ -111,15 +122,21 @@ fn read_codex_session_identity(file_path: &Path) -> Option<CodexSessionIdentity>
     let reader = BufReader::new(file);
 
     for line in reader.lines() {
-        let line = line.ok()?;
+        let Ok(line) = line else {
+            continue;
+        };
         if !line.contains("\"session_meta\"") {
             continue;
         }
-        let value: serde_json::Value = serde_json::from_str(&line).ok()?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
         if value.get("type").and_then(|value| value.as_str()) != Some("session_meta") {
             continue;
         }
-        return value.get("payload").and_then(parse_codex_session_identity);
+        if let Some(identity) = value.get("payload").and_then(parse_codex_session_identity) {
+            return Some(identity);
+        }
     }
 
     None
@@ -144,7 +161,8 @@ fn session_meta_carries_history_snapshot(payload: &serde_json::Value) -> bool {
         .get("source")
         .and_then(|source| source.get("subagent"))
         .is_some()
-        || parse_codex_session_identity(payload).is_some_and(|identity| identity.is_subagent());
+        || parse_codex_session_identity(payload)
+            .is_some_and(|identity| identity.carries_history_snapshot);
 
     has_fork_parent || is_subagent
 }
@@ -155,12 +173,19 @@ fn codex_history_replay_boundary(
     file_path: &Path,
     identity: Option<&CodexSessionIdentity>,
 ) -> Option<i64> {
+    if identity.is_some_and(|identity| !identity.carries_history_snapshot) {
+        return None;
+    }
+
     let file = fs::File::open(file_path).ok()?;
     let reader = BufReader::new(file);
-    let mut carries_history_snapshot = identity.is_some_and(CodexSessionIdentity::is_subagent);
+    let mut carries_history_snapshot =
+        identity.is_some_and(|identity| identity.carries_history_snapshot);
 
     for (index, line) in reader.lines().enumerate() {
-        let line = line.ok()?;
+        let Ok(line) = line else {
+            continue;
+        };
         if !line.contains("\"session_meta\"")
             && !line.contains("\"thread_settings_applied\"")
             && !line.contains("\"inter_agent_communication")
@@ -168,8 +193,12 @@ fn codex_history_replay_boundary(
             continue;
         }
 
-        let value: serde_json::Value = serde_json::from_str(&line).ok()?;
-        let event_type = value.get("type").and_then(|value| value.as_str())?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let Some(event_type) = value.get("type").and_then(|value| value.as_str()) else {
+            continue;
+        };
 
         if event_type == "session_meta" {
             if let Some(payload) = value.get("payload") {
@@ -199,26 +228,42 @@ fn is_history_snapshot_event(state: &FileParseState, line_offset: i64) -> bool {
         .is_some_and(|boundary| line_offset < boundary)
 }
 
-fn codex_file_may_overlap_rollup_dates(file_path: &Path, rollup_dates: &HashSet<String>) -> bool {
-    if rollup_dates.is_empty() {
-        return false;
+struct CodexRollupDateCoverage {
+    dates: HashSet<String>,
+    unknown: bool,
+}
+
+impl CodexRollupDateCoverage {
+    fn from_file(file_path: &Path) -> Self {
+        match codex_file_rollup_date_candidates(file_path) {
+            Some(dates) => Self {
+                dates,
+                unknown: false,
+            },
+            None => Self {
+                dates: HashSet::new(),
+                unknown: true,
+            },
+        }
     }
 
-    let Ok(file) = fs::File::open(file_path) else {
-        return true;
-    };
+    fn may_overlap(&self, rollup_dates: &HashSet<String>) -> bool {
+        !rollup_dates.is_empty()
+            && (self.unknown || self.dates.iter().any(|date| rollup_dates.contains(date)))
+    }
+}
+
+fn codex_file_rollup_date_candidates(file_path: &Path) -> Option<HashSet<String>> {
+    let file = fs::File::open(file_path).ok()?;
+    let mut dates = HashSet::new();
 
     for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            return true;
-        };
+        let line = line.ok()?;
         if !line.contains("\"token_count\"") {
             continue;
         }
 
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            return true;
-        };
+        let value = serde_json::from_str::<serde_json::Value>(&line).ok()?;
         let is_usage_event = value.get("type").and_then(|value| value.as_str())
             == Some("event_msg")
             && value
@@ -234,26 +279,21 @@ fn codex_file_may_overlap_rollup_dates(file_path: &Path, rollup_dates: &HashSet<
             continue;
         }
 
-        let Some(timestamp) = value.get("timestamp").and_then(|value| value.as_str()) else {
-            return true;
-        };
-        let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
-            return true;
-        };
+        let timestamp = value.get("timestamp").and_then(|value| value.as_str())?;
+        let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp).ok()?;
         // rollup 只保留当时的本地日期，无法得知当时的时区。任意合法时区下，
         // 一个时间点的本地日期只可能落在其 UTC 日期的前一天、当天或后一天。
         // 检查这三个日期可避免用户在 rollup 后切换时区时漏判并重复导入。
         let utc_date = timestamp.with_timezone(&chrono::Utc).date_naive();
-        let may_overlap = [utc_date.pred_opt(), Some(utc_date), utc_date.succ_opt()]
+        for date in [utc_date.pred_opt(), Some(utc_date), utc_date.succ_opt()]
             .into_iter()
             .flatten()
-            .any(|date| rollup_dates.contains(&date.format("%Y-%m-%d").to_string()));
-        if may_overlap {
-            return true;
+        {
+            dates.insert(date.format("%Y-%m-%d").to_string());
         }
     }
 
-    false
+    Some(dates)
 }
 
 /// 归一化 Codex 模型名
@@ -407,41 +447,15 @@ fn repair_legacy_codex_subagent_usage(
     db: &Database,
     files: &[(PathBuf, Option<CodexSessionIdentity>)],
 ) -> Result<(), AppError> {
-    let mut conn = lock_conn!(db.conn);
-
-    let already_migrated = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1 AND value = 'true')",
-            rusqlite::params![CODEX_SUBAGENT_USAGE_MIGRATION_KEY],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(|e| AppError::Database(format!("查询 Codex 子代理用量迁移状态失败: {e}")))?;
-    if already_migrated {
-        return Ok(());
-    }
-
-    let codex_rollup_dates = conn
-        .prepare("SELECT DISTINCT date FROM usage_daily_rollups WHERE app_type = 'codex'")
-        .and_then(|mut stmt| {
-            stmt.query_map([], |row| row.get::<_, String>(0))?
-                .collect::<Result<HashSet<_>, _>>()
-        })
-        .map_err(|e| AppError::Database(format!("查询 Codex 历史汇总日期失败: {e}")))?;
-
-    let rebuildable_thread_ids: HashSet<&str> = files
-        .iter()
-        .filter_map(|(_, identity)| {
-            identity
-                .as_ref()
-                .map(|identity| identity.thread_id.as_str())
-        })
-        .collect();
-    let mut affected_session_ids = HashSet::new();
-    let mut preserved_session_ids = HashSet::new();
-    let mut preserved_synced_subagent_paths = HashSet::new();
-    let mut synced_subagent_paths = Vec::new();
-
-    {
+    let (already_migrated, synced_subagent_paths) = {
+        let conn = lock_conn!(db.conn);
+        let already_migrated = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1 AND value = 'true')",
+                rusqlite::params![CODEX_SUBAGENT_USAGE_MIGRATION_KEY],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| AppError::Database(format!("查询 Codex 子代理用量迁移状态失败: {e}")))?;
         let mut stmt = conn
             .prepare(
                 "SELECT EXISTS(
@@ -450,6 +464,7 @@ fn repair_legacy_codex_subagent_usage(
                 )",
             )
             .map_err(|e| AppError::Database(format!("准备 Codex 子代理同步状态查询失败: {e}")))?;
+        let mut synced_paths = Vec::new();
 
         for (path, identity) in files {
             let Some(identity) = identity else {
@@ -466,41 +481,137 @@ fn repair_legacy_codex_subagent_usage(
                 })
                 .map_err(|e| AppError::Database(format!("查询 Codex 子代理旧同步状态失败: {e}")))?;
             if was_synced {
-                synced_subagent_paths.push((path.into_owned(), identity.session_id.clone()));
+                synced_paths.push((path.into_owned(), identity.session_id.clone()));
+            }
+        }
+
+        (already_migrated, synced_paths)
+    };
+
+    if synced_subagent_paths.is_empty() {
+        // 空目录可能只是 CODEX_HOME 暂时不可用，不能永久关闭后续迁移。
+        if !already_migrated && !files.is_empty() {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, 'true')",
+                rusqlite::params![CODEX_SUBAGENT_USAGE_MIGRATION_KEY],
+            )
+            .map_err(|e| AppError::Database(format!("保存 Codex 子代理用量迁移状态失败: {e}")))?;
+        }
+        return Ok(());
+    }
+
+    let candidate_session_ids: HashSet<&str> = synced_subagent_paths
+        .iter()
+        .map(|(_, session_id)| session_id.as_str())
+        .collect();
+    let file_rollup_coverage: HashMap<PathBuf, CodexRollupDateCoverage> = files
+        .iter()
+        .filter(|(_, identity)| {
+            identity.as_ref().is_some_and(|identity| {
+                candidate_session_ids.contains(identity.thread_id.as_str())
+                    || candidate_session_ids.contains(identity.session_id.as_str())
+            })
+        })
+        .map(|(path, _)| (path.clone(), CodexRollupDateCoverage::from_file(path)))
+        .collect();
+
+    let rebuildable_thread_ids: HashSet<&str> = files
+        .iter()
+        .filter_map(|(_, identity)| {
+            identity
+                .as_ref()
+                .map(|identity| identity.thread_id.as_str())
+        })
+        .collect();
+
+    let mut conn = lock_conn!(db.conn);
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::Database(format!("开启 Codex 子代理用量修复事务失败: {e}")))?;
+
+    // 文件扫描期间没有持有数据库锁。重新加锁后再确认旧游标仍存在，避免并发
+    // 同步已经完成迁移时重复处理同一文件。
+    let active_synced_subagent_paths = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT EXISTS(
+                    SELECT 1 FROM session_log_sync
+                    WHERE file_path = ?1 AND last_line_offset > 0
+                )",
+            )
+            .map_err(|e| AppError::Database(format!("准备 Codex 子代理同步状态复查失败: {e}")))?;
+        let mut active_paths = Vec::new();
+        for (path, session_id) in synced_subagent_paths {
+            let was_synced = stmt
+                .query_row(rusqlite::params![path], |row| row.get::<_, bool>(0))
+                .map_err(|e| AppError::Database(format!("复查 Codex 子代理旧同步状态失败: {e}")))?;
+            if was_synced {
+                active_paths.push((path, session_id));
+            }
+        }
+        active_paths
+    };
+
+    if active_synced_subagent_paths.is_empty() {
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交 Codex 子代理用量修复失败: {e}")))?;
+        return Ok(());
+    }
+
+    let migration_became_active = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1 AND value = 'true')",
+            rusqlite::params![CODEX_SUBAGENT_USAGE_MIGRATION_KEY],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|e| AppError::Database(format!("复查 Codex 子代理迁移状态失败: {e}")))?;
+
+    let codex_rollup_dates = if migration_became_active {
+        HashSet::new()
+    } else {
+        tx.prepare("SELECT DISTINCT date FROM usage_daily_rollups WHERE app_type = 'codex'")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<HashSet<_>, _>>()
+            })
+            .map_err(|e| AppError::Database(format!("查询 Codex 历史汇总日期失败: {e}")))?
+    };
+
+    let synced_session_ids: HashSet<&str> = active_synced_subagent_paths
+        .iter()
+        .map(|(_, session_id)| session_id.as_str())
+        .collect();
+    let mut affected_session_ids = HashSet::new();
+    let mut preserved_session_ids = HashSet::new();
+    let mut preserved_synced_subagent_paths = HashSet::new();
+
+    if !migration_became_active {
+        for session_id in synced_session_ids {
+            if !rebuildable_thread_ids.contains(session_id) {
+                continue;
+            }
+
+            let overlaps_rollup = files.iter().any(|(path, identity)| {
+                identity.as_ref().is_some_and(|identity| {
+                    (identity.thread_id == session_id || identity.session_id == session_id)
+                        && file_rollup_coverage
+                            .get(path)
+                            .is_none_or(|coverage| coverage.may_overlap(&codex_rollup_dates))
+                })
+            });
+            if !overlaps_rollup {
+                affected_session_ids.insert(session_id.to_string());
             }
         }
     }
 
-    let synced_session_ids: HashSet<&str> = synced_subagent_paths
-        .iter()
-        .map(|(_, session_id)| session_id.as_str())
-        .collect();
-    for session_id in synced_session_ids {
-        if !rebuildable_thread_ids.contains(session_id) {
-            continue;
-        }
-
-        let overlaps_rollup = files.iter().any(|(path, identity)| {
-            identity.as_ref().is_some_and(|identity| {
-                (identity.thread_id == session_id || identity.session_id == session_id)
-                    && codex_file_may_overlap_rollup_dates(path, &codex_rollup_dates)
-            })
-        });
-        if !overlaps_rollup {
-            affected_session_ids.insert(session_id.to_string());
-        }
-    }
-
-    for (path, session_id) in synced_subagent_paths {
+    for (path, session_id) in active_synced_subagent_paths {
         if !affected_session_ids.contains(&session_id) {
             preserved_session_ids.insert(session_id);
             preserved_synced_subagent_paths.insert(path);
         }
     }
-
-    let tx = conn
-        .transaction()
-        .map_err(|e| AppError::Database(format!("开启 Codex 子代理用量修复事务失败: {e}")))?;
 
     for session_id in &affected_session_ids {
         tx.execute(
@@ -517,8 +628,9 @@ fn repair_legacy_codex_subagent_usage(
     for session_id in &preserved_session_ids {
         tx.execute(
             "UPDATE proxy_request_logs
-             SET request_id = 'codex_session:legacy:' || request_id
-             WHERE data_source = 'codex_session' AND session_id = ?1",
+             SET request_id = 'codex_session:legacy:' || rowid || ':' || request_id
+             WHERE data_source = 'codex_session' AND session_id = ?1
+               AND request_id NOT LIKE 'codex_session:legacy:%'",
             rusqlite::params![session_id],
         )
         .map_err(|e| AppError::Database(format!("迁移保留的 Codex 旧请求 ID 失败: {e}")))?;
@@ -546,18 +658,25 @@ fn repair_legacy_codex_subagent_usage(
     }
 
     // 父日志已不存在，或历史已进入无 session 维度的 rollup 时，无法安全重建
-    // 旧记录。保留旧统计，并把旧游标复制到 thread_id 同步键，避免重复计费。
+    // 旧记录。保留旧统计，把旧游标复制到 thread_id 同步键，再删除 plain-path
+    // 游标作为该文件已处理的标记。以后恢复的遗漏文件仍可独立触发同一迁移。
     for path in &preserved_synced_subagent_paths {
         let subagent_key = format!("{path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
         tx.execute(
-            "INSERT OR IGNORE INTO session_log_sync (
+            "INSERT INTO session_log_sync (
                 file_path, last_modified, last_line_offset, last_synced_at
              )
              SELECT ?2, last_modified, last_line_offset, last_synced_at
-             FROM session_log_sync WHERE file_path = ?1",
+             FROM session_log_sync WHERE file_path = ?1
+             ON CONFLICT(file_path) DO UPDATE SET
+                last_modified = MAX(last_modified, excluded.last_modified),
+                last_line_offset = MAX(last_line_offset, excluded.last_line_offset),
+                last_synced_at = MAX(last_synced_at, excluded.last_synced_at)",
             rusqlite::params![path, subagent_key],
         )
         .map_err(|e| AppError::Database(format!("迁移保留的 Codex 子代理同步游标失败: {e}")))?;
+        tx.execute("DELETE FROM session_log_sync WHERE file_path = ?1", [path])
+            .map_err(|e| AppError::Database(format!("清理 Codex 子代理旧同步游标失败: {e}")))?;
     }
 
     tx.execute(
@@ -643,7 +762,16 @@ fn sync_single_codex_file(
     let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
-    let (last_modified, last_offset) = get_sync_state(db, &sync_state_key)?;
+    let (mut last_modified, mut last_offset) = get_sync_state(db, &sync_state_key)?;
+    if identity.is_some_and(CodexSessionIdentity::is_subagent) {
+        let legacy_state = get_sync_state(db, &file_path_str)?;
+        if legacy_state.1 > last_offset {
+            // 迁移可能在日志文件暂时缺失时完成。suffix 游标不存在时始终继承
+            // plain-path 旧游标，避免文件恢复后从头重导造成重复统计。
+            update_sync_state(db, &sync_state_key, legacy_state.0, legacy_state.1)?;
+            (last_modified, last_offset) = legacy_state;
+        }
+    }
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -655,6 +783,14 @@ fn sync_single_codex_file(
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
     let reader = BufReader::new(file);
     let history_replay_boundary = codex_history_replay_boundary(file_path, identity);
+    if identity.is_some_and(|identity| identity.carries_history_snapshot)
+        && history_replay_boundary.is_none()
+    {
+        log::debug!(
+            "[CODEX-SYNC] fork/子代理日志未发现历史接管边界: {}",
+            file_path.display()
+        );
+    }
 
     let mut state = FileParseState {
         thread_id: identity.map(|identity| identity.thread_id.clone()),
@@ -1178,6 +1314,41 @@ mod tests {
         assert_eq!(identity.thread_id, "child-thread");
         assert_eq!(identity.session_id, "parent-thread");
         assert!(identity.is_subagent());
+        assert!(identity.carries_history_snapshot);
+    }
+
+    #[test]
+    fn test_identity_and_replay_boundary_skip_malformed_matching_lines() {
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("child-malformed.jsonl");
+        let lines = [
+            "not-json session_meta".to_string(),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "child",
+                    "session_id": "parent",
+                    "source": { "subagent": {} }
+                }
+            })
+            .to_string(),
+            "not-json thread_settings_applied".to_string(),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:01Z",
+                "type": "event_msg",
+                "payload": { "type": "thread_settings_applied" }
+            })
+            .to_string(),
+        ];
+        fs::write(&child, lines.join("\n") + "\n").unwrap();
+
+        let identity = read_codex_session_identity(&child).unwrap();
+        assert_eq!(identity.thread_id, "child");
+        assert_eq!(
+            codex_history_replay_boundary(&child, Some(&identity)),
+            Some(4)
+        );
     }
 
     #[test]
@@ -1633,6 +1804,7 @@ mod tests {
         repair_legacy_codex_subagent_usage(&db, &files)?;
 
         let subagent_key = format!("{child_path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        assert_eq!(get_sync_state(&db, &child_path)?, (0, 0));
         assert_eq!(get_sync_state(&db, &subagent_key)?, (1, 3));
         assert_eq!(
             sync_single_codex_file(&db, &child, Some(&identity))?,
@@ -1647,13 +1819,135 @@ mod tests {
             )?
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids.len(), 2);
+        assert!(request_ids.contains(&"codex_session:child:2".to_string()));
+        assert!(request_ids.iter().any(|request_id| {
+            request_id.starts_with("codex_session:legacy:")
+                && request_id.ends_with(":codex_session:missing-parent:1")
+        }));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_late_subagent_after_migration_activation_preserves_legacy_cursor(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        repair_legacy_codex_subagent_usage(&db, &[])?;
+        {
+            let conn = lock_conn!(db.conn);
+            let marker_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+                [CODEX_SUBAGENT_USAGE_MIGRATION_KEY],
+                |row| row.get(0),
+            )?;
+            assert!(!marker_exists);
+        }
+
+        let temp = tempdir().unwrap();
+        let unrelated_main = temp.path().join("unrelated-main.jsonl");
+        write_codex_usage_log(&unrelated_main, "unrelated", "unrelated", 100, 10);
+        let unrelated_identity = read_codex_session_identity(&unrelated_main).unwrap();
+        repair_legacy_codex_subagent_usage(&db, &[(unrelated_main, Some(unrelated_identity))])?;
+
+        let child = temp.path().join("late-child.jsonl");
+        let child_lines = [
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "late-child",
+                    "session_id": "missing-parent",
+                    "source": { "subagent": {} }
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:01Z",
+                "type": "turn_context",
+                "payload": { "model": "gpt-5.6-sol" }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:02Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 200,
+                        "cached_input_tokens": 100,
+                        "output_tokens": 20
+                    }}
+                }
+            }),
+            serde_json::json!({
+                "timestamp": "2026-07-10T03:00:03Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": { "total_token_usage": {
+                        "input_tokens": 300,
+                        "cached_input_tokens": 150,
+                        "output_tokens": 30
+                    }}
+                }
+            }),
+        ];
+        fs::write(
+            &child,
+            child_lines
+                .iter()
+                .map(serde_json::Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        let identity = read_codex_session_identity(&child).unwrap();
+        let child_path = child.to_string_lossy().to_string();
+        insert_legacy_codex_usage_row(&db, "missing-parent")?;
+        update_sync_state(&db, &child_path, 1, 3)?;
+
+        repair_legacy_codex_subagent_usage(&db, &[(child.clone(), Some(identity.clone()))])?;
+
+        let subagent_key = format!("{child_path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        assert_eq!(get_sync_state(&db, &child_path)?, (0, 0));
+        assert_eq!(get_sync_state(&db, &subagent_key)?, (1, 3));
         assert_eq!(
-            request_ids,
-            vec![
-                "codex_session:child:2".to_string(),
-                "codex_session:legacy:codex_session:missing-parent:1".to_string()
-            ]
+            sync_single_codex_file(&db, &child, Some(&identity))?,
+            (1, 0)
         );
+
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_subagent_sync_falls_back_to_newer_plain_cursor() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("fallback-child.jsonl");
+        write_codex_usage_log(&child, "fallback-child", "parent", 200, 20);
+
+        let identity = read_codex_session_identity(&child).unwrap();
+        let child_path = child.to_string_lossy().to_string();
+        let subagent_key = format!("{child_path}{CODEX_SUBAGENT_SYNC_KEY_SUFFIX}");
+        update_sync_state(&db, &subagent_key, 1, 1)?;
+        update_sync_state(&db, &child_path, 2, 3)?;
+
+        assert_eq!(
+            sync_single_codex_file(&db, &child, Some(&identity))?,
+            (0, 0)
+        );
+        let (last_modified, last_offset) = get_sync_state(&db, &subagent_key)?;
+        assert!(last_modified > 2);
+        assert_eq!(last_offset, 3);
 
         Ok(())
     }
@@ -1808,14 +2102,13 @@ mod tests {
             )?
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(
-            request_ids,
-            vec![
-                "codex_session:child:2".to_string(),
-                "codex_session:legacy:codex_session:parent:2".to_string(),
-                "codex_session:parent:2".to_string(),
-            ]
-        );
+        assert_eq!(request_ids.len(), 3);
+        assert!(request_ids.contains(&"codex_session:child:2".to_string()));
+        assert!(request_ids.contains(&"codex_session:parent:2".to_string()));
+        assert!(request_ids.iter().any(|request_id| {
+            request_id.starts_with("codex_session:legacy:")
+                && request_id.ends_with(":codex_session:parent:2")
+        }));
 
         Ok(())
     }
