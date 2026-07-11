@@ -556,6 +556,71 @@ impl SkillService {
         })
     }
 
+    /// 检测当前环境是否激活/使用了 Antigravity (agy)
+    fn is_agy_active() -> bool {
+        let gemini_dir = crate::gemini_config::get_gemini_dir();
+
+        // 如果存在 agy 的通用目录，或任意一个 antigravity 客户端的专属目录，则判定为已激活
+        gemini_dir.join("config").join("skills").is_dir()
+            || gemini_dir.join("antigravity").is_dir()
+            || gemini_dir.join("antigravity-cli").is_dir()
+            || gemini_dir.join("antigravity-ide").is_dir()
+    }
+
+    /// 获取应用 Skill 实际写入（符号链接/复制/删除）的目标目录
+    ///
+    /// 对于 Gemini：
+    /// - `~/.gemini/skills/` 是 gemini-cli 的专属 Skill 目录，始终保留以确保向后兼容。
+    /// - `~/.gemini/config/skills/` 是 Antigravity (agy) 三个客户端共享的通用 Skill
+    ///   目录。开启 Gemini 的 Skill 同步后，它与 `~/.gemini/skills/` 都是 CC
+    ///   Switch 的受管投影目录：检测到 agy 环境时会在此写入、更新和删除受管 Skill。
+    /// - `~/.gemini/antigravity*/skills/` 是各 agy 客户端维护的私有目录。它们只作为
+    ///   扫描/导入来源，不作为 CC Switch 的写入或删除目标，避免误删客户端私有状态。
+    pub fn get_app_skills_dirs(app: &AppType) -> Result<Vec<PathBuf>> {
+        let primary = Self::get_app_skills_dir(app)?;
+        if !matches!(app, AppType::Gemini) {
+            return Ok(vec![primary]);
+        }
+
+        let mut dirs = vec![primary]; // 默认包含 gemini-cli 路径
+
+        // 如果检测到 agy 活跃，动态追加同步到 agy 的通用公共目录
+        if Self::is_agy_active() {
+            let gemini_dir = crate::gemini_config::get_gemini_dir();
+            dirs.push(gemini_dir.join("config").join("skills"));
+        }
+
+        dirs.sort();
+        dirs.dedup();
+        Ok(dirs)
+    }
+
+    /// 获取应用 Skill 扫描与导入的候选目录（始终全量扫描以防遗漏）
+    ///
+    /// 注意：Gemini 的扫描口径故意大于写入口径。前端“导入已有”需要发现
+    /// `~/.gemini/config/skills/` 以及 `~/.gemini/antigravity*/skills/` 中的既有
+    /// Skill；但安装、同步、禁用和删除仍只通过 [`Self::get_app_skills_dirs`] 处理
+    /// gemini-cli 专属目录和 agy 通用目录。
+    pub fn get_app_skills_scan_dirs(app: &AppType) -> Result<Vec<PathBuf>> {
+        let primary = Self::get_app_skills_dir(app)?; // 包含 ~/.gemini/skills/
+        if !matches!(app, AppType::Gemini) {
+            return Ok(vec![primary]);
+        }
+
+        let gemini_dir = crate::gemini_config::get_gemini_dir();
+        let mut dirs = vec![
+            primary,
+            gemini_dir.join("config").join("skills"),
+            gemini_dir.join("antigravity").join("skills"),
+            gemini_dir.join("antigravity-cli").join("skills"),
+            gemini_dir.join("antigravity-ide").join("skills"),
+        ];
+
+        dirs.sort();
+        dirs.dedup();
+        Ok(dirs)
+    }
+
     // ========== 统一管理方法 ==========
 
     /// 获取所有已安装的 Skills
@@ -1391,8 +1456,10 @@ impl SkillService {
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
-            if let Ok(d) = Self::get_app_skills_dir(&app) {
-                scan_sources.push((d, app.as_str().to_string()));
+            if let Ok(dirs) = Self::get_app_skills_scan_dirs(&app) {
+                for d in dirs {
+                    scan_sources.push((d, app.as_str().to_string()));
+                }
             }
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
@@ -1462,8 +1529,10 @@ impl SkillService {
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
-            if let Ok(d) = Self::get_app_skills_dir(&app) {
-                search_sources.push((d, app.as_str().to_string()));
+            if let Ok(dirs) = Self::get_app_skills_scan_dirs(&app) {
+                for d in dirs {
+                    search_sources.push((d, app.as_str().to_string()));
+                }
             }
         }
         if let Some(agents_dir) = get_agents_skills_dir() {
@@ -1593,27 +1662,83 @@ impl SkillService {
 
         Self::validate_sync_source_dir(&source, directory)?;
 
-        let app_dir = Self::get_app_skills_dir(app)?;
-        fs::create_dir_all(&app_dir)?;
+        let app_dirs = Self::get_app_skills_dirs(app)?;
+        if matches!(app, AppType::Gemini) && app_dirs.len() > 1 {
+            return Self::sync_to_gemini_dirs_best_effort(&source, directory, &app_dirs);
+        }
 
+        let app_dir = app_dirs
+            .first()
+            .ok_or_else(|| anyhow!("Skill 同步目标目录为空: {app:?}"))?;
         let dest = app_dir.join(directory);
+        fs::create_dir_all(app_dir)?;
+        Self::sync_to_dest_dir(&source, &dest, directory, app)?;
 
+        Ok(())
+    }
+
+    /// Gemini 同时投影到 CLI 与 Antigravity 目录时，保留已成功的目标。
+    ///
+    /// 这些目录是同一 Skill 的多个运行时入口。单个目录的失败不应删除其他
+    /// 已成功的同步结果；所有目标都失败时仍返回错误，以保持交互式操作的失败语义。
+    fn sync_to_gemini_dirs_best_effort(
+        source: &Path,
+        directory: &str,
+        app_dirs: &[PathBuf],
+    ) -> Result<()> {
+        let mut success_count = 0usize;
+        let mut failures = Vec::new();
+
+        for app_dir in app_dirs {
+            let dest = app_dir.join(directory);
+            let sync_result = (|| -> Result<()> {
+                fs::create_dir_all(app_dir)?;
+                Self::sync_to_dest_dir(source, &dest, directory, &AppType::Gemini)
+            })();
+            match sync_result {
+                Ok(()) => success_count += 1,
+                Err(err) => failures.push(format!("{}: {err:#}", dest.display())),
+            }
+        }
+
+        if failures.is_empty() {
+            return Ok(());
+        }
+
+        let failure_summary = failures.join("; ");
+        if success_count == 0 {
+            return Err(anyhow!(
+                "同步 Skill {directory} 到 Gemini 所有目标目录均失败: {failure_summary}"
+            ));
+        }
+
+        // Gemini 的多个投影目标彼此独立；只要至少一个目标可用，
+        // 就保留已完成的同步并将本次操作视为成功，避免单个客户端目录故障
+        // 回滚或阻断其他客户端已经可用的 Skill。
+        log::warn!(
+            "Skill 多目录同步部分失败: skill={directory}, app=gemini, succeeded={success_count}, failed={}, failures=[{failure_summary}]",
+            failures.len()
+        );
+        Ok(())
+    }
+
+    fn sync_to_dest_dir(source: &Path, dest: &Path, directory: &str, app: &AppType) -> Result<()> {
         let sync_method = Self::get_sync_method();
 
         match sync_method {
             SyncMethod::Auto => {
-                if dest.exists() && !Self::is_symlink(&dest) {
-                    Self::replace_dest_with_copy(&source, &dest, directory)?;
+                if dest.exists() && !Self::is_symlink(dest) {
+                    Self::replace_dest_with_copy(source, dest, directory)?;
                     log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
                     return Ok(());
                 }
 
-                if Self::is_symlink(&dest) {
-                    Self::remove_path(&dest)?;
+                if Self::is_symlink(dest) {
+                    Self::remove_path(dest)?;
                 }
 
                 // 优先尝试 symlink
-                match Self::create_symlink(&source, &dest) {
+                match Self::create_symlink(source, dest) {
                     Ok(()) => {
                         log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
                         return Ok(());
@@ -1627,18 +1752,18 @@ impl SkillService {
                     }
                 }
                 // Fallback 到 copy
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
+                Self::replace_dest_with_copy(source, dest, directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
             SyncMethod::Symlink => {
-                if dest.exists() || Self::is_symlink(&dest) {
-                    Self::remove_path(&dest)?;
+                if dest.exists() || Self::is_symlink(dest) {
+                    Self::remove_path(dest)?;
                 }
-                Self::create_symlink(&source, &dest)?;
+                Self::create_symlink(source, dest)?;
                 log::debug!("Skill {directory} 已通过 symlink 同步到 {app:?}");
             }
             SyncMethod::Copy => {
-                Self::replace_dest_with_copy(&source, &dest, directory)?;
+                Self::replace_dest_with_copy(source, dest, directory)?;
                 log::debug!("Skill {directory} 已通过复制同步到 {app:?}");
             }
         }
@@ -1754,24 +1879,26 @@ impl SkillService {
         canonical_target.starts_with(&canonical_ssot)
     }
 
-    /// 从应用目录删除 Skill（支持 symlink 和真实目录）
     pub fn remove_from_app(directory: &str, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
 
-        let app_dir = Self::get_app_skills_dir(app)?;
-        let skill_path = app_dir.join(directory);
-
-        if skill_path.exists() || Self::is_symlink(&skill_path) {
-            Self::remove_path(&skill_path)?;
-            log::debug!("Skill {directory} 已从 {app:?} 删除");
+        // 删除与写入保持同一口径：只清理 CC Switch 管理的实际投影目标，
+        // 不触碰仅用于扫描/导入的 Antigravity 私有 Skill 目录。
+        // 删除采用 fail-fast；任一受管目标清理失败时立即向上层
+        // 报错，避免在未能完整确认清理结果的情况下报告禁用/卸载成功。
+        for app_dir in Self::get_app_skills_dirs(app)? {
+            let skill_path = app_dir.join(directory);
+            if skill_path.exists() || Self::is_symlink(&skill_path) {
+                Self::remove_path(&skill_path)?;
+                log::debug!("Skill {directory} 已从 {app:?} 删除");
+            }
         }
 
         Ok(())
     }
 
-    /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
@@ -1779,32 +1906,34 @@ impl SkillService {
 
         let skills = db.get_all_installed_skills()?;
         let ssot_dir = Self::get_ssot_dir()?;
-        let app_dir = Self::get_app_skills_dir(app)?;
+        let app_dirs = Self::get_app_skills_dirs(app)?;
 
         let indexed_skills: HashMap<String, &InstalledSkill> = skills
             .values()
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        if app_dir.exists() {
-            for entry in fs::read_dir(&app_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                let dir_name = entry.file_name().to_string_lossy().to_string();
+        for app_dir in &app_dirs {
+            if app_dir.exists() {
+                for entry in fs::read_dir(app_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
 
-                if dir_name.starts_with('.') {
-                    continue;
-                }
+                    if dir_name.starts_with('.') {
+                        continue;
+                    }
 
-                if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
-                    if !skill.apps.is_enabled_for(app) {
+                    if let Some(skill) = indexed_skills.get(&dir_name.to_lowercase()) {
+                        if !skill.apps.is_enabled_for(app) {
+                            Self::remove_path(&path)?;
+                        }
+                        continue;
+                    }
+
+                    if Self::is_symlink_to_ssot(&path, &ssot_dir) {
                         Self::remove_path(&path)?;
                     }
-                    continue;
-                }
-
-                if Self::is_symlink_to_ssot(&path, &ssot_dir) {
-                    Self::remove_path(&path)?;
                 }
             }
         }
@@ -2343,13 +2472,15 @@ impl SkillService {
         }
 
         for app in AppType::all() {
-            let app_dir = match Self::get_app_skills_dir(&app) {
-                Ok(dir) => dir,
+            let app_dirs = match Self::get_app_skills_scan_dirs(&app) {
+                Ok(dirs) => dirs,
                 Err(_) => continue,
             };
-            let candidate = app_dir.join(&skill.directory);
-            if candidate.is_dir() {
-                return Ok(Some(candidate));
+            for app_dir in app_dirs {
+                let candidate = app_dir.join(&skill.directory);
+                if candidate.is_dir() {
+                    return Ok(Some(candidate));
+                }
             }
         }
 
@@ -2969,44 +3100,46 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     // 扫描各应用目录
     for app in AppType::all() {
-        let app_dir = match SkillService::get_app_skills_dir(&app) {
-            Ok(d) => d,
+        let app_dirs = match SkillService::get_app_skills_scan_dirs(&app) {
+            Ok(dirs) => dirs,
             Err(_) => continue,
         };
 
-        let entries = match fs::read_dir(&app_dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        for app_dir in app_dirs {
+            let entries = match fs::read_dir(&app_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
 
-            let dir_name = entry.file_name().to_string_lossy().to_string();
-            if dir_name.starts_with('.') {
-                continue;
-            }
-            if !path.join("SKILL.md").exists() {
-                continue;
-            }
-            if has_snapshot && !discovered.contains_key(&dir_name) {
-                continue;
-            }
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+                if !path.join("SKILL.md").exists() {
+                    continue;
+                }
+                if has_snapshot && !discovered.contains_key(&dir_name) {
+                    continue;
+                }
 
-            // 复制到 SSOT（如果不存在）
-            let ssot_path = ssot_dir.join(&dir_name);
-            if !ssot_path.exists() {
-                SkillService::copy_dir_recursive(&path, &ssot_path)?;
-            }
+                // 复制到 SSOT（如果不存在）
+                let ssot_path = ssot_dir.join(&dir_name);
+                if !ssot_path.exists() {
+                    SkillService::copy_dir_recursive(&path, &ssot_path)?;
+                }
 
-            if !has_snapshot {
-                discovered
-                    .entry(dir_name)
-                    .or_default()
-                    .set_enabled_for(&app, true);
+                if !has_snapshot {
+                    discovered
+                        .entry(dir_name)
+                        .or_default()
+                        .set_enabled_for(&app, true);
+                }
             }
         }
     }
@@ -3069,6 +3202,12 @@ mod tests {
         .expect("write SKILL.md");
     }
 
+    fn invalid_skill_target_parent(temp: &Path, name: &str) -> PathBuf {
+        let parent = temp.join(name);
+        fs::write(&parent, "not a directory").expect("write blocking file");
+        parent.join("skills")
+    }
+
     #[test]
     fn resolve_skill_source_dir_returns_repo_root_for_root_level_skill() {
         let temp = tempdir().expect("tempdir");
@@ -3123,5 +3262,96 @@ mod tests {
             dest.join("SKILL.md").is_file(),
             "existing destination skill should be preserved"
         );
+    }
+
+    #[test]
+    fn gemini_skills_dirs_only_include_cli_by_default_and_add_config_when_agy_active() {
+        let dirs =
+            SkillService::get_app_skills_dirs(&AppType::Gemini).expect("gemini dirs resolve");
+
+        if SkillService::is_agy_active() {
+            assert_eq!(dirs.len(), 2);
+        } else {
+            assert_eq!(dirs.len(), 1);
+            assert!(dirs[0].to_string_lossy().ends_with(".gemini/skills"));
+        }
+    }
+
+    #[test]
+    fn gemini_multi_dir_sync_keeps_success_when_a_later_target_fails() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-skill");
+        let successful_dir = temp.path().join("gemini-cli").join("skills");
+        let failed_dir = invalid_skill_target_parent(temp.path(), "blocked-agy-parent");
+        write_skill(&source, "Source Skill");
+
+        SkillService::sync_to_gemini_dirs_best_effort(
+            &source,
+            "source-skill",
+            &[successful_dir.clone(), failed_dir],
+        )
+        .expect("one successful target keeps the operation successful");
+
+        assert!(successful_dir
+            .join("source-skill")
+            .join("SKILL.md")
+            .is_file());
+    }
+
+    #[test]
+    fn gemini_multi_dir_sync_continues_after_an_early_failure() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-skill");
+        let failed_dir = invalid_skill_target_parent(temp.path(), "blocked-cli-parent");
+        let successful_dir = temp.path().join("antigravity").join("skills");
+        write_skill(&source, "Source Skill");
+
+        SkillService::sync_to_gemini_dirs_best_effort(
+            &source,
+            "source-skill",
+            &[failed_dir, successful_dir.clone()],
+        )
+        .expect("later successful target should still be attempted");
+
+        assert!(successful_dir
+            .join("source-skill")
+            .join("SKILL.md")
+            .is_file());
+    }
+
+    #[test]
+    fn gemini_multi_dir_sync_errors_when_every_target_fails() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-skill");
+        let first_failed_dir = invalid_skill_target_parent(temp.path(), "blocked-cli-parent");
+        let second_failed_dir = invalid_skill_target_parent(temp.path(), "blocked-agy-parent");
+        write_skill(&source, "Source Skill");
+
+        let err = SkillService::sync_to_gemini_dirs_best_effort(
+            &source,
+            "source-skill",
+            &[first_failed_dir, second_failed_dir],
+        )
+        .expect_err("all failed targets should fail the operation");
+
+        assert!(err.to_string().contains("所有目标目录均失败"));
+    }
+
+    #[test]
+    fn single_target_sync_failure_still_propagates() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-skill");
+        let failed_dir = invalid_skill_target_parent(temp.path(), "blocked-parent");
+        write_skill(&source, "Source Skill");
+
+        let err = SkillService::sync_to_dest_dir(
+            &source,
+            &failed_dir.join("source-skill"),
+            "source-skill",
+            &AppType::Codex,
+        )
+        .expect_err("single target errors must still propagate");
+
+        assert!(!err.to_string().is_empty());
     }
 }
