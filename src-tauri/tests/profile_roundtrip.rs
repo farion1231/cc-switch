@@ -83,6 +83,7 @@ fn installed_skill(id: &str, directory: &str, claude_enabled: bool) -> Installed
         installed_at: 1_000,
         content_hash: None,
         updated_at: 0,
+        global_enabled: false,
     }
 }
 
