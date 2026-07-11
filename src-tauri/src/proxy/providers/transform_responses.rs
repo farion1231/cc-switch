@@ -259,10 +259,11 @@ pub(crate) fn map_responses_stop_reason(
 /// 1. input_tokens: Anthropic `input_tokens` → OpenAI `prompt_tokens` → default 0
 /// 2. output_tokens: Anthropic `output_tokens` → OpenAI `completion_tokens` → default 0
 /// 3. cache_read_input_tokens: Direct field → nested input_tokens_details.cached_tokens → prompt_tokens_details.cached_tokens
-/// 4. cache_creation_input_tokens: Direct field only
+/// 4. cache_creation_input_tokens: Direct field → nested
+///    input_tokens_details.cache_write_tokens → prompt_tokens_details.cache_write_tokens
 ///
 /// **Cache Token Priority Order**:
-/// 1. OpenAI nested details (`input_tokens_details.cached_tokens`, `prompt_tokens_details.cached_tokens`) as initial value
+/// 1. OpenAI nested details (`cached_tokens`, `cache_write_tokens`) as initial values
 /// 2. Direct Anthropic-style fields (`cache_read_input_tokens`, `cache_creation_input_tokens`) override if present
 ///
 /// **Logging**:
@@ -344,6 +345,19 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
         if result.get("cache_read_input_tokens").is_none() {
             result["cache_read_input_tokens"] = json!(cached);
         }
+    }
+    // GPT-5.6+ reports cache writes in the nested OpenAI token-details object.
+    // Treat writes as Anthropic cache creation so the downstream client and
+    // billing layer can distinguish them from fresh input.
+    let nested_cache_write = u
+        .pointer("/input_tokens_details/cache_write_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            u.pointer("/prompt_tokens_details/cache_write_tokens")
+                .and_then(|v| v.as_u64())
+        });
+    if let Some(cache_write) = nested_cache_write {
+        result["cache_creation_input_tokens"] = json!(cache_write);
     }
 
     // Step 2: Direct Anthropic-style fields override (authoritative if present)
@@ -1708,6 +1722,21 @@ mod tests {
         assert_eq!(result["input_tokens"], json!(20));
         assert_eq!(result["output_tokens"], json!(50));
         assert_eq!(result["cache_read_input_tokens"], json!(80));
+    }
+
+    #[test]
+    fn test_build_usage_cache_write_tokens_from_nested_details() {
+        let result = build_anthropic_usage_from_responses(Some(&json!({
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "input_tokens_details": {
+                "cached_tokens": 30,
+                "cache_write_tokens": 20
+            }
+        })));
+        assert_eq!(result["input_tokens"], json!(50));
+        assert_eq!(result["cache_read_input_tokens"], json!(30));
+        assert_eq!(result["cache_creation_input_tokens"], json!(20));
     }
 
     #[test]
