@@ -13,7 +13,13 @@ use crate::services::subscription::SubscriptionQuota;
 #[derive(Default)]
 pub struct UsageCache {
     subscription: RwLock<HashMap<AppType, SubscriptionQuota>>,
+    /// `(app_type, provider_id)` → 该 provider 的"默认/active" key 快照。
+    /// Provider-level 用途：托盘菜单、ProviderCard 顶部。
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
+    /// `(app_type, provider_id, key_id)` → 该 key 自己的快照。
+    /// Per-key 用途：编辑面板里 ApiKeyListSection 逐行展示。key 维度的
+    /// 快照不能跟 provider-level 用同一个 HashMap——否则两把 key 互相覆盖。
+    script_per_key: RwLock<HashMap<(AppType, String, String), UsageResult>>,
 }
 
 impl UsageCache {
@@ -30,6 +36,24 @@ impl UsageCache {
     pub fn put_script(&self, app_type: AppType, provider_id: String, result: UsageResult) {
         if let Ok(mut w) = self.script.write() {
             w.insert((app_type, provider_id), result);
+        }
+    }
+
+    /// Per-key 写穿。`key_id` 维度的快照独立落盘，不会和同 pool 其它 key
+    /// 互相覆盖，也不会污染 `script[(app_type, provider_id)]` 的 provider
+    /// 级快照。
+    pub fn put_script_per_key(
+        &self,
+        app_type: AppType,
+        provider_id: &str,
+        key_id: &str,
+        result: UsageResult,
+    ) {
+        if let Ok(mut w) = self.script_per_key.write() {
+            w.insert(
+                (app_type, provider_id.to_string(), key_id.to_string()),
+                result,
+            );
         }
     }
 

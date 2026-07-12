@@ -377,6 +377,33 @@ impl AppType {
         )
     }
 
+    /// 此 AppType 的 API key 在 `settings_config` 里的写入位置。
+    ///
+    /// 单一真理来源——`Provider::set_api_key`、`adapter::inject_key_into_provider`、
+    /// `dao::api_keys::set_active_api_key_with_settings` 都走这里。
+    /// 顺序：先取元组内出现的第一组可见字段（与 `resolve_usage_credentials` 读取路径
+    /// 严格对称——避免写入和读出不在同一位置）。
+    ///
+    /// 元组：`(parent, child)`。
+    ///   - `("env", "ANTHROPIC_AUTH_TOKEN")` → `settings_config["env"]["ANTHROPIC_AUTH_TOKEN"]`
+    ///   - `("auth", "OPENAI_API_KEY")` → `settings_config["auth"]["OPENAI_API_KEY"]`
+    ///   - `("config", "api_key")` → Hermes 顶层 config
+    ///   - `("config", "apiKey")` → OpenClaw 驼峰
+    ///   - `("options", "apiKey")` → OpenCode
+    pub fn api_key_settings_path(&self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            AppType::Claude | AppType::ClaudeDesktop => &[
+                ("env", "ANTHROPIC_AUTH_TOKEN"),
+                ("env", "ANTHROPIC_API_KEY"),
+            ],
+            AppType::Codex => &[("auth", "OPENAI_API_KEY")],
+            AppType::Gemini => &[("env", "GEMINI_API_KEY")],
+            AppType::Hermes => &[("config", "api_key")],
+            AppType::OpenClaw => &[("config", "apiKey")],
+            AppType::OpenCode => &[("options", "apiKey")],
+        }
+    }
+
     /// Return an iterator over all app types
     pub fn all() -> impl Iterator<Item = AppType> {
         [

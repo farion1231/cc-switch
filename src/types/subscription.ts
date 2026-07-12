@@ -11,6 +11,15 @@ export interface QuotaTier {
   usedValueUsd?: number | null;
   maxValueUsd?: number | null;
   planLabel?: string | null;
+  // MiniMax 等 provider 直接返回绝对次数时填充；与 utilization 同时存在，
+  // 渲染层应优先用绝对值（"7 / 100"）展示。仅在 provider 给出绝对值时存在，
+  // 其余 provider（ZenMux USD / Zhipu percentage）保持 undefined。
+  usedCount?: number | null;
+  totalCount?: number | null;
+  countUnit?: string | null;
+  // 服务端精确剩余毫秒数（来自 MiniMax *_remains_time 等字段）。
+  // 优先于前端 end_time - Date.now() 计算（避免本地时钟漂移 + 拿到毫秒精度）。
+  remainsTimeMs?: number | null;
 }
 
 export interface ExtraUsage {

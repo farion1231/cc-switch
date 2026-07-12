@@ -209,7 +209,7 @@ async fn update_tray_menu(
 
 #[cfg(target_os = "macos")]
 fn macos_tray_icon() -> Option<Image<'static>> {
-    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template_3x.png");
+    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusTemplate.png");
 
     match Image::from_bytes(ICON_BYTES) {
         Ok(icon) => Some(icon),
@@ -264,6 +264,10 @@ pub fn run() {
                 {
                     linux_fix::nudge_main_window(window.clone());
                 }
+                #[cfg(target_os = "macos")]
+                {
+                    tray::nudge_main_window_on_macos(window.clone());
+                }
             }
         }));
     }
@@ -301,6 +305,22 @@ pub fn run() {
                     api.prevent_close();
                     window.app_handle().exit(0);
                 }
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                if let tauri::WindowEvent::Focused(focused) = event {
+                    if *focused {
+                        if let Some(webview_window) = window.app_handle().get_webview_window("main") {
+                            tray::nudge_main_window_on_macos(webview_window);
+                        }
+                    }
+                }
+
+                // 注意：不在 Resized 事件里 nudge——macOS WebKit 的
+                // Resized 事件会被 nudge 自身的 set_size 反复触发，
+                // 形成回调风暴。改用 webview 端的 CSS 媒体查询 / ResizeObserver
+                // 处理自适应布局，或让用户手动最大化时由 maximize 事件触发。
             }
         })
         .plugin(tauri_plugin_process::init())
@@ -420,29 +440,36 @@ pub fn run() {
             //
             // 预检：数据库版本过新时，必须先于任何 schema 写操作（create_tables 内含
             // DROP/ALTER 等 DDL）进入恢复界面，避免旧应用对读不懂的更新版 DB 落写。
-            match crate::database::Database::stored_user_version_exceeds_supported(&db_path) {
-                Ok(Some(version)) => {
-                    log::warn!("数据库版本过新（v{version}），引导用户在应用内升级应用");
-                    crate::init_status::set_init_error(crate::init_status::InitErrorPayload {
-                        path: db_path.display().to_string(),
-                        error: format!(
-                            "数据库版本过新（{version}），当前应用仅支持 {}，请升级应用后再尝试。",
-                            crate::database::SCHEMA_VERSION
-                        ),
-                        kind: Some("db_version_too_new".to_string()),
-                        db_version: Some(version),
-                        supported_version: Some(crate::database::SCHEMA_VERSION),
-                    });
-                    // 主窗口默认 visible:false，恢复界面必须强制显示
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+            // 开发期可通过 CC_SWITCH_DEV_BYPASS_DB_VERSION=1 跳过此预检。
+            if std::env::var_os("CC_SWITCH_DEV_BYPASS_DB_VERSION").is_some() {
+                log::warn!(
+                    "已设置 CC_SWITCH_DEV_BYPASS_DB_VERSION，跳过数据库版本过新预检（仅限开发环境）"
+                );
+            } else {
+                match crate::database::Database::stored_user_version_exceeds_supported(&db_path) {
+                    Ok(Some(version)) => {
+                        log::warn!("数据库版本过新（v{version}），引导用户在应用内升级应用");
+                        crate::init_status::set_init_error(crate::init_status::InitErrorPayload {
+                            path: db_path.display().to_string(),
+                            error: format!(
+                                "数据库版本过新（{version}），当前应用仅支持 {}，请升级应用后再尝试。",
+                                crate::database::SCHEMA_VERSION
+                            ),
+                            kind: Some("db_version_too_new".to_string()),
+                            db_version: Some(version),
+                            supported_version: Some(crate::database::SCHEMA_VERSION),
+                        });
+                        // 主窗口默认 visible:false，恢复界面必须强制显示
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    log::warn!("预检数据库版本失败，继续正常初始化流程: {e}");
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("预检数据库版本失败，继续正常初始化流程: {e}");
+                    }
                 }
             }
 
@@ -703,6 +730,43 @@ pub fn run() {
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
 
+            // Per-key live config 写入迁移（multi-api-keys 第一次启动时跑一遍）。
+            // 已有 provider 的 N 把 key 各自生成 on-disk 副本
+            // （`{config_dir}/keys/{provider_id}/{key_id}.<ext>`）——保证
+            // 升级后立即可用。完成后写迁移标记，不再跑。
+            let migrations =
+                app_state.db.get_setting("local_migrations").ok().flatten();
+            if let Some(json) = migrations {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if parsed.get("multiApiKeysFilesV1").is_none() {
+                        log::info!(
+                            "Running per-key live config migration (multi_api_keys_files_v1)..."
+                        );
+                        match crate::services::provider::per_key_live::regenerate_all_per_key_files(
+                            app_state.db.as_ref(),
+                        ) {
+                            Ok(()) => {
+                                let mut m = parsed;
+                                m["multiApiKeysFilesV1"] = serde_json::json!({
+                                    "completedAt": chrono::Utc::now().to_rfc3339(),
+                                    "providersScanned": 0,
+                                    "filesWritten": 0,
+                                });
+                                if let Ok(s) = serde_json::to_string(&m) {
+                                    let _ = app_state.db.set_setting("local_migrations", &s);
+                                }
+                                log::info!(
+                                    "✓ Per-key live config migration completed"
+                                );
+                            }
+                            Err(e) => log::warn!(
+                                "✗ Per-key live config migration failed: {e}"
+                            ),
+                        }
+                    }
+                }
+            }
+
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
                 let has_omo = app_state
@@ -922,11 +986,10 @@ pub fn run() {
             // 使用平台对应的托盘图标（macOS 使用模板图标适配深浅色）
             #[cfg(target_os = "macos")]
             {
-                if let Some(icon) = macos_tray_icon() {
-                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
-                } else if let Some(icon) = app.default_window_icon() {
-                    log::warn!("Falling back to default window icon for tray");
+                if let Some(icon) = app.default_window_icon() {
                     tray_builder = tray_builder.icon(icon.clone());
+                } else if let Some(icon) = macos_tray_icon() {
+                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
                 } else {
                     log::warn!("Failed to load macOS tray icon for tray");
                 }
@@ -1155,6 +1218,17 @@ pub fn run() {
 
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
+
+            // macOS: silent_startup 模式下把激活策略切到 Accessory，dock
+            // 隐藏，窗口由 `window.hide()` 负责隐藏。**先**于 `window.show`
+            // 切策略，避免「先 show 后改策略」导致 dock 图标闪一下又消失的
+            // 现象。正常启动模式无需显式 set_activation_policy——Tauri 默认
+            // 就是 Regular，由 show() + set_focus() 决定焦点归属。
+            #[cfg(target_os = "macos")]
+            if settings.silent_startup {
+                tray::apply_tray_policy(app.handle(), false);
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 // 在窗口首次显示前同步装饰状态，避免前端加载后再切换导致标题栏闪烁
                 // 仅 Linux 生效：解决 Wayland 下系统窗口按钮不可用的问题
@@ -1165,13 +1239,40 @@ pub fn run() {
                     let _ = window.hide();
                     #[cfg(target_os = "windows")]
                     let _ = window.set_skip_taskbar(true);
-                    #[cfg(target_os = "macos")]
-                    tray::apply_tray_policy(app.handle(), false);
                     log::info!("静默启动模式：主窗口已隐藏");
                 } else {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
                     log::info!("正常启动模式：主窗口已显示");
+
+                    // macOS: 还原后的窗口矩形可能跑到屏外（外接副屏断开的常见
+                    // 副作用），拉回主屏可视范围。Linux 由 nudge_main_window 兜底，
+                    // 不再重复。
+                    #[cfg(target_os = "macos")]
+                    {
+                        let app_handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            // 等待 window-state 插件的还原完成（它在 setup() 之后
+                            // 异步跑），否则读到的 outer_size/position 是 conf 默认值。
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            clamp_window_to_monitor(&app_handle);
+                        });
+                    }
+
+                    // macOS: show() 之后 wait 一帧再 set_focus，避免与 webview
+                    // 首次布局争抢焦点导致窗口被瞬间最小化。
+                    #[cfg(target_os = "macos")]
+                    {
+                        let app_handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                            if let Some(w) = app_handle.get_webview_window("main") {
+                                let _ = w.set_focus();
+                            }
+                        });
+                    }
 
                     // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
                     // 启动时 webview 未获取焦点 + surface 尺寸协商失败，导致点击无效。
@@ -1181,6 +1282,8 @@ pub fn run() {
                         linux_fix::nudge_main_window(window.clone());
                     }
                 }
+
+
             }
 
 
@@ -1250,6 +1353,7 @@ pub fn run() {
             commands::validate_mcp_command,
             // usage query
             commands::queryProviderUsage,
+            commands::queryProviderUsageForKey,
             commands::testUsageScript,
             // subscription quota
             commands::get_subscription_quota,
@@ -1509,6 +1613,16 @@ pub fn run() {
             commands::enter_lightweight_mode,
             commands::exit_lightweight_mode,
             commands::is_lightweight_mode,
+            // Multi-API key per provider (v12)
+            commands::cmd_list_api_keys,
+            commands::cmd_get_api_key,
+            commands::cmd_get_active_api_key,
+            commands::cmd_create_api_key,
+            commands::cmd_update_api_key,
+            commands::cmd_delete_api_key,
+            commands::cmd_reorder_api_keys,
+            commands::cmd_set_active_api_key,
+            commands::cmd_mark_key_usage_high,
         ]);
 
     let app = builder
@@ -1588,6 +1702,7 @@ pub fn run() {
                         let _ = window.show();
                         let _ = window.set_focus();
                         tray::apply_tray_policy(app_handle, true);
+                        tray::nudge_main_window_on_macos(window.clone());
                     } else if crate::lightweight::is_lightweight_mode() {
                         if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
                             log::error!("退出轻量模式重建窗口失败: {e}");
@@ -2024,7 +2139,82 @@ fn classify_exit_request(code: Option<i32>) -> ExitRequestAction {
 // ============================================================
 
 fn window_state_flags() -> StateFlags {
+    // 不持久化 FULLSCREEN：macOS 上从 fullscreen 还原时偶发黑屏。
+    // 不持久化 DECORATED / VISIBLE：装饰状态在 setup() 里按 `use_app_window_controls`
+    // 同步过一次；可见性由 silent_startup 单独控制。MAXIMIZED 必须持久化，
+    // 否则最大化窗口下次启动会回到普通尺寸。
     StateFlags::POSITION | StateFlags::SIZE | StateFlags::MAXIMIZED
+}
+
+/// 把 `tauri_plugin_window_state` 还原的窗口矩形裁剪到当前任意一块显示器的
+/// 可见区域内——主要应对用户上次在外接显示器 / 高 DPI 屏幕上拖大窗口、之后
+/// 断开副屏或重启后窗口跑出主屏可视范围、看起来像「窗口不见了」。还原后
+/// 调一次 `set_position` / `set_size` 把窗口拽回来。
+///
+/// 仅在普通启动模式（非静默启动）下生效；静默启动本身就把窗口 hide 了，
+/// 几何修复没有意义。
+#[cfg(target_os = "macos")]
+fn clamp_window_to_monitor(app: &tauri::AppHandle) {
+    use tauri::{LogicalPosition, LogicalSize, Manager};
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return;
+    };
+    if monitors.is_empty() {
+        return;
+    }
+
+    let win_size = window.outer_size().ok();
+    let win_pos = window.outer_position().ok();
+    let (Some(win_size), Some(win_pos)) = (win_size, win_pos) else {
+        return;
+    };
+
+    // 任意一块显示器的可见区域（逻辑像素）；窗口只要跟任意一块有 ≥ 80px × ≥ 40px
+    // 的重叠就算"在屏幕内"。完全在外就把它拉回主屏中央。
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let win_w = (win_size.width as f64) / scale;
+    let win_h = (win_size.height as f64) / scale;
+    let win_x = (win_pos.x as f64) / scale;
+    let win_y = (win_pos.y as f64) / scale;
+
+    let on_screen = monitors.iter().any(|m| {
+        let mpos = m.position();
+        let msize = m.size();
+        let mx = mpos.x as f64 / scale;
+        let my = mpos.y as f64 / scale;
+        let mw = msize.width as f64 / scale;
+        let mh = msize.height as f64 / scale;
+        let overlap_w = (win_x + win_w).min(mx + mw) - win_x.max(mx);
+        let overlap_h = (win_y + win_h).min(my + mh) - win_y.max(my);
+        overlap_w >= 80.0 && overlap_h >= 40.0
+    });
+
+    if on_screen {
+        return;
+    }
+
+    log::warn!(
+        "还原后的窗口位置 ({win_x:.0},{win_y:.0}) {win_w:.0}x{win_h:.0} 不在任一可见显示器内，重新居中"
+    );
+    if let Some(primary) = window.primary_monitor().ok().flatten().or(monitors.into_iter().next()) {
+        let ppos = primary.position();
+        let psize = primary.size();
+        let px = ppos.x as f64 / scale;
+        let py = ppos.y as f64 / scale;
+        let pw = psize.width as f64 / scale;
+        let ph = psize.height as f64 / scale;
+        // 缩到主屏的 80% 大小，居中
+        let target_w = (pw * 0.8).min(win_w);
+        let target_h = (ph * 0.8).min(win_h);
+        let target_x = px + (pw - target_w) / 2.0;
+        let target_y = py + (ph - target_h) / 2.0;
+        let _ = window.set_size(LogicalSize::new(target_w, target_h));
+        let _ = window.set_position(LogicalPosition::new(target_x, target_y));
+    }
 }
 
 /// 当前应用的退出路径会拦截 `ExitRequested` 并最终直接 `std::process::exit(0)`，

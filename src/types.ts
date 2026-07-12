@@ -67,6 +67,7 @@ export interface UsageScript {
   teamOrganizationId?: string; // 智谱团队套餐组织 ID（请求头 bigmodel-organization）
   teamProjectId?: string; // 智谱团队套餐项目 ID（请求头 bigmodel-project）
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
+  groupId?: string; // MiniMax Coding Plan 集团 ID（必填，缺省时接口返回占位零值导致误显示 0%）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
   request?: {
@@ -83,7 +84,7 @@ const DEFAULT_USAGE_SCRIPT: UsageScript = {
   language: "javascript",
   code: "",
   timeout: 10,
-  autoQueryInterval: 5,
+  autoQueryInterval: 1,
 };
 
 export function createUsageScript(

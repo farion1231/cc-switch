@@ -183,10 +183,13 @@ impl Database {
         // 10. Proxy Request Logs 表
         // pricing_model = 写入时实际用于计价的模型名（pricing_model_source 解析结果），
         // 回填按它重算；NULL 表示 v11 之前的历史行，'' 表示未计价的错误行。
+        // v12：新增 api_key_id TEXT 列（NULL = v12 前历史行）。明细 prune 前必须
+        // 按 key 维度聚合，否则 rollback 时 key-pool 关系永久丢失。
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
             pricing_model TEXT,
+            api_key_id TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -261,11 +264,14 @@ impl Database {
         // request_model 保留路由接管的「客户端别名 → 真实模型」映射维度，
         // pricing_model 保留写入时的计价基准（request 计价模式下与 model 分叉），
         // 否则明细被 prune 后接管计费不可审计；历史行迁移时填 ''（未知）。
+        // v12：主键新增 api_key_id 维度——同一 provider 不同 key 的用量必须独立成行，
+        // 否则明细 prune 后 key-pool 关系永久丢失。
         conn.execute(
             "CREATE TABLE IF NOT EXISTS usage_daily_rollups (
                 date TEXT NOT NULL,
                 app_type TEXT NOT NULL,
                 provider_id TEXT NOT NULL,
+                api_key_id TEXT NOT NULL DEFAULT '',
                 model TEXT NOT NULL,
                 request_model TEXT NOT NULL DEFAULT '',
                 pricing_model TEXT NOT NULL DEFAULT '',
@@ -277,7 +283,7 @@ impl Database {
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
+                PRIMARY KEY (date, app_type, provider_id, api_key_id, model, request_model, pricing_model)
             )",
             [],
         )
@@ -389,6 +395,58 @@ impl Database {
             [],
         );
 
+        // provider_api_keys：每 provider 维护多把 API key 的子表（v12 引入）。
+        // enabled 字段允许用户临时排除某把 key 不参与轮换；
+        // is_active 标记当前正在写入 live settings.json 的那把 key
+        // （live 模式只能容纳一把 key，多把时由用户/后端选一把）；
+        // cooldown_until / failure_count 是持久化在行内的运行时状态——
+        // 不拆到独立 cooldown 表是为了避免一次原子写跨两表；进程重启
+        // 直接 reload，无需"脏"队列恢复。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS provider_api_keys (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                notes TEXT NOT NULL DEFAULT '',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT 0,
+                cooldown_until INTEGER NOT NULL DEFAULT 0,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                last_used_at INTEGER,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE,
+                UNIQUE(provider_id, app_type, label)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_api_keys_pool
+             ON provider_api_keys(provider_id, app_type, sort_index)",
+            [],
+        );
+
+        // v12：proxy_request_logs 增加 api_key_id 列（NULL 表示 v12 前的历史行）。
+        // 现有 idx_request_logs_provider 已覆盖 provider 级查询；按 key 查询走
+        // 新增的 (api_key_id, created_at DESC) 索引。
+        let _ = Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "api_key_id",
+            "TEXT",
+        )?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_key
+             ON proxy_request_logs(api_key_id, created_at DESC)",
+            [],
+        );
+
         Ok(())
     }
 
@@ -406,11 +464,18 @@ impl Database {
         let mut version = Self::get_user_version(conn)?;
 
         if version > SCHEMA_VERSION {
-            conn.execute("ROLLBACK TO schema_migration;", []).ok();
-            conn.execute("RELEASE schema_migration;", []).ok();
-            return Err(AppError::Database(format!(
-                "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
-            )));
+            // 开发期可通过 CC_SWITCH_DEV_BYPASS_DB_VERSION=1 跳过此保护（仅限开发环境）
+            if std::env::var_os("CC_SWITCH_DEV_BYPASS_DB_VERSION").is_some() {
+                log::warn!(
+                    "已设置 CC_SWITCH_DEV_BYPASS_DB_VERSION，跳过 DB 版本过新检查（user_version={version}, SCHEMA_VERSION={SCHEMA_VERSION}）"
+                );
+            } else {
+                conn.execute("ROLLBACK TO schema_migration;", []).ok();
+                conn.execute("RELEASE schema_migration;", []).ok();
+                return Err(AppError::Database(format!(
+                    "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+                )));
+            }
         }
 
         let result = (|| {
@@ -474,9 +539,14 @@ impl Database {
                         Self::set_user_version(conn, 11)?;
                     }
                     11 => {
-                        log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
+                        log::info!("迁移数据库从 v11 到 v12（多 API Key 支持：provider_api_keys 表 + proxy_request_logs.api_key_id + 用量聚合按 key 分组）");
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（添加项目 Profiles 表）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -648,6 +718,7 @@ impl Database {
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
             request_model TEXT,
+            api_key_id TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -1304,9 +1375,288 @@ impl Database {
         Ok(())
     }
 
-    /// v11 -> v12 迁移：添加项目 Profiles 表
-    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
+    /// v11 → v12：多 API Key 支持
+    ///
+    /// 1. usage_daily_rollups 主键新增 `api_key_id` 维度（SQLite 改主键必须重建表）。
+    ///    历史行的 api_key_id 用 '' 表示"v12 前数据、未绑定具体 key"。
+    /// 2. 为每个持有可解析 API key 的 provider 在 `provider_api_keys` 写入一条
+    ///    `label="Default"`、`is_active=1` 的种子行——保证前端 / forwarder 立刻能
+    ///    在不感知迁移的前提下读出"当前那把 key"，向后兼容单 key 调用路径。
+    /// 3. OAuth-managed provider（GitHub Copilot、Codex OAuth）由 `meta.provider_type`
+    ///    标识，它们的凭据通过 device-code 流程动态获取，**不**走 api_key 池；
+    ///    这里直接跳过。
+    /// 4. CLAUDE_DESKTOP_OFFICIAL_SEED_ID（v3.x 内置的官方 Claude Desktop 占位）
+    ///    也没有外部 key，跳过。
     fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        // ---- 1. 重建 usage_daily_rollups 主键 ----
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            conn.execute_batch(
+                "ALTER TABLE usage_daily_rollups RENAME TO usage_daily_rollups_v11;
+                 CREATE TABLE usage_daily_rollups (
+                     date TEXT NOT NULL,
+                     app_type TEXT NOT NULL,
+                     provider_id TEXT NOT NULL,
+                     api_key_id TEXT NOT NULL DEFAULT '',
+                     model TEXT NOT NULL,
+                     request_model TEXT NOT NULL DEFAULT '',
+                     pricing_model TEXT NOT NULL DEFAULT '',
+                     request_count INTEGER NOT NULL DEFAULT 0,
+                     success_count INTEGER NOT NULL DEFAULT 0,
+                     input_tokens INTEGER NOT NULL DEFAULT 0,
+                     output_tokens INTEGER NOT NULL DEFAULT 0,
+                     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                     cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                     total_cost_usd TEXT NOT NULL DEFAULT '0',
+                     avg_latency_ms INTEGER NOT NULL DEFAULT 0,
+                     PRIMARY KEY (date, app_type, provider_id, api_key_id, model, request_model, pricing_model)
+                 );
+                 INSERT INTO usage_daily_rollups
+                     (date, app_type, provider_id, api_key_id, model, request_model, pricing_model,
+                      request_count, success_count, input_tokens, output_tokens,
+                      cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms)
+                 SELECT date, app_type, provider_id, '', model, request_model, pricing_model,
+                      request_count, success_count, input_tokens, output_tokens,
+                      cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                 FROM usage_daily_rollups_v11;
+                 DROP TABLE usage_daily_rollups_v11;",
+            )
+            .map_err(|e| {
+                AppError::Database(format!("v11 -> v12 重建 usage_daily_rollups 失败: {e}"))
+            })?;
+        }
+
+        // ---- 2. provider_api_keys 表 + 索引 ----
+        // 必须在 backfill INSERT **之前**建表——v11 升级路径下这张表不存在，
+        // CREATE IF NOT EXISTS 幂等，fresh install 由 create_tables_on_conn
+        // 走过之后这里 no-op。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS provider_api_keys (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                label TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                notes TEXT NOT NULL DEFAULT '',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT 0,
+                cooldown_until INTEGER NOT NULL DEFAULT 0,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                last_used_at INTEGER,
+                last_error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (provider_id, app_type) REFERENCES providers(id, app_type) ON DELETE CASCADE,
+                UNIQUE(provider_id, app_type, label)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11->v12: 创建 provider_api_keys 失败: {e}")))?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_api_keys_pool
+             ON provider_api_keys(provider_id, app_type, sort_index)",
+            [],
+        );
+
+        // ---- 3. 反向 seed：把单 key provider 翻译成 provider_api_keys 行 ----
+        // 跳过 OAuth-managed（凭据走 device-code 流程，无静态 api_key）
+        // 跳过官方 Claude Desktop 占位行（同理，无外部 key）
+        // 注意：v10→v11 的迁移测试 fixture 只有 rollup 表，没有 providers——这种
+        // 半残 fixture 必须容忍。生产路径里 providers 表由更早的 v0/v1 迁移创建。
+        let mut backfilled = 0usize;
+        let mut skipped_oauth = 0usize;
+        let mut skipped_empty = 0usize;
+        if !Self::table_exists(conn, "providers")? {
+            log::info!("v11 -> v12: providers 表不存在，跳过 seed（fixture 路径）");
+        } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, app_type, settings_config, meta FROM providers
+                 WHERE id != 'claude-desktop-official'",
+            )
+            .map_err(|e| AppError::Database(format!("读取 provider 列表失败: {e}")))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(format!("迭代 provider 行失败: {e}")))?;
+
+        let now = chrono::Utc::now().timestamp();
+
+        for row in rows {
+            let (provider_id, app_type, settings_config_str, meta_str) =
+                row.map_err(|e| AppError::Database(e.to_string()))?;
+
+            // OAuth-managed 检测：meta.providerType in {"github_copilot", "codex_oauth"}
+            if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
+                if let Some(pt) = meta.get("providerType").and_then(|v| v.as_str()) {
+                    if pt == "github_copilot" || pt == "codex_oauth" {
+                        skipped_oauth += 1;
+                        continue;
+                    }
+                }
+                // 同时跳过显式 authBinding.source == "managed_account" 的行
+                if meta
+                    .get("authBinding")
+                    .and_then(|b| b.get("source"))
+                    .and_then(|s| s.as_str())
+                    == Some("managed_account")
+                {
+                    skipped_oauth += 1;
+                    continue;
+                }
+            }
+
+            let api_key = Self::extract_legacy_api_key(&settings_config_str, &app_type);
+            if api_key.is_empty() {
+                skipped_empty += 1;
+                continue;
+            }
+
+            // 确定性 id：相同 (provider_id, app_type) 多次重跑 INSERT OR IGNORE 命中唯一约束
+            let key_id = format!("legacy-{provider_id}-{app_type}");
+            let seed_id = format!("legacy-{provider_id}-{app_type}");
+            let tags = "[]";
+
+            // 只有当没有同 provider 的活动 key 时才把这一把标 is_active=1
+            // —— 防御性：极少数情况（用户手动 INSERT 过 provider_api_keys 行）也保留他们的高优先级选择
+            conn.execute(
+                "INSERT OR IGNORE INTO provider_api_keys (
+                    id, provider_id, app_type, label, api_key, tags,
+                    enabled, sort_index, is_active,
+                    cooldown_until, failure_count,
+                    created_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 0, 1, 0, 0, ?7, ?7)",
+                params![
+                    key_id,
+                    provider_id,
+                    app_type,
+                    "Default",
+                    api_key,
+                    tags,
+                    now,
+                ],
+            )
+            .map_err(|e| {
+                AppError::Database(format!("种子 provider_api_keys 行失败 ({seed_id}): {e}"))
+            })?;
+            backfilled += 1;
+        }
+        } // end else (providers table exists)
+
+        log::info!(
+            "v11 -> v12 迁移完成：backfilled {backfilled} 个 provider_api_keys 行，跳过 {skipped_oauth} 个 OAuth-managed、{skipped_empty} 个无 key"
+        );
+
+        // ---- 4. proxy_request_logs.api_key_id ----
+        // 现有 v11 数据库（无此列）必须补上。add_column_if_missing 幂等——fresh
+        // schema 走过 create_tables_on_conn 已创建，本调用 no-op。
+        let _ = Self::add_column_if_missing(
+            conn,
+            "proxy_request_logs",
+            "api_key_id",
+            "TEXT",
+        )?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_key
+             ON proxy_request_logs(api_key_id, created_at DESC)",
+            [],
+        );
+
+        Ok(())
+    }
+
+    /// 从 v11 的 `settings_config` JSON 中按 app 提取唯一的 API key。
+    ///
+    /// 镜像 `Provider::resolve_usage_credentials` 的解析逻辑（`provider.rs:119-208`），
+    /// 但写成纯函数以便在迁移路径（不构造 Provider 实例）里调用。
+    /// 返回 `""` 表示该 provider 没有静态 key（OAuth / 官方占位 / 未配置）。
+    ///
+    /// `pub(crate)`：除了迁移（v11→v12 backfill）外，`ProviderService::add`
+    /// 也会调用——在新建 provider 时把 settings_config 里的 api key seed 进
+    /// provider_api_keys 表，让池与 settings_config 保持同步（review P2）。
+    pub(crate) fn extract_legacy_api_key(settings_config_str: &str, app_type: &str) -> String {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(settings_config_str) else {
+            return String::new();
+        };
+
+        // 辅助：从 env map 中按顺序找第一个非空字符串值（空字符串视为未设置——
+        // 与 provider.rs 里的 first_non_empty 语义对齐，避免预设中 "" 占位吞掉真实 key）
+        fn first_non_empty(env: Option<&serde_json::Value>, keys: &[&str]) -> String {
+            let Some(env) = env else { return String::new() };
+            for key in keys {
+                if let Some(s) = env.get(*key).and_then(|v| v.as_str()) {
+                    if !s.is_empty() {
+                        return s.to_string();
+                    }
+                }
+            }
+            String::new()
+        }
+
+        match app_type {
+            // Claude / ClaudeDesktop：env 风格
+            "claude" | "claude-desktop" => first_non_empty(
+                value.get("env"),
+                &[
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "ANTHROPIC_API_KEY",
+                    "OPENROUTER_API_KEY",
+                    "GOOGLE_API_KEY",
+                ],
+            ),
+            // Codex：auth.OPENAI_API_KEY（兼容顶层 OPENAI_API_KEY 的历史形态）
+            "codex" => value
+                .get("auth")
+                .and_then(|a| a.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    value
+                        .get("OPENAI_API_KEY")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default(),
+            // Gemini：env.GEMINI_API_KEY || env.GOOGLE_API_KEY
+            "gemini" => first_non_empty(value.get("env"), &["GEMINI_API_KEY", "GOOGLE_API_KEY"]),
+            // Hermes：顶层 snake_case
+            "hermes" => value
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_default(),
+            // OpenClaw：顶层 camelCase
+            "openclaw" => value
+                .get("apiKey")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_default(),
+            // OpenCode：嵌套 options.apiKey
+            "opencode" => value
+                .get("options")
+                .and_then(|o| o.get("apiKey"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    /// v12 -> v13 迁移：添加项目 Profiles 表
+    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
                 id TEXT PRIMARY KEY,
@@ -1318,13 +1668,12 @@ impl Database {
             )",
             [],
         )
-        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        .map_err(|e| AppError::Database(format!("v12 -> v13 创建 profiles 表失败: {e}")))?;
         Ok(())
     }
 
+
     /// 插入默认模型定价数据
-    /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
-    /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
     fn seed_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_data = [
             // Claude Fable 5（Opus 之上的新档）

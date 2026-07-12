@@ -39,7 +39,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ApiKeySection } from "./shared";
+import { ProviderKeyEditor } from "./shared";
+import type { AppId } from "@/lib/api";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -53,6 +54,9 @@ import {
 import type { ProviderCategory } from "@/types";
 
 interface HermesFormFieldsProps {
+  // Provider ID (for multi-key pool, only in edit mode)
+  providerId?: string;
+
   baseUrl: string;
   onBaseUrlChange: (value: string) => void;
   apiKey: string;
@@ -140,6 +144,7 @@ function AdvancedSection({
 }
 
 export function HermesFormFields({
+  providerId,
   baseUrl,
   onBaseUrlChange,
   apiKey,
@@ -327,16 +332,18 @@ export function HermesFormFields({
         )}
       </div>
 
-      <ApiKeySection
-        value={apiKey}
-        onChange={onApiKeyChange}
-        // Hermes 没有 OAuth-only 的免 key 官方供应商：即便是 official 预设
-        // （如 Nous Research）也需用户自填 key，故不让 official 禁用输入框。
-        category={category === "official" ? undefined : category}
-        shouldShowLink={shouldShowApiKeyLink}
+{/* API Key——单/多 key 由 ProviderKeyEditor 按 providerId 内部切换 */}
+      <ProviderKeyEditor
+        appId={"hermes" as AppId}
+        providerId={providerId ?? null}
+        shouldShowApiKey
+        shouldShowApiKeyLink={shouldShowApiKeyLink}
+        category={category}
         websiteUrl={websiteUrl}
         isPartner={isPartner}
         partnerPromotionKey={partnerPromotionKey}
+        value={apiKey}
+        onChange={onApiKeyChange}
       />
 
       <div className="space-y-3">

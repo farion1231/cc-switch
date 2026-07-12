@@ -24,9 +24,9 @@
 //! ```
 
 pub(crate) mod backup;
-mod dao;
+pub(crate) mod dao;
 mod migration;
-mod schema;
+pub(crate) mod schema;
 
 #[cfg(test)]
 mod tests;

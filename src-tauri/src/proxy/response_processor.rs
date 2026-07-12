@@ -518,6 +518,7 @@ fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        None, // api_key_id
                     )
                     .await;
                 });
@@ -544,6 +545,7 @@ fn create_usage_collector(
                         true, // is_streaming
                         status_code,
                         Some(session_id),
+                        None, // api_key_id
                     )
                     .await;
                 });
@@ -582,6 +584,10 @@ fn spawn_log_usage(
         .unwrap_or_else(|| ctx.request_model.clone());
     let latency_ms = ctx.latency_ms();
     let session_id = ctx.session_id.clone();
+    // v12 多 key 池：ctx 在 forwarder 入口处会写入 current_key_id（None = 走
+    // provider 自身单 key）。spawn_log_usage 是 forwarder 的成功/失败回调用，
+    // 必须在 forwarder 内更新 ctx.current_key_id 后这里才非空。
+    let api_key_id = ctx.current_key_id.clone();
 
     tokio::spawn(async move {
         log_usage_internal(
@@ -597,6 +603,7 @@ fn spawn_log_usage(
             is_streaming,
             status_code,
             Some(session_id),
+            api_key_id,
         )
         .await;
     });
@@ -630,6 +637,11 @@ async fn log_usage_internal(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    // 该请求实际使用的 API key id（v12 多 key 池引入）。
+    // None = 上游 proxy 未关联到具体 key（OAuth-managed、单 key pre-v12、
+    // 外部 debug 流量）。rollup 按 `''` 归一聚合；前端 UsageFooter 的
+    // "每 key 用量"视图依赖此字段非 None 来拆分。
+    api_key_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -668,6 +680,7 @@ async fn log_usage_internal(
         session_id,
         None, // provider_type
         is_streaming,
+        api_key_id,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
@@ -940,10 +953,13 @@ mod tests {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            key_ring: Arc::new(crate::proxy::providers::key_ring::KeyRing::new()),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            flush_task: Arc::new(Mutex::new(None)),
+            flush_cancel: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -1021,6 +1037,7 @@ mod tests {
             false,
             200,
             None,
+            None, // api_key_id
         )
         .await;
 
@@ -1091,6 +1108,7 @@ mod tests {
             false,
             200,
             None,
+            None, // api_key_id
         )
         .await;
 
@@ -1171,6 +1189,7 @@ mod tests {
             false,
             200,
             None,
+            None, // api_key_id
         )
         .await;
 

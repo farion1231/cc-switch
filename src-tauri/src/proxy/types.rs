@@ -176,6 +176,9 @@ pub struct AppProxyConfig {
     pub auto_failover_enabled: bool,
     /// 最大重试次数
     pub max_retries: u32,
+    /// 单个 provider 内最多尝试多少把 key 才放弃换 provider。
+    /// 上限 = provider 池大小；当 KeyRing 返回 None 时立刻停止。
+    pub max_key_attempts: u32,
     /// 流式首字超时（秒）
     pub streaming_first_byte_timeout: u32,
     /// 流式静默超时（秒）

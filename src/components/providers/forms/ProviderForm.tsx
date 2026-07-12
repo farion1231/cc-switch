@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -637,9 +637,21 @@ function ProviderFormFull({
     }
   }, [appId, initialData, selectedPresetId, resetCodexConfig]);
 
+  // 只在以下两种情况下重置表单：
+  // 1. 首次挂载（initialMountRef.current === true）
+  // 2. providerId 切换（编辑不同供应商）
+  // 不要因为 initialData?.meta 变化（例如选中一把 API key 导致元数据更新）就重置，
+  // 否则会清空用户未保存的改动，给人的感觉是“点击 API key 后整个表单跳回了原始状态”。
+  const initialMountRef = useRef(true);
+  const lastProviderIdRef = useRef<string | undefined>(providerId);
   useEffect(() => {
-    form.reset(defaultValues);
-  }, [defaultValues, form]);
+    const providerIdChanged = lastProviderIdRef.current !== providerId;
+    if (initialMountRef.current || providerIdChanged) {
+      form.reset(defaultValues);
+      lastProviderIdRef.current = providerId;
+      initialMountRef.current = false;
+    }
+  }, [defaultValues, form, providerId]);
 
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({
@@ -2221,6 +2233,7 @@ function ProviderFormFull({
 
           {appId === "opencode" && !isAnyOmoCategory && (
             <OpenCodeFormFields
+              providerId={providerId}
               npm={opencodeForm.opencodeNpm}
               onNpmChange={opencodeForm.handleOpencodeNpmChange}
               apiKey={opencodeForm.opencodeApiKey}
@@ -2266,6 +2279,7 @@ function ProviderFormFull({
           {/* OpenClaw 专属字段 */}
           {appId === "openclaw" && (
             <OpenClawFormFields
+              providerId={providerId}
               baseUrl={openclawForm.openclawBaseUrl}
               onBaseUrlChange={openclawForm.handleOpenclawBaseUrlChange}
               apiKey={openclawForm.openclawApiKey}
@@ -2287,6 +2301,7 @@ function ProviderFormFull({
           {/* Hermes 专属字段 */}
           {appId === "hermes" && (
             <HermesFormFields
+              providerId={providerId}
               baseUrl={hermesForm.hermesBaseUrl}
               onBaseUrlChange={hermesForm.handleHermesBaseUrlChange}
               apiKey={hermesForm.hermesApiKey}

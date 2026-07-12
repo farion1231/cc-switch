@@ -42,6 +42,104 @@
     "enabled": "已开启",
     "notSet": "未设置"
   },
+  "apiKeyList": {
+    "saveProviderFirst": "请先保存供应商，再管理 Key 池",
+    "title": "API Key 池",
+    "subtitle": "多把 key 在代理模式下自动轮换",
+    "empty": "还没有 key，点击下方添加。",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "active": "默认",
+    "disabled": "已停用",
+    "cooldown": "冷却中",
+    "unnamed": "（未命名）",
+    "toggleEnabled": "启用 / 停用",
+    "setActive": "设为默认",
+    "delete": "删除",
+    "add": "添加 Key",
+    "createTitle": "添加 API Key",
+    "createDesc": "为该供应商新增一把 API Key",
+    "labelLabel": "标签",
+    "valueLabel": "API Key",
+    "tagsLabel": "标签",
+    "tagsPlaceholder": "输入后回车添加（prod、region-east）",
+    "notesLabel": "备注",
+    "enabledLabel": "启用",
+    "edit": "编辑",
+    "editTitle": "编辑 Key",
+    "editValueHint": "留空则保留原值",
+    "dragHandle": "拖动以重新排序",
+    "deleteConfirmTitle": "删除 API Key？",
+    "deleteConfirmMessage": "确认删除 \"{{label}}\" 吗？此操作不可撤销。"
+  },
+  "apiKeys": {
+    "create": {
+      "success": "API key 已添加",
+      "error": "添加失败：{{error}}"
+    },
+    "update": {
+      "success": "已保存",
+      "error": "保存失败：{{error}}"
+    },
+    "delete": {
+      "success": "已删除",
+      "error": "删除失败：{{error}}"
+    },
+    "setActive": {
+      "success": "已设为默认 key",
+      "error": "设置失败：{{error}}"
+    }
+  },
+  "apiKeyStatusBar": {
+    "cooldownRemaining": "冷却剩余",
+    "cooldownHint": "（届时自动恢复轮换）",
+    "disabled": "已停用",
+    "disabledHint": "（手动启用后恢复轮换）",
+    "failureCount": "已失败 {{count}} / {{threshold}} 次",
+    "failureHint": "（再失败 {{remaining}} 次将自动轮换）",
+    "ready": "冷却状态：就绪",
+    "readyHint": "（{{threshold}} 次失败后自动轮换）",
+    "fiveHour": "5h 配额",
+    "fiveHourWindow": "5小时",
+    "sevenDay": "7d 配额",
+    "sevenDayWindow": "7天",
+    "thirtyDayWindow": "30天",
+    "monthlyWindow": "月度",
+    "weeklyLimitWindow": "周限额",
+    "remaining": "剩",
+    "windowResetsIn": "将在 {{reset}} 后重置",
+    "units": {
+      "second": "秒",
+      "minute": "分钟",
+      "hour": "小时",
+      "day": "天"
+    }
+  },
+  "keyPool": {
+    "listTitle": "API 密钥池（{{count}}）",
+    "listHint": "代理模式下自动轮换；编辑面板在「编辑」中",
+    "active": "默认",
+    "unnamed": "（未命名）",
+    "cooldown": "冷却",
+    "disabled": "停用",
+    "refresh": "刷新",
+    "refreshing": "刷新中…",
+    "setActive": "设为默认",
+    "activateLabel": "立即启用",
+    "activatedLabel": "已启用",
+    "toggleRotation": "加入轮换",
+    "rotationBlocked": "该 key 轮换已禁用",
+    "rotationBlockedExhausted": "5h/7d 配额已耗尽",
+    "rotationBlockedCooldown": "冷却中，轮换已禁用",
+    "rotationBlockedApiInvalid": "API 无响应或失效，已禁用轮换",
+    "dragHandle": "拖动以重新排序",
+    "health": {
+      "healthy": "正常",
+      "degraded": "有失败",
+      "cooling_down": "冷却中",
+      "disabled": "已停用"
+    }
+  },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
     "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Gemini CLI 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",
@@ -173,7 +271,8 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试"
   },
   "claudeCode": {
     "needsRouting": "需要路由",
@@ -220,7 +319,8 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
         "inactive": "开启 Claude Desktop 本地路由，用于需要模型映射或格式转换的供应商。当前配置地址：{{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "其它应用正在使用代理接管。请先在设置中关闭对应应用接管，再停止本地路由。"
     }
   },
   "notifications": {
@@ -265,7 +365,8 @@
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
-    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由"
+    "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
+    "proxyReasonClaudeDesktop": "使用 Claude Desktop 本地路由模式"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -793,35 +894,35 @@
     "manualInstallCommands": "手动安装命令",
     "oneClickInstallHint": "安装或升级 Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes",
     "localEnvCheck": "本地环境检查",
-    "updateAllTools": "全部升级（{{count}}）",
+    "updateAllTools": "更新所有工具",
     "currentVersion": "当前版本",
     "latestVersion": "最新版本",
-    "updateAvailableShort": "可升级",
+    "updateAvailableShort": "有新版本",
     "toolInstall": "安装",
-    "toolUpdate": "升级",
+    "toolUpdate": "更新",
     "toolReady": "已就绪",
-    "toolActionDone": "{{count}} 个工具{{action}}完成",
+    "toolActionDone": "{{action}}完成",
     "toolActionPartial": "{{succeeded}} 个{{action}}成功，{{failed}} 个失败",
-    "toolActionFailed": "安装/升级命令执行失败",
-    "toolNotRunnable": "已安装但无法运行（未探测到版本）",
-    "toolActionVersionUnchangedTitle": "版本没有变化",
-    "toolActionVersionUnchanged": "仍是 {{version}}（最新：{{latest}}）。上游升级器可能报告成功但没有实际更新。",
-    "toolActionInstalledNotRunnable": "已安装，但当前环境无法运行，请检查",
-    "installedNotRunnable": "已安装·无法运行",
-    "toolCheckEnv": "请检查运行环境",
-    "toolDiagnose": "诊断安装冲突",
+    "toolActionFailed": "{{action}}失败",
+    "toolNotRunnable": "不可用",
+    "toolActionVersionUnchangedTitle": "已经是最新版本",
+    "toolActionVersionUnchanged": "版本未变化",
+    "toolActionInstalledNotRunnable": "已安装但无法运行",
+    "installedNotRunnable": "已安装但不可运行",
+    "toolCheckEnv": "环境检测",
+    "toolDiagnose": "诊断",
     "toolDiagnosing": "诊断中…",
-    "toolConflictTitle": "检测到多处安装",
-    "toolConflictHint": "命令行实际使用标「默认」的那处；升级可能写到了别处。",
+    "toolConflictTitle": "检测到多个安装位置",
+    "toolConflictHint": "检测到多个安装位置，建议选择其中一个作为默认",
     "toolConflictDefault": "默认",
-    "toolConflictNotRunnable": "无法运行",
-    "toolDiagnoseNoConflict": "未发现安装冲突",
+    "toolConflictNotRunnable": "不可用",
+    "toolDiagnoseNoConflict": "未发现冲突",
     "toolDiagnoseFailed": "诊断失败",
-    "toolUpgradeConfirmTitle": "确认升级位置",
-    "toolUpgradeConfirmHint": "检测到多处安装。本次升级不会全部更新，具体作用的位置以下方各项为准。",
-    "toolUpgradeWillRun": "将执行：",
-    "toolUpgradeConfirmBtn": "确认升级",
-    "toolUpgradeUnanchoredHint": "无法确定命令行实际使用哪处，将执行默认升级命令（可能装到 PATH 上第一个 npm）。",
+    "toolUpgradeConfirmTitle": "确认更新",
+    "toolUpgradeConfirmHint": "此操作会从包管理器中升级到最新版本",
+    "toolUpgradeWillRun": "将执行以下命令",
+    "toolUpgradeConfirmBtn": "开始更新",
+    "toolUpgradeUnanchoredHint": "将执行：",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1152,7 +1253,8 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",
@@ -1323,7 +1425,8 @@
     "reasoningEffortHint": "上游支持 low/high/max 等思考深度控制时启用。启用后会自动启用思考模式，并把 Codex 的 reasoning.effort 转成上游 Chat 参数。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "预设供应商已自动配置；自定义供应商会按名称/地址自动推断。仅当自动识别不准时才需手动覆盖。",
-    "advancedSectionHint": "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。"
+"advancedSectionHint": "包含本地路由映射、上游格式、模型映射、思考能力与自定义 User-Agent。供应商使用 Chat Completions 协议或非 GPT 模型时，需在此开启本地路由映射。",
+    "noCommonConfigToApply": "通用配置片段为空或没有可写入的内容"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -1579,7 +1682,8 @@
     "modelsDevTruncated": "仅显示前 {{shown}} 条，共 {{total}} 条结果，请缩小搜索范围",
     "modelsDevDefaultHint": "默认展示最新发布的 {{shown}} 个模型（共 {{total}} 个），输入关键字可全量搜索",
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
-    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
+    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)",
+    "unpriced": "未定价"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -1621,6 +1725,10 @@
     "organizationIdPlaceholder": "例如：org-xxxxxx",
     "projectId": "项目 ID",
     "projectIdPlaceholder": "例如：proj-xxxxxx",
+    "minimaxGroupId": "集团 ID（Group ID）",
+    "minimaxGroupIdHint": "MiniMax 用量接口需要 Group ID 才能返回真实数据；缺省时接口返回 0/100 占位值，会被误显示为 0%。",
+    "minimaxGroupIdLink": "请在 MiniMax 开放平台「账户管理 → 账户信息 → 基本信息」中获取。",
+    "minimaxGroupIdUrlLabel": "打开 MiniMax 账户页面",
     "defaultPlan": "默认套餐",
     "queryFailedMessage": "查询失败",
     "queryScript": "查询脚本（JavaScript）",
@@ -2447,7 +2555,7 @@
     "testProvider": "测试模型"
   },
   "health": {
-    "operational": "正常",
+    "operational": "轮换中",
     "degraded": "降级",
     "failed": "失败",
     "circuitOpen": "熔断",
@@ -2457,14 +2565,15 @@
     "enabled": "{{app}} 故障转移已启用",
     "disabled": "{{app}} 故障转移已关闭",
     "toggleFailed": "操作失败: {{detail}}",
-    "inQueue": "已加入",
-    "addQueue": "加入",
+    "inRotation": "轮换中",
+    "addToRotation": "加入轮换",
     "priority": {
       "tooltip": "故障转移优先级 {{priority}}"
     },
     "tooltip": {
       "enabled": "{{app}} 故障转移已启用\n按队列优先级（P1→P2→...）选择供应商",
-      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个"
+      "disabled": "启用 {{app}} 故障转移\n将立即切换到队列 P1，并在失败时自动切换到下一个",
+      "takeoverRequired": "请先接管 {{app}}，再启用故障转移"
     }
   },
   "proxy": {
@@ -2642,7 +2751,9 @@
     },
     "server": {
       "started": "路由服务已启动 - {{address}}:{{port}}",
-      "startFailed": "启动路由服务失败: {{detail}}"
+      "startFailed": "启动路由服务失败: {{detail}}",
+      "stopFailed": "停止代理服务失败：{{detail}}",
+      "stopped": "代理服务已停止"
     },
     "stoppedWithRestore": "路由服务已关闭，已恢复所有路由配置",
     "stopWithRestoreFailed": "停止失败: {{detail}}"

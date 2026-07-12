@@ -40,10 +40,30 @@ pub enum ProxyError {
     ProviderUnhealthy(String),
 
     #[error("上游错误 (状态码 {status}): {body:?}")]
-    UpstreamError { status: u16, body: Option<String> },
+    UpstreamError {
+        status: u16,
+        body: Option<String>,
+        /// 来自上游 `Retry-After` / `Retry-After-MS` / `x-ratelimit-reset-ms`
+        /// 头预解析出的冷却秒数。`None` 表示响应里没有 retry hint（也包括
+        /// 解析失败——失败时静默退化为 `None`，避免 panic）。
+        ///
+        /// KeyRing 轮换时用这个值来设 cooldown；forwarder 在构造错误时
+        /// 从 `response.headers()` 解析并填入。
+        retry_after_secs: Option<u64>,
+    },
 
     #[error("超过最大重试次数")]
     MaxRetriesExceeded,
+
+    /// Provider 池里所有可用的 key 都被限流/配额耗尽。
+    /// 携带 provider.id 用于日志/UI 提示。
+    ///
+    /// 触发场景：同一 provider 的 key 池大小为 N，max_key_attempts=M，
+    /// 连续 M 次 `classify_limit_signal` 命中后没有可用的下一把 key
+    /// —— 此时应停止故障转移到下家（因为下家更不可信），直接返回 429/503
+    /// 让客户端决定是否重试。
+    #[error("Provider {0} 的所有 API key 都暂时不可用（限流/配额耗尽）")]
+    AllKeysRateLimited(String),
 
     #[error("数据库错误: {0}")]
     DatabaseError(String),
@@ -82,6 +102,7 @@ impl IntoResponse for ProxyError {
             ProxyError::UpstreamError {
                 status: upstream_status,
                 body: upstream_body,
+                ..
             } => {
                 let http_status =
                     StatusCode::from_u16(*upstream_status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -127,6 +148,11 @@ impl IntoResponse for ProxyError {
                     ProxyError::ForwardFailed(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
                     ProxyError::NoAvailableProvider => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
+                    }
+                    ProxyError::AllKeysRateLimited(_) => {
+                        // 单 provider 池内 key 全耗尽——用 429 告诉客户端「暂时过载」，
+                        // 比 503 更准确地表达「这是上游配额问题，不是代理故障」。
+                        (StatusCode::TOO_MANY_REQUESTS, self.to_string())
                     }
                     ProxyError::AllProvidersCircuitOpen => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())

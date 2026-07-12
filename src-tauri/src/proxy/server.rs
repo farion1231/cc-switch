@@ -26,8 +26,9 @@ use axum::{
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -40,6 +41,9 @@ pub struct ProxyState {
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
+    /// 共享的 KeyRing（每 provider 多 API key 池 + 冷却状态）。
+    /// forwarder 借它做限流后轮换；ProxyService 借它做 30s tick flush。
+    pub key_ring: Arc<crate::proxy::providers::key_ring::KeyRing>,
     /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
@@ -48,12 +52,17 @@ pub struct ProxyState {
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
     pub failover_manager: Arc<FailoverSwitchManager>,
+    /// 30s KeyRing flush tick 的 join handle 槽位。start 时填入、stop 时取出 join。
+    pub flush_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    /// 30s flush tick 的取消信号——stop 时 cancel，spawn 出来的 loop 监听。
+    pub flush_cancel: CancellationToken,
 }
 
 /// 代理HTTP服务器
+#[derive(Clone)]
 pub struct ProxyServer {
     config: ProxyConfig,
-    state: ProxyState,
+    pub state: ProxyState,
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
@@ -69,6 +78,8 @@ impl ProxyServer {
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
         // 创建故障转移切换管理器
         let failover_manager = Arc::new(FailoverSwitchManager::new(db.clone()));
+        // 创建共享 KeyRing——forwarder 限流轮换 + 30s tick flush 共享同一实例。
+        let key_ring = Arc::new(crate::proxy::providers::key_ring::KeyRing::new());
 
         let state = ProxyState {
             db,
@@ -77,10 +88,13 @@ impl ProxyServer {
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
+            key_ring,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
+            flush_task: Arc::new(Mutex::new(None)),
+            flush_cancel: CancellationToken::new(),
         };
 
         Self {
@@ -95,6 +109,14 @@ impl ProxyServer {
         // 检查是否已在运行
         if self.shutdown_tx.read().await.is_some() {
             return Err(ProxyError::AlreadyRunning);
+        }
+
+        // 启动时把所有 provider 的 key 池 reload 进 KeyRing 内存。
+        // 失败的 key 池只是"代理不接管该 provider 的多 key 路径"——记日志继续启动。
+        if let Err(e) = self.state.key_ring.reload_from_db(&self.state.db).await {
+            log::warn!(
+                "[ProxyServer] KeyRing 初始 reload 失败（继续启动，单 key 路径仍可用）: {e}"
+            );
         }
 
         let addr: SocketAddr =

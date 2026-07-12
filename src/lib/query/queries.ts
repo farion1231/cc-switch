@@ -304,6 +304,74 @@ export const useUsageQuery = (
   };
 };
 
+/**
+ * Per-key 用量查询：与 `useUsageQuery` 走同一份 `usage_script`，但
+ * `api_key` 来自 `provider_api_keys` 表里那一行自己的值，不复用
+ * provider 级的 active key。用于 ApiKeyListSection 里逐行展示
+ * 每把 key 自己的配额 / 7d 用量。
+ *
+ * **query key 故意不带 providerId**：每把 key 的 (keyId, appId) 在
+ * 同 pool 内是唯一的。把 providerId 塞进去会让用户切换 provider 时
+ * 误以为换了 key——实际上 keyId 不变才是同一条记录。把 providerId
+ * 作为 queryFn 的闭包参数（不参与 key 构造）即可。
+ */
+export const useKeyUsageQuery = (
+  providerId: string,
+  keyId: string | null | undefined,
+  appId: AppId,
+  options?: UseUsageQueryOptions,
+) => {
+  const { enabled = true, autoQueryInterval = 0 } = options || {};
+
+  const staleTime =
+    autoQueryInterval > 0
+      ? autoQueryInterval * 60 * 1000
+      : 5 * 60 * 1000;
+
+  const query = useQuery<UsageResult>({
+    // keyId 维度——React Query 自动按 keyId 拆 cache，pool 里 N 把 key
+    // 就有 N 份独立快照，切换 active / 轮换时互不污染。
+    queryKey: ["keyUsage", keyId, appId] as const,
+    queryFn: async () => {
+      if (!keyId) {
+        // 占位：enabled=false 时不会调用，但保险起见短路掉。
+        return {
+          success: false,
+          data: undefined,
+          error: "no keyId",
+        } as UsageResult;
+      }
+      return usageApi.queryForKey(providerId, keyId, appId);
+    },
+    enabled: enabled && !!keyId,
+    refetchInterval:
+      autoQueryInterval > 0
+        ? Math.max(autoQueryInterval, 1) * 60 * 1000
+        : false,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: false,
+    retry: 1,
+    retryDelay: 1500,
+    staleTime,
+    gcTime: 10 * 60 * 1000,
+  });
+
+  const lastGoodRef = useRef<LastGoodUsage | null>(null);
+  const { data, lastQueriedAt, lastGood } = resolveDisplayUsage(
+    query.data,
+    query.dataUpdatedAt,
+    lastGoodRef.current,
+    Date.now(),
+  );
+  lastGoodRef.current = lastGood;
+
+  return {
+    ...query,
+    data,
+    lastQueriedAt,
+  };
+};
+
 export const useSessionsQuery = () => {
   return useQuery<SessionMeta[]>({
     queryKey: ["sessions"],

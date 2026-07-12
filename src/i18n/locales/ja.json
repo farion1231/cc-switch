@@ -42,6 +42,104 @@
     "enabled": "有効",
     "notSet": "未設定"
   },
+  "apiKeyList": {
+    "saveProviderFirst": "Key プールを管理する前に、まずプロバイダーを保存してください",
+    "title": "API Key プール",
+    "subtitle": "プロキシモードで複数の key を自動ローテーション",
+    "empty": "key がまだありません。下から追加してください。",
+    "moveUp": "上へ移動",
+    "moveDown": "下へ移動",
+    "active": "デフォルト",
+    "disabled": "無効",
+    "cooldown": "クールダウン中",
+    "unnamed": "（名前なし）",
+    "toggleEnabled": "有効 / 無効",
+    "setActive": "デフォルトに設定",
+    "delete": "削除",
+    "add": "Key を追加",
+    "createTitle": "API Key を追加",
+    "createDesc": "このプロバイダーに新しい API Key を追加します",
+    "labelLabel": "ラベル",
+    "valueLabel": "API Key",
+    "tagsLabel": "タグ",
+    "tagsPlaceholder": "入力後 Enter で追加（prod、region-east）",
+    "notesLabel": "メモ",
+    "enabledLabel": "有効化",
+    "edit": "編集",
+    "editTitle": "Key を編集",
+    "editValueHint": "空欄のままにすると既存の値を保持します",
+    "dragHandle": "ドラッグして並べ替え",
+    "deleteConfirmTitle": "API Key を削除しますか？",
+    "deleteConfirmMessage": "\"{{label}}\" を削除してもよろしいですか？この操作は元に戻せません。"
+  },
+  "apiKeys": {
+    "create": {
+      "success": "API key を追加しました",
+      "error": "追加に失敗しました：{{error}}"
+    },
+    "update": {
+      "success": "保存しました",
+      "error": "保存に失敗しました：{{error}}"
+    },
+    "delete": {
+      "success": "削除しました",
+      "error": "削除に失敗しました：{{error}}"
+    },
+    "setActive": {
+      "success": "デフォルトのキーに設定しました",
+      "error": "設定に失敗しました：{{error}}"
+    }
+  },
+  "apiKeyStatusBar": {
+    "cooldownRemaining": "クールダウン残り",
+    "cooldownHint": "（終了時に自動的にローテーションを再開）",
+    "disabled": "無効",
+    "disabledHint": "（手動で有効化するとローテーションを再開）",
+    "failureCount": "失敗 {{count}} / {{threshold}} 回",
+    "failureHint": "（あと {{remaining}} 回失敗で自動的にローテーション）",
+    "ready": "クールダウン：準備完了",
+    "readyHint": "（{{threshold}} 回失敗で自動的にローテーション）",
+    "fiveHour": "5h クォータ",
+    "fiveHourWindow": "5時間",
+    "sevenDay": "7d クォータ",
+    "sevenDayWindow": "7日",
+    "thirtyDayWindow": "30日",
+    "monthlyWindow": "月間",
+    "weeklyLimitWindow": "週間制限",
+    "remaining": "残り",
+    "windowResetsIn": "{{reset}} 後にリセット",
+    "units": {
+      "second": "秒",
+      "minute": "分",
+      "hour": "時間",
+      "day": "日"
+    }
+  },
+  "keyPool": {
+    "listTitle": "API Key プール（{{count}}）",
+    "listHint": "プロキシモードで自動ローテーション；編集画面で管理",
+    "active": "デフォルト",
+    "unnamed": "（名前なし）",
+    "cooldown": "クールダウン",
+    "disabled": "無効",
+    "refresh": "更新",
+    "refreshing": "更新中…",
+    "setActive": "デフォルトに設定",
+    "activateLabel": "今すぐ有効化",
+    "activatedLabel": "有効",
+    "toggleRotation": "ローテーション対象",
+    "rotationBlocked": "この key のローテーションを無効化",
+    "rotationBlockedExhausted": "5h/7d クォータ枯渇",
+    "rotationBlockedCooldown": "クールダウン中、ローテーション無効",
+    "rotationBlockedApiInvalid": "API 無効または無応答、ローテーション無効",
+    "dragHandle": "ドラッグして並べ替え",
+    "health": {
+      "healthy": "正常",
+      "degraded": "失敗あり",
+      "cooling_down": "クールダウン中",
+      "disabled": "無効"
+    }
+  },
   "firstRunNotice": {
     "title": "CC Switch へようこそ",
     "bodyDefault": "CC Switch は Claude Code / Codex / Gemini CLI の複数プロバイダーをワンクリックで切り替えられるツールです。すでにこれらのツールを設定済みの場合、CC Switch は現在の設定を「default」という名前のプロバイダーとして自動的に保存するので、既存の設定が失われることはありません。",
@@ -173,7 +271,8 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       }
-    }
+    },
+    "duplicateLiveIdsLoadFailed": "設定内のプロバイダー ID の読み込みに失敗しました。設定を修正してから再試行してください"
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要",
@@ -220,7 +319,8 @@
       "tooltip": {
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
         "inactive": "モデルマッピングや形式変換が必要なプロバイダー向けに Claude Desktop ローカルルーティングを起動します。設定アドレス: {{address}}:{{port}}"
-      }
+      },
+      "stopBlockedByTakeover": "他のアプリが代理接管を使用しています。ローカル ルートを停止する前に、設定で対応するアプリの接管をオフにしてください。"
     }
   },
   "notifications": {
@@ -265,7 +365,8 @@
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
-    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。"
+    "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
+    "proxyReasonClaudeDesktop": "Claude Desktop ローカル ルート モードを使用"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -790,38 +891,38 @@
     "viewCurrentReleaseNotes": "現在のバージョンのリリースノートを見る",
     "officialWebsite": "公式サイト",
     "github": "GitHub",
-    "manualInstallCommands": "手動インストールコマンド",
+    "manualInstallCommands": "手動インストール コマンド",
     "oneClickInstallHint": "Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes をインストールまたは更新",
     "localEnvCheck": "ローカル環境チェック",
-    "updateAllTools": "すべて更新（{{count}}）",
+    "updateAllTools": "すべてのツールを更新",
     "currentVersion": "現在のバージョン",
     "latestVersion": "最新バージョン",
-    "updateAvailableShort": "更新あり",
+    "updateAvailableShort": "新バージョンあり",
     "toolInstall": "インストール",
     "toolUpdate": "更新",
     "toolReady": "準備完了",
-    "toolActionDone": "{{count}} 個のツールの{{action}}が完了しました",
-    "toolActionPartial": "{{succeeded}} 個成功、{{failed}} 個失敗（{{action}}）",
-    "toolActionFailed": "インストール/更新コマンドの実行に失敗しました",
-    "toolNotRunnable": "インストール済みですが実行できません（バージョン未検出）",
-    "toolActionVersionUnchangedTitle": "バージョンは変わりませんでした",
-    "toolActionVersionUnchanged": "現在も {{version}}（最新: {{latest}}）です。アップデーターが成功を報告しても実際には更新されていない可能性があります。",
-    "toolActionInstalledNotRunnable": "インストールされましたが、現在の環境では実行できません。確認してください",
-    "installedNotRunnable": "インストール済み・実行不可",
-    "toolCheckEnv": "実行環境を確認",
-    "toolDiagnose": "インストールを診断",
+    "toolActionDone": "{{action}}完了",
+    "toolActionPartial": "{{succeeded}} 個{{action}}成功、{{failed}} 個失敗",
+    "toolActionFailed": "{{action}}に失敗しました",
+    "toolNotRunnable": "使用不可",
+    "toolActionVersionUnchangedTitle": "すでに最新バージョンです",
+    "toolActionVersionUnchanged": "バージョンは変更されていません",
+    "toolActionInstalledNotRunnable": "インストール済みだが実行できません",
+    "installedNotRunnable": "インストール済みだが実行不可",
+    "toolCheckEnv": "環境検出",
+    "toolDiagnose": "診断",
     "toolDiagnosing": "診断中…",
-    "toolConflictTitle": "複数のインストールを検出",
-    "toolConflictHint": "コマンドラインは「既定」のものを使用します。更新が別の場所に適用された可能性があります。",
-    "toolConflictDefault": "既定",
-    "toolConflictNotRunnable": "実行不可",
-    "toolDiagnoseNoConflict": "競合するインストールは見つかりませんでした",
+    "toolConflictTitle": "複数のインストール場所が検出されました",
+    "toolConflictHint": "複数のインストール場所が検出されました。一つをデフォルトとして選択することをお勧めします",
+    "toolConflictDefault": "デフォルト",
+    "toolConflictNotRunnable": "使用不可",
+    "toolDiagnoseNoConflict": "競合は見つかりませんでした",
     "toolDiagnoseFailed": "診断に失敗しました",
-    "toolUpgradeConfirmTitle": "アップグレード先の確認",
-    "toolUpgradeConfirmHint": "複数のインストールを検出しました。今回のアップグレードはすべてを更新するわけではありません。実際に作用する箇所は下記の各項目をご確認ください。",
-    "toolUpgradeWillRun": "実行内容：",
-    "toolUpgradeConfirmBtn": "アップグレードを実行",
-    "toolUpgradeUnanchoredHint": "コマンドラインが実際に使用する箇所を特定できません。既定のアップグレードコマンドを実行します（PATH 上の最初の npm にインストールされる場合があります）。",
+    "toolUpgradeConfirmTitle": "更新の確認",
+    "toolUpgradeConfirmHint": "この操作はパッケージ マネージャーから最新バージョンにアップグレードします",
+    "toolUpgradeWillRun": "次のコマンドが実行されます",
+    "toolUpgradeConfirmBtn": "更新を開始",
+    "toolUpgradeUnanchoredHint": "実行される内容：",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1152,7 +1253,8 @@
     "fetchModelsAuthFailed": "API Key が無効か、権限がありません",
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
-    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください"
+    "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+    "providerKeyStatusLoading": "プロバイダー ID 狀態を読み込み中です。少ししてから再試行してください"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",
@@ -1323,7 +1425,8 @@
     "reasoningEffortHint": "上流が low/high/max などの思考の深さの制御に対応している場合に有効化します。有効にすると思考モードも自動的にオンになり、Codex の reasoning.effort を上流の Chat パラメータに変換します。",
     "reasoningGroupTitle": "思考能力",
     "reasoningSectionHint": "プリセットの供給元は自動的に設定され、カスタム供給元は名前/URL から自動推論されます。自動識別が正しくない場合のみ手動で上書きしてください。",
-    "advancedSectionHint": "上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。Chat Completions プロトコルを使用するプロバイダーはルーティング引き継ぎの有効化が必要です。"
+"advancedSectionHint": "ローカルルーティング、上流フォーマット、モデルマッピング、思考能力、カスタム User-Agent の設定を含みます。供給元が Chat Completions プロトコルまたは GPT 以外のモデルを使用する場合は、ここでローカルルーティングを有効にしてください。",
+    "noCommonConfigToApply": "共通設定スニペットが空か、書き込める内容がありません"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
@@ -1579,7 +1682,8 @@
     "modelsDevTruncated": "{{total}} 件中、先頭 {{shown}} 件のみ表示しています。検索条件を絞り込んでください",
     "modelsDevDefaultHint": "最新リリース順に {{shown}} 件を表示しています（全 {{total}} 件）。キーワード入力で全件検索できます",
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
-    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
+    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
+    "unpriced": "未価格設定"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -1621,6 +1725,10 @@
     "organizationIdPlaceholder": "例: org-xxxxxx",
     "projectId": "プロジェクト ID",
     "projectIdPlaceholder": "例: proj-xxxxxx",
+    "minimaxGroupId": "グループ ID（Group ID）",
+    "minimaxGroupIdHint": "MiniMax 使用量 API は Group ID が必須です。これがないとエンドポイントはプレースホルダのゼロを返し、利用実績がある場合でも 0% と表示されます。",
+    "minimaxGroupIdLink": "MiniMax オープンプラットフォームの「アカウント管理 → アカウント情報 → 基本情報」から取得してください。",
+    "minimaxGroupIdUrlLabel": "MiniMax アカウントページを開く",
     "defaultPlan": "デフォルトプラン",
     "queryFailedMessage": "照会に失敗しました",
     "queryScript": "照会スクリプト (JavaScript)",
@@ -2447,7 +2555,7 @@
     "testProvider": "モデルテスト"
   },
   "health": {
-    "operational": "正常",
+    "operational": "ローテーション中",
     "degraded": "低下",
     "failed": "失敗",
     "circuitOpen": "サーキットオープン",
@@ -2457,14 +2565,15 @@
     "enabled": "{{app}} フェイルオーバーが有効になりました",
     "disabled": "{{app}} フェイルオーバーが無効になりました",
     "toggleFailed": "操作に失敗しました: {{detail}}",
-    "inQueue": "キュー内",
-    "addQueue": "追加",
+    "inRotation": "ローテーション中",
+    "addToRotation": "ローテーションに追加",
     "priority": {
       "tooltip": "フェイルオーバー優先度 {{priority}}"
     },
     "tooltip": {
       "enabled": "{{app}} フェイルオーバーが有効\nキューの優先度（P1→P2→...）で使用します",
-      "disabled": "{{app}} フェイルオーバーを有効にする\nキューの P1 に即時切替し、失敗時は次を順に試行します"
+      "disabled": "{{app}} フェイルオーバーを有効にする\nキューの P1 に即時切替し、失敗時は次を順に試行します",
+      "takeoverRequired": "{{app}} を先に接管してから、フェイルオーバーを有効にしてください"
     }
   },
   "proxy": {
@@ -2642,7 +2751,9 @@
     },
     "server": {
       "started": "ルーティングサービスが開始されました - {{address}}:{{port}}",
-      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}"
+      "startFailed": "ルーティングサービスの開始に失敗しました: {{detail}}",
+      "stopFailed": "ルーティング サービスの停止に失敗しました：{{detail}}",
+      "stopped": "ルーティング サービスは停止しました"
     },
     "stoppedWithRestore": "ルーティングサービスが停止し、すべてのルーティング設定が復元されました",
     "stopWithRestoreFailed": "停止に失敗しました: {{detail}}"

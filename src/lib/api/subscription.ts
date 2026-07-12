@@ -16,6 +16,8 @@ export const subscriptionApi = {
     codingPlanProvider?: string,
     teamOrganizationId?: string,
     teamProjectId?: string,
+    // MiniMax Coding Plan 集团 ID；缺省时接口返回占位零值导致误显示 0%。
+    groupId?: string,
   ): Promise<SubscriptionQuota> =>
     invoke("get_coding_plan_quota", {
       baseUrl,
@@ -25,6 +27,7 @@ export const subscriptionApi = {
       codingPlanProvider,
       teamOrganizationId,
       teamProjectId,
+      groupId,
     }),
   getBalance: (
     baseUrl: string,

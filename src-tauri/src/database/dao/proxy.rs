@@ -233,6 +233,9 @@ impl Database {
                         enabled: row.get::<_, i32>(1)? != 0,
                         auto_failover_enabled: row.get::<_, i32>(2)? != 0,
                         max_retries: row.get::<_, i32>(3)? as u32,
+                        // TODO(phase-10): 读 proxy_config.max_key_attempts 列；
+                        // 当前 schema 未加该列，固定 3（与默认构造一致）。
+                        max_key_attempts: 3,
                         streaming_first_byte_timeout: row.get::<_, i32>(4)? as u32,
                         streaming_idle_timeout: row.get::<_, i32>(5)? as u32,
                         non_streaming_timeout: row.get::<_, i32>(6)? as u32,
@@ -257,6 +260,7 @@ impl Database {
                     enabled: false,
                     auto_failover_enabled: false,
                     max_retries: 3,
+                    max_key_attempts: 3,
                     streaming_first_byte_timeout: 60,
                     streaming_idle_timeout: 120,
                     non_streaming_timeout: 600,

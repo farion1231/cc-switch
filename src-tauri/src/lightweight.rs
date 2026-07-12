@@ -48,6 +48,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         #[cfg(target_os = "macos")]
         {
             crate::tray::apply_tray_policy(app, true);
+            crate::tray::nudge_main_window_on_macos(window.clone());
         }
         LIGHTWEIGHT_MODE.store(false, Ordering::Release);
         crate::tray::refresh_tray_menu(app);
@@ -75,6 +76,10 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
             crate::linux_fix::nudge_main_window(window.clone());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            crate::tray::nudge_main_window_on_macos(window.clone());
         }
     }
 

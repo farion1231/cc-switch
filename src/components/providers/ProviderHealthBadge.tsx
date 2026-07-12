@@ -24,7 +24,7 @@ export function ProviderHealthBadge({
     if (consecutiveFailures === 0) {
       return {
         labelKey: "health.operational",
-        labelFallback: "正常",
+        labelFallback: "In rotation",
         status: ProviderHealthStatus.Healthy,
         color: "bg-green-500",
         // 使用更深/柔和的背景色，去除可能的白色内容感

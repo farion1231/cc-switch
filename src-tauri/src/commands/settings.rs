@@ -524,6 +524,7 @@ mod tests {
                     migrated_state_rows: 7,
                     codex_config_dir: None,
                 }),
+                multi_api_keys_files_v1: None,
             }),
             ..AppSettings::default()
         };
@@ -577,6 +578,7 @@ mod tests {
                     migrated_state_rows: 2,
                     codex_config_dir: None,
                 }),
+                multi_api_keys_files_v1: None,
             }),
             ..AppSettings::default()
         };

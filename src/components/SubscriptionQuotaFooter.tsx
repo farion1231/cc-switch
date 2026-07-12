@@ -48,29 +48,47 @@ export function utilizationColor(utilization: number): string {
   return "text-green-600 dark:text-green-400";
 }
 
-/** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h" */
-export function countdownStr(resetsAt: string | null): string | null {
+/** 计算倒计时的纯时间字符串，如 "2h30m"、"3d12h"。
+ *  优先用服务端给的 remainsTimeMs（精确到毫秒,无本地时钟漂移）,
+ *  否则 fallback 到 endTime - Date.now()。
+ */
+export function countdownStr(
+  resetsAt: string | null,
+  remainsTimeMs?: number | null,
+): string | null {
+  // 服务端剩余毫秒数优先：避免本地时钟偏差 + 拿到秒级精度。
+  if (typeof remainsTimeMs === "number" && remainsTimeMs > 0) {
+    return countdownFromMs(remainsTimeMs);
+  }
   if (!resetsAt) return null;
   const diffMs = new Date(resetsAt).getTime() - Date.now();
   if (diffMs <= 0) return null;
+  return countdownFromMs(diffMs);
+}
 
-  const hours = Math.floor(diffMs / (1000 * 60 * 60));
-  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+/** 内部：从毫秒数渲染倒计时文本（与上面拆分便于测试）。 */
+function countdownFromMs(diffMs: number): string {
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
 
-  if (hours > 24) {
+  if (hours >= 24) {
     const days = Math.floor(hours / 24);
     return `${days}d${hours % 24}h`;
   }
   if (hours > 0) return `${hours}h${minutes}m`;
-  return `${minutes}m`;
+  if (minutes > 0) return `${minutes}m${seconds}s`;
+  return `${seconds}s`;
 }
 
 /** 格式化重置时间为倒计时文本（带 i18n 模板） */
 function formatResetTime(
   resetsAt: string | null,
   t: (key: string, options?: Record<string, string>) => string,
+  remainsTimeMs?: number | null,
 ): string | null {
-  const time = countdownStr(resetsAt);
+  const time = countdownStr(resetsAt, remainsTimeMs);
   if (!time) return null;
   return t("subscription.resetsIn", { time });
 }
@@ -312,18 +330,37 @@ export const TierBadge: React.FC<{
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
-  const countdown = countdownStr(tier.resetsAt);
+  const countdown = countdownStr(tier.resetsAt, tier.remainsTimeMs);
 
   const hasUsd = tier.usedValueUsd != null && tier.maxValueUsd != null;
+  // MiniMax: 绝对次数（usedCount/totalCount, unit 通常 "count"）
+  const hasAbsolute =
+    tier.usedCount != null && tier.totalCount != null;
 
   return (
     <div className="flex items-center gap-0.5">
       <span className="text-gray-500 dark:text-gray-400">{label}:</span>
-      <span
-        className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
-      >
-        {t("subscription.utilization", { value: Math.round(tier.utilization) })}
-      </span>
+      {hasAbsolute ? (
+        // 绝对数路径：把百分比与 X/Y 合并成 "X%/Y% count" 形式（与官方 web 风格一致）。
+        // - used%  = round(used) (作为 100% 的倍数) — 用户期望原始数字
+        // - total% = round(total) (作为 100% 的倍数) — 用户期望原始数字
+        // 例:used=107, total=150 → "107%/150% count"
+        // 例:used=7, total=100 → "7%/100% count"
+        // 真实使用率仍用 utilization 决定颜色。
+        <span
+          className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+        >
+          {Math.round(tier.usedCount as number)}%/
+          {Math.round(tier.totalCount as number)}%
+          {tier.countUnit ? ` ${tier.countUnit}` : ""}
+        </span>
+      ) : (
+        <span
+          className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
+        >
+          {t("subscription.utilization", { value: Math.round(tier.utilization) })}
+        </span>
+      )}
       {hasUsd && (
         <span className="text-muted-foreground/60">
           (${tier.usedValueUsd!.toFixed(2)}/${tier.maxValueUsd!.toFixed(2)})
@@ -347,7 +384,10 @@ const TierBar: React.FC<{
   const label = TIER_I18N_KEYS[tier.name]
     ? t(TIER_I18N_KEYS[tier.name])
     : tier.name;
-  const resetText = formatResetTime(tier.resetsAt, t);
+  const resetText = formatResetTime(tier.resetsAt, t, tier.remainsTimeMs);
+
+  const hasAbsolute =
+    tier.usedCount != null && tier.totalCount != null;
 
   return (
     <div className="flex items-center gap-3 text-xs">
@@ -379,7 +419,11 @@ const TierBar: React.FC<{
         <span
           className={`font-semibold tabular-nums ${utilizationColor(tier.utilization)}`}
         >
-          {Math.round(tier.utilization)}%
+          {hasAbsolute
+            ? `${Math.round(tier.usedCount as number)}%/${Math.round(tier.totalCount as number)}%${
+                tier.countUnit ? ` ${tier.countUnit}` : ""
+              }`
+            : `${Math.round(tier.utilization)}%`}
         </span>
         {resetText && (
           <span
@@ -402,7 +446,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   appId,
   inline = false,
   isCurrent = false,
-  autoQueryInterval = 5,
+  autoQueryInterval = 1,
 }) => {
   const {
     data: quota,

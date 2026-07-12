@@ -23,7 +23,7 @@ pub enum CredentialStatus {
 }
 
 /// 单个限速窗口（如 5小时会话、7天周期）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaTier {
     /// 窗口标识：five_hour, seven_day, seven_day_opus, seven_day_sonnet 等
@@ -38,6 +38,24 @@ pub struct QuotaTier {
     /// ZenMux: 窗口上限（USD）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_value_usd: Option<f64>,
+    /// MiniMax: 已用次数（prompt 调用计数）
+    /// 当上游直接返回绝对值（如 current_interval_usage_count / 7）时填充；
+    /// 其他 provider 永远为 None，渲染层应回退到 utilization 百分比。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub used_count: Option<f64>,
+    /// MiniMax: 窗口上限次数（prompt 配额）
+    /// 语义与 used_count 配对；None 时回退到 utilization 百分比。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub total_count: Option<f64>,
+    /// 该窗口数据的单位（仅与 used_count/total_count 同时使用）：
+    /// "count"（次/条）= MiniMax, "tokens" = 智谱 etc. None 表示百分比口径。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub count_unit: Option<String>,
+    /// API 服务端计算的「距窗口重置剩余毫秒数」（如 MiniMax `remains_time` /
+    /// `weekly_remains_time`）。优先于前端 `end_time - Date.now()` 计算,
+    /// 避免本地时钟漂移导致 4h 级别的偏差。前端可据此精确渲染倒计时。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remains_time_ms: Option<i64>,
 }
 
 /// 超额使用信息
@@ -398,8 +416,7 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
                         name: tier_name.to_string(),
                         utilization: util,
                         resets_at: w.resets_at,
-                        used_value_usd: None,
-                        max_value_usd: None,
+                        ..Default::default()
                     });
                 }
             }
@@ -418,8 +435,7 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
                         name: key.clone(),
                         utilization: util,
                         resets_at: w.resets_at,
-                        used_value_usd: None,
-                        max_value_usd: None,
+                        ..Default::default()
                     });
                 }
             }
@@ -741,8 +757,7 @@ pub(crate) async fn query_codex_quota(
                         .unwrap_or_else(|| "unknown".to_string()),
                     utilization: used,
                     resets_at: window.reset_at.and_then(unix_ts_to_iso),
-                    used_value_usd: None,
-                    max_value_usd: None,
+                    ..Default::default()
                 });
             }
         }
@@ -1204,8 +1219,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
             name,
             utilization: (1.0 - remaining) * 100.0,
             resets_at: reset_time,
-            used_value_usd: None,
-            max_value_usd: None,
+            ..Default::default()
         })
         .collect();
 

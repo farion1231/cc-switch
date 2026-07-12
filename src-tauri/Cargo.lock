@@ -814,6 +814,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "tower 0.4.13",
@@ -6171,6 +6172,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
