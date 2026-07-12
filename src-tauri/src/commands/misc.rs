@@ -1841,7 +1841,10 @@ fn npm_install_command_for_path(tool: &str, npm_path: Option<&Path>) -> Option<S
     let Some(npm_path) = npm_path else {
         return Some(fallback);
     };
-    let Some(npm_dir) = npm_path.parent().filter(|path| !path.as_os_str().is_empty()) else {
+    let Some(npm_dir) = npm_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    else {
         return Some(fallback);
     };
     let package = npm_package_for(tool)?;
@@ -4840,7 +4843,10 @@ mod tests {
                 !parts[0].contains('|'),
                 "native installer should avoid pipe: {cmd}"
             );
-            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
+            assert!(
+                parts[1].ends_with("i -g @anthropic-ai/claude-code@latest"),
+                "npm second: {cmd}"
+            );
         }
 
         #[test]
