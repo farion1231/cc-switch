@@ -14,6 +14,9 @@ use crate::error::AppError;
 use super::validation::{extract_server_spec, validate_server_spec};
 
 fn should_sync_codex_mcp() -> bool {
+    if !crate::settings::mcp_live_sync_enabled() {
+        return false;
+    }
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
     crate::codex_config::get_codex_config_dir().exists()

@@ -9,6 +9,9 @@ use crate::error::AppError;
 use super::validation::{extract_server_spec, validate_server_spec};
 
 fn should_sync_gemini_mcp() -> bool {
+    if !crate::settings::mcp_live_sync_enabled() {
+        return false;
+    }
     // Gemini 未安装/未初始化时：~/.gemini 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
     crate::gemini_config::get_gemini_dir().exists()
