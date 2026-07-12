@@ -800,6 +800,62 @@ fn schema_model_pricing_is_seeded_on_init() {
 }
 
 #[test]
+fn schema_seeds_gpt_5_6_pricing() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT model_id, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing
+             WHERE model_id LIKE 'gpt-5.6-%'
+             ORDER BY model_id",
+        )
+        .expect("prepare GPT-5.6 pricing query");
+    let pricing: Vec<(String, String, String, String, String)> = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .expect("query GPT-5.6 pricing")
+        .collect::<Result<_, _>>()
+        .expect("collect GPT-5.6 pricing");
+
+    assert_eq!(
+        pricing,
+        vec![
+            (
+                "gpt-5.6-luna".into(),
+                "1".into(),
+                "6".into(),
+                "0.10".into(),
+                "1.25".into(),
+            ),
+            (
+                "gpt-5.6-sol".into(),
+                "5".into(),
+                "30".into(),
+                "0.50".into(),
+                "6.25".into(),
+            ),
+            (
+                "gpt-5.6-terra".into(),
+                "2.50".into(),
+                "15".into(),
+                "0.25".into(),
+                "3.125".into(),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
     let db = Database::memory().expect("create memory db");
 

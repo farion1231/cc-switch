@@ -485,12 +485,31 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
-        if let Some(modalities) = &spec.input_modalities {
+        if let Some(modalities) = codex_catalog_input_modalities(spec) {
+            let supports_images = modalities
+                .iter()
+                .any(|modality| modality.eq_ignore_ascii_case("image"));
             entry_obj.insert("input_modalities".to_string(), json!(modalities));
+            entry_obj.insert(
+                "supports_image_detail_original".to_string(),
+                json!(supports_images),
+            );
         }
     }
 
     entry
+}
+
+fn codex_catalog_input_modalities(spec: &CodexCatalogModelSpec) -> Option<Vec<String>> {
+    if let Some(modalities) = &spec.input_modalities {
+        return Some(modalities.clone());
+    }
+
+    let model = spec.model.to_ascii_lowercase();
+    ["gpt-5.4", "gpt-5.5", "gpt-5.6"]
+        .iter()
+        .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
+        .then(|| vec!["text".to_string(), "image".to_string()])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1255,6 +1274,7 @@ fn set_codex_experimental_bearer_token(config_text: &str, token: &str) -> Result
             .and_then(|item| item.as_table_mut())
         {
             provider_table["experimental_bearer_token"] = toml_edit::value(token);
+            provider_table["requires_openai_auth"] = toml_edit::value(false);
             return Ok(doc.to_string());
         }
     }
@@ -2002,6 +2022,41 @@ model = "gpt-5"
     }
 
     #[test]
+    fn prepare_provider_live_config_disables_chatgpt_auth_for_custom_provider() {
+        let input = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Third Party"
+base_url = "https://third-party.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let output =
+            prepare_codex_provider_live_config(&json!({"OPENAI_API_KEY": "sk-test"}), input)
+                .expect("prepare live config");
+        let parsed: toml::Value = toml::from_str(&output).expect("parse output");
+        let provider = parsed
+            .get("model_providers")
+            .and_then(|value| value.get("custom"))
+            .expect("custom provider");
+
+        assert_eq!(
+            provider
+                .get("experimental_bearer_token")
+                .and_then(|value| value.as_str()),
+            Some("sk-test")
+        );
+        assert_eq!(
+            provider
+                .get("requires_openai_auth")
+                .and_then(|value| value.as_bool()),
+            Some(false),
+            "Codex 0.144+ must not select ChatGPT auth for a third-party bearer token"
+        );
+    }
+
+    #[test]
     fn extract_bearer_uses_top_level_token_for_reserved_provider() {
         let input = r#"model_provider = "openai"
 experimental_bearer_token = "top-level-key"
@@ -2600,6 +2655,58 @@ base_url = "https://production.api/v1"
         assert!(
             base.is_some_and(|s| !s.trim().is_empty()),
             "every native entry must carry a non-empty base_instructions (Codex requires it)"
+        );
+    }
+
+    #[test]
+    fn native_responses_catalog_enables_images_for_known_gpt_models() {
+        let settings = json!({
+            "modelCatalog": { "models": [{ "model": "gpt-5.6-sol" }] }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("native catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+        let entry = &catalog["models"][0];
+
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
+        assert_eq!(
+            entry.get("supports_image_detail_original"),
+            Some(&json!(true))
+        );
+    }
+
+    #[test]
+    fn native_responses_catalog_honors_explicit_text_only_modality() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [{
+                    "model": "gpt-5.6-sol",
+                    "inputModalities": ["text"]
+                }]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("native catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+        let entry = &catalog["models"][0];
+
+        assert_eq!(entry.get("input_modalities"), Some(&json!(["text"])));
+        assert_eq!(
+            entry.get("supports_image_detail_original"),
+            Some(&json!(false))
         );
     }
 
