@@ -1297,17 +1297,22 @@ mod tests {
 
     #[test]
     fn test_model_effort_suffix_overrides_claude_effort_for_responses() {
-        let input = json!({
-            "model": "gpt-5.6-sol(max)",
-            "max_tokens": 1024,
-            "output_config": {"effort": "xhigh"},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
+        for (model, expected_model, effort) in [
+            ("gpt-5.5-sol(high)", "gpt-5.5-sol", "high"),
+            ("gpt-5.6-sol(max)", "gpt-5.6-sol", "max"),
+        ] {
+            let input = json!({
+                "model": model,
+                "max_tokens": 1024,
+                "output_config": {"effort": "xhigh"},
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
 
-        let result = anthropic_to_responses(input, None, false, false).unwrap();
+            let result = anthropic_to_responses(input, None, false, false).unwrap();
 
-        assert_eq!(result["model"], "gpt-5.6-sol");
-        assert_eq!(result["reasoning"]["effort"], "max");
+            assert_eq!(result["model"], expected_model);
+            assert_eq!(result["reasoning"]["effort"], effort);
+        }
     }
 
     #[test]
