@@ -1661,6 +1661,18 @@ pub fn prepare_codex_live_config_text_with_optional_catalog(
     }
 }
 
+pub fn sync_codex_desktop_available_models_cache_from_settings(settings: &Value) {
+    let model_ids = codex_model_ids_from_settings(settings);
+    match sync_codex_desktop_available_models_cache(&model_ids) {
+        Ok(updated) if updated > 0 => {
+            log::info!("Synced {updated} Codex Desktop model whitelist cache entries")
+        }
+        Ok(_) => {}
+        Err(err) => log::warn!(
+            "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
+        ),
+    }
+}
 pub fn write_codex_provider_live_with_catalog(
     settings: &Value,
     category: Option<&str>,
@@ -1674,16 +1686,7 @@ pub fn write_codex_provider_live_with_catalog(
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())?;
 
-    let model_ids = codex_model_ids_from_settings(settings);
-    match sync_codex_desktop_available_models_cache(&model_ids) {
-        Ok(updated) if updated > 0 => {
-            log::info!("Synced {updated} Codex Desktop model whitelist cache entries")
-        }
-        Ok(_) => {}
-        Err(err) => log::warn!(
-            "Codex provider switched, but the Desktop model whitelist cache was not synced: {err}"
-        ),
-    }
+    sync_codex_desktop_available_models_cache_from_settings(settings);
 
     Ok(())
 }
