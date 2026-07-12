@@ -8,6 +8,8 @@ use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
+const MAX_AUTO_LIGHTWEIGHT_IDLE_MINUTES: u32 = 24 * 60;
+
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -357,6 +359,8 @@ pub struct AppSettings {
     /// 静默启动（程序启动时不显示主窗口，仅托盘运行）
     #[serde(default)]
     pub silent_startup: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_lightweight_idle_minutes: Option<u32>,
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
@@ -500,6 +504,7 @@ impl Default for AppSettings {
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
+            auto_lightweight_idle_minutes: None,
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
@@ -599,6 +604,15 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
             .map(|s| s.to_string());
+
+        self.auto_lightweight_idle_minutes =
+            self.auto_lightweight_idle_minutes.and_then(|minutes| {
+                if minutes == 0 {
+                    None
+                } else {
+                    Some(minutes.min(MAX_AUTO_LIGHTWEIGHT_IDLE_MINUTES))
+                }
+            });
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();
@@ -923,6 +937,16 @@ pub fn unify_codex_session_history() -> bool {
         .unify_codex_session_history
 }
 
+pub fn auto_lightweight_idle_minutes() -> Option<u32> {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .auto_lightweight_idle_minutes
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -1145,5 +1169,36 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn auto_lightweight_idle_minutes_defaults_to_disabled() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "showInTray": true,
+            "minimizeToTrayOnClose": true
+        }))
+        .expect("settings");
+
+        assert_eq!(settings.auto_lightweight_idle_minutes, None);
+    }
+
+    #[test]
+    fn normalize_auto_lightweight_idle_minutes_disables_zero_and_caps_large_values() {
+        let mut disabled = AppSettings {
+            auto_lightweight_idle_minutes: Some(0),
+            ..Default::default()
+        };
+        disabled.normalize_paths();
+        assert_eq!(disabled.auto_lightweight_idle_minutes, None);
+
+        let mut capped = AppSettings {
+            auto_lightweight_idle_minutes: Some(MAX_AUTO_LIGHTWEIGHT_IDLE_MINUTES + 1),
+            ..Default::default()
+        };
+        capped.normalize_paths();
+        assert_eq!(
+            capped.auto_lightweight_idle_minutes,
+            Some(MAX_AUTO_LIGHTWEIGHT_IDLE_MINUTES)
+        );
     }
 }

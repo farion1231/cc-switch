@@ -14,6 +14,7 @@ export const settingsSchema = z.object({
   enableClaudePluginIntegration: z.boolean().optional(),
   skipClaudeOnboarding: z.boolean().optional(),
   launchOnStartup: z.boolean().optional(),
+  autoLightweightIdleMinutes: z.number().int().min(0).optional(),
   enableLocalProxy: z.boolean().optional(),
   usageDashboardRefreshIntervalMs: z.number().optional(),
   preserveCodexOfficialAuthOnSwitch: z.boolean().optional(),
