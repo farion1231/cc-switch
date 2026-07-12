@@ -50,7 +50,8 @@ pub use claude::{
 };
 pub use codex::CodexAdapter;
 pub use codex::{
-    apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
+    apply_codex_chat_upstream_model, apply_codex_upstream_model,
+    codex_provider_supports_hosted_namespaces, codex_provider_upstream_model,
     resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
     should_convert_codex_responses_to_anthropic, should_convert_codex_responses_to_chat,
 };

@@ -1712,6 +1712,43 @@ pub fn update_codex_toml_field(toml_str: &str, field: &str, value: &str) -> Resu
     Ok(doc.to_string())
 }
 
+/// Update a boolean capability on the active Codex model provider.
+///
+/// Proxy takeover uses this for transport capabilities that describe the
+/// local proxy rather than the selected upstream. In particular, the local
+/// HTTP proxy does not implement the Responses WebSocket transport, so
+/// leaving an official provider's `supports_websockets = true` in the live
+/// config causes repeated 405 retries before Codex falls back to HTTP.
+pub fn update_codex_active_provider_bool_field(
+    toml_str: &str,
+    field: &str,
+    value: bool,
+) -> Result<String, String> {
+    let mut doc = toml_str
+        .parse::<DocumentMut>()
+        .map_err(|e| format!("TOML parse error: {e}"))?;
+    let provider_key = doc
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .ok_or_else(|| "Codex config has no active model_provider".to_string())?
+        .to_string();
+
+    if doc.get("model_providers").is_none() {
+        doc["model_providers"] = toml_edit::table();
+    }
+    let providers = doc["model_providers"]
+        .as_table_mut()
+        .ok_or_else(|| "model_providers is not a TOML table".to_string())?;
+    if !providers.contains_key(&provider_key) {
+        providers[&provider_key] = toml_edit::table();
+    }
+    let provider = providers[&provider_key]
+        .as_table_mut()
+        .ok_or_else(|| format!("model_providers.{provider_key} is not a TOML table"))?;
+    provider[field] = toml_edit::value(value);
+    Ok(doc.to_string())
+}
+
 /// Remove `base_url` from the active model_provider section only if it matches `predicate`.
 /// Also removes top-level `base_url` if it matches.
 /// Used by proxy cleanup to strip local proxy URLs without touching user-configured URLs.

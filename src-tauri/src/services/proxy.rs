@@ -2367,6 +2367,16 @@ impl ProxyService {
         let mut updated =
             crate::codex_config::update_codex_toml_field(&updated, "wire_api", "responses")
                 .unwrap_or(updated);
+        // The local proxy currently supports Responses over HTTP/SSE, not the
+        // WebSocket transport. Provider configs imported from official login
+        // can carry `supports_websockets = true`; disable it only in the live
+        // takeover projection to avoid five 405 retries before HTTP fallback.
+        updated = crate::codex_config::update_codex_active_provider_bool_field(
+            &updated,
+            "supports_websockets",
+            false,
+        )
+        .unwrap_or(updated);
 
         if let Some(upstream_model) =
             provider.and_then(crate::proxy::providers::codex_provider_upstream_model)
@@ -4328,6 +4338,7 @@ model = "gpt-5.1-codex"
 name = "Chat Only"
 base_url = "https://chat-only.example/v1"
 wire_api = "chat"
+supports_websockets = true
 "#;
 
         let proxy_url = "http://127.0.0.1:5000/v1";
@@ -4348,6 +4359,12 @@ wire_api = "chat"
         assert_eq!(
             provider.get("wire_api").and_then(|v| v.as_str()),
             Some("responses")
+        );
+        assert_eq!(
+            provider
+                .get("supports_websockets")
+                .and_then(|v| v.as_bool()),
+            Some(false)
         );
     }
 

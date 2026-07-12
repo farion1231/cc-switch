@@ -73,6 +73,42 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the upstream is an OpenAI-owned Responses endpoint that supports
+/// hosted namespace tools such as `image_gen` natively.
+///
+/// Third-party Responses relays may inject their own image tool when they see
+/// Codex's hosted namespace declaration, producing a duplicate-tool error.
+/// Keep the namespace for OpenAI API and ChatGPT OAuth traffic, and let the
+/// forwarder remove it only for non-OpenAI upstreams.
+pub fn codex_provider_supports_hosted_namespaces(provider: &Provider) -> bool {
+    if provider.is_codex_oauth() {
+        return true;
+    }
+
+    codex_provider_base_url(provider).is_some_and(|base_url| {
+        url::Url::parse(&base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+            .is_some_and(|host| host == "api.openai.com")
+    })
+}
+
+fn codex_provider_base_url(provider: &Provider) -> Option<String> {
+    provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(|value| value.as_str())
+                .and_then(extract_codex_base_url_from_toml)
+        })
+}
+
 pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &str) -> bool {
     let path = endpoint
         .split_once('?')
@@ -715,6 +751,32 @@ mod tests {
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn hosted_namespaces_are_preserved_only_for_openai_upstreams() {
+        let openai = create_provider(json!({
+            "base_url": "https://api.openai.com/v1"
+        }));
+        let relay = create_provider(json!({
+            "base_url": "https://relay.example/v1"
+        }));
+
+        assert!(codex_provider_supports_hosted_namespaces(&openai));
+        assert!(!codex_provider_supports_hosted_namespaces(&relay));
+    }
+
+    #[test]
+    fn codex_oauth_preserves_hosted_namespaces() {
+        let mut provider = create_provider(json!({
+            "base_url": "https://chatgpt.com/backend-api/codex"
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..Default::default()
+        });
+
+        assert!(codex_provider_supports_hosted_namespaces(&provider));
     }
 
     #[test]

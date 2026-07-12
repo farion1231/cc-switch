@@ -42,6 +42,7 @@ const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
+const HOSTED_IMAGE_NAMESPACE: &str = "image_gen";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -198,6 +199,9 @@ impl CodexToolContext {
         let Some(namespace) = namespace_tool.get("name").and_then(|v| v.as_str()) else {
             return;
         };
+        if namespace == HOSTED_IMAGE_NAMESPACE {
+            return;
+        }
         let Some(children) = namespace_tool
             .get("tools")
             .or_else(|| namespace_tool.get("children"))
@@ -317,6 +321,10 @@ pub fn responses_to_chat_completions_with_reasoning(
         result["tool_choice"] = responses_tool_choice_to_chat(tool_choice, &tool_context);
     }
 
+    if let Some(response_format) = responses_text_format_to_chat_response_format(&body) {
+        result["response_format"] = response_format;
+    }
+
     for key in EXTRA_CHAT_PASSTHROUGH_FIELDS {
         if let Some(value) = body.get(*key) {
             result[*key] = value.clone();
@@ -344,6 +352,23 @@ pub fn responses_to_chat_completions_with_reasoning(
     super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
+}
+
+fn responses_text_format_to_chat_response_format(body: &Value) -> Option<Value> {
+    let format = body.pointer("/text/format")?.as_object()?;
+    match format.get("type").and_then(Value::as_str)? {
+        "json_schema" => {
+            let mut json_schema = format.clone();
+            json_schema.remove("type");
+            Some(json!({
+                "type": "json_schema",
+                "json_schema": json_schema
+            }))
+        }
+        "json_object" => Some(json!({ "type": "json_object" })),
+        "text" => Some(json!({ "type": "text" })),
+        _ => None,
+    }
 }
 
 fn apply_reasoning_options(
@@ -1753,6 +1778,56 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn responses_request_maps_text_json_schema_to_chat_response_format() {
+        let input = json!({
+            "model": "gpt-5.5",
+            "input": "Generate a thread title",
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "thread_title",
+                    "strict": true,
+                    "schema": {
+                        "type": "object",
+                        "properties": { "title": { "type": "string" } },
+                        "required": ["title"],
+                        "additionalProperties": false
+                    }
+                }
+            }
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["response_format"]["type"], "json_schema");
+        assert_eq!(
+            result["response_format"]["json_schema"]["name"],
+            "thread_title"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_skips_hosted_image_namespace_tools() {
+        let input = json!({
+            "model": "gpt-5.5",
+            "tools": [{
+                "type": "namespace",
+                "name": "image_gen",
+                "tools": [{"type": "function", "name": "imagegen"}]
+            }],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "input": "Draw an image."
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert!(result.get("tools").is_none());
+        assert!(result.get("tool_choice").is_none());
+        assert!(result.get("parallel_tool_calls").is_none());
+    }
 
     #[test]
     fn responses_request_with_stream_injects_include_usage() {
