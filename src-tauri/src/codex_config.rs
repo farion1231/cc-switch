@@ -675,7 +675,9 @@ fn append_codex_leveldb_layouts(candidates: &mut Vec<PathBuf>, codex_root: &Path
 #[cfg(target_os = "windows")]
 fn codex_desktop_windows_leveldb_candidates(appdata: &Path, local_appdata: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    append_codex_leveldb_layouts(&mut candidates, &appdata.join("Codex"));
+    let appdata_codex = appdata.join("Codex");
+    append_codex_leveldb_layouts(&mut candidates, &appdata_codex);
+    append_codex_leveldb_layouts(&mut candidates, &appdata_codex.join("web").join("Codex"));
 
     let packages = local_appdata.join("Packages");
     if let Ok(entries) = fs::read_dir(packages) {
@@ -3233,6 +3235,15 @@ base_url = "https://production.api/v1"
         let candidates = codex_desktop_windows_leveldb_candidates(&appdata, &local_appdata);
 
         assert!(candidates.contains(&appdata.join("Codex").join("Local Storage").join("leveldb")));
+        assert!(candidates.contains(
+            &appdata
+                .join("Codex")
+                .join("web")
+                .join("Codex")
+                .join("Default")
+                .join("Local Storage")
+                .join("leveldb")
+        ));
         assert!(candidates.contains(&package_root.join("Local Storage").join("leveldb")));
         assert!(candidates.contains(
             &package_root
