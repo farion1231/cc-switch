@@ -114,12 +114,12 @@ mod tests {
     #[cfg(any(target_os = "macos", windows))]
     use crate::app::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::app::{ProviderMeta, UsageScript};
+    use crate::config::write_json_file;
     use crate::database::Database;
     #[cfg(any(target_os = "macos", windows))]
     use crate::live_config::claude_desktop::PROFILE_ID;
-    use crate::{get_claude_settings_path, read_json_file};
-    use crate::config::write_json_file;
     use crate::proxy::types::ProxyConfig;
+    use crate::{get_claude_settings_path, read_json_file};
     use serde_json::json;
     use serial_test::serial;
     use std::env;
