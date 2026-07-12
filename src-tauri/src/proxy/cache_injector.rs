@@ -76,32 +76,28 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
         }
     }
 
-    // (c) 最后一条 assistant 消息的最后一个非 thinking block
+    // (c) 最后一条可缓存消息的最后一个非 thinking block。工具循环通常以
+    // user/tool_result 结束；只标 assistant 会让最新稳定前缀无法命中缓存。
     if budget > 0 {
         if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
-            if let Some(assistant_msg) = messages
-                .iter_mut()
-                .rev()
-                .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
-            {
-                if let Some(content) = assistant_msg
-                    .get_mut("content")
-                    .and_then(|c| c.as_array_mut())
-                {
-                    // 逆序找最后一个非 thinking/redacted_thinking block
-                    if let Some(block) = content.iter_mut().rev().find(|b| {
-                        let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                        bt != "thinking" && bt != "redacted_thinking"
+            'messages: for message in messages.iter_mut().rev() {
+                if let Some(content) = message.get_mut("content").and_then(|c| c.as_array_mut()) {
+                    if let Some(block) = content.iter_mut().rev().find(|block| {
+                        !matches!(
+                            block.get("type").and_then(Value::as_str),
+                            Some("thinking" | "redacted_thinking")
+                        )
                     }) {
                         if block.get("cache_control").is_none() {
-                            if let Some(o) = block.as_object_mut() {
-                                o.insert(
+                            if let Some(object) = block.as_object_mut() {
+                                object.insert(
                                     "cache_control".to_string(),
                                     make_cache_control(&config.cache_ttl),
                                 );
+                                injected.push("msgs");
                             }
-                            injected.push("msgs");
                         }
+                        break 'messages;
                     }
                 }
             }
@@ -206,10 +202,10 @@ mod tests {
     #[test]
     fn test_empty_body_no_injection() {
         let mut body = json!({"model": "test", "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]});
-        let original = body.clone();
         inject(&mut body, &default_config());
-        // No tools, no system, no assistant → no injection
-        assert_eq!(body, original);
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_some());
     }
 
     #[test]
@@ -373,5 +369,24 @@ mod tests {
         assert!(body["messages"][0]["content"][2]
             .get("cache_control")
             .is_none());
+    }
+
+    #[test]
+    fn test_injects_latest_tool_result_instead_of_older_assistant() {
+        let mut body = json!({
+            "messages": [
+                {"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "Read", "input": {}}]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call_1", "content": "done"}]}
+            ]
+        });
+
+        inject(&mut body, &default_config());
+
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        assert!(body["messages"][1]["content"][0]
+            .get("cache_control")
+            .is_some());
     }
 }

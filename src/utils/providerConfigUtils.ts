@@ -1,6 +1,7 @@
 // 供应商配置处理工具函数
 
 import type { TemplateValueConfig } from "../config/claudeProviderPresets";
+import type { CodexApiFormat } from "@/types";
 import { deepClone } from "@/utils/deepClone";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { parse as parseToml } from "smol-toml";
@@ -734,6 +735,32 @@ export const isChatGptCodexOAuthBaseUrl = (
     );
   } catch {
     return false;
+  }
+};
+
+export const isCodexAnthropicWireApi = (
+  wireApi: string | undefined | null,
+): boolean =>
+  [
+    "anthropic",
+    "anthropic_messages",
+    "anthropic-messages",
+    "messages",
+    "claude",
+  ].includes((wireApi ?? "").trim().toLowerCase());
+
+export const codexApiFormatFromWireApi = (
+  wireApi: string | undefined | null,
+): CodexApiFormat | undefined => {
+  if (isCodexChatWireApi(wireApi)) return "openai_chat";
+  if (isCodexAnthropicWireApi(wireApi)) return "anthropic";
+  switch ((wireApi ?? "").trim().toLowerCase()) {
+    case "responses":
+    case "openai_responses":
+    case "openai-responses":
+      return "openai_responses";
+    default:
+      return undefined;
   }
 };
 

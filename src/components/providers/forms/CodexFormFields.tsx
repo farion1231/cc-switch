@@ -36,6 +36,7 @@ import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
 import type {
+  ClaudeApiKeyField,
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
@@ -73,6 +74,15 @@ interface CodexFormFieldsProps {
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  // Auth field for the Anthropic Messages upstream (only used when apiFormat === "anthropic")
+  anthropicAuthField: ClaudeApiKeyField;
+  onAnthropicAuthFieldChange: (value: ClaudeApiKeyField) => void;
+  // Anthropic path: whether to emulate the Claude Code client
+  impersonateClaudeCode: boolean;
+  onImpersonateClaudeCodeChange: (value: boolean) => void;
+  // Anthropic path: output ceiling override (empty string = use default). Digits only.
+  maxOutputTokens: string;
+  onMaxOutputTokensChange: (value: string) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
 
@@ -158,6 +168,12 @@ export function CodexFormFields({
   onAutoSelectChange,
   apiFormat,
   onApiFormatChange,
+  anthropicAuthField,
+  onAnthropicAuthFieldChange,
+  impersonateClaudeCode,
+  onImpersonateClaudeCodeChange,
+  maxOutputTokens,
+  onMaxOutputTokensChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
   catalogModels = [],
@@ -177,6 +193,7 @@ export function CodexFormFields({
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
+  const isAnthropicFormat = apiFormat === "anthropic";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -194,8 +211,10 @@ export function CodexFormFields({
     hasRequestOverrides ||
     catalogModels.length > 0 ||
     apiFormat === "openai_responses" ||
+    isAnthropicFormat ||
     supportsThinking ||
-    supportsEffort;
+    supportsEffort ||
+    !!maxOutputTokens;
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -449,15 +468,118 @@ export function CodexFormFields({
                           defaultValue: "Responses（原生）",
                         })}
                       </SelectItem>
+                      <SelectItem value="anthropic">
+                        {t("codexConfig.upstreamFormatAnthropic", {
+                          defaultValue: "Anthropic Messages（需开启路由）",
+                        })}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     {t("codexConfig.upstreamFormatHint", {
                       defaultValue:
-                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat（需开启路由接管才能转换为 Chat Completions）。",
+                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
                     })}
                   </p>
                 </div>
+
+                {isAnthropicFormat && (
+                  <div className="space-y-1.5">
+                    <FormLabel htmlFor="codex-anthropic-auth-field">
+                      {t("codexConfig.anthropicAuthFieldLabel", {
+                        defaultValue: "认证字段",
+                      })}
+                    </FormLabel>
+                    <Select
+                      value={anthropicAuthField}
+                      onValueChange={(value) =>
+                        onAnthropicAuthFieldChange(value as ClaudeApiKeyField)
+                      }
+                    >
+                      <SelectTrigger
+                        id="codex-anthropic-auth-field"
+                        className="w-full"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                          {t("codexConfig.anthropicAuthFieldAuthToken", {
+                            defaultValue:
+                              "ANTHROPIC_AUTH_TOKEN（Authorization）",
+                          })}
+                        </SelectItem>
+                        <SelectItem value="ANTHROPIC_API_KEY">
+                          {t("codexConfig.anthropicAuthFieldApiKey", {
+                            defaultValue: "ANTHROPIC_API_KEY（x-api-key）",
+                          })}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.anthropicAuthFieldHint", {
+                        defaultValue:
+                          "选择网关接收 API Key 的请求头：ANTHROPIC_AUTH_TOKEN 发送 Authorization: Bearer；ANTHROPIC_API_KEY 发送 x-api-key。两者只发其一。",
+                      })}
+                    </p>
+                  </div>
+                )}
+
+                {isAnthropicFormat && (
+                  <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+                    <div className="space-y-1">
+                      <FormLabel>
+                        {t("codexConfig.impersonateClaudeCodeLabel", {
+                          defaultValue: "模拟 Claude Code 客户端",
+                        })}
+                      </FormLabel>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t("codexConfig.impersonateClaudeCodeHint", {
+                          defaultValue:
+                            "网关或其上游限制只能通过 Claude Code 使用时开启：伪装 User-Agent、anthropic-beta、x-app 请求头，并在系统提示首行注入 Claude Code 身份。",
+                        })}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={impersonateClaudeCode}
+                      onCheckedChange={onImpersonateClaudeCodeChange}
+                      aria-label={t("codexConfig.impersonateClaudeCodeLabel", {
+                        defaultValue: "模拟 Claude Code 客户端",
+                      })}
+                    />
+                  </div>
+                )}
+
+                {isAnthropicFormat && (
+                  <div className="space-y-1.5 border-t border-border-default pt-3">
+                    <FormLabel htmlFor="codex-anthropic-max-output-tokens">
+                      {t("codexConfig.maxOutputTokensLabel", {
+                        defaultValue: "最大输出 tokens",
+                      })}
+                    </FormLabel>
+                    <Input
+                      id="codex-anthropic-max-output-tokens"
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={maxOutputTokens}
+                      onChange={(event) =>
+                        onMaxOutputTokensChange(
+                          event.target.value.replace(/[^\d]/g, ""),
+                        )
+                      }
+                      placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
+                        defaultValue: "留空则使用默认 8192",
+                      })}
+                    />
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.maxOutputTokensHint", {
+                        defaultValue:
+                          "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                      })}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
