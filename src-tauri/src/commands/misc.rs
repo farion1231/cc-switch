@@ -1497,7 +1497,13 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
         extend_mise_node_search_paths(&mut search_paths, &home);
+        // pnpm 全局 bin：Linux/XDG 默认 `~/.local/share/pnpm`；macOS 默认
+        // `~/Library/pnpm`（见下方 macos 块）。$PNPM_HOME 覆盖两者。
+        push_unique_path(&mut search_paths, home.join(".local/share/pnpm"));
     }
+    // $PNPM_HOME 与 Windows 侧 extend_windows_cli_manager_search_paths 对齐：
+    // 用户自定义全局 bin 目录时，必须能扫到，否则 GUI 非登录 PATH 会漏装。
+    push_env_single_dir(&mut search_paths, std::env::var_os("PNPM_HOME"));
 
     #[cfg(target_os = "macos")]
     {
@@ -1509,6 +1515,12 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             &mut search_paths,
             std::path::PathBuf::from("/usr/local/bin"),
         );
+        // pnpm 在 macOS 的默认全局 bin（Homebrew/corepack 装的 pnpm 常写到这里）。
+        // Apple Silicon M1 上最常见：~/Library/pnpm 不在 launchd GUI PATH 里，
+        // 若不显式加入搜索列表，升级会漏掉这处并旁路装出第二份 npm 全局包。
+        if !home.as_os_str().is_empty() {
+            push_unique_path(&mut search_paths, home.join("Library/pnpm"));
+        }
         if tool == "hermes" {
             let python_base = home.join("Library").join("Python");
             if python_base.exists() {
@@ -1766,14 +1778,25 @@ fn infer_install_source(path: &Path) -> &'static str {
     // Windows 的 `%LOCALAPPDATA%\Volta\bin` / `%VOLTA_HOME%\bin`(无前导点)。
     } else if s.contains("/.volta/") || s.contains("/volta/") {
         "volta"
-    } else if s.contains("fnm_multishells") {
+    // fnm：运行时 symlink 目录 `fnm_multishells`；真实安装树是
+    // `~/.fnm/node-versions/<ver>/installation/bin/...` 或 `$FNM_DIR/node-versions/...`。
+    // 只匹配 `fnm_multishells` 会把 canonicalize 后的真身误判为 system，
+    // 锚定层随后拼 sibling npm 失败或落到错误的全局位置。
+    } else if s.contains("fnm_multishells")
+        || s.contains("/.fnm/")
+        || s.contains("/node-versions/")
+    {
         "fnm"
     } else if s.contains("/mise/") {
         "mise"
+    // asdf：`~/.asdf/installs/nodejs/<ver>/bin/...`；兜底 `/asdf/` 覆盖
+    // 非点前缀的自定义 ASDF_DATA_DIR。
+    } else if s.contains("/.asdf/") || s.contains("/asdf/") {
+        "asdf"
     } else if s.contains("/.bun/") {
         "bun"
-    // pnpm 全局包目录: macOS 一般 `~/.local/share/pnpm`(已 normalize 到 `/pnpm/`)
-    // 与 Windows `%LOCALAPPDATA%\pnpm` / `%PNPM_HOME%` 都命中 `/pnpm/`。
+    // pnpm 全局包目录: macOS `~/Library/pnpm`、Linux `~/.local/share/pnpm`
+    // （normalize 后都含 `/pnpm/`）与 Windows `%LOCALAPPDATA%\pnpm` / `%PNPM_HOME%`。
     } else if s.contains("/pnpm/") {
         "pnpm"
     } else if s.contains("/scoop/") {
@@ -2079,10 +2102,10 @@ fn sibling_bin_with_ext(
 }
 
 /// 返回 `<bin_path 同目录>/<exe>` 的绝对路径。bin_path 是命令行命中的入口
-/// (如 `/opt/homebrew/bin/gemini`、`~/.volta/bin/codex`),`exe` 是与之共处一个
-/// bin 目录的另一个可执行(`brew` / `volta` / `bun` / `npm`)——这些包管理器
-/// 都把自己的 cli 跟它们安装的命令并列放在同一个 bin 目录,所以"同目录推导"
-/// 是可靠的绝对路径来源。
+/// (如 `/opt/homebrew/bin/gemini`、`~/.volta/bin/codex`、`~/Library/pnpm/codex`),
+/// `exe` 是与之共处一个 bin 目录的另一个可执行(`brew` / `volta` / `bun` / `pnpm` /
+/// `npm`)——这些包管理器都把自己的 cli 跟它们安装的命令并列放在同一个 bin 目录,
+/// 所以"同目录推导"是可靠的绝对路径来源。
 ///
 /// **dir 为空(bin_path 不含 `/`) → 返回 None**:此时无法推导出绝对路径,让上游
 /// `anchored_command_from_paths` 整体退化为 None,调用方落到静态命令兜底——而非
@@ -2149,13 +2172,13 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 /// 让 uninstall 失败（如 nvm 上对半损坏包静默返回非 0）不触发外层 `set -e` 中止，但随后的
 /// install 若失败仍会被 `set -e` 捕获并上报给前端 toast。
 ///
-/// **仅对会锚定到 sibling npm 的 node 管理器来源（nvm/fnm/mise/homebrew npm）生效**：
+/// **仅对会锚定到 sibling npm 的 node 管理器来源（nvm/fnm/mise/asdf/homebrew npm）生效**：
 /// `runnable=false` 是宽信号（权限 / node 版本 / 任意 `--version` 失败皆可触发），非 npm
 /// 全局安装各有自己的二进制分发与修复方式，无脑套 npm uninstall+install 会出错——Homebrew
 /// formula（real 在 `Cellar/`）本应 `brew upgrade codex`，npm 够不到它反而旁路装第二份 npm
-/// 全局 codex；Volta/Bun 本应 `volta install`/`bun add`，且 `~/.bun/bin` 下没有 npm、
-/// `sibling_bin` 会拼出不存在的路径；system/未知来源无可靠 sibling npm。这些来源一律返回
-/// None，让上游继续走 source-specific 的 `anchored_command_from_paths`。白名单与
+/// 全局 codex；Volta/Bun/pnpm 本应各自 package-manager 命令，且 `~/.bun/bin`/`~/Library/pnpm`
+/// 下没有 npm、`sibling_bin` 会拼出不存在的路径；system/未知来源无可靠 sibling npm。这些
+/// 来源一律返回 None，让上游继续走 source-specific 的 `anchored_command_from_paths`。白名单与
 /// `package_manager_anchored_command_from_paths` 的 sibling-npm 分支对齐。
 /// 刻意**不**额外用 `inst.error` 文本确认「确系缺二进制」：enumerate 只保留 stderr 末尾 4 行，
 /// 而 codex.js 抛错的 "Missing optional dependency" 行会被尾部 node stack `at ...` 行挤出窗口
@@ -2167,10 +2190,10 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
     if brew_formula_from_path(real).is_some() {
         return None;
     }
-    // 只认会落到 sibling npm 的 node 管理器来源；volta/bun/system/未知交回 anchored。
+    // 只认会落到 sibling npm 的 node 管理器来源；volta/bun/pnpm/system/未知交回 anchored。
     if !matches!(
         infer_install_source(Path::new(bin_path)),
-        "nvm" | "fnm" | "mise" | "homebrew"
+        "nvm" | "fnm" | "mise" | "asdf" | "homebrew"
     ) {
         return None;
     }
@@ -2213,8 +2236,19 @@ fn package_manager_anchored_command_from_paths(
                 quote_path_if_spaced(&bun)
             ));
         }
+        // pnpm 全局 bin 目录（macOS `~/Library/pnpm`、Linux `~/.local/share/pnpm`、
+        // `$PNPM_HOME`）同级是 `pnpm` 而非 `npm`。若落到 sibling npm，要么拼出不存在
+        // 的路径，要么写到另一套 node 的全局目录 → 双份安装、PATH 命中处不更新。
+        // 与 Windows 分支 `pnpm add -g {pkg}@latest` 对齐。
+        "pnpm" => {
+            let pnpm = sibling_bin(bin_path, "pnpm")?;
+            return Some(format!(
+                "{} add -g {pkg}@latest",
+                quote_path_if_spaced(&pnpm)
+            ));
+        }
         // 自带同级 npm 的 node 管理器：落到下面锚定到那处的 npm。
-        "nvm" | "fnm" | "mise" | "homebrew" => {}
+        "nvm" | "fnm" | "mise" | "asdf" | "homebrew" => {}
         // system / 未知来源通常没有同级 npm，不能拼 `<dir>/npm`。若工具有官方
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
@@ -4267,6 +4301,52 @@ mod tests {
         }
 
         #[test]
+        fn macos_pnpm_library_path() {
+            // macOS 默认 `~/Library/pnpm`（Homebrew/corepack 装的 pnpm 常见位置）。
+            // normalize 后命中 `/pnpm/`，与 Windows LocalAppData 对称。
+            assert_eq!(
+                infer_install_source(Path::new("/Users/me/Library/pnpm/codex")),
+                "pnpm"
+            );
+        }
+
+        #[test]
+        fn linux_pnpm_xdg_share_path() {
+            assert_eq!(
+                infer_install_source(Path::new("/home/me/.local/share/pnpm/codex")),
+                "pnpm"
+            );
+        }
+
+        #[test]
+        fn fnm_dot_prefix_and_node_versions() {
+            // 真身在 `~/.fnm/node-versions/...`，不是临时 `fnm_multishells` symlink。
+            assert_eq!(
+                infer_install_source(Path::new(
+                    "/Users/me/.fnm/node-versions/v22.14.0/installation/bin/codex"
+                )),
+                "fnm"
+            );
+            // 自定义 FNM_DIR 无 `.fnm` 前缀时，靠 `/node-versions/` 兜底。
+            assert_eq!(
+                infer_install_source(Path::new(
+                    "/opt/fnm/node-versions/v22.14.0/installation/bin/codex"
+                )),
+                "fnm"
+            );
+        }
+
+        #[test]
+        fn asdf_nodejs_install_path() {
+            assert_eq!(
+                infer_install_source(Path::new(
+                    "/Users/me/.asdf/installs/nodejs/22.14.0/bin/codex"
+                )),
+                "asdf"
+            );
+        }
+
+        #[test]
         fn windows_nvm_falls_back_to_system() {
             // nvm-windows 安装的工具路径不含 `.nvm`(它通常装在 `%APPDATA%\nvm` 或
             // `C:\Program Files\nodejs` symlink),刻意不识别成专属 source——锚定层
@@ -4530,6 +4610,80 @@ mod tests {
                 Some(
                     "/Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
+            );
+        }
+
+        #[test]
+        fn fnm_node_versions_anchors_to_that_npm() {
+            // canonicalize 后的真身常落在 `~/.fnm/node-versions/...`，必须识别为 fnm
+            // 才能锚定到同级 npm，而不是 system → None 后旁路装到别处。
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/Users/me/.fnm/node-versions/v22.14.0/installation/bin/codex",
+                "/Users/me/.fnm/node-versions/v22.14.0/installation/lib/node_modules/@openai/codex/bin/codex.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "/Users/me/.fnm/node-versions/v22.14.0/installation/bin/npm i -g @openai/codex@latest"
+                )
+            );
+        }
+
+        #[test]
+        fn asdf_nodejs_anchors_to_that_npm() {
+            let cmd = anchored_command_from_paths(
+                "gemini",
+                "/Users/me/.asdf/installs/nodejs/22.14.0/bin/gemini",
+                "/Users/me/.asdf/installs/nodejs/22.14.0/lib/node_modules/@google/gemini-cli/dist/index.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "/Users/me/.asdf/installs/nodejs/22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                )
+            );
+        }
+
+        #[test]
+        fn macos_pnpm_library_anchors_to_pnpm_add() {
+            // macOS `~/Library/pnpm`：必须 `pnpm add -g`，不能落到 sibling npm
+            // （该目录通常没有 npm；即使 PATH 里有也会写到另一套 node 全局）。
+            // Apple Silicon 上 Homebrew/corepack 的 pnpm 全局包几乎都在这里。
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/Users/me/Library/pnpm/codex",
+                "/Users/me/Library/pnpm/global/5/node_modules/@openai/codex/bin/codex.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/Users/me/Library/pnpm/pnpm add -g @openai/codex@latest")
+            );
+        }
+
+        #[test]
+        fn linux_pnpm_xdg_anchors_to_pnpm_add() {
+            let cmd = anchored_command_from_paths(
+                "gemini",
+                "/home/me/.local/share/pnpm/gemini",
+                "/home/me/.local/share/pnpm/global/5/node_modules/@google/gemini-cli/dist/index.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("/home/me/.local/share/pnpm/pnpm add -g @google/gemini-cli@latest")
+            );
+        }
+
+        #[test]
+        fn pnpm_path_with_space_is_quoted() {
+            let cmd = anchored_command_from_paths(
+                "codex",
+                "/Users/my name/Library/pnpm/codex",
+                "/Users/my name/Library/pnpm/global/5/node_modules/@openai/codex/bin/codex.js",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("'/Users/my name/Library/pnpm/pnpm' add -g @openai/codex@latest")
             );
         }
 
