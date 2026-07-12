@@ -22,6 +22,7 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexWireApi,
+  isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
@@ -220,11 +221,16 @@ export function ProviderCard({
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const codexNeedsRouting = useMemo(() => {
     if (appId !== "codex" || provider.category === "official") return false;
-    if (provider.meta?.apiFormat === "openai_chat") return true;
+    if (
+      provider.meta?.apiFormat === "openai_chat" ||
+      provider.meta?.apiFormat === "anthropic"
+    )
+      return true;
     const config = (provider.settingsConfig as Record<string, any>)?.config;
     return (
       typeof config === "string" &&
-      isCodexChatWireApi(extractCodexWireApi(config))
+      (isCodexChatWireApi(extractCodexWireApi(config)) ||
+        isCodexAnthropicWireApi(extractCodexWireApi(config)))
     );
   }, [
     appId,

@@ -80,7 +80,11 @@ impl CodexToolContext {
             .is_some_and(|spec| matches!(&spec.kind, CodexToolKind::Custom))
     }
 
-    fn chat_name_for_response_function(&self, name: &str, namespace: Option<&str>) -> String {
+    pub(crate) fn chat_name_for_response_function(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> String {
         if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
             if let Some(chat_name) = self
                 .namespace_name_to_chat_name

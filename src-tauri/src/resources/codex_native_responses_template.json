@@ -1,0 +1,38 @@
+{
+  "slug": "native-responses-template",
+  "display_name": "native-responses-template",
+  "description": "native-responses-template",
+  "base_instructions": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
+  "default_reasoning_level": "high",
+  "supported_reasoning_levels": [
+    {
+      "effort": "none",
+      "description": "Disable Thinking"
+    },
+    {
+      "effort": "high",
+      "description": "Enabled Thinking"
+    }
+  ],
+  "shell_type": "shell_command",
+  "visibility": "list",
+  "supported_in_api": true,
+  "priority": 0,
+  "supports_reasoning_summaries": true,
+  "default_reasoning_summary": "none",
+  "support_verbosity": false,
+  "truncation_policy": {
+    "mode": "bytes",
+    "limit": 10000
+  },
+  "supports_parallel_tool_calls": false,
+  "supports_image_detail_original": false,
+  "context_window": 262144,
+  "max_context_window": 262144,
+  "effective_context_window_percent": 95,
+  "experimental_supported_tools": [],
+  "input_modalities": [
+    "text"
+  ],
+  "supports_search_tool": false
+}
