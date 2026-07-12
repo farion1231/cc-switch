@@ -16,7 +16,7 @@ use chrono::{Duration, Local, TimeZone};
 /// the cutoff falls mid-day, leaving the day half-rolled-up and half-pruned —
 /// which would silently under-count any range query that touches that day
 /// after `compute_rollup_date_bounds` trims partial-coverage rollup days.
-fn compute_local_midnight_cutoff(
+pub(crate) fn compute_local_midnight_cutoff(
     now: chrono::DateTime<Local>,
     retain_days: i64,
 ) -> Result<i64, AppError> {
