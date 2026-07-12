@@ -451,6 +451,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                     tabIndex={0}
                     onClick={() => openFile(result.filename)}
                     onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
                         openFile(result.filename);
@@ -519,6 +520,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                   tabIndex={0}
                   onClick={() => openFile(file.filename)}
                   onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       openFile(file.filename);

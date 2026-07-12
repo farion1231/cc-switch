@@ -60,6 +60,7 @@ export function ProviderAdvancedConfig({
           className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
           onClick={() => setIsTestConfigOpen(!isTestConfigOpen)}
           onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               setIsTestConfigOpen(!isTestConfigOpen);
@@ -206,6 +207,7 @@ export function ProviderAdvancedConfig({
           className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
           onClick={() => setIsPricingConfigOpen(!isPricingConfigOpen)}
           onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               setIsPricingConfigOpen(!isPricingConfigOpen);

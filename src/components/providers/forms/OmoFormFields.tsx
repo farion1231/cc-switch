@@ -1078,6 +1078,7 @@ export function OmoFormFields({
       className="flex items-center justify-between w-full py-2 px-3 text-left"
       onClick={onToggle}
       onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onToggle();

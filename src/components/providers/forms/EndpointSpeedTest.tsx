@@ -572,6 +572,7 @@ const EndpointSpeedTest: React.FC<EndpointSpeedTestProps> = ({
                   tabIndex={0}
                   onClick={() => handleSelect(entry.url)}
                   onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       handleSelect(entry.url);
