@@ -33,6 +33,41 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+fn apply_managed_claude_auth_placeholders_for_live(settings: &mut Value, provider: &Provider) {
+    if !provider.uses_managed_account_auth() {
+        return;
+    }
+
+    if !settings.is_object() {
+        *settings = json!({});
+    }
+
+    let root = settings
+        .as_object_mut()
+        .expect("Claude settings should be normalized to an object");
+    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+    if !env.is_object() {
+        *env = json!({});
+    }
+
+    let env = env
+        .as_object_mut()
+        .expect("Claude env should be normalized to an object");
+    for key in [
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+    ] {
+        env.remove(key);
+    }
+
+    env.insert("ANTHROPIC_API_KEY".to_string(), json!("PROXY_MANAGED"));
+    if !provider.is_github_copilot() {
+        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), json!("PROXY_MANAGED"));
+    }
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -783,7 +818,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            apply_managed_claude_auth_placeholders_for_live(&mut settings, provider);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -1709,7 +1745,60 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderMeta;
     use serde_json::json;
+
+    fn managed_claude_provider(provider_type: &str) -> Provider {
+        let mut provider = Provider::with_id(
+            provider_type.to_string(),
+            provider_type.to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some(provider_type.to_string()),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn managed_codex_auth_replaces_stale_live_credentials_with_placeholders() {
+        let provider = managed_claude_provider("codex_oauth");
+        let mut settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "stale-token",
+                "ANTHROPIC_API_KEY": "stale-key",
+                "OPENAI_API_KEY": "stale-openai-key",
+                "OPENROUTER_API_KEY": "stale-openrouter-key",
+                "KEEP_ME": "value"
+            }
+        });
+
+        apply_managed_claude_auth_placeholders_for_live(&mut settings, &provider);
+
+        assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "PROXY_MANAGED");
+        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "PROXY_MANAGED");
+        assert_eq!(settings["env"]["KEEP_ME"], "value");
+        assert!(settings["env"].get("OPENAI_API_KEY").is_none());
+        assert!(settings["env"].get("OPENROUTER_API_KEY").is_none());
+    }
+
+    #[test]
+    fn managed_copilot_auth_uses_only_the_api_key_placeholder() {
+        let provider = managed_claude_provider("github_copilot");
+        let mut settings = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "stale-token",
+                "ANTHROPIC_API_KEY": "stale-key"
+            }
+        });
+
+        apply_managed_claude_auth_placeholders_for_live(&mut settings, &provider);
+
+        assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "PROXY_MANAGED");
+        assert!(settings["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
+    }
 
     /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。
     /// smol-toml 的 parse→merge→stringify 整文档重序列化会丢注释、

@@ -71,6 +71,10 @@ impl Provider {
         self.provider_type() == Some("codex_oauth")
     }
 
+    pub fn is_xai_oauth(&self) -> bool {
+        self.provider_type() == Some("xai_oauth")
+    }
+
     pub fn is_github_copilot(&self) -> bool {
         self.provider_type() == Some("github_copilot")
             || self.claude_base_url_contains("githubcopilot.com")
@@ -79,6 +83,7 @@ impl Provider {
     pub fn uses_managed_account_auth(&self) -> bool {
         self.is_github_copilot()
             || self.is_codex_oauth()
+            || self.is_xai_oauth()
             || self.claude_base_url_contains("chatgpt.com/backend-api/codex")
     }
 
@@ -1117,6 +1122,19 @@ mod tests {
         });
         assert!(codex.is_codex_oauth());
         assert!(codex.uses_managed_account_auth());
+
+        let mut xai = Provider::with_id(
+            "xai".to_string(),
+            "xAI".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        xai.meta = Some(ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(xai.is_xai_oauth());
+        assert!(xai.uses_managed_account_auth());
 
         let codex_endpoint = Provider::with_id(
             "codex-endpoint".to_string(),

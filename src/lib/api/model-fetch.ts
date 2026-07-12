@@ -43,6 +43,19 @@ export async function fetchCodexOauthModels(
 }
 
 /**
+ * 获取 xAI Grok OAuth 可用模型列表。
+ *
+ * xAI OAuth 使用托管账号刷新出的 access token，不需要表单 API Key。
+ */
+export async function fetchXaiOauthModels(
+  accountId?: string | null,
+): Promise<FetchedModel[]> {
+  return invoke("get_xai_oauth_models", {
+    accountId: accountId || null,
+  });
+}
+
+/**
  * 根据错误类型显示对应的 toast 提示
  */
 export function showFetchModelsError(

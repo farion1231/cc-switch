@@ -327,7 +327,8 @@
       "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
-      "codexOauthDescription": "管理 ChatGPT 帳號"
+      "codexOauthDescription": "管理 ChatGPT 帳號",
+      "xaiOauthDescription": "管理 xAI Grok 帳號"
     },
     "advanced": {
       "configDir": {
@@ -1230,6 +1231,28 @@
     "pricingModelSourceRequest": "請求模型",
     "pricingModelSourceResponse": "回傳模型",
     "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
+  },
+  "xaiOauth": {
+    "authStatus": "認證狀態",
+    "accountCount": "{{count}} 個帳號",
+    "accountCount_plural": "{{count}} 個帳號",
+    "notAuthenticated": "未認證",
+    "entitlementNotice": "OAuth 登入成功不代表 xAI 一定允許 API 存取；若訂閱不支援 OAuth API 存取，後續請求可能返回 HTTP 403。此時請改用 xAI API Key 供應商。",
+    "selectAccount": "選擇帳號",
+    "selectAccountPlaceholder": "選擇一個 xAI 帳號",
+    "useDefaultAccount": "使用預設帳號",
+    "loggedInAccounts": "已登入帳號",
+    "defaultAccount": "預設",
+    "selected": "已選擇",
+    "setAsDefault": "設為預設",
+    "removeAccount": "移除帳號",
+    "addAnotherAccount": "新增另一個 xAI 帳號",
+    "loginWithXai": "使用 xAI 登入",
+    "openBrowser": "請在瀏覽器中完成登入。",
+    "copyCode": "複製代碼",
+    "retry": "重試",
+    "callbackPortInUse": "xAI 登入回呼連接埠已被占用。請取消上一次登入或關閉占用該連接埠的應用程式，然後重試。",
+    "loginRequired": "使用此供應商前請先登入 xAI。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

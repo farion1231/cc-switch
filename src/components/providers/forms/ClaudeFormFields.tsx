@@ -36,6 +36,7 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
+import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -44,6 +45,7 @@ import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
   fetchModelsForConfig,
+  fetchXaiOauthModels,
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
@@ -97,6 +99,12 @@ interface ClaudeFormFieldsProps {
   onCodexAccountSelect?: (accountId: string | null) => void;
   codexFastMode?: boolean;
   onCodexFastModeChange?: (enabled: boolean) => void;
+
+  // xAI OAuth (SuperGrok / X Premium+)
+  isXaiOauthPreset?: boolean;
+  isXaiOauthAuthenticated?: boolean;
+  selectedXaiAccountId?: string | null;
+  onXaiAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -174,6 +182,10 @@ export function ClaudeFormFields({
   onCodexAccountSelect,
   codexFastMode,
   onCodexFastModeChange,
+  isXaiOauthPreset,
+  isXaiOauthAuthenticated,
+  selectedXaiAccountId,
+  onXaiAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -248,6 +260,11 @@ export function ClaudeFormFields({
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
+
+  // xAI OAuth 可用模型列表
+  const [xaiOauthModels, setXaiOauthModels] = useState<FetchedModel[]>([]);
+  const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
+  const xaiOauthModelsRequestRef = useRef(0);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -373,6 +390,37 @@ export function ClaudeFormFields({
     t,
   ]);
 
+  const handleFetchXaiOauthModels = useCallback(() => {
+    if (!isXaiOauthAuthenticated) {
+      toast.error(
+        t("xaiOauth.loginRequired", {
+          defaultValue: "Please sign in with xAI first",
+        }),
+      );
+      return;
+    }
+
+    const requestId = xaiOauthModelsRequestRef.current + 1;
+    xaiOauthModelsRequestRef.current = requestId;
+    setXaiOauthModelsLoading(true);
+    fetchXaiOauthModels(selectedXaiAccountId)
+      .then((models) => {
+        if (xaiOauthModelsRequestRef.current !== requestId) return;
+        setXaiOauthModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (xaiOauthModelsRequestRef.current !== requestId) return;
+        console.warn("[XaiOAuth] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (xaiOauthModelsRequestRef.current === requestId) {
+          setXaiOauthModelsLoading(false);
+        }
+      });
+  }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
+
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels([]);
@@ -385,16 +433,26 @@ export function ClaudeFormFields({
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
+  useEffect(() => {
+    xaiOauthModelsRequestRef.current += 1;
+    setXaiOauthModels([]);
+    setXaiOauthModelsLoading(false);
+  }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
+
   const modelFetchLoading = isCopilotPreset
     ? modelsLoading
     : isCodexOauthPreset
       ? codexOauthModelsLoading
-      : isFetchingModels;
+      : isXaiOauthPreset
+        ? xaiOauthModelsLoading
+        : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
     : isCodexOauthPreset
       ? handleFetchCodexOauthModels
-      : handleFetchModels;
+      : isXaiOauthPreset
+        ? handleFetchXaiOauthModels
+        : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -416,6 +474,19 @@ export function ClaudeFormFields({
           placeholder={placeholder}
           fetchedModels={codexOauthModels}
           isLoading={codexOauthModelsLoading}
+        />
+      );
+    }
+
+    if (isXaiOauthPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={xaiOauthModels}
+          isLoading={xaiOauthModelsLoading}
         />
       );
     }
@@ -616,6 +687,13 @@ export function ClaudeFormFields({
           onAccountSelect={onCodexAccountSelect}
           fastModeEnabled={codexFastMode}
           onFastModeChange={onCodexFastModeChange}
+        />
+      )}
+
+      {isXaiOauthPreset && (
+        <XaiOAuthSection
+          selectedAccountId={selectedXaiAccountId}
+          onAccountSelect={onXaiAccountSelect}
         />
       )}
 

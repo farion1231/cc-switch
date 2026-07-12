@@ -1,9 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ClaudeDesktopProviderForm } from "@/components/providers/forms/ClaudeDesktopProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
+
+const xaiOauthMock = vi.hoisted(() => ({
+  accounts: [] as Array<{ id: string }>,
+  isAuthenticated: false,
+}));
+
+vi.mock("@/components/providers/forms/hooks/useXaiOauth", () => ({
+  useXaiOauth: () => xaiOauthMock,
+}));
+
+vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
+  XaiOAuthSection: () => <div data-testid="xai-oauth-section" />,
+}));
 
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
@@ -30,6 +43,11 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
+  beforeEach(() => {
+    xaiOauthMock.accounts = [];
+    xaiOauthMock.isAuthenticated = false;
+  });
+
   it("编辑模型映射的菜单显示名时保持输入框焦点", () => {
     renderForm({
       name: "Proxy Provider",
@@ -263,5 +281,32 @@ describe("ClaudeDesktopProviderForm", () => {
         model: "claude-sonnet-5",
       },
     });
+  });
+
+  it("未登录 xAI 时不允许保存 xAI OAuth provider", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "xAI Grok OAuth",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.x.ai/v1",
+          },
+        },
+        meta: {
+          providerType: "xai_oauth",
+          claudeDesktopMode: "proxy",
+          apiFormat: "openai_responses",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": { model: "grok-build-0.1" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).not.toHaveBeenCalled());
   });
 });

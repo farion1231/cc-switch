@@ -335,6 +335,7 @@ pub fn transform_claude_request_for_api_format(
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
     let is_codex_oauth = provider.is_codex_oauth();
+    let is_xai_oauth = provider.is_xai_oauth();
 
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
     // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
@@ -386,7 +387,7 @@ pub fn transform_claude_request_for_api_format(
     match api_format {
         "openai_responses" => {
             log::debug!(
-                "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
+                "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, xai_oauth={is_xai_oauth}, has_key={}",
                 provider.id,
                 cache_key.is_some()
             );
@@ -463,6 +464,11 @@ impl ClaudeAdapter {
             return ProviderType::CodexOAuth;
         }
 
+        // 检测 xAI OAuth (SuperGrok / X Premium+)
+        if self.is_xai_oauth(provider) {
+            return ProviderType::XaiOAuth;
+        }
+
         // 检测 GitHub Copilot
         if self.is_github_copilot(provider) {
             return ProviderType::GitHubCopilot;
@@ -489,6 +495,10 @@ impl ClaudeAdapter {
             }
         }
         false
+    }
+
+    fn is_xai_oauth(&self, provider: &Provider) -> bool {
+        provider.is_xai_oauth()
     }
 
     /// 检测是否为 GitHub Copilot 供应商
@@ -669,6 +679,11 @@ impl ProviderAdapter for ClaudeAdapter {
             return Ok("https://chatgpt.com/backend-api/codex".to_string());
         }
 
+        // xAI OAuth: 强制使用 xAI Responses API 端点前缀（忽略用户配置的 base_url）
+        if self.is_xai_oauth(provider) {
+            return Ok("https://api.x.ai/v1".to_string());
+        }
+
         // 1. 从 env 中获取
         if let Some(env) = provider.settings_config.get("env") {
             if let Some(url) = env.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
@@ -725,6 +740,14 @@ impl ProviderAdapter for ClaudeAdapter {
             return Some(AuthInfo::new(
                 "codex_oauth_placeholder".to_string(),
                 AuthStrategy::CodexOAuth,
+            ));
+        }
+
+        // xAI OAuth 同样使用托管占位符，真实 access_token 由 forwarder 动态提供。
+        if provider_type == ProviderType::XaiOAuth {
+            return Some(AuthInfo::new(
+                "xai_oauth_placeholder".to_string(),
+                AuthStrategy::XaiOAuth,
             ));
         }
 
@@ -846,6 +869,10 @@ impl ProviderAdapter for ClaudeAdapter {
                         HeaderValue::from_static("cc-switch"),
                     ),
                 ]
+            }
+            AuthStrategy::XaiOAuth => {
+                // bearer token 由 forwarder 动态注入到 auth.api_key
+                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {
                 // 生成请求追踪 ID
@@ -1373,6 +1400,54 @@ mod tests {
     }
 
     #[test]
+    fn test_build_url_xai_does_not_override_the_requested_api_format() {
+        let adapter = ClaudeAdapter::new();
+        assert_eq!(
+            adapter.build_url("https://api.x.ai/v1", "/v1/messages"),
+            "https://api.x.ai/v1/messages"
+        );
+        assert_eq!(
+            adapter.build_url("https://api.x.ai/v1", "/v1/responses"),
+            "https://api.x.ai/v1/responses"
+        );
+    }
+
+    #[test]
+    fn test_xai_oauth_responses_transform_keeps_output_controls() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.x.ai/v1"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let transformed = adapter
+            .transform_request(
+                json!({
+                    "model": "grok-build-0.1",
+                    "max_tokens": 1024,
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                &provider,
+            )
+            .unwrap();
+
+        assert_eq!(transformed["max_output_tokens"], json!(1024));
+        assert_eq!(transformed["temperature"], json!(0.2));
+        assert_eq!(transformed["top_p"], json!(0.9));
+        assert!(transformed.get("store").is_none());
+    }
+
+    #[test]
     fn test_build_url_no_beta_for_other_endpoints() {
         let adapter = ClaudeAdapter::new();
         let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
@@ -1569,6 +1644,33 @@ mod tests {
         assert_eq!(
             adapter.provider_type(&copilot_meta),
             ProviderType::GitHubCopilot
+        );
+    }
+
+    #[test]
+    fn test_xai_oauth_detection_by_meta_and_auth_strategy() {
+        let adapter = ClaudeAdapter::new();
+        let xai = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.example.com"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("xai_oauth".to_string()),
+                api_format: Some("openai_responses".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(adapter.provider_type(&xai), ProviderType::XaiOAuth);
+        assert_eq!(
+            adapter.extract_base_url(&xai).unwrap(),
+            "https://api.x.ai/v1"
+        );
+        assert_eq!(
+            adapter.extract_auth(&xai).unwrap().strategy,
+            AuthStrategy::XaiOAuth
         );
     }
 

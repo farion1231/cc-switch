@@ -39,11 +39,13 @@ import { Switch } from "@/components/ui/switch";
 import { BasicFormFields } from "./BasicFormFields";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
+import { XaiOAuthSection } from "./XaiOAuthSection";
 import { ApiKeySection } from "./shared/ApiKeySection";
 import { EndpointField } from "./shared/EndpointField";
 import { ModelDropdown } from "./shared/ModelDropdown";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { useApiKeyLink } from "./hooks/useApiKeyLink";
+import { useXaiOauth } from "./hooks/useXaiOauth";
 import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import type {
   ClaudeApiFormat,
@@ -256,6 +258,8 @@ export function ClaudeDesktopProviderForm({
   showButtons = true,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
+  const { accounts: xaiAccounts, isAuthenticated: isXaiOauthAuthenticated } =
+    useXaiOauth();
   const initialMode = initialData?.meta?.claudeDesktopMode ?? "direct";
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
   const needsModelMapping = mode === "proxy";
@@ -280,6 +284,9 @@ export function ClaudeDesktopProviderForm({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -383,7 +390,8 @@ export function ClaudeDesktopProviderForm({
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
     activeProviderType === "github_copilot" ||
-    activeProviderType === "codex_oauth";
+    activeProviderType === "codex_oauth" ||
+    activeProviderType === "xai_oauth";
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
   const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
@@ -576,6 +584,20 @@ export function ClaudeDesktopProviderForm({
       );
       return;
     }
+    if (
+      activeProviderType === "xai_oauth" &&
+      (!isXaiOauthAuthenticated ||
+        (selectedXaiAccountId !== null &&
+          !xaiAccounts.some((account) => account.id === selectedXaiAccountId)))
+    ) {
+      toast.error(
+        t("xaiOauth.loginRequired", {
+          defaultValue:
+            "Please sign in with xAI and select an available account",
+        }),
+      );
+      return;
+    }
     if (!usesManagedOAuth && !apiKey.trim()) {
       toast.error(
         t("providerForm.fetchModelsNeedApiKey", {
@@ -683,7 +705,13 @@ export function ClaudeDesktopProviderForm({
               authProvider: "codex_oauth",
               accountId: selectedCodexAccountId ?? undefined,
             }
-          : undefined;
+          : activeProviderType === "xai_oauth"
+            ? {
+                source: "managed_account",
+                authProvider: "xai_oauth",
+                accountId: selectedXaiAccountId ?? undefined,
+              }
+            : undefined;
     meta.codexFastMode =
       activeProviderType === "codex_oauth" ? codexFastMode : undefined;
 
@@ -772,6 +800,11 @@ export function ClaudeDesktopProviderForm({
                   <CopilotAuthSection
                     selectedAccountId={selectedGitHubAccountId}
                     onAccountSelect={setSelectedGitHubAccountId}
+                  />
+                ) : activeProviderType === "xai_oauth" ? (
+                  <XaiOAuthSection
+                    selectedAccountId={selectedXaiAccountId}
+                    onAccountSelect={setSelectedXaiAccountId}
                   />
                 ) : (
                   <CodexOAuthSection

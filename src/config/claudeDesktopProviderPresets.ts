@@ -56,7 +56,7 @@ export interface ClaudeDesktopProviderPreset {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
-  providerType?: "github_copilot" | "codex_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
   requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
@@ -396,6 +396,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     requiresOAuth: true,
     modelRoutes: brandedRoutes("gpt-5.5", "gpt-5.5", "gpt-5.4-mini"),
     icon: "openai",
+    iconColor: "#000000",
+  },
+  {
+    name: "xAI Grok OAuth (SuperGrok / X Premium+)",
+    websiteUrl: "https://x.ai",
+    category: "third_party",
+    baseUrl: "https://api.x.ai/v1",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    providerType: "xai_oauth",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes(
+      "grok-build-0.1",
+      "grok-build-0.1",
+      "grok-build-0.1",
+    ),
+    icon: "x",
     iconColor: "#000000",
   },
   {

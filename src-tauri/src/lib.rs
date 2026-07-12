@@ -994,6 +994,18 @@ pub fn run() {
                 log::info!("✓ CodexOAuthManager initialized");
             }
 
+            // 初始化 XaiOAuthManager (xAI Grok managed OAuth)
+            {
+                use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+                use commands::XaiOAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
+                app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
+                log::info!("✓ XaiOAuthManager initialized");
+            }
+
             // 初始化全局出站代理 HTTP 客户端
             {
                 let db = &app.state::<AppState>().db;
@@ -1255,6 +1267,7 @@ pub fn run() {
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
             commands::get_codex_oauth_models,
+            commands::get_xai_oauth_models,
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
@@ -1467,6 +1480,7 @@ pub fn run() {
             // Generic managed auth commands
             commands::auth_start_login,
             commands::auth_poll_for_account,
+            commands::auth_cancel_login,
             commands::auth_list_accounts,
             commands::auth_get_status,
             commands::auth_remove_account,

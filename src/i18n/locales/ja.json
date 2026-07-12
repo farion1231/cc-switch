@@ -327,7 +327,8 @@
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
-      "codexOauthDescription": "ChatGPT アカウントを管理します"
+      "codexOauthDescription": "ChatGPT アカウントを管理します",
+      "xaiOauthDescription": "xAI Grok アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -1258,6 +1259,28 @@
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
     "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+  },
+  "xaiOauth": {
+    "authStatus": "認証ステータス",
+    "accountCount": "{{count}} 個のアカウント",
+    "accountCount_plural": "{{count}} 個のアカウント",
+    "notAuthenticated": "未認証",
+    "entitlementNotice": "OAuth ログインが成功しても、xAI が後続の API アクセスを HTTP 403 で拒否する場合があります。ご利用のサブスクリプションが OAuth API アクセスの対象外の場合は、xAI API キーのプロバイダーを使用してください。",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "xAI アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "loggedInAccounts": "ログイン済みアカウント",
+    "defaultAccount": "デフォルト",
+    "selected": "選択中",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "addAnotherAccount": "別の xAI アカウントを追加",
+    "loginWithXai": "xAI でサインイン",
+    "openBrowser": "ブラウザーでサインインを完了してください。",
+    "copyCode": "コードをコピー",
+    "retry": "再試行",
+    "callbackPortInUse": "xAI サインインのコールバックポートが使用中です。前のサインインをキャンセルするか、競合するアプリを終了してから再試行してください。",
+    "loginRequired": "このプロバイダーを使用する前に xAI にサインインしてください。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

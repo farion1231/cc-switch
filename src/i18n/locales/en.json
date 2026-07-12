@@ -327,7 +327,8 @@
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts",
+      "xaiOauthDescription": "Manage xAI Grok accounts"
     },
     "advanced": {
       "configDir": {
@@ -1258,6 +1259,28 @@
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
     "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
+  },
+  "xaiOauth": {
+    "authStatus": "Authentication status",
+    "accountCount": "{{count}} account",
+    "accountCount_plural": "{{count}} accounts",
+    "notAuthenticated": "Not authenticated",
+    "entitlementNotice": "OAuth login can succeed even when xAI later rejects API access with HTTP 403. Use an xAI API key provider if your subscription is not eligible for OAuth API access.",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select an xAI account",
+    "useDefaultAccount": "Use default account",
+    "loggedInAccounts": "Signed-in accounts",
+    "defaultAccount": "Default",
+    "selected": "Selected",
+    "setAsDefault": "Set default",
+    "removeAccount": "Remove account",
+    "addAnotherAccount": "Add another xAI account",
+    "loginWithXai": "Sign in with xAI",
+    "openBrowser": "Complete sign-in in your browser.",
+    "copyCode": "Copy code",
+    "retry": "Retry",
+    "callbackPortInUse": "The xAI sign-in callback port is already in use. Cancel the previous sign-in or close the conflicting app, then retry.",
+    "loginRequired": "Sign in with xAI before using this provider."
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

@@ -22,9 +22,10 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState};
+use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
     provider::{LocalProxyRequestOverrides, Provider},
@@ -1632,6 +1633,47 @@ impl RequestForwarder {
                 }
             }
 
+            // xAI OAuth 特殊处理：从 XaiOAuthManager 获取真实 access_token
+            if auth.strategy == AuthStrategy::XaiOAuth {
+                if !is_xai_oauth_upstream_url(&url) {
+                    return Err(ProxyError::AuthError(
+                        "xAI OAuth tokens may only be sent to https://api.x.ai upstreams"
+                            .to_string(),
+                    ));
+                }
+
+                if let Some(app_handle) = &self.app_handle {
+                    let xai_state = app_handle.state::<XaiOAuthState>();
+                    let xai_auth: tokio::sync::RwLockReadGuard<'_, XaiOAuthManager> =
+                        xai_state.0.read().await;
+
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("xai_oauth"));
+
+                    let token_result = match &account_id {
+                        Some(id) => xai_auth.get_valid_token_for_account(id).await,
+                        None => xai_auth.get_valid_token().await,
+                    };
+
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::XaiOAuth);
+                        }
+                        Err(e) => {
+                            return Err(ProxyError::AuthError(format!(
+                                "xAI OAuth authentication failed: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ProxyError::AuthError(
+                        "xAI OAuth authentication unavailable without AppHandle".to_string(),
+                    ));
+                }
+            }
+
             adapter.get_auth_headers(&auth)?
         } else {
             Vec::new()
@@ -2810,6 +2852,18 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
     host == "githubcopilot.com"
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
+        || is_xai_oauth_upstream_url(url)
+}
+
+fn is_xai_oauth_upstream_url(url: &str) -> bool {
+    let Ok(uri) = url.parse::<http::Uri>() else {
+        return false;
+    };
+
+    uri.scheme_str() == Some("https")
+        && uri
+            .host()
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.x.ai"))
 }
 
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -2831,7 +2885,7 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() {
+    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
         return false;
     }
 
@@ -3564,6 +3618,35 @@ mod tests {
     }
 
     #[test]
+    fn xai_oauth_upstream_rejects_proxy_managed_placeholder_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+        );
+
+        let err = reject_proxy_placeholder_for_managed_account_upstream(
+            "https://api.x.ai/v1/responses",
+            &headers,
+        )
+        .expect_err("placeholder should be rejected before xAI upstream");
+
+        assert!(matches!(
+            err,
+            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+        ));
+    }
+
+    #[test]
+    fn xai_oauth_upstream_guard_is_host_pinned() {
+        assert!(is_xai_oauth_upstream_url("https://api.x.ai/v1/responses"));
+        assert!(!is_xai_oauth_upstream_url("http://api.x.ai/v1/responses"));
+        assert!(!is_xai_oauth_upstream_url(
+            "https://api.x.ai.evil.example/v1/responses"
+        ));
+    }
+
+    #[test]
     fn non_managed_upstream_allows_proxy_managed_placeholder_guard() {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -3606,6 +3689,7 @@ mod tests {
     fn exact_header_case_skipped_for_codex_oauth_and_copilot() {
         let codex_oauth = test_provider_with_type(Some("codex_oauth"));
         let copilot = test_provider_with_type(Some("github_copilot"));
+        let xai_oauth = test_provider_with_type(Some("xai_oauth"));
 
         assert!(!should_preserve_exact_header_case(
             "Claude",
@@ -3618,6 +3702,12 @@ mod tests {
             &copilot,
             Some("openai_chat"),
             true
+        ));
+        assert!(!should_preserve_exact_header_case(
+            "Claude",
+            &xai_oauth,
+            Some("openai_responses"),
+            false
         ));
     }
 
