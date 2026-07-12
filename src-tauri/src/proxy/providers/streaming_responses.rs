@@ -10,7 +10,7 @@
 
 use super::reasoning_bridge::{encode_openai_reasoning_item, reasoning_summary_text};
 use super::transform_responses::{
-    build_anthropic_usage_from_responses, map_responses_stop_reason,
+    build_anthropic_usage_from_responses, map_responses_stop_reason, responses_to_anthropic,
     sanitize_anthropic_tool_use_input_json,
 };
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
@@ -22,6 +22,182 @@ use std::collections::{HashMap, HashSet};
 #[inline]
 fn response_object_from_event(data: &Value) -> &Value {
     data.get("response").unwrap_or(data)
+}
+
+fn anthropic_sse(event_name: &str, payload: &Value) -> Bytes {
+    Bytes::from(format!(
+        "event: {event_name}\ndata: {}\n\n",
+        serde_json::to_string(payload).unwrap_or_default()
+    ))
+}
+
+fn responses_error_details(data: &Value, fallback: &str) -> (String, String) {
+    let response = response_object_from_event(data);
+    let error = response.get("error").unwrap_or(response);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string();
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| error.get("code").and_then(Value::as_str))
+        .unwrap_or("upstream_error")
+        .to_string();
+    (message, error_type)
+}
+
+fn anthropic_error_sse(message: &str, error_type: &str) -> Bytes {
+    anthropic_sse(
+        "error",
+        &json!({
+            "type": "error",
+            "error": {"type": error_type, "message": message}
+        }),
+    )
+}
+
+/// Convert a compatible gateway's non-streaming Responses JSON into a complete
+/// Anthropic SSE lifecycle. This is used when the client requested streaming but
+/// the upstream ignored `stream:true` and returned `application/json`.
+fn responses_json_to_anthropic_sse(body: Value) -> Vec<Bytes> {
+    let message = match responses_to_anthropic(body) {
+        Ok(message) => message,
+        Err(error) => {
+            return vec![anthropic_error_sse(
+                &error.to_string(),
+                "response_transform_error",
+            )]
+        }
+    };
+
+    let usage = message.get("usage").cloned().unwrap_or_else(|| json!({}));
+    let mut start_usage = usage.clone();
+    start_usage["output_tokens"] = json!(0);
+    let mut events = vec![anthropic_sse(
+        "message_start",
+        &json!({
+            "type": "message_start",
+            "message": {
+                "id": message.get("id").cloned().unwrap_or_else(|| json!("")),
+                "type": "message",
+                "role": "assistant",
+                "model": message.get("model").cloned().unwrap_or_else(|| json!("")),
+                "usage": start_usage
+            }
+        }),
+    )];
+
+    if let Some(content) = message.get("content").and_then(Value::as_array) {
+        for (index, block) in content.iter().enumerate() {
+            let index = index as u64;
+            match block.get("type").and_then(Value::as_str) {
+                Some("text") => {
+                    events.push(anthropic_sse(
+                        "content_block_start",
+                        &json!({"type":"content_block_start","index":index,"content_block":{"type":"text","text":""}}),
+                    ));
+                    if let Some(text) = block.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            events.push(anthropic_sse(
+                                "content_block_delta",
+                                &json!({"type":"content_block_delta","index":index,"delta":{"type":"text_delta","text":text}}),
+                            ));
+                        }
+                    }
+                    events.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                Some("tool_use") => {
+                    events.push(anthropic_sse(
+                        "content_block_start",
+                        &json!({
+                            "type":"content_block_start",
+                            "index":index,
+                            "content_block":{
+                                "type":"tool_use",
+                                "id":block.get("id").cloned().unwrap_or_else(|| json!("")),
+                                "name":block.get("name").cloned().unwrap_or_else(|| json!("")),
+                                "input":{}
+                            }
+                        }),
+                    ));
+                    let input = block.get("input").cloned().unwrap_or_else(|| json!({}));
+                    events.push(anthropic_sse(
+                        "content_block_delta",
+                        &json!({
+                            "type":"content_block_delta",
+                            "index":index,
+                            "delta":{"type":"input_json_delta","partial_json":serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string())}
+                        }),
+                    ));
+                    events.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                Some("thinking") => {
+                    events.push(anthropic_sse(
+                        "content_block_start",
+                        &json!({"type":"content_block_start","index":index,"content_block":{"type":"thinking","thinking":""}}),
+                    ));
+                    if let Some(thinking) = block.get("thinking").and_then(Value::as_str) {
+                        if !thinking.is_empty() {
+                            events.push(anthropic_sse(
+                                "content_block_delta",
+                                &json!({"type":"content_block_delta","index":index,"delta":{"type":"thinking_delta","thinking":thinking}}),
+                            ));
+                        }
+                    }
+                    if let Some(signature) = block.get("signature").and_then(Value::as_str) {
+                        if !signature.is_empty() {
+                            events.push(anthropic_sse(
+                                "content_block_delta",
+                                &json!({"type":"content_block_delta","index":index,"delta":{"type":"signature_delta","signature":signature}}),
+                            ));
+                        }
+                    }
+                    events.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                Some("redacted_thinking") => {
+                    events.push(anthropic_sse(
+                        "content_block_start",
+                        &json!({"type":"content_block_start","index":index,"content_block":block}),
+                    ));
+                    events.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    events.push(anthropic_sse(
+        "message_delta",
+        &json!({
+            "type":"message_delta",
+            "delta":{
+                "stop_reason":message.get("stop_reason").cloned().unwrap_or(Value::Null),
+                "stop_sequence":null
+            },
+            "usage":usage
+        }),
+    ));
+    events.push(anthropic_sse(
+        "message_stop",
+        &json!({"type":"message_stop"}),
+    ));
+    events
 }
 
 #[inline]
@@ -138,13 +314,60 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
         let mut reasoning_item_by_index: HashMap<u32, Value> = HashMap::new();
         let mut reasoning_text_by_index: HashMap<u32, String> = HashMap::new();
         let mut legacy_reasoning_index: Option<u32> = None;
+        let mut has_substantive_output = false;
+        let mut terminated = false;
 
+        // Append an EOF sentinel so the same parser handles a final SSE event that
+        // omitted its trailing blank line. The boolean distinguishes the sentinel
+        // from a legitimate empty upstream chunk.
+        let stream = stream
+            .map(|result| (result, false))
+            .chain(futures::stream::once(async {
+                (Ok::<Bytes, E>(Bytes::new()), true)
+            }));
         tokio::pin!(stream);
 
-        while let Some(chunk) = stream.next().await {
+        while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+
+                    // A few compatible gateways ignore stream:true and return one
+                    // JSON document. Hold it intact until EOF, including any pretty-
+                    // printed blank lines that would otherwise look like SSE separators.
+                    let looks_like_json = matches!(
+                        buffer
+                            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}')
+                            .as_bytes()
+                            .first(),
+                        Some(b'{') | Some(b'[')
+                    );
+                    if looks_like_json && !is_eof {
+                        continue;
+                    }
+                    if looks_like_json && is_eof {
+                        match serde_json::from_str::<Value>(buffer.trim()) {
+                            Ok(body) => {
+                                for event in responses_json_to_anthropic_sse(body) {
+                                    yield Ok(event);
+                                }
+                                terminated = true;
+                            }
+                            Err(error) => {
+                                yield Ok(anthropic_error_sse(
+                                    &format!("Invalid JSON response from Responses upstream: {error}"),
+                                    "response_parse_error",
+                                ));
+                                terminated = true;
+                            }
+                        }
+                        buffer.clear();
+                        continue;
+                    }
+
+                    if is_eof && !buffer.trim().is_empty() {
+                        buffer.push_str("\n\n");
+                    }
 
                     // SSE 事件由 \n\n 分隔
                     while let Some(block) = take_sse_block(&mut buffer) {
@@ -169,7 +392,6 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                         }
 
                         let data_str = data_parts.join("\n");
-                        let event_name = event_type.as_deref().unwrap_or("");
 
                         // 解析 JSON 数据
                         let data: Value = match serde_json::from_str(&data_str) {
@@ -177,7 +399,52 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             Err(_) => continue,
                         };
 
+                        // Official streams use both a named SSE event and `type` in
+                        // the JSON payload. Compatible gateways sometimes omit the
+                        // `event:` line, so fall back to the payload type.
+                        let event_name = event_type
+                            .as_deref()
+                            .filter(|name| !name.is_empty())
+                            .or_else(|| data.get("type").and_then(Value::as_str))
+                            .unwrap_or("");
+
                         log::debug!("[Claude/Responses] <<< SSE event: {event_name}");
+
+                        // Ignore every event after a terminal response. In particular,
+                        // do not synthesize message_start if a broken gateway emits a
+                        // late delta after response.failed/error.
+                        if terminated {
+                            continue;
+                        }
+
+                        let delta_requires_message_start = matches!(
+                            event_name,
+                            "response.output_text.delta"
+                                | "response.refusal.delta"
+                                | "response.function_call_arguments.delta"
+                                | "response.reasoning_summary_text.delta"
+                                | "response.reasoning_text.delta"
+                                | "response.reasoning.delta"
+                        );
+                        if delta_requires_message_start {
+                            has_substantive_output = true;
+                        }
+                        if delta_requires_message_start && !has_sent_message_start {
+                            yield Ok(anthropic_sse(
+                                "message_start",
+                                &json!({
+                                    "type":"message_start",
+                                    "message":{
+                                        "id":message_id.clone().unwrap_or_default(),
+                                        "type":"message",
+                                        "role":"assistant",
+                                        "model":current_model.clone().unwrap_or_default(),
+                                        "usage":{"input_tokens":0,"output_tokens":0}
+                                    }
+                                }),
+                            ));
+                            has_sent_message_start = true;
+                        }
 
                         match event_name {
                             // ================================================
@@ -383,6 +650,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
                                     if item_type == "function_call" {
                                         has_tool_use = true;
+                                        has_substantive_output = true;
                                         if let Some(index) = current_text_index.take() {
                                             if open_indices.remove(&index) {
                                                 let stop_event = json!({
@@ -511,6 +779,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             // ================================================
                             "response.function_call_arguments.delta" => {
                                 if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+                                    has_tool_use = true;
                                     let item_id = data.get("item_id").and_then(|v| v.as_str());
                                     let index = if let Some(id) = item_id {
                                         tool_index_by_item_id.get(id).copied()
@@ -527,6 +796,16 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                         next_content_index += 1;
                                         assigned
                                     });
+
+                                    if let Some(id) = item_id {
+                                        tool_index_by_item_id.insert(id.to_string(), index);
+                                    }
+                                    if let Some(name) = data.get("name").and_then(Value::as_str) {
+                                        tool_name_by_index.insert(index, name.to_string());
+                                    } else {
+                                        tool_name_by_index.entry(index).or_default();
+                                    }
+                                    last_tool_index = Some(index);
 
                                     if !open_indices.contains(&index) {
                                         let start_event = json!({
@@ -579,6 +858,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             // response.function_call_arguments.done → content_block_stop
                             // ================================================
                             "response.function_call_arguments.done" => {
+                                has_tool_use = true;
                                 let item_id = data.get("item_id").and_then(|v| v.as_str());
                                 let index = if let Some(id) = item_id {
                                     tool_index_by_item_id.get(id).copied()
@@ -867,12 +1147,59 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             }
 
                             // ================================================
-                            // response.completed → message_delta + message_stop
+                            // response.completed / response.incomplete → message_delta + message_stop
                             // ================================================
-                            "response.completed" => {
+                            "response.completed" | "response.incomplete" => {
                                 let response_obj = response_object_from_event(&data);
+                                if matches!(
+                                    response_obj.get("status").and_then(Value::as_str),
+                                    Some("failed" | "cancelled")
+                                ) || response_obj
+                                    .get("error")
+                                    .is_some_and(|error| !error.is_null())
+                                {
+                                    let (message, error_type) = responses_error_details(
+                                        &data,
+                                        "Responses upstream returned a failed terminal response",
+                                    );
+                                    yield Ok(anthropic_error_sse(&message, &error_type));
+                                    terminated = true;
+                                    continue;
+                                }
+                                if !has_sent_message_start {
+                                    if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
+                                        message_id = Some(id.to_string());
+                                    }
+                                    if let Some(model) =
+                                        response_obj.get("model").and_then(Value::as_str)
+                                    {
+                                        current_model = Some(model.to_string());
+                                    }
+                                    yield Ok(anthropic_sse(
+                                        "message_start",
+                                        &json!({
+                                            "type":"message_start",
+                                            "message":{
+                                                "id":message_id.clone().unwrap_or_default(),
+                                                "type":"message",
+                                                "role":"assistant",
+                                                "model":current_model.clone().unwrap_or_default(),
+                                                "usage":{"input_tokens":0,"output_tokens":0}
+                                            }
+                                        }),
+                                    ));
+                                    has_sent_message_start = true;
+                                }
+                                let terminal_status = response_obj
+                                    .get("status")
+                                    .and_then(Value::as_str)
+                                    .or(match event_name {
+                                        "response.incomplete" => Some("incomplete"),
+                                        "response.completed" => Some("completed"),
+                                        _ => None,
+                                    });
                                 let stop_reason = map_responses_stop_reason(
-                                    response_obj.get("status").and_then(|s| s.as_str()),
+                                    terminal_status,
                                     has_tool_use,
                                     response_obj
                                         .pointer("/incomplete_details/reason")
@@ -923,6 +1250,24 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                     serde_json::to_string(&stop_event).unwrap_or_default());
                                 log::debug!("[Claude/Responses] >>> Anthropic SSE: message_stop");
                                 yield Ok(Bytes::from(stop_sse));
+                                terminated = true;
+                            }
+
+                            // ================================================
+                            // Semantic failures can be carried inside an HTTP 2xx SSE.
+                            // Preserve the upstream details instead of silently ending.
+                            // ================================================
+                            "response.failed" | "error" => {
+                                let (message, error_type) = responses_error_details(
+                                    &data,
+                                    if event_name == "response.failed" {
+                                        "Responses upstream reported response.failed"
+                                    } else {
+                                        "Responses upstream emitted an error event"
+                                    },
+                                );
+                                yield Ok(anthropic_error_sse(&message, &error_type));
+                                terminated = true;
                             }
 
                             // Lifecycle events that don't need Anthropic counterparts.
@@ -949,6 +1294,7 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 };
                                 match item.get("type").and_then(Value::as_str) {
                                     Some("function_call") => {
+                                        has_tool_use = true;
                                         let item_id = item
                                             .get("id")
                                             .and_then(Value::as_str)
@@ -1126,8 +1472,64 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     let sse = format!("event: error\ndata: {}\n\n",
                         serde_json::to_string(&error_event).unwrap_or_default());
                     yield Ok(Bytes::from(sse));
+                    terminated = true;
                     break;
                 }
+            }
+        }
+
+        if !terminated {
+            let has_open_tool = open_indices.iter().any(|index| {
+                tool_name_by_index.contains_key(index) || tool_args_by_index.contains_key(index)
+            });
+            let has_open_reasoning = open_indices.iter().any(|index| {
+                reasoning_item_by_index.contains_key(index)
+                    || reasoning_text_by_index.contains_key(index)
+                    || legacy_reasoning_index == Some(*index)
+            });
+
+            if has_substantive_output && !has_open_tool && !has_open_reasoning {
+                // Text-only partial output is safe to expose as a max-token style
+                // incomplete turn. Close blocks before the terminal events.
+                let mut remaining: Vec<u32> = open_indices.iter().copied().collect();
+                remaining.sort_unstable();
+                for index in remaining {
+                    yield Ok(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                if !has_sent_message_start {
+                    yield Ok(anthropic_sse(
+                        "message_start",
+                        &json!({
+                            "type":"message_start",
+                            "message":{
+                                "id":message_id.clone().unwrap_or_default(),
+                                "type":"message",
+                                "role":"assistant",
+                                "model":current_model.clone().unwrap_or_default(),
+                                "usage":{"input_tokens":0,"output_tokens":0}
+                            }
+                        }),
+                    ));
+                }
+                yield Ok(anthropic_sse(
+                    "message_delta",
+                    &json!({
+                        "type":"message_delta",
+                        "delta":{"stop_reason":"max_tokens","stop_sequence":null},
+                        "usage":{"input_tokens":0,"output_tokens":0}
+                    }),
+                ));
+                yield Ok(anthropic_sse("message_stop", &json!({"type":"message_stop"})));
+            } else {
+                // A truncated tool/reasoning block cannot be safely finalized: tool
+                // JSON may be partial and thinking may be missing its signature.
+                yield Ok(anthropic_error_sse(
+                    "Responses upstream stream ended before a terminal event",
+                    "stream_truncated",
+                ));
             }
         }
     }
@@ -1139,6 +1541,16 @@ mod tests {
     use futures::stream;
     use futures::StreamExt;
     use std::collections::HashMap;
+
+    async fn convert_stream_text(input: impl Into<Bytes>) -> String {
+        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
+        create_anthropic_sse_stream_from_responses(upstream)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .collect()
+    }
 
     #[test]
     fn test_map_responses_stop_reason_tool_use() {
@@ -1172,6 +1584,152 @@ mod tests {
         let obj = response_object_from_event(&data);
         assert_eq!(obj["id"], "resp_1");
         assert_eq!(obj["model"], "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn test_response_failed_event_becomes_anthropic_error() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"message\":\"backend exploded\"}}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("backend exploded"));
+        assert!(!merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_late_delta_after_failure_does_not_emit_message_start() {
+        let input = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"message\":\"boom\"}}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"too late\"}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: error"));
+        assert!(!merged.contains("event: message_start"));
+        assert!(!merged.contains("too late"));
+    }
+
+    #[tokio::test]
+    async fn test_completed_event_with_failed_status_is_error() {
+        let input = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"message\":\"failed wrapper\"},\"output\":[]}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("failed wrapper"));
+        assert!(!merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_response_incomplete_event_terminates_with_max_tokens() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":3}}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
+        assert!(merged.contains("event: message_stop"));
+        assert!(!merged.contains("event: error"));
+    }
+
+    #[tokio::test]
+    async fn test_response_incomplete_event_without_status_uses_event_fallback() {
+        let input = concat!(
+            "event: response.incomplete\n",
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"usage\":{\"output_tokens\":3}}}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_final_event_without_blank_line_is_processed() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("\"stop_reason\":\"end_turn\""));
+        assert_eq!(merged.matches("event: message_stop").count(), 1);
+        assert!(!merged.contains("stream_truncated"));
+    }
+
+    #[tokio::test]
+    async fn test_clean_eof_after_partial_text_is_explicitly_incomplete() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
+        assert!(merged.contains("event: content_block_stop"));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_clean_eof_during_tool_arguments_is_error() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
+            "event: response.function_call_arguments.delta\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"exec\",\"delta\":\"{\\\"cmd\\\":\"}\n\n"
+        );
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("stream_truncated"));
+        assert!(!merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_request_with_complete_json_response_is_converted() {
+        let input = r#"{
+            "id":"resp_json",
+            "status":"completed",
+            "model":"gpt-5",
+            "output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}],
+            "usage":{"input_tokens":4,"output_tokens":1}
+        }"#;
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: message_start"));
+        assert!(merged.contains("\"text\":\"hello\""));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_request_with_failed_json_response_is_error() {
+        let input = r#"{
+            "id":"resp_json",
+            "status":"failed",
+            "error":{"type":"server_error","message":"json backend failed"},
+            "output":[]
+        }"#;
+
+        let merged = convert_stream_text(input).await;
+        assert!(merged.contains("event: error"));
+        assert!(merged.contains("json backend failed"));
+        assert!(!merged.contains("event: message_stop"));
     }
 
     #[tokio::test]
