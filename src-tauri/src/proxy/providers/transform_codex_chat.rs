@@ -1111,6 +1111,8 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .and_then(|value| value.as_object_mut())
         {
             obj.insert("name".to_string(), json!(chat_name));
+            let parameters = normalize_chat_function_parameters(obj.get("parameters"));
+            obj.insert("parameters".to_string(), parameters);
             if let Some(strict) = tool.get("strict").cloned() {
                 obj.entry("strict".to_string()).or_insert(strict);
             }
@@ -1121,7 +1123,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     let mut function = json!({
         "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
+        "parameters": normalize_chat_function_parameters(tool.get("parameters"))
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
@@ -1131,6 +1133,18 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
         "type": "function",
         "function": function
     }))
+}
+
+fn normalize_chat_function_parameters(parameters: Option<&Value>) -> Value {
+    let Some(mut schema) = parameters.and_then(Value::as_object).cloned() else {
+        return json!({"type": "object"});
+    };
+
+    if schema.get("type").is_none_or(Value::is_null) {
+        schema.insert("type".to_string(), json!("object"));
+    }
+
+    Value::Object(schema)
 }
 
 fn responses_function_call_to_chat_tool_call(
@@ -1967,6 +1981,40 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_adds_object_type_to_composed_tool_schema() {
+        let input = json!({
+            "model": "deepseek-v4-flash",
+            "input": "Create an automation.",
+            "tools": [{
+                "type": "function",
+                "name": "codex_app__automation_update",
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "properties": {
+                                "action": {"const": "create"}
+                            },
+                            "required": ["action"]
+                        },
+                        {
+                            "properties": {
+                                "action": {"const": "view"}
+                            },
+                            "required": ["action"]
+                        }
+                    ]
+                }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(parameters["oneOf"].as_array().unwrap().len(), 2);
     }
 
     #[test]
