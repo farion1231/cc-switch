@@ -244,6 +244,7 @@
     "syncClaudePluginFailed": "Claude プラグインとの同期に失敗しました",
     "skipClaudeOnboardingFailed": "Claude Code の初回確認スキップに失敗しました",
     "clearClaudeOnboardingSkipFailed": "Claude Code の初回確認の復元に失敗しました",
+    "keepConversationHistoryFailed": "会話履歴保護の更新に失敗しました",
     "updateSuccess": "プロバイダーを更新しました",
     "updateFailed": "プロバイダーの更新に失敗しました: {{error}}",
     "deleteSuccess": "プロバイダーを削除しました",
@@ -691,6 +692,8 @@
     "unifyCodexHistoryRestoreFailed": "公式セッション履歴の復元に失敗しました。もう一度お試しください",
     "unifyCodexHistoryRestoreNothing": "現在の Codex ディレクトリに復元可能な移行バックアップはありません",
     "unifyCodexHistoryRestoreSkippedToggleOn": "統一セッション履歴が再度有効化されたため、復元をスキップしました",
+    "keepConversationHistory": "会話履歴を保持",
+    "keepConversationHistoryDescription": "Claude Codeが会話記録を自動削除するのを防ぎます（デフォルト：30日でクリーンアップ）",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
+import { settingsApi } from "@/lib/api/settings";
 import type { Settings } from "@/types";
 
 type Language = "zh" | "zh-TW" | "en" | "ja";
@@ -78,6 +79,10 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  // 用户手动操作过 keepConversationHistory 后，异步初始化读取不再覆盖
+  const userTouchedTranscriptRef = useRef(false);
+  // 避免 data refetch 时重复读取 ~/.claude/settings.json
+  const hasSyncedTranscriptProtectionRef = useRef(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
@@ -119,6 +124,7 @@ export function useSettingsForm(): UseSettingsFormResult {
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
+      keepConversationHistory: data.keepConversationHistory ?? false,
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -130,10 +136,36 @@ export function useSettingsForm(): UseSettingsFormResult {
     setSettingsState(normalized);
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
+
+    // 从 ~/.claude/settings.json 读取实际的 transcript protection 状态并同步到表单
+    // 仅在用户未手动操作过 toggle 时才覆盖，避免异步结果回滚用户选择
+    // 用 ref 保证只读取一次，防止 data refetch 时重复触发
+    if (!hasSyncedTranscriptProtectionRef.current) {
+      hasSyncedTranscriptProtectionRef.current = true;
+      settingsApi
+        .getTranscriptProtection()
+        .then((isProtected) => {
+          if (userTouchedTranscriptRef.current) return;
+          setSettingsState((prev) => {
+            if (!prev || prev.keepConversationHistory === isProtected)
+              return prev;
+            return { ...prev, keepConversationHistory: isProtected };
+          });
+        })
+        .catch((err) => {
+          console.warn(
+            "[useSettingsForm] Failed to read transcript protection state",
+            err,
+          );
+        });
+    }
   }, [data, readPersistedLanguage, syncLanguage]);
 
   const updateSettings = useCallback(
     (updates: Partial<SettingsFormState>) => {
+      if (updates.keepConversationHistory !== undefined) {
+        userTouchedTranscriptRef.current = true;
+      }
       setSettingsState((prev) => {
         const base =
           prev ??
@@ -145,6 +177,7 @@ export function useSettingsForm(): UseSettingsFormResult {
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
             unifyCodexSessionHistory: false,
+            keepConversationHistory: false,
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -185,6 +218,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
+        keepConversationHistory: serverData.keepConversationHistory ?? false,
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
