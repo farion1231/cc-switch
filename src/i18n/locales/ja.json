@@ -339,6 +339,7 @@
       "toLabel": "移行先アカウント",
       "sessionCount": "{{count}} 件のセッション",
       "currentTag": "ログイン中",
+      "managedTag": "管理対象 (3P)",
       "sameSelection": "移行元と移行先を同じアカウントにはできません。",
       "previewBtn": "プレビュー",
       "migrateBtn": "移行を開始",

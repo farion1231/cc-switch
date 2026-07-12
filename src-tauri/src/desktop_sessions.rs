@@ -16,8 +16,12 @@
 //! - 只复制会话文件（`local_*.json`），绝不碰凭据 / OAuth token / `config.json`；
 //! - 非破坏性：来源目录保持不变，目标目录已有的同名文件不覆盖；
 //! - 只搬**历史**，不搬**用量额度**——每个账号各自的 limit 不变。
+//!
+//! Claude Desktop 有两个数据根：普通版 `.../Claude`（`default`）与本工具受管的 3P 版
+//! `.../Claude-3p`（`managed`）。会话可能落在任一根，故列举与迁移都对**两个根**生效，
+//! 每个账号分组带上 `rootKind` 以区分并支持跨根迁移。
 
-use crate::claude_desktop_config::get_claude_desktop_data_dir;
+use crate::claude_desktop_config::get_claude_desktop_data_dirs;
 use crate::error::AppError;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -31,11 +35,17 @@ const SESSION_FILE_PREFIX: &str = "local_";
 const DESKTOP_CONFIG_FILE: &str = "config.json";
 /// `config.json` 中「当前登录账号」字段。
 const LAST_KNOWN_ACCOUNT_KEY: &str = "lastKnownAccountUuid";
+/// 数据根类型：普通版 `.../Claude`。
+const ROOT_DEFAULT: &str = "default";
+/// 数据根类型：3P 托管版 `.../Claude-3p`。
+const ROOT_MANAGED: &str = "managed";
 
 /// 一个账号 / 组织下的会话分组。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSessionAccount {
+    /// 数据根类型：`default`（`.../Claude`）或 `managed`（`.../Claude-3p`）。
+    pub root_kind: String,
     /// 账号 UUID（`claude-code-sessions/<账号>/` 目录名）。
     pub account_uuid: String,
     /// 组织 UUID（`.../<账号>/<组织>/` 目录名）。
@@ -91,8 +101,8 @@ fn session_file_names(dir: &Path) -> Result<BTreeSet<String>, AppError> {
     if !dir.is_dir() {
         return Ok(names);
     }
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| io_ctx(format!("读取目录失败: {}", dir.display()), e))?;
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| io_ctx(format!("读取目录失败: {}", dir.display()), e))?;
     for entry in entries {
         let entry = entry.map_err(|e| io_ctx(format!("遍历目录失败: {}", dir.display()), e))?;
         let path = entry.path();
@@ -139,9 +149,10 @@ fn read_current_account(data_dir: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 扫描 `root`（即 `claude-code-sessions` 目录）下的所有账号/组织分组。
+/// 扫描 `root`（即某个数据根下的 `claude-code-sessions` 目录）下的所有账号/组织分组。
 fn scan_accounts_at(
     root: &Path,
+    root_kind: &str,
     current_account: Option<&str>,
 ) -> Result<Vec<DesktopSessionAccount>, AppError> {
     let mut out = Vec::new();
@@ -164,6 +175,7 @@ fn scan_accounts_at(
         for org_uuid in org_dirs(&account_dir)? {
             let count = session_file_names(&account_dir.join(&org_uuid))?.len();
             out.push(DesktopSessionAccount {
+                root_kind: root_kind.to_string(),
                 account_uuid: account_uuid.to_string(),
                 org_uuid,
                 session_count: count,
@@ -175,7 +187,12 @@ fn scan_accounts_at(
 }
 
 /// 解析 org：显式给定则原样返回；否则在唯一时自动选取，多个/为空时报错。
-fn resolve_org(root: &Path, account: &str, org: Option<&str>, label: &str) -> Result<String, AppError> {
+fn resolve_org(
+    root: &Path,
+    account: &str,
+    org: Option<&str>,
+    label: &str,
+) -> Result<String, AppError> {
     let account_dir = root.join(account);
     if !account_dir.is_dir() {
         return Err(AppError::Config(format!(
@@ -203,25 +220,25 @@ fn resolve_org(root: &Path, account: &str, org: Option<&str>, label: &str) -> Re
     }
 }
 
-/// 在 `root` 下执行迁移（核心逻辑，供测试直接调用）。
-fn migrate_at(
-    root: &Path,
+/// 在 `src_root` / `dst_root` 之间执行迁移（核心逻辑）。两个 root 可相同（同一数据根内
+/// 迁移）或不同（跨 `default` / `managed` 根迁移）。
+fn migrate_between(
+    src_root: &Path,
     from_account: &str,
     from_org: Option<&str>,
+    dst_root: &Path,
     to_account: &str,
     to_org: Option<&str>,
     dry_run: bool,
 ) -> Result<MigrateReport, AppError> {
-    let from_org = resolve_org(root, from_account, from_org, "来源")?;
-    let to_org = resolve_org(root, to_account, to_org, "目标")?;
+    let from_org = resolve_org(src_root, from_account, from_org, "来源")?;
+    let to_org = resolve_org(dst_root, to_account, to_org, "目标")?;
 
-    let src_dir = root.join(from_account).join(&from_org);
-    let dst_dir = root.join(to_account).join(&to_org);
+    let src_dir = src_root.join(from_account).join(&from_org);
+    let dst_dir = dst_root.join(to_account).join(&to_org);
 
     if src_dir == dst_dir {
-        return Err(AppError::Config(
-            "来源与目标是同一目录，无需迁移".into(),
-        ));
+        return Err(AppError::Config("来源与目标是同一目录，无需迁移".into()));
     }
 
     let src_names = session_file_names(&src_dir)?;
@@ -288,30 +305,58 @@ fn migrate_at(
     })
 }
 
-/// 列出所有账号/组织分组（含当前登录标记）。供 command 调用。
-pub fn list_accounts() -> Result<Vec<DesktopSessionAccount>, AppError> {
-    let data_dir = get_claude_desktop_data_dir()?;
-    let current = read_current_account(&data_dir);
-    scan_accounts_at(&data_dir.join(SESSIONS_DIR), current.as_deref())
+/// 把 `root_kind`（`default` / `managed`）映射到对应数据根的 `claude-code-sessions` 目录。
+fn sessions_root_for_kind(kind: &str) -> Result<PathBuf, AppError> {
+    let dirs = get_claude_desktop_data_dirs()?;
+    let data_dir = match kind {
+        ROOT_DEFAULT => dirs.default_dir,
+        ROOT_MANAGED => dirs.managed_dir,
+        other => return Err(AppError::Config(format!("未知的会话根类型：{other}"))),
+    };
+    Ok(data_dir.join(SESSIONS_DIR))
 }
 
-/// 迁移会话。`to_account` 默认为当前登录账号。供 command 调用。
+/// 列出**两个数据根**（`default` + `managed`）下的所有账号/组织分组（含当前登录标记）。
+/// 供 command 调用。
+pub fn list_accounts() -> Result<Vec<DesktopSessionAccount>, AppError> {
+    let dirs = get_claude_desktop_data_dirs()?;
+    let mut out = Vec::new();
+    for (kind, data_dir) in [
+        (ROOT_DEFAULT, dirs.default_dir),
+        (ROOT_MANAGED, dirs.managed_dir),
+    ] {
+        let current = read_current_account(&data_dir);
+        out.extend(scan_accounts_at(
+            &data_dir.join(SESSIONS_DIR),
+            kind,
+            current.as_deref(),
+        )?);
+    }
+    Ok(out)
+}
+
+/// 迁移会话。来源与目标各自带上 `root_kind`（`default` / `managed`），支持跨根迁移。
+/// 供 command 调用。
 pub fn migrate(
+    from_root_kind: &str,
     from_account: &str,
     from_org: Option<&str>,
-    to_account: Option<&str>,
+    to_root_kind: &str,
+    to_account: &str,
     to_org: Option<&str>,
     dry_run: bool,
 ) -> Result<MigrateReport, AppError> {
-    let data_dir = get_claude_desktop_data_dir()?;
-    let root = data_dir.join(SESSIONS_DIR);
-    let to_account = match to_account {
-        Some(acc) => acc.to_string(),
-        None => read_current_account(&data_dir).ok_or_else(|| {
-            AppError::Config("无法确定当前登录账号，请显式指定目标账号".into())
-        })?,
-    };
-    migrate_at(&root, from_account, from_org, &to_account, to_org, dry_run)
+    let src_root = sessions_root_for_kind(from_root_kind)?;
+    let dst_root = sessions_root_for_kind(to_root_kind)?;
+    migrate_between(
+        &src_root,
+        from_account,
+        from_org,
+        &dst_root,
+        to_account,
+        to_org,
+        dry_run,
+    )
 }
 
 #[cfg(test)]
@@ -333,6 +378,26 @@ mod tests {
         session_file_names(&root.join(acct).join(org)).unwrap()
     }
 
+    /// 同一数据根内迁移的便捷包装（src_root == dst_root）。
+    fn migrate_at(
+        root: &Path,
+        from_account: &str,
+        from_org: Option<&str>,
+        to_account: &str,
+        to_org: Option<&str>,
+        dry_run: bool,
+    ) -> Result<MigrateReport, AppError> {
+        migrate_between(
+            root,
+            from_account,
+            from_org,
+            root,
+            to_account,
+            to_org,
+            dry_run,
+        )
+    }
+
     #[test]
     fn scan_counts_sessions_and_marks_current() {
         let tmp = TempDir::new().unwrap();
@@ -340,7 +405,7 @@ mod tests {
         seed(root, "acctA", "orgA", &["1", "2", "3"]);
         seed(root, "acctB", "orgB", &["9"]);
 
-        let mut got = scan_accounts_at(root, Some("acctB")).unwrap();
+        let mut got = scan_accounts_at(root, ROOT_DEFAULT, Some("acctB")).unwrap();
         got.sort_by(|a, b| a.account_uuid.cmp(&b.account_uuid));
 
         assert_eq!(got.len(), 2);
@@ -363,15 +428,16 @@ mod tests {
         fs::write(dir.join("notes.txt"), b"x").unwrap();
         fs::write(dir.join("session.json"), b"{}").unwrap();
 
-        let got = scan_accounts_at(root, None).unwrap();
+        let got = scan_accounts_at(root, ROOT_DEFAULT, None).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].session_count, 1);
+        assert_eq!(got[0].root_kind, ROOT_DEFAULT);
     }
 
     #[test]
     fn scan_missing_root_is_empty() {
         let tmp = TempDir::new().unwrap();
-        let got = scan_accounts_at(&tmp.path().join("nope"), None).unwrap();
+        let got = scan_accounts_at(&tmp.path().join("nope"), ROOT_MANAGED, None).unwrap();
         assert!(got.is_empty());
     }
 
@@ -460,5 +526,30 @@ mod tests {
         seed(root, "dest", "d1", &["9"]);
         let err = migrate_at(root, "multi", None, "dest", None, false).unwrap_err();
         assert!(err.to_string().contains("多个组织"));
+    }
+
+    #[test]
+    fn migrate_across_roots_copies_between_trees() {
+        // 模拟 default（Claude）与 managed（Claude-3p）两个数据根。
+        let tmp = TempDir::new().unwrap();
+        let default_root = tmp.path().join("Claude").join(SESSIONS_DIR);
+        let managed_root = tmp.path().join("Claude-3p").join(SESSIONS_DIR);
+        seed(&default_root, "acct", "org", &["1", "2"]);
+        fs::create_dir_all(managed_root.join("acct").join("org")).unwrap();
+
+        let report = migrate_between(
+            &default_root,
+            "acct",
+            None,
+            &managed_root,
+            "acct",
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(report.copied, 2);
+        assert_eq!(names(&managed_root, "acct", "org").len(), 2);
+        // 来源（default 根）保持不变。
+        assert_eq!(names(&default_root, "acct", "org").len(), 2);
     }
 }

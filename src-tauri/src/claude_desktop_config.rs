@@ -213,16 +213,30 @@ pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
 }
 
-/// Claude Desktop 应用数据根目录（`.../Claude`，存放 `claude-code-sessions/`、
-/// `config.json` 等运行时数据）。复用 `current_platform_paths` 的按平台解析逻辑，
-/// 保证与配置写入路径一致；Linux 等无 Claude Desktop 的平台返回 unsupported 错误。
-pub fn get_claude_desktop_data_dir() -> Result<PathBuf, AppError> {
+/// Claude Desktop 的两个应用数据根目录：普通版（`.../Claude`）与本工具受管的
+/// 3P 版（`.../Claude-3p`）。二者各自存放 `claude-code-sessions/`、`config.json`
+/// 等运行时数据——会话落在哪个目录取决于用户是否使用 3P 托管模式，故需同时覆盖。
+/// 复用 `current_platform_paths` 的按平台解析逻辑；Linux 等无 Claude Desktop 的
+/// 平台返回 unsupported 错误。
+#[derive(Debug, Clone)]
+pub struct ClaudeDesktopDataDirs {
+    /// 普通版：`.../Claude`。
+    pub default_dir: PathBuf,
+    /// 3P 托管版：`.../Claude-3p`。
+    pub managed_dir: PathBuf,
+}
+
+pub fn get_claude_desktop_data_dirs() -> Result<ClaudeDesktopDataDirs, AppError> {
     let paths = current_platform_paths()?;
-    paths
-        .normal_config_path
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| AppError::Config("无法定位 Claude Desktop 数据目录".into()))
+    let parent_of = |p: &Path| -> Result<PathBuf, AppError> {
+        p.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| AppError::Config("无法定位 Claude Desktop 数据目录".into()))
+    };
+    Ok(ClaudeDesktopDataDirs {
+        default_dir: parent_of(&paths.normal_config_path)?,
+        managed_dir: parent_of(&paths.threep_config_path)?,
+    })
 }
 
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {

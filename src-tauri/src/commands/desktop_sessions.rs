@@ -11,21 +11,25 @@ pub async fn list_desktop_session_accounts() -> Result<Vec<DesktopSessionAccount
         .map_err(|e| e.to_string())
 }
 
-/// 把来源账号的会话迁移（非破坏性复制）到目标账号；`toAccount` 缺省为当前登录账号。
-/// `dryRun` 为真时只预览、不写入。
+/// 把来源账号的会话迁移（非破坏性复制）到目标账号。来源与目标各自带上 `root`
+/// （`default` / `managed`），支持跨数据根迁移。`dryRun` 为真时只预览、不写入。
 #[tauri::command]
 pub async fn migrate_desktop_sessions(
+    fromRoot: String,
     fromAccount: String,
     fromOrg: Option<String>,
-    toAccount: Option<String>,
+    toRoot: String,
+    toAccount: String,
     toOrg: Option<String>,
     dryRun: bool,
 ) -> Result<MigrateReport, String> {
     tauri::async_runtime::spawn_blocking(move || {
         desktop_sessions::migrate(
+            &fromRoot,
             &fromAccount,
             fromOrg.as_deref(),
-            toAccount.as_deref(),
+            &toRoot,
+            &toAccount,
             toOrg.as_deref(),
             dryRun,
         )

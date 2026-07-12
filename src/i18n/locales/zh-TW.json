@@ -339,6 +339,7 @@
       "toLabel": "目標帳號",
       "sessionCount": "{{count}} 個工作階段",
       "currentTag": "目前登入",
+      "managedTag": "受管 (3P)",
       "sameSelection": "來源和目標不能是同一個帳號。",
       "previewBtn": "預覽",
       "migrateBtn": "開始遷移",

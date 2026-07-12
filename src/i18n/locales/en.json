@@ -339,6 +339,7 @@
       "toLabel": "Target account",
       "sessionCount": "{{count}} sessions",
       "currentTag": "current",
+      "managedTag": "managed (3P)",
       "sameSelection": "Source and target can't be the same account.",
       "previewBtn": "Preview",
       "migrateBtn": "Migrate",

@@ -339,6 +339,7 @@
       "toLabel": "目标账号",
       "sessionCount": "{{count}} 条会话",
       "currentTag": "当前登录",
+      "managedTag": "受管 (3P)",
       "sameSelection": "来源和目标不能是同一个账号。",
       "previewBtn": "预览",
       "migrateBtn": "开始迁移",

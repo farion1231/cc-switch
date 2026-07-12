@@ -17,14 +17,15 @@ import type {
 } from "@/lib/api/desktopSessions";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
-/** 账号+组织的复合 key（两段均为 UUID，不含 "/"）。 */
+/** 复合 key：`rootKind|账号UUID/组织UUID`（rootKind 不含 "|"，两段 UUID 不含 "/"）。 */
 function keyOf(a: DesktopSessionAccount): string {
-  return `${a.accountUuid}/${a.orgUuid}`;
+  return `${a.rootKind}|${a.accountUuid}/${a.orgUuid}`;
 }
 
-function parseKey(key: string): { account: string; org: string } {
-  const [account, org] = key.split("/");
-  return { account, org };
+function parseKey(key: string): { root: string; account: string; org: string } {
+  const [root, rest] = key.split("|");
+  const [account, org] = rest.split("/");
+  return { root, account, org };
 }
 
 /**
@@ -91,7 +92,13 @@ export function DesktopSessionMigration() {
             defaultValue: "当前登录",
           })}`
         : "";
-      return `${short}… · ${count}${current}`;
+      const managed =
+        a.rootKind === "managed"
+          ? ` · ${t("settings.desktopSessionMigration.managedTag", {
+              defaultValue: "受管 (3P)",
+            })}`
+          : "";
+      return `${short}… · ${count}${current}${managed}`;
     },
     [t],
   );
@@ -103,8 +110,10 @@ export function DesktopSessionMigration() {
     setBusy(true);
     try {
       const report = await desktopSessionsApi.migrate({
+        fromRoot: from.root,
         fromAccount: from.account,
         fromOrg: from.org,
+        toRoot: to.root,
         toAccount: to.account,
         toOrg: to.org,
         dryRun: true,
@@ -124,8 +133,10 @@ export function DesktopSessionMigration() {
     setBusy(true);
     try {
       const report = await desktopSessionsApi.migrate({
+        fromRoot: from.root,
         fromAccount: from.account,
         fromOrg: from.org,
+        toRoot: to.root,
         toAccount: to.account,
         toOrg: to.org,
         dryRun: false,
