@@ -42,7 +42,7 @@ const CLAUDE_MODEL_OVERRIDE_ENV_KEYS: [&str; 12] = [
 ];
 
 const CLAUDE_TAKEOVER_HAIKU_MODEL: &str = "claude-haiku-4-5";
-const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
+const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-5";
 const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-8";
 const CLAUDE_TAKEOVER_FABLE_MODEL: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
@@ -2966,7 +2966,7 @@ mod tests {
         assert_env_str(
             env,
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            Some("claude-sonnet-4-6"),
+            Some("claude-sonnet-5"),
         );
         assert_env_str(
             env,
@@ -3084,7 +3084,7 @@ mod tests {
         assert_env_str(
             env,
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            Some("claude-sonnet-4-6"),
+            Some("claude-sonnet-5"),
         );
         assert_env_str(env, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", Some("gpt-5.4"));
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", Some("claude-opus-4-8"));
@@ -4797,7 +4797,7 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-sonnet-4-6[1M]"),
+            Some("claude-sonnet-5[1M]"),
             "Sonnet role should carry the local 1M declaration for Claude Code"
         );
         assert_eq!(
