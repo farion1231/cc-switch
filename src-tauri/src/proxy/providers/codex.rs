@@ -206,6 +206,14 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
     ) && codex_provider_uses_anthropic(provider)
 }
 
+/// The single built-in official Codex provider.  Unlike managed Codex OAuth
+/// providers used by Claude, this route receives authentication from the
+/// calling Codex client (`requires_openai_auth = true`).
+pub fn is_codex_official_provider(provider: &Provider) -> bool {
+    provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
+        && provider.category.as_deref() == Some("official")
+}
+
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
 /// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
 /// generated catalog never disagrees with the routed transform. A provider whose
@@ -217,6 +225,9 @@ pub fn resolve_codex_catalog_tool_profile(
     provider: &Provider,
 ) -> crate::codex_config::CodexCatalogToolProfile {
     use crate::codex_config::CodexCatalogToolProfile;
+    if is_codex_official_provider(provider) {
+        return CodexCatalogToolProfile::NativeResponses;
+    }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
     }
@@ -634,6 +645,10 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        if is_codex_official_provider(provider) {
+            return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
+        }
+
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -779,6 +794,30 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn official_provider_uses_fixed_chatgpt_backend_without_stored_key() {
+        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+        let adapter = CodexAdapter::new();
+
+        assert!(is_codex_official_provider(&provider));
+        assert_eq!(
+            adapter
+                .extract_base_url(&provider)
+                .expect("official base url"),
+            "https://chatgpt.com/backend-api/codex"
+        );
+        assert!(adapter.extract_auth(&provider).is_none());
+        assert_eq!(
+            adapter.build_url(
+                "https://chatgpt.com/backend-api/codex",
+                "/responses/compact"
+            ),
+            "https://chatgpt.com/backend-api/codex/responses/compact"
+        );
     }
 
     #[test]

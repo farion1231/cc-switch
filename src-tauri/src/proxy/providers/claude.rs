@@ -666,7 +666,7 @@ impl ProviderAdapter for ClaudeAdapter {
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
         // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
         if self.is_codex_oauth(provider) {
-            return Ok("https://chatgpt.com/backend-api/codex".to_string());
+            return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
         // 1. 从 env 中获取
@@ -778,9 +778,9 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
         // Codex OAuth: 所有请求统一走 /responses 端点
-        if base_url == "https://chatgpt.com/backend-api/codex" {
+        if base_url == super::CHATGPT_CODEX_BASE_URL {
             let _ = endpoint; // 忽略原始 endpoint
-            return "https://chatgpt.com/backend-api/codex/responses".to_string();
+            return format!("{}/responses", super::CHATGPT_CODEX_BASE_URL);
         }
 
         // NOTE:

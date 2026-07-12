@@ -39,6 +39,22 @@ use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<(), ProxyError> {
+    let authorization = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim);
+    match authorization {
+        None | Some("") => Err(ProxyError::AuthError(
+            "Codex 官方登录不可用，请先在 Codex 中完成 ChatGPT 登录".to_string(),
+        )),
+        Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
+            "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
+        )),
+        Some(_) => Ok(()),
+    }
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
@@ -986,7 +1002,7 @@ impl RequestForwarder {
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
                     //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
-                    let category = self.categorize_proxy_error(&e);
+                    let category = self.categorize_proxy_error(&e, provider);
 
                     match category {
                         ErrorCategory::Retryable => {
@@ -1130,6 +1146,12 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
+            && super::providers::is_codex_official_provider(provider);
+
+        if codex_official_auth_passthrough {
+            validate_codex_official_authorization(headers)?;
+        }
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
@@ -1840,6 +1862,17 @@ impl RequestForwarder {
                 || key_str.eq_ignore_ascii_case("x-api-key")
                 || key_str.eq_ignore_ascii_case("x-goog-api-key")
             {
+                // The built-in Codex official provider deliberately has no
+                // credential in CC Switch. `requires_openai_auth = true` makes
+                // Codex send its native ChatGPT authorization, which must reach
+                // the fixed official upstream unchanged. Other credential
+                // headers are still discarded.
+                if codex_official_auth_passthrough && key_str.eq_ignore_ascii_case("authorization")
+                {
+                    saw_auth = true;
+                    ordered_headers.append(key.clone(), value.clone());
+                    continue;
+                }
                 if !saw_auth {
                     saw_auth = true;
                     for (ah_name, ah_value) in &auth_headers {
@@ -2494,7 +2527,23 @@ impl RequestForwarder {
         }
     }
 
-    fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
+    fn categorize_proxy_error(&self, error: &ProxyError, provider: &Provider) -> ErrorCategory {
+        // Authentication belongs to the Codex client for the built-in official
+        // route. Retrying another provider would silently move the conversation
+        // away from the selected official account and poison its health state.
+        if super::providers::is_codex_official_provider(provider)
+            && (matches!(error, ProxyError::AuthError(_))
+                || matches!(
+                    error,
+                    ProxyError::UpstreamError {
+                        status: 401 | 403,
+                        ..
+                    }
+                ))
+        {
+            return ErrorCategory::NonRetryable;
+        }
+
         match error {
             // 网络和上游错误：都应该尝试下一个供应商
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
@@ -4197,12 +4246,51 @@ mod tests {
     #[test]
     fn invalid_client_history_is_not_retryable() {
         let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
         assert_eq!(
-            forwarder.categorize_proxy_error(&ProxyError::InvalidRequest(
-                "invalid historical tool arguments".to_string()
-            )),
+            forwarder.categorize_proxy_error(
+                &ProxyError::InvalidRequest("invalid historical tool arguments".to_string()),
+                &provider,
+            ),
             ErrorCategory::NonRetryable
         );
+    }
+
+    #[test]
+    fn official_codex_auth_failures_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+
+        for error in [
+            ProxyError::AuthError("restart Codex".to_string()),
+            ProxyError::UpstreamError {
+                status: 401,
+                body: None,
+            },
+            ProxyError::UpstreamError {
+                status: 403,
+                body: None,
+            },
+        ] {
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider),
+                ErrorCategory::NonRetryable
+            );
+        }
+    }
+
+    #[test]
+    fn official_codex_rejects_stale_proxy_placeholder_with_restart_hint() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+        );
+        let error = validate_codex_official_authorization(&headers)
+            .expect_err("stale placeholder must be rejected");
+        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
     }
 
     #[test]

@@ -43,6 +43,14 @@ use live::{
 };
 use usage::validate_usage_script;
 
+/// The built-in Codex official provider is safe to select during takeover:
+/// Codex keeps ownership of its ChatGPT login and the proxy only forwards the
+/// authenticated request. Other official providers retain the existing block.
+pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(app_type, AppType::Codex)
+        && crate::proxy::providers::is_codex_official_provider(provider)
+}
+
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
@@ -2394,7 +2402,10 @@ impl ProviderService {
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
-        if should_hot_switch && _provider.category.as_deref() == Some("official") {
+        if should_hot_switch
+            && _provider.category.as_deref() == Some("official")
+            && !official_provider_supports_proxy_takeover(&app_type, _provider)
+        {
             return Err(AppError::localized(
                 "switch.official_blocked_by_proxy",
                 "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
