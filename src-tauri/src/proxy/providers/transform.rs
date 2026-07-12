@@ -68,18 +68,33 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
 }
 
+fn gpt_5_minor(model: Option<&str>) -> Option<u32> {
+    let model = model?.to_ascii_lowercase();
+    let suffix = model.strip_prefix("gpt-5")?;
+    let Some(rest) = suffix.strip_prefix('.') else {
+        return Some(0);
+    };
+    let minor = rest
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .filter(|minor| !minor.is_empty())?;
+    minor.parse().ok()
+}
+
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
-/// 1. Explicit `output_config.effort` — preserves the user's intent directly.
-///    `low`/`medium`/`high` map 1:1; `max` maps to `xhigh`
-///    (supported by mainstream GPT models). Unknown values are ignored.
+/// 1. Explicit `output_config.effort` — preserves the user's intent up to the
+///    target model's highest supported tier. GPT-5/5.1 top out at `high`,
+///    GPT-5.2–5.5 at `xhigh`, and GPT-5.6 supports `max`.
 /// 2. Fallback: `thinking.type` + `budget_tokens`:
-///    - `adaptive` → `xhigh` (adaptive = maximum reasoning effort)
+///    - `adaptive` → the model's highest supported tier (`high` or `xhigh`)
 ///    - `enabled` with budget → `low` (<4 000) / `medium` (4 000–15 999) / `high` (≥16 000)
 ///    - `enabled` without budget → `high` (conservative default)
 ///    - `disabled` / absent → `None`
 pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
+    let gpt_5_minor = gpt_5_minor(body.get("model").and_then(Value::as_str));
+
     // --- Priority 1: explicit output_config.effort ---
     if let Some(effort) = body
         .pointer("/output_config/effort")
@@ -89,14 +104,19 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
-            "max" => Some("xhigh"), // OpenAI xhigh = maximum reasoning effort
-            _ => None,              // unknown value — do not inject
+            "xhigh" if matches!(gpt_5_minor, Some(0 | 1)) => Some("high"),
+            "xhigh" => Some("xhigh"),
+            "max" if matches!(gpt_5_minor, Some(6)) => Some("max"),
+            "max" if matches!(gpt_5_minor, Some(0 | 1)) => Some("high"),
+            "max" => Some("xhigh"),
+            _ => None, // unknown value — do not inject
         };
     }
 
     // --- Priority 2: thinking.type + budget_tokens fallback ---
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
+        Some("adaptive") if matches!(gpt_5_minor, Some(0 | 1)) => Some("high"),
         Some("adaptive") => Some("xhigh"),
         Some("enabled") => {
             let budget = thinking.get("budget_tokens").and_then(|b| b.as_u64());
@@ -1591,6 +1611,38 @@ mod tests {
     }
 
     #[test]
+    fn test_gpt_5_6_output_config_efforts_map_one_to_one() {
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            let body = json!({
+                "model": "gpt-5.6-sol",
+                "output_config": {"effort": effort}
+            });
+            assert_eq!(resolve_reasoning_effort(&body), Some(effort));
+        }
+    }
+
+    #[test]
+    fn test_pre_gpt_5_6_output_config_efforts_clamp_to_supported_maximum() {
+        for (model, xhigh, max) in [
+            ("gpt-5", "high", "high"),
+            ("gpt-5.1", "high", "high"),
+            ("gpt-5.2", "xhigh", "xhigh"),
+            ("gpt-5.5", "xhigh", "xhigh"),
+        ] {
+            let xhigh_body = json!({
+                "model": model,
+                "output_config": {"effort": "xhigh"}
+            });
+            let max_body = json!({
+                "model": model,
+                "output_config": {"effort": "max"}
+            });
+            assert_eq!(resolve_reasoning_effort(&xhigh_body), Some(xhigh));
+            assert_eq!(resolve_reasoning_effort(&max_body), Some(max));
+        }
+    }
+
+    #[test]
     fn test_output_config_takes_priority_over_thinking() {
         // Even with thinking.adaptive present, explicit effort wins
         let body = json!({
@@ -1602,8 +1654,10 @@ mod tests {
 
     #[test]
     fn test_output_config_unknown_value_no_reasoning_effort() {
-        let body = json!({"output_config": {"effort": "turbo"}});
-        assert_eq!(resolve_reasoning_effort(&body), None);
+        for effort in ["turbo", "ultra", "ultracode"] {
+            let body = json!({"output_config": {"effort": effort}});
+            assert_eq!(resolve_reasoning_effort(&body), None);
+        }
     }
 
     #[test]
@@ -1634,6 +1688,15 @@ mod tests {
     fn test_thinking_adaptive_maps_xhigh() {
         let body = json!({"thinking": {"type": "adaptive"}});
         assert_eq!(resolve_reasoning_effort(&body), Some("xhigh"));
+    }
+
+    #[test]
+    fn test_gpt_5_1_adaptive_thinking_clamps_to_high() {
+        let body = json!({
+            "model": "gpt-5.1",
+            "thinking": {"type": "adaptive"}
+        });
+        assert_eq!(resolve_reasoning_effort(&body), Some("high"));
     }
 
     #[test]

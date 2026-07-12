@@ -1273,6 +1273,32 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_gpt_5_6_output_config_max_sets_reasoning_max() {
+        let input = json!({
+            "model": "gpt-5.6-sol",
+            "max_tokens": 1024,
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "max");
+    }
+
+    #[test]
+    fn test_responses_gpt_5_5_output_config_xhigh_sets_reasoning_xhigh() {
+        let input = json!({
+            "model": "gpt-5.5",
+            "max_tokens": 1024,
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
     fn test_responses_output_config_takes_priority_over_thinking() {
         let input = json!({
             "model": "gpt-5.4",
