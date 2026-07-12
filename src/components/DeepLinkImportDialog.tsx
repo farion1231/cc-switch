@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
+import { providersApi } from "@/lib/api/providers";
 import {
   Dialog,
   DialogContent,
@@ -136,6 +137,14 @@ export function DeepLinkImportDialog() {
           await queryClient.invalidateQueries({
             queryKey: ["providers", request.app],
           });
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (trayError) {
+            console.error(
+              "Failed to update tray menu after deep link import",
+              trayError,
+            );
+          }
           toast.success(t("deeplink.importSuccess"), {
             description: t("deeplink.importSuccessDescription", {
               name: request.name,
