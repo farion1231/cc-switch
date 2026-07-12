@@ -11,21 +11,50 @@ describe("Kimi For Coding Provider Preset", () => {
     expect(kimiForCoding).toBeDefined();
   });
 
-  it("should use template placeholder for Claude Code auto-compact window", () => {
+  // CLAUDE_CODE_MAX_CONTEXT_TOKENS is ignored for claude-* model ids, so the
+  // preset must route the endpoint's own alias for the context envs to bite
+  it("should route the kimi-for-coding model id on every tier", () => {
     const env = (kimiForCoding!.settingsConfig as any).env;
+    expect(env).toMatchObject({
+      ANTHROPIC_MODEL: "kimi-for-coding",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-for-coding",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
+    });
+  });
+
+  it("should use matching context and auto-compact placeholders", () => {
+    const env = (kimiForCoding!.settingsConfig as any).env;
+    expect(env).toHaveProperty(
+      "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+      "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}",
+    );
     expect(env).toHaveProperty(
       "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
       "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
     );
   });
 
-  it("should expose auto-compact window as editable template value with Kimi default", () => {
-    const values = (kimiForCoding!.templateValues as any)
-      ?.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
-    expect(values).toBeDefined();
-    expect(values.defaultValue).toBe("262144");
-    expect(values.editorValue).toBe("262144");
-    expect(values.label).toBe("Auto Compact Window");
+  it("should expose matching 256K context and auto-compact values", () => {
+    const values = kimiForCoding!.templateValues as any;
+    expect(values?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toMatchObject({
+      defaultValue: "262144",
+      editorValue: "262144",
+    });
+    expect(values?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toMatchObject({
+      defaultValue: "262144",
+      editorValue: "262144",
+      label: "Auto Compact Window",
+    });
+  });
+
+  it("should resolve both Kimi context placeholders", () => {
+    const config = applyTemplateValues(
+      kimiForCoding!.settingsConfig,
+      kimiForCoding!.templateValues,
+    ) as any;
+    expect(config.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
+    expect(config.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
   });
 });
 
