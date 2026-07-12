@@ -293,17 +293,59 @@ pub fn write_text_file(path: &Path, data: &str) -> Result<(), AppError> {
     atomic_write(path, data.as_bytes())
 }
 
-/// 原子写入：写入临时文件后 rename 替换，避免半写状态
+/// 解析原子写入的最终落盘路径。
+///
+/// 若 `path` 本身是符号链接，则跟随到最终目标文件写入，从而保留 `path` 处的
+/// 符号链接（NixOS / dotfiles 等场景）。悬空符号链接返回明确错误，避免
+/// rename 把 symlink 替换成普通文件。
+fn resolve_atomic_write_path(path: &Path) -> Result<PathBuf, AppError> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // 目标尚不存在：按普通路径写入
+            return Ok(path.to_path_buf());
+        }
+        Err(e) => return Err(AppError::io(path, e)),
+    };
+
+    if !meta.file_type().is_symlink() {
+        return Ok(path.to_path_buf());
+    }
+
+    // canonicalize 会完整跟随链接链，且要求最终目标存在；悬空链接在此失败。
+    match fs::canonicalize(path) {
+        Ok(resolved) => {
+            if resolved.is_dir() {
+                return Err(AppError::Config(format!(
+                    "无法写入符号链接 {}: 目标是目录",
+                    path.display()
+                )));
+            }
+            Ok(resolved)
+        }
+        Err(e) => Err(AppError::Config(format!(
+            "无法写入符号链接 {}: 目标无效或已断开 ({e})",
+            path.display()
+        ))),
+    }
+}
+
+/// 原子写入：写入临时文件后 rename 替换，避免半写状态。
+///
+/// 若 `path` 是符号链接，则原子写入其最终目标文件，保留路径上的 symlink 本身。
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
+    // 跟随文件符号链接，避免 rename/remove 破坏 symlink 路径
+    let write_path = resolve_atomic_write_path(path)?;
+
+    if let Some(parent) = write_path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
 
-    let parent = path
+    let parent = write_path
         .parent()
         .ok_or_else(|| AppError::Config("无效的路径".to_string()))?;
     let mut tmp = parent.to_path_buf();
-    let file_name = path
+    let file_name = write_path
         .file_name()
         .ok_or_else(|| AppError::Config("无效的文件名".to_string()))?
         .to_string_lossy()
@@ -323,7 +365,8 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(path) {
+        // metadata 跟随符号链接，与 write_path 指向的实体权限一致
+        if let Ok(meta) = fs::metadata(&write_path) {
             let perm = meta.permissions().mode();
             let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(perm));
         }
@@ -331,20 +374,29 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 
     #[cfg(windows)]
     {
-        // Windows 上 rename 目标存在会失败，先移除再重命名（尽量接近原子性）
-        if path.exists() {
-            let _ = fs::remove_file(path);
+        // Windows 上 rename 目标存在会失败，先移除再重命名（尽量接近原子性）。
+        // 必须操作 write_path（解析后的目标），不能 remove 原始 path，否则会删掉 symlink。
+        if write_path.exists() {
+            let _ = fs::remove_file(&write_path);
         }
-        fs::rename(&tmp, path).map_err(|e| AppError::IoContext {
-            context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+        fs::rename(&tmp, &write_path).map_err(|e| AppError::IoContext {
+            context: format!(
+                "原子替换失败: {} -> {}",
+                tmp.display(),
+                write_path.display()
+            ),
             source: e,
         })?;
     }
 
     #[cfg(not(windows))]
     {
-        fs::rename(&tmp, path).map_err(|e| AppError::IoContext {
-            context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+        fs::rename(&tmp, &write_path).map_err(|e| AppError::IoContext {
+            context: format!(
+                "原子替换失败: {} -> {}",
+                tmp.display(),
+                write_path.display()
+            ),
             source: e,
         })?;
     }
@@ -520,6 +572,104 @@ mod tests {
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
         );
+    }
+
+    #[test]
+    fn atomic_write_creates_and_overwrites_regular_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.json");
+
+        atomic_write(&path, b"first").expect("create file");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+        assert!(!path
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        atomic_write(&path, b"second").expect("overwrite file");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_symlink_and_updates_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real-config.json");
+        let link = dir.path().join("config.json");
+        fs::write(&target, b"old").unwrap();
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+
+        atomic_write(&link, b"new-content").expect("write via symlink");
+
+        assert!(
+            link.symlink_metadata().unwrap().file_type().is_symlink(),
+            "path should remain a symlink"
+        );
+        assert_eq!(fs::read_to_string(&link).unwrap(), "new-content");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new-content");
+        assert_eq!(
+            fs::canonicalize(&link).unwrap(),
+            fs::canonicalize(&target).unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_relative_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real-config.json");
+        let link = dir.path().join("config.json");
+        fs::write(&target, b"old").unwrap();
+        std::os::unix::fs::symlink("real-config.json", &link).expect("create relative symlink");
+
+        atomic_write(&link, b"updated").expect("write via relative symlink");
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            PathBuf::from("real-config.json")
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "updated");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_dangling_symlink_returns_clear_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let link = dir.path().join("config.json");
+        let missing = dir.path().join("missing.json");
+        std::os::unix::fs::symlink(&missing, &link).expect("create dangling symlink");
+
+        let err = atomic_write(&link, b"data").expect_err("dangling symlink should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("符号链接") && (msg.contains("断开") || msg.contains("无效")),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            link.symlink_metadata().unwrap().file_type().is_symlink(),
+            "dangling symlink must not be replaced"
+        );
+        assert!(!missing.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_follows_symlink_chain_to_final_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let final_target = dir.path().join("final.json");
+        let mid = dir.path().join("mid.json");
+        let link = dir.path().join("config.json");
+        fs::write(&final_target, b"seed").unwrap();
+        std::os::unix::fs::symlink(&final_target, &mid).unwrap();
+        std::os::unix::fs::symlink(&mid, &link).unwrap();
+
+        atomic_write(&link, b"chained").expect("write via symlink chain");
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(mid.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&final_target).unwrap(), "chained");
     }
 }
 
