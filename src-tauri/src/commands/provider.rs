@@ -161,6 +161,16 @@ pub async fn get_claude_desktop_status(
 }
 
 #[tauri::command]
+pub fn set_claude_desktop_disable_auto_updates(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    crate::claude_desktop_config::set_disable_auto_updates(state.db.as_ref(), enabled)
+        .map(|_| true)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_claude_desktop_default_routes(
 ) -> Vec<crate::claude_desktop_config::ClaudeDesktopDefaultRoute> {
     crate::claude_desktop_config::default_proxy_routes()

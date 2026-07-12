@@ -216,6 +216,15 @@
     "statusMissingRouteMappings": "当前供应商启用了模型映射，但没有有效路由；请编辑供应商并补全至少一个模型映射。",
     "statusGatewayTokenMissing": "当前本地路由 token 尚未生成；重新切换该供应商会写入新的本地 token。",
     "statusBaseUrlMismatch": "Claude Desktop profile 指向的地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
+    "autoUpdates": {
+      "label": "关闭 Claude Desktop 自动更新",
+      "blocked": "已关闭 Claude Desktop 自动更新",
+      "allowed": "已允许 Claude Desktop 自动更新",
+      "failed": "更新 Claude Desktop 自动更新设置失败: {{error}}",
+      "unsupported": "当前平台暂不支持 Claude Desktop 3P 配置写入",
+      "tooltipBlocked": "Claude Desktop 自动更新已关闭",
+      "tooltipAllowed": "允许 Claude Desktop 自动更新"
+    },
     "route": {
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
@@ -683,6 +692,10 @@
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
     "codexAuth": "Codex 应用增强",
+    "claudeDesktopSettings": "Claude Desktop 设置",
+    "disableClaudeDesktopAutoUpdates": "关闭 Claude Desktop 自动更新",
+    "disableClaudeDesktopAutoUpdatesDescription": "开启后，Claude Desktop 不会自动下载和安装新版本；关闭后恢复默认自动更新。",
+    "claudeDesktopUnsupportedDescription": "当前平台暂不支持 Claude Desktop 3P 配置写入。",
     "preserveCodexOfficialAuthOnSwitch": "切换第三方时保留官方登录",
     "preserveCodexOfficialAuthOnSwitchDescription": "开启后可以在使用第三方 API 的时候使用 Codex 应用的官方插件、手机远程操作等功能",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",

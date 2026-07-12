@@ -216,6 +216,15 @@
     "statusMissingRouteMappings": "現在のプロバイダーはモデルマッピングを有効にしていますが、有効なルートがありません。プロバイダーを編集し、少なくとも 1 つのマッピングを追加してください。",
     "statusGatewayTokenMissing": "ローカルルーティング token がまだ生成されていません。このプロバイダーへ再度切り替えると新しい token が書き込まれます。",
     "statusBaseUrlMismatch": "Claude Desktop profile の URL が現在のプロバイダーと一致しません。現在: {{actual}}、期待値: {{expected}}。現在のプロバイダーへ再度切り替えると修復できます。",
+    "autoUpdates": {
+      "label": "Claude Desktop の自動更新をオフにする",
+      "blocked": "Claude Desktop の自動更新をオフにしました",
+      "allowed": "Claude Desktop の自動更新を許可しました",
+      "failed": "Claude Desktop の自動更新設定の更新に失敗しました: {{error}}",
+      "unsupported": "このプラットフォームでは Claude Desktop 3P 設定の書き込みはまだサポートされていません",
+      "tooltipBlocked": "Claude Desktop の自動更新はオフです",
+      "tooltipAllowed": "Claude Desktop の自動更新を許可しています"
+    },
     "route": {
       "tooltip": {
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",
@@ -683,6 +692,10 @@
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
     "codexAuth": "Codex アプリ拡張",
+    "claudeDesktopSettings": "Claude Desktop 設定",
+    "disableClaudeDesktopAutoUpdates": "Claude Desktop の自動更新をオフにする",
+    "disableClaudeDesktopAutoUpdatesDescription": "オンにすると、Claude Desktop は新しいバージョンを自動でダウンロード・インストールしません。オフにすると既定の自動更新に戻ります。",
+    "claudeDesktopUnsupportedDescription": "このプラットフォームでは Claude Desktop 3P 設定の書き込みはまだサポートされていません。",
     "preserveCodexOfficialAuthOnSwitch": "サードパーティ切替時に公式ログインを保持",
     "preserveCodexOfficialAuthOnSwitchDescription": "オンにすると、サードパーティ API を使用する際に Codex アプリの公式プラグインやスマホからのリモート操作などの機能を利用できます。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",

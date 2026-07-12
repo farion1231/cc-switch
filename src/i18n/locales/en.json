@@ -216,6 +216,15 @@
     "statusMissingRouteMappings": "The current provider has model mapping enabled but no valid routes. Edit the provider and add at least one mapping.",
     "statusGatewayTokenMissing": "The local routing token has not been generated yet. Switching to this provider again will write a new local token.",
     "statusBaseUrlMismatch": "The Claude Desktop profile points to a different URL than the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
+    "autoUpdates": {
+      "label": "Turn off Claude Desktop auto-updates",
+      "blocked": "Claude Desktop auto-updates are off",
+      "allowed": "Claude Desktop auto-updates are allowed",
+      "failed": "Failed to update Claude Desktop auto-update setting: {{error}}",
+      "unsupported": "This platform does not support writing Claude Desktop 3P configuration yet",
+      "tooltipBlocked": "Claude Desktop auto-updates are off",
+      "tooltipAllowed": "Claude Desktop auto-updates are allowed"
+    },
     "route": {
       "tooltip": {
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",
@@ -683,6 +692,10 @@
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
     "codexAuth": "Codex App Enhancements",
+    "claudeDesktopSettings": "Claude Desktop Settings",
+    "disableClaudeDesktopAutoUpdates": "Turn off Claude Desktop auto-updates",
+    "disableClaudeDesktopAutoUpdatesDescription": "When enabled, Claude Desktop will not download and install new versions automatically. Turn it off to restore the default auto-update behavior.",
+    "claudeDesktopUnsupportedDescription": "This platform does not support writing Claude Desktop 3P configuration yet.",
     "preserveCodexOfficialAuthOnSwitch": "Keep official login when switching third-party providers",
     "preserveCodexOfficialAuthOnSwitchDescription": "When enabled, you can use the Codex app's official plugins, mobile remote control, and other features while using third-party APIs.",
     "unifyCodexSessionHistory": "Unified Codex session history",
