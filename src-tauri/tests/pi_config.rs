@@ -120,8 +120,12 @@ fn writes_provider_and_defaults_without_clobbering_existing_pi_config() {
     );
     assert_eq!(models.pointer("/metadata/keep"), Some(&json!(true)));
     assert_eq!(
-        models.pointer("/providers/packy/baseURL"),
+        models.pointer("/providers/packy/baseUrl"),
         Some(&json!("https://api.packy.example/v1"))
+    );
+    assert!(
+        models.pointer("/providers/packy/baseURL").is_none(),
+        "new Pi providers should use the canonical baseUrl key"
     );
     assert_eq!(
         models.pointer("/providers/packy/models/1/id"),
