@@ -166,6 +166,12 @@ impl StreamCheckService {
     /// 没有 cc-switch 能可靠探测的目标——这类供应商的连通检测按钮在前端已隐藏
     /// （见 `ProviderCard.tsx`），故此处对其提取失败直接报错即可，不做官方端点回退。
     fn resolve_base_url(app_type: &AppType, provider: &Provider) -> Result<String, AppError> {
+        if provider.category.as_deref() == Some("official") {
+            return Err(AppError::Message(
+                "Official providers do not expose a reachability-check target".to_string(),
+            ));
+        }
+
         match app_type {
             // 累加模式应用的 settings_config 结构与 Claude/Codex/Gemini 不同，
             // 不走 adapter，直接按各自约定提取 base_url。
@@ -510,5 +516,10 @@ mod tests {
         // 不会走到这里；不做官方端点回退（避免给忘填地址的第三方误显绿灯）。
         let empty = make_provider(serde_json::json!({ "env": {} }));
         assert!(StreamCheckService::resolve_base_url(&AppType::Claude, &empty).is_err());
+
+        let mut official = make_provider(serde_json::json!({ "auth": {}, "config": "" }));
+        official.id = crate::database::CODEX_OFFICIAL_PROVIDER_ID.to_string();
+        official.category = Some("official".to_string());
+        assert!(StreamCheckService::resolve_base_url(&AppType::Codex, &official).is_err());
     }
 }
