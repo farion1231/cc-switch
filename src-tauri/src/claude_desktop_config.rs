@@ -1625,6 +1625,44 @@ mod tests {
     }
 
     #[test]
+    fn claude_desktop_proxy_preserves_model_effort_suffix_through_responses_transform() {
+        let mut provider = proxy_provider("proxy");
+        let meta = provider.meta.as_mut().expect("proxy meta");
+        meta.api_format = Some("openai_responses".to_string());
+        meta.claude_desktop_model_routes = std::collections::HashMap::from([(
+            "claude-sonnet-4-6".to_string(),
+            ClaudeDesktopModelRoute {
+                model: "gpt-5.6-sol(max)".to_string(),
+                label_override: Some("GPT-5.6 Sol".to_string()),
+                supports_1m: Some(false),
+            },
+        )]);
+
+        let mapped = map_proxy_request_model(
+            json!({
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 1024,
+                "output_config": {"effort": "xhigh"},
+                "messages": [{"role": "user", "content": "Hello"}]
+            }),
+            &provider,
+        )
+        .expect("map desktop route");
+
+        let transformed = crate::proxy::providers::transform_claude_request_for_api_format(
+            mapped,
+            &provider,
+            "openai_responses",
+            None,
+            None,
+        )
+        .expect("transform desktop request");
+
+        assert_eq!(transformed["model"], json!("gpt-5.6-sol"));
+        assert_eq!(transformed["reasoning"]["effort"], json!("max"));
+    }
+
+    #[test]
     fn claude_desktop_proxy_maps_dated_role_alias_via_keyword() {
         // 复现反馈：Claude Desktop 子 agent 请求带发布日期后缀的完整官方名
         // （claude-haiku-4-5-20251001），与 manifest 的简短 route_id（claude-haiku-4-5）
