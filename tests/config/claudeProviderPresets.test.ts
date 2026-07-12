@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import { applyTemplateValues } from "@/utils/providerConfigUtils";
 
 describe("Kimi For Coding Provider Preset", () => {
   const kimiForCoding = providerPresets.find(
@@ -25,6 +26,47 @@ describe("Kimi For Coding Provider Preset", () => {
     expect(values.defaultValue).toBe("262144");
     expect(values.editorValue).toBe("262144");
     expect(values.label).toBe("Auto Compact Window");
+  });
+});
+
+describe("Codex Provider Preset", () => {
+  const codex = providerPresets.find((p) => p.name === "Codex");
+
+  it("should include the Codex preset", () => {
+    expect(codex).toBeDefined();
+  });
+
+  it("should override Claude Code's 200K fallback for GPT models", () => {
+    const env = (codex!.settingsConfig as any).env;
+    expect(env).toHaveProperty(
+      "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+      "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}",
+    );
+    expect(env).toHaveProperty(
+      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+      "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
+    );
+  });
+
+  it("should expose the Codex-catalog 372K window for both context knobs", () => {
+    const values = codex!.templateValues as any;
+    expect(values?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toMatchObject({
+      defaultValue: "372000",
+      editorValue: "372000",
+    });
+    expect(values?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toMatchObject({
+      defaultValue: "372000",
+      editorValue: "372000",
+    });
+  });
+
+  it("should resolve both context placeholders into Claude Code env values", () => {
+    const config = applyTemplateValues(
+      codex!.settingsConfig,
+      codex!.templateValues,
+    ) as any;
+    expect(config.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("372000");
+    expect(config.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("372000");
   });
 });
 
