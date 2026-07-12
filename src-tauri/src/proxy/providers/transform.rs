@@ -68,6 +68,16 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
 }
 
+pub(crate) fn parse_model_effort_suffix(model: &str) -> Option<(&str, &str)> {
+    if !model.ends_with(')') {
+        return None;
+    }
+
+    let open = model.rfind('(')?;
+    let effort = &model[open + 1..model.len() - 1];
+    (open > 0 && !effort.is_empty()).then_some((&model[..open], effort))
+}
+
 fn gpt_5_minor(model: Option<&str>) -> Option<u32> {
     let model = model?.to_ascii_lowercase();
     let suffix = model.strip_prefix("gpt-5")?;
@@ -151,8 +161,18 @@ pub fn anthropic_to_openai_with_reasoning_content(
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
+    let (model, explicit_effort) = body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(|model| {
+            parse_model_effort_suffix(model)
+                .map(|(model, effort)| (model, Some(effort)))
+                .unwrap_or((model, None))
+        })
+        .unwrap_or(("", None));
+
     // NOTE: 模型映射由上游统一处理（proxy::model_mapper），格式转换层只做结构转换。
-    if let Some(model) = body.get("model").and_then(|m| m.as_str()) {
+    if !model.is_empty() {
         result["model"] = json!(model);
     }
 
@@ -192,7 +212,6 @@ pub fn anthropic_to_openai_with_reasoning_content(
     result["messages"] = json!(messages);
 
     // 转换参数 — o-series 模型需要 max_completion_tokens
-    let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
     if let Some(v) = body.get("max_tokens") {
         if is_openai_o_series(model) {
             result["max_completion_tokens"] = v.clone();
@@ -215,7 +234,7 @@ pub fn anthropic_to_openai_with_reasoning_content(
 
     // Map Anthropic thinking → OpenAI reasoning_effort
     if supports_reasoning_effort(model) {
-        if let Some(effort) = resolve_reasoning_effort(&body) {
+        if let Some(effort) = explicit_effort.or_else(|| resolve_reasoning_effort(&body)) {
             result["reasoning_effort"] = json!(effort);
         }
     }
@@ -1618,6 +1637,49 @@ mod tests {
                 "output_config": {"effort": effort}
             });
             assert_eq!(resolve_reasoning_effort(&body), Some(effort));
+        }
+    }
+
+    #[test]
+    fn test_model_effort_suffix_overrides_claude_effort_for_openai_chat() {
+        let body = json!({
+            "model": "gpt-5.6-sol(max)",
+            "output_config": {"effort": "xhigh"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(body).unwrap();
+
+        assert_eq!(result["model"], "gpt-5.6-sol");
+        assert_eq!(result["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn test_model_effort_suffix_forwards_unknown_value_for_openai_chat() {
+        let body = json!({
+            "model": "gpt-5.6-sol(foo)",
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(body).unwrap();
+
+        assert_eq!(result["model"], "gpt-5.6-sol");
+        assert_eq!(result["reasoning_effort"], "foo");
+    }
+
+    #[test]
+    fn test_model_effort_suffix_leaves_invalid_suffixes_unchanged() {
+        for model in ["gpt-5.6-sol()", "gpt-5.6-sol(max"] {
+            let body = json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+
+            let result = anthropic_to_openai(body).unwrap();
+
+            assert_eq!(result["model"], model);
+            assert!(result.get("reasoning_effort").is_none());
         }
     }
 
