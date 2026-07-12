@@ -885,13 +885,15 @@ fn codex_reasoning_level(effort: &str) -> Value {
     json!({ "effort": effort, "description": description })
 }
 
-fn codex_model_reasoning_efforts(model: &str) -> Option<&'static [&'static str]> {
+fn codex_model_reasoning_metadata(model: &str) -> Option<(&'static str, &'static [&'static str])> {
     match model.trim().to_ascii_lowercase().as_str() {
-        "gpt-5.6-sol" | "gpt-5.6-terra" => {
-            Some(&["low", "medium", "high", "xhigh", "max", "ultra"])
-        }
-        "gpt-5.6-luna" => Some(&["low", "medium", "high", "xhigh", "max"]),
-        "gpt-5.5" => Some(&["low", "medium", "high", "xhigh"]),
+        "gpt-5.6-sol" => Some(("low", &["low", "medium", "high", "xhigh", "max", "ultra"])),
+        "gpt-5.6-terra" => Some((
+            "medium",
+            &["low", "medium", "high", "xhigh", "max", "ultra"],
+        )),
+        "gpt-5.6-luna" => Some(("medium", &["low", "medium", "high", "xhigh", "max"])),
+        "gpt-5.5" => Some(("medium", &["low", "medium", "high", "xhigh"])),
         _ => None,
     }
 }
@@ -900,10 +902,10 @@ fn apply_codex_model_reasoning_metadata(
     entry_obj: &mut serde_json::Map<String, Value>,
     model: &str,
 ) {
-    let Some(efforts) = codex_model_reasoning_efforts(model) else {
+    let Some((default_effort, efforts)) = codex_model_reasoning_metadata(model) else {
         return;
     };
-    entry_obj.insert("default_reasoning_level".to_string(), json!("high"));
+    entry_obj.insert("default_reasoning_level".to_string(), json!(default_effort));
     entry_obj.insert(
         "supported_reasoning_levels".to_string(),
         Value::Array(
@@ -3057,9 +3059,11 @@ base_url = "https://production.api/v1"
         );
         assert_eq!(efforts(2), vec!["low", "medium", "high", "xhigh", "max"]);
         assert_eq!(efforts(3), vec!["low", "medium", "high", "xhigh"]);
-        assert!(models
+        let defaults = models
             .iter()
-            .all(|model| { model["default_reasoning_level"].as_str() == Some("high") }));
+            .map(|model| model["default_reasoning_level"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(defaults, vec!["low", "medium", "medium", "medium"]);
     }
 
     #[test]
