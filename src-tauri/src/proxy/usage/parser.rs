@@ -27,6 +27,22 @@ fn openai_cache_write_tokens(usage: &Value) -> u32 {
         .unwrap_or(0) as u32
 }
 
+fn cache_creation_ttl_tokens(usage: &Value) -> (u32, u32) {
+    let details = usage
+        .get("cache_creation")
+        .or_else(|| usage.pointer("/input_tokens_details/cache_creation"))
+        .or_else(|| usage.pointer("/prompt_tokens_details/cache_creation"));
+    let five_minutes = details
+        .and_then(|value| value.get("ephemeral_5m_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let one_hour = details
+        .and_then(|value| value.get("ephemeral_1h_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    (five_minutes, one_hour)
+}
+
 /// Session 日志 request_id 前缀，与 `session_usage.rs` 中的格式保持一致
 pub const SESSION_REQUEST_ID_PREFIX: &str = "session:";
 
@@ -37,6 +53,13 @@ pub struct TokenUsage {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
+    /// Anthropic cache-write TTL detail. The aggregate above remains the stable
+    /// public/storage metric; these buckets make 1-hour writes billable at 2x input
+    /// instead of the 5-minute 1.25x rate.
+    #[serde(default)]
+    pub cache_creation_5m_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_1h_tokens: u32,
     /// 从响应中提取的实际模型名称（如果可用）
     pub model: Option<String>,
     /// 从响应中提取的消息 ID（用于跨源去重）
@@ -47,6 +70,23 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
+    /// Return mutually exclusive cache-write buckets, clamped to the aggregate.
+    /// Providers that do not expose TTL detail remain in `unspecified` and keep the
+    /// legacy cache-creation price.
+    pub fn normalized_cache_creation_buckets(&self) -> (u32, u32, u32) {
+        let one_hour = self
+            .cache_creation_1h_tokens
+            .min(self.cache_creation_tokens);
+        let five_minutes = self
+            .cache_creation_5m_tokens
+            .min(self.cache_creation_tokens.saturating_sub(one_hour));
+        let unspecified = self
+            .cache_creation_tokens
+            .saturating_sub(one_hour)
+            .saturating_sub(five_minutes);
+        (unspecified, five_minutes, one_hour)
+    }
+
     /// 生成与 session 日志共享的 request_id，用于跨源去重。
     /// 有 message_id 时返回 `session:{id}`，否则回退到随机 UUID。
     pub fn dedup_request_id(&self) -> String {
@@ -83,6 +123,7 @@ impl TokenUsage {
     /// 从 Claude API 非流式响应解析
     pub fn from_claude_response(body: &Value) -> Option<Self> {
         let usage = body.get("usage")?;
+        let (cache_creation_5m_tokens, cache_creation_1h_tokens) = cache_creation_ttl_tokens(usage);
         // 提取响应中的模型名称
         let model = body
             .get("model")
@@ -104,6 +145,8 @@ impl TokenUsage {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            cache_creation_5m_tokens,
+            cache_creation_1h_tokens,
             model,
             message_id,
         })
@@ -134,6 +177,8 @@ impl TokenUsage {
                             }
                         }
                         if let Some(msg_usage) = event.get("message").and_then(|m| m.get("usage")) {
+                            let (cache_creation_5m, cache_creation_1h) =
+                                cache_creation_ttl_tokens(msg_usage);
                             // 从 message_start 获取 input_tokens（原生 Claude API）
                             if let Some(input) =
                                 msg_usage.get("input_tokens").and_then(|v| v.as_u64())
@@ -150,10 +195,14 @@ impl TokenUsage {
                                 .and_then(|v| v.as_u64())
                                 .unwrap_or(0)
                                 as u32;
+                            usage.cache_creation_5m_tokens = cache_creation_5m;
+                            usage.cache_creation_1h_tokens = cache_creation_1h;
                         }
                     }
                     "message_delta" => {
                         if let Some(delta_usage) = event.get("usage") {
+                            let (delta_cache_creation_5m, delta_cache_creation_1h) =
+                                cache_creation_ttl_tokens(delta_usage);
                             // 从 message_delta 获取 output_tokens
                             if let Some(output) =
                                 delta_usage.get("output_tokens").and_then(|v| v.as_u64())
@@ -192,6 +241,14 @@ impl TokenUsage {
                                     }
                                     if let Some(cache_creation) = delta_cache_creation {
                                         usage.cache_creation_tokens = cache_creation;
+                                        if delta_cache_creation_5m > 0
+                                            || delta_cache_creation_1h > 0
+                                        {
+                                            usage.cache_creation_5m_tokens =
+                                                delta_cache_creation_5m;
+                                            usage.cache_creation_1h_tokens =
+                                                delta_cache_creation_1h;
+                                        }
                                     }
                                 }
                             }
@@ -206,6 +263,10 @@ impl TokenUsage {
                             if usage.cache_creation_tokens == 0 {
                                 if let Some(cache_creation) = delta_cache_creation {
                                     usage.cache_creation_tokens = cache_creation;
+                                    if delta_cache_creation_5m > 0 || delta_cache_creation_1h > 0 {
+                                        usage.cache_creation_5m_tokens = delta_cache_creation_5m;
+                                        usage.cache_creation_1h_tokens = delta_cache_creation_1h;
+                                    }
                                 }
                             }
                         }
@@ -237,6 +298,8 @@ impl TokenUsage {
             output_tokens: usage.get("completion_tokens")?.as_u64()? as u32,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         })
@@ -270,12 +333,15 @@ impl TokenUsage {
 
         let cached_tokens = openai_cache_read_tokens(usage);
         let cache_write_tokens = openai_cache_write_tokens(usage);
+        let (cache_creation_5m_tokens, cache_creation_1h_tokens) = cache_creation_ttl_tokens(usage);
 
         Some(Self {
             input_tokens: input_tokens? as u32,
             output_tokens: output_tokens? as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_5m_tokens,
+            cache_creation_1h_tokens,
             model,
             message_id: None,
         })
@@ -294,6 +360,7 @@ impl TokenUsage {
         // 获取 cached_tokens (可能在 cache_read_input_tokens 或 input_tokens_details 中)
         let cached_tokens = openai_cache_read_tokens(usage);
         let cache_write_tokens = openai_cache_write_tokens(usage);
+        let (cache_creation_5m_tokens, cache_creation_1h_tokens) = cache_creation_ttl_tokens(usage);
 
         // 调整 input_tokens: OpenAI total input 同时包含 cache read/write 两桶。
         let adjusted_input = input_tokens
@@ -311,6 +378,8 @@ impl TokenUsage {
             output_tokens,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_5m_tokens,
+            cache_creation_1h_tokens,
             model,
             message_id: None,
         })
@@ -391,6 +460,7 @@ impl TokenUsage {
         // 获取 cached_tokens (可能在 prompt_tokens_details 中)
         let cached_tokens = openai_cache_read_tokens(usage);
         let cache_write_tokens = openai_cache_write_tokens(usage);
+        let (cache_creation_5m_tokens, cache_creation_1h_tokens) = cache_creation_ttl_tokens(usage);
 
         // 提取响应中的模型名称
         let model = body
@@ -403,6 +473,8 @@ impl TokenUsage {
             output_tokens: completion_tokens as u32,
             cache_read_tokens: cached_tokens,
             cache_creation_tokens: cache_write_tokens,
+            cache_creation_5m_tokens,
+            cache_creation_1h_tokens,
             model,
             message_id: None,
         })
@@ -448,6 +520,8 @@ impl TokenUsage {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model,
             message_id: None,
         })
@@ -499,6 +573,8 @@ impl TokenUsage {
                 output_tokens: total_output,
                 cache_read_tokens: total_cache_read,
                 cache_creation_tokens: 0,
+                cache_creation_5m_tokens: 0,
+                cache_creation_1h_tokens: 0,
                 model,
                 message_id: None,
             })
@@ -521,7 +597,11 @@ mod tests {
                 "input_tokens": 100,
                 "output_tokens": 50,
                 "cache_read_input_tokens": 20,
-                "cache_creation_input_tokens": 10
+                "cache_creation_input_tokens": 10,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 4,
+                    "ephemeral_1h_input_tokens": 6
+                }
             }
         });
 
@@ -530,6 +610,9 @@ mod tests {
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.cache_read_tokens, 20);
         assert_eq!(usage.cache_creation_tokens, 10);
+        assert_eq!(usage.cache_creation_5m_tokens, 4);
+        assert_eq!(usage.cache_creation_1h_tokens, 6);
+        assert_eq!(usage.normalized_cache_creation_buckets(), (0, 4, 6));
         assert_eq!(usage.model, Some("claude-sonnet-4-20250514".to_string()));
     }
 

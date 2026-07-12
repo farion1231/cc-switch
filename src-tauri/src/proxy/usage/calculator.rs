@@ -94,9 +94,20 @@ impl CostCalculator {
             Decimal::from(usage.output_tokens) * pricing.output_cost_per_million / million;
         let cache_read_cost =
             Decimal::from(usage.cache_read_tokens) * pricing.cache_read_cost_per_million / million;
-        let cache_creation_cost = Decimal::from(usage.cache_creation_tokens)
-            * pricing.cache_creation_cost_per_million
-            / million;
+        let (cache_creation_unspecified, cache_creation_5m, cache_creation_1h) =
+            usage.normalized_cache_creation_buckets();
+        let cache_creation_5m_price = pricing.cache_creation_cost_per_million;
+        // The stored cache-creation price is the existing 5-minute rate. Anthropic
+        // prices 5m writes at 1.25x input and 1h writes at 2x input, therefore the
+        // corresponding 1h price is 8/5 of the configured 5m price. Unknown providers
+        // without TTL details retain the configured legacy rate.
+        let cache_creation_1h_price =
+            cache_creation_5m_price * Decimal::from(8u32) / Decimal::from(5u32);
+        let cache_creation_cost = (Decimal::from(cache_creation_unspecified)
+            + Decimal::from(cache_creation_5m))
+            * cache_creation_5m_price
+            / million
+            + Decimal::from(cache_creation_1h) * cache_creation_1h_price / million;
 
         // 总成本 = 各项基础成本之和 × 倍率
         let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
@@ -159,6 +170,8 @@ mod tests {
             output_tokens: 500,
             cache_read_tokens: 200,
             cache_creation_tokens: 100,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -191,6 +204,8 @@ mod tests {
             output_tokens: 500,
             cache_read_tokens: 200,
             cache_creation_tokens: 100,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -212,12 +227,33 @@ mod tests {
     }
 
     #[test]
+    fn test_one_hour_cache_creation_uses_premium_rate() {
+        let usage = TokenUsage {
+            cache_creation_tokens: 1_000_000,
+            cache_creation_5m_tokens: 250_000,
+            cache_creation_1h_tokens: 750_000,
+            ..TokenUsage::default()
+        };
+        let pricing = ModelPricing::from_strings("3", "15", "0.3", "3.75").unwrap();
+
+        let cost = CostCalculator::calculate(&usage, &pricing, Decimal::ONE);
+
+        // 250k × $3.75/M + 750k × $6/M = $5.4375.
+        assert_eq!(
+            cost.cache_creation_cost,
+            Decimal::from_str("5.4375").unwrap()
+        );
+    }
+
+    #[test]
     fn test_cost_multiplier() {
         let usage = TokenUsage {
             input_tokens: 1000,
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -240,6 +276,8 @@ mod tests {
             output_tokens: 500,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -257,6 +295,8 @@ mod tests {
             output_tokens: 1,
             cache_read_tokens: 1,
             cache_creation_tokens: 1,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };

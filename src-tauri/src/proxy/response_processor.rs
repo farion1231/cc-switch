@@ -645,12 +645,14 @@ async fn log_usage_internal(
     let request_id = usage.dedup_request_id();
 
     log::debug!(
-        "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
+        "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}, cache_creation_5m={}, cache_creation_1h={}",
         session_id.as_deref().unwrap_or("none"),
         usage.input_tokens,
         usage.output_tokens,
         usage.cache_read_tokens,
-        usage.cache_creation_tokens
+        usage.cache_creation_tokens,
+        usage.cache_creation_5m_tokens,
+        usage.cache_creation_1h_tokens
     );
 
     if let Err(e) = logger.log_with_calculation(
@@ -1004,6 +1006,8 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -1072,6 +1076,8 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
@@ -1154,6 +1160,8 @@ mod tests {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
             model: None,
             message_id: None,
         };
