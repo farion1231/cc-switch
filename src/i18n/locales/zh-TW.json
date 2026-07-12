@@ -2151,6 +2151,45 @@
       "noSelection": "請選擇要刪除的環境變數"
     }
   },
+  "plugins": {
+    "title": "外掛程式",
+    "manage": "管理外掛程式",
+    "tabs": { "installed": "已安裝", "discover": "探索" },
+    "apps": { "codex": "Codex", "claude": "Claude Code" },
+    "detecting": "正在偵測客戶端...",
+    "available": "可用",
+    "unavailable": "不可用",
+    "search": "搜尋外掛程式名稱、ID 或描述...",
+    "empty": "沒有符合的外掛程式",
+    "unknownVersion": "未知版本",
+    "enabled": "啟用外掛程式",
+    "install": "安裝",
+    "uninstall": "解除安裝",
+    "update": "更新",
+    "actionSuccess": "外掛程式操作成功",
+    "actionFailed": "外掛程式操作失敗",
+    "restartHint": "請重新啟動客戶端或建立新工作階段。包含 Hooks 的外掛程式仍需在原生客戶端中審核並信任。",
+    "resultLimit": "僅顯示前 200 筆，請使用搜尋縮小範圍。",
+    "uninstallConfirm": "確定要從 {{app}} 解除安裝「{{name}}」嗎？另一個客戶端不受影響。",
+    "scope": {
+      "title": "選擇 Claude 安裝範圍",
+      "user": "使用者（所有專案）",
+      "project": "專案（與協作者共用）",
+      "local": "本機（僅目前專案）",
+      "projectPath": "選擇專案目錄",
+      "projectPathRequired": "專案或本機範圍必須選擇專案目錄",
+      "browse": "瀏覽"
+    },
+    "marketplaces": {
+      "title": "外掛程式市集",
+      "description": "分別管理 Codex 與 Claude Code 的原生 Marketplace。",
+      "sourcePlaceholder": "GitHub owner/repo、Git URL 或本機路徑",
+      "add": "新增",
+      "refresh": "重新整理",
+      "remove": "移除市集",
+      "removeConfirm": "移除市集「{{name}}」可能同時解除安裝其外掛程式，是否繼續？"
+    }
+  },
   "skills": {
     "manage": "Skills",
     "title": "Skills 管理",

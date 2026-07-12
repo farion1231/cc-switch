@@ -1,6 +1,97 @@
 #![allow(non_snake_case)]
 
 use crate::config::ConfigStatus;
+use crate::services::plugin::{
+    self, PluginActionResult, PluginApp, PluginClientStatus, PluginMarketplace, PluginScope,
+    UnifiedPlugin,
+};
+
+#[tauri::command]
+pub async fn get_plugin_client_statuses() -> Vec<PluginClientStatus> {
+    let (codex, claude) = tokio::join!(
+        plugin::client_status(PluginApp::Codex),
+        plugin::client_status(PluginApp::Claude)
+    );
+    vec![codex, claude]
+}
+
+#[tauri::command]
+pub async fn list_plugins(
+    app: PluginApp,
+    include_available: bool,
+) -> Result<Vec<UnifiedPlugin>, String> {
+    plugin::list_plugins(app, include_available).await
+}
+
+#[tauri::command]
+pub async fn list_plugin_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, String> {
+    plugin::list_marketplaces(app).await
+}
+
+#[tauri::command]
+pub async fn add_plugin_marketplace(
+    app: PluginApp,
+    source: String,
+) -> Result<PluginActionResult, String> {
+    plugin::add_marketplace(app, &source).await
+}
+
+#[tauri::command]
+pub async fn refresh_plugin_marketplace(
+    app: PluginApp,
+    name: String,
+) -> Result<PluginActionResult, String> {
+    plugin::refresh_marketplace(app, &name).await
+}
+
+#[tauri::command]
+pub async fn remove_plugin_marketplace(
+    app: PluginApp,
+    name: String,
+) -> Result<PluginActionResult, String> {
+    plugin::remove_marketplace(app, &name).await
+}
+
+#[tauri::command]
+pub async fn install_plugin(
+    app: PluginApp,
+    plugin_id: String,
+    scope: Option<PluginScope>,
+    project_path: Option<String>,
+) -> Result<PluginActionResult, String> {
+    plugin::install_plugin(app, &plugin_id, scope, project_path.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn update_plugin(
+    app: PluginApp,
+    plugin_id: String,
+    scope: Option<PluginScope>,
+    project_path: Option<String>,
+) -> Result<PluginActionResult, String> {
+    plugin::update_plugin(app, &plugin_id, scope, project_path.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn set_plugin_enabled(
+    app: PluginApp,
+    plugin_id: String,
+    enabled: bool,
+    scope: Option<PluginScope>,
+    project_path: Option<String>,
+) -> Result<PluginActionResult, String> {
+    plugin::set_plugin_enabled(app, &plugin_id, enabled, scope, project_path.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn uninstall_plugin(
+    app: PluginApp,
+    plugin_id: String,
+    scope: Option<PluginScope>,
+    project_path: Option<String>,
+) -> Result<PluginActionResult, String> {
+    plugin::uninstall_plugin(app, &plugin_id, scope, project_path.as_deref()).await
+}
 
 /// Claude 插件：获取 ~/.claude/config.json 状态
 #[tauri::command]

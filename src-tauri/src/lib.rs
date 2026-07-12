@@ -1342,6 +1342,17 @@ pub fn run() {
             commands::update_skill,
             commands::migrate_skill_storage,
             commands::search_skills_sh,
+            // Native Codex / Claude plugin management
+            commands::get_plugin_client_statuses,
+            commands::list_plugins,
+            commands::list_plugin_marketplaces,
+            commands::add_plugin_marketplace,
+            commands::refresh_plugin_marketplace,
+            commands::remove_plugin_marketplace,
+            commands::install_plugin,
+            commands::update_plugin,
+            commands::set_plugin_enabled,
+            commands::uninstall_plugin,
             // Skill management (legacy API compatibility)
             commands::get_skills,
             commands::get_skills_for_app,

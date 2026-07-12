@@ -2179,6 +2179,45 @@
       "noSelection": "Please select environment variables to delete"
     }
   },
+  "plugins": {
+    "title": "Plugins",
+    "manage": "Manage plugins",
+    "tabs": { "installed": "Installed", "discover": "Discover" },
+    "apps": { "codex": "Codex", "claude": "Claude Code" },
+    "detecting": "Detecting client...",
+    "available": "Available",
+    "unavailable": "Unavailable",
+    "search": "Search plugin name, ID, or description...",
+    "empty": "No matching plugins",
+    "unknownVersion": "Unknown version",
+    "enabled": "Enable plugin",
+    "install": "Install",
+    "uninstall": "Uninstall",
+    "update": "Update",
+    "actionSuccess": "Plugin action completed",
+    "actionFailed": "Plugin action failed",
+    "restartHint": "Restart the client or start a new session. Plugins with hooks still require review and trust in the native client.",
+    "resultLimit": "Only the first 200 results are shown. Use search to narrow the list.",
+    "uninstallConfirm": "Uninstall \"{{name}}\" from {{app}}? The other client's installation is not affected.",
+    "scope": {
+      "title": "Choose Claude install scope",
+      "user": "User (all projects)",
+      "project": "Project (shared)",
+      "local": "Local (current project)",
+      "projectPath": "Choose a project directory",
+      "projectPathRequired": "Project and local scopes require a project directory",
+      "browse": "Browse"
+    },
+    "marketplaces": {
+      "title": "Plugin marketplaces",
+      "description": "Manage the native Codex and Claude Code marketplaces separately.",
+      "sourcePlaceholder": "GitHub owner/repo, Git URL, or local path",
+      "add": "Add",
+      "refresh": "Refresh",
+      "remove": "Remove marketplace",
+      "removeConfirm": "Removing marketplace \"{{name}}\" may also uninstall its plugins. Continue?"
+    }
+  },
   "skills": {
     "manage": "Skills",
     "title": "Skills Management",

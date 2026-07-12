@@ -2179,6 +2179,45 @@
       "noSelection": "削除する環境変数を選択してください"
     }
   },
+  "plugins": {
+    "title": "プラグイン",
+    "manage": "プラグインを管理",
+    "tabs": { "installed": "インストール済み", "discover": "探す" },
+    "apps": { "codex": "Codex", "claude": "Claude Code" },
+    "detecting": "クライアントを検出中...",
+    "available": "利用可能",
+    "unavailable": "利用不可",
+    "search": "プラグイン名、ID、説明を検索...",
+    "empty": "一致するプラグインがありません",
+    "unknownVersion": "不明なバージョン",
+    "enabled": "プラグインを有効化",
+    "install": "インストール",
+    "uninstall": "アンインストール",
+    "update": "更新",
+    "actionSuccess": "プラグイン操作が完了しました",
+    "actionFailed": "プラグイン操作に失敗しました",
+    "restartHint": "クライアントを再起動するか新しいセッションを開始してください。Hooks を含むプラグインはネイティブクライアントでの確認と信頼が必要です。",
+    "resultLimit": "最初の 200 件のみ表示しています。検索で絞り込んでください。",
+    "uninstallConfirm": "「{{name}}」を {{app}} からアンインストールしますか？もう一方のクライアントには影響しません。",
+    "scope": {
+      "title": "Claude のインストール範囲",
+      "user": "ユーザー（すべてのプロジェクト）",
+      "project": "プロジェクト（共有）",
+      "local": "ローカル（現在のプロジェクト）",
+      "projectPath": "プロジェクトディレクトリを選択",
+      "projectPathRequired": "プロジェクトとローカル範囲にはプロジェクトディレクトリが必要です",
+      "browse": "参照"
+    },
+    "marketplaces": {
+      "title": "プラグインマーケットプレイス",
+      "description": "Codex と Claude Code のネイティブ Marketplace を個別に管理します。",
+      "sourcePlaceholder": "GitHub owner/repo、Git URL、またはローカルパス",
+      "add": "追加",
+      "refresh": "更新",
+      "remove": "マーケットプレイスを削除",
+      "removeConfirm": "マーケットプレイス「{{name}}」を削除すると、そのプラグインも削除される場合があります。続行しますか？"
+    }
+  },
   "skills": {
     "manage": "Skills",
     "title": "Skills 管理",
