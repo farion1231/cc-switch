@@ -205,6 +205,90 @@ pub async fn run_tool_lifecycle_action(
     .map_err(|e| format!("tool lifecycle task join error: {e}"))?
 }
 
+/// GUI/launchd 启动时 PATH 常只有 `/usr/bin:/bin:/usr/sbin:/sbin`，而
+/// `npm` / `claude` / `codex` 等入口脚本使用 `#!/usr/bin/env node`。
+/// 探测阶段走登录 shell 能看到 nvm/Homebrew，执行阶段却找不到 `node`，
+/// 最终报 `env: node: No such file or directory`（#4162 / 本机 nvm + Dock 复现）。
+///
+/// 这里复用 `build_tool_search_paths`（含 Apple Silicon `/opt/homebrew`、
+/// Intel `/usr/local`、nvm/fnm/mise/volta 等），把候选 bin 目录前置到执行 PATH。
+#[cfg(not(target_os = "windows"))]
+fn lifecycle_execution_path() -> String {
+    let mut dirs: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    // "claude" 只是代表性工具名：node 管理器路径与工具无关；hermes 专用 Python
+    // 路径也会被顺带纳入，无害。
+    for path in build_tool_search_paths("claude") {
+        let s = path.to_string_lossy().into_owned();
+        if s.is_empty() || !seen.insert(s.clone()) {
+            continue;
+        }
+        dirs.push(s);
+    }
+
+    if let Ok(current) = std::env::var("PATH") {
+        for part in std::env::split_paths(&current) {
+            let s = part.to_string_lossy().into_owned();
+            if s.is_empty() || !seen.insert(s.clone()) {
+                continue;
+            }
+            dirs.push(s);
+        }
+    }
+
+    // 兜底：即便探测目录为空，也保证 macOS 常见 node 安装前缀在 PATH 里。
+    for fallback in [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ] {
+        if seen.insert(fallback.to_string()) {
+            dirs.push(fallback.to_string());
+        }
+    }
+
+    dirs.join(":")
+}
+
+/// Windows GUI 进程 PATH 补齐：Program Files\nodejs、nvm-windows、Volta、pnpm 等。
+/// 与 POSIX 版同一意图——全局覆盖 install/update 全链路。
+#[cfg(target_os = "windows")]
+fn lifecycle_execution_path_windows() -> String {
+    let mut dirs: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for path in build_tool_search_paths("claude") {
+        let s = path.to_string_lossy().into_owned();
+        if s.is_empty() || !seen.insert(s.to_ascii_lowercase()) {
+            continue;
+        }
+        dirs.push(s);
+    }
+
+    if let Ok(current) = std::env::var("PATH") {
+        for part in std::env::split_paths(&current) {
+            let s = part.to_string_lossy().into_owned();
+            if s.is_empty() || !seen.insert(s.to_ascii_lowercase()) {
+                continue;
+            }
+            dirs.push(s);
+        }
+    }
+
+    for fallback in [r"C:\Program Files\nodejs", r"C:\Program Files (x86)\nodejs"] {
+        if seen.insert(fallback.to_ascii_lowercase()) {
+            dirs.push(fallback.to_string());
+        }
+    }
+
+    dirs.join(";")
+}
+
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
 /// 不再弹出可见终端窗口（与 `launch_terminal_running` 的"开窗即返回"形成对比，
 /// 后者仍保留给 provider 切换等需要交互式终端的场景）。
@@ -214,9 +298,15 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     use std::process::Command;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
+    //
+    // 显式注入 lifecycle_execution_path：绝对路径调用 npm/claude 仍不够，
+    // 它们的 shebang 是 `/usr/bin/env node`，必须在 PATH 里解析到 node。
+    // 脚本头部也有 export PATH（build_tool_lifecycle_command），双保险。
+    let path = lifecycle_execution_path();
     let output = Command::new("bash")
         .arg("-c")
         .arg(command_line)
+        .env("PATH", &path)
         .output()
         .map_err(|e| format!("启动安装进程失败: {e}"))?;
     finish_lifecycle_output(&output)
@@ -233,9 +323,11 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
         std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
     std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
+    let path = lifecycle_execution_path_windows();
     let output = Command::new("cmd")
         .arg("/C")
         .arg(&bat_file)
+        .env("PATH", &path)
         .creation_flags(CREATE_NO_WINDOW)
         .output();
     let _ = std::fs::remove_file(&bat_file);
@@ -387,10 +479,24 @@ fn build_tool_lifecycle_command(
         // 仍应让管道前段失败参与整条脚本判定。
         lines.push("set -e".to_string());
         lines.push("set -o pipefail".to_string());
+        // 全局补齐 PATH：覆盖本脚本内全部工具的 install / update / 裸 npm /
+        // 官方 installer 二次 spawn。与 run_tool_lifecycle_silently 的 .env 注入双保险，
+        // 即使脚本被拷贝到别处执行，也能解析 nvm/Homebrew 的 node（#4162）。
+        lines.push(format!(
+            "export PATH={}:\"${{PATH:-}}\"",
+            shell_single_quote(&lifecycle_execution_path())
+        ));
     }
 
     #[cfg(target_os = "windows")]
-    lines.push("@echo off".to_string());
+    {
+        lines.push("@echo off".to_string());
+        // GUI 启动的 cmd 常缺用户级 node 目录；全局 set PATH 覆盖本 bat 内所有工具。
+        lines.push(format!(
+            "set \"PATH={};%PATH%\"",
+            lifecycle_execution_path_windows()
+        ));
+    }
 
     for tool in tools {
         let label = tool_display_name(tool);
@@ -498,6 +604,68 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// 在 GUI 瘦 PATH 下解析用户真正会用到的 npm，并生成可执行的全局安装命令。
+///
+/// 优先级：登录 shell 的 `command -v npm` → 候选搜索目录中的 npm 文件 → 裸 `npm`。
+/// 命中绝对路径时同时前置 sibling bin，保证 `#!/usr/bin/env node` 全局可解析。
+#[cfg(not(target_os = "windows"))]
+fn resolve_npm_executable() -> Option<std::path::PathBuf> {
+    resolve_login_shell_command_path("npm")
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            build_tool_search_paths("claude")
+                .into_iter()
+                .find_map(|dir| {
+                    let npm = dir.join("npm");
+                    npm.is_file().then_some(npm)
+                })
+        })
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的命令入口路径。
+/// 保留符号链接本身：npm 入口常是用户 bin 下的链接，执行时需要同级 node。
+#[cfg(not(target_os = "windows"))]
+fn resolve_login_shell_command_path(tool: &str) -> Option<std::path::PathBuf> {
+    use std::process::Command;
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| is_valid_shell(s))
+        .unwrap_or_else(|| "sh".to_string());
+    let flag = default_flag_for_shell(&shell);
+    let output = Command::new(shell)
+        .arg(flag)
+        .arg(format!("command -v {tool}"))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = decode_command_output(&output.stdout);
+    let first = first_abs_path_line(&raw)?;
+    Some(std::path::PathBuf::from(first))
+}
+
+/// 返回 GUI 进程可直接执行的 npm 安装命令（全局匹配：所有 npm 工具共用）。
+#[cfg(not(target_os = "windows"))]
+fn resolved_npm_install_command_for(tool: &str) -> Option<String> {
+    let bare = npm_install_command_for(tool)?.to_string();
+    let Some(npm_path) = resolve_npm_executable() else {
+        return Some(bare);
+    };
+    let Some(npm_dir) = npm_path.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return Some(bare);
+    };
+    let package = npm_package_for(tool)?;
+    let npm = shell_single_quote(&npm_path.to_string_lossy());
+    let npm_dir = shell_single_quote(&npm_dir.to_string_lossy());
+    Some(format!("PATH={npm_dir}:$PATH {npm} i -g {package}@latest"))
+}
+
+#[cfg(target_os = "windows")]
+fn resolved_npm_install_command_for(tool: &str) -> Option<String> {
+    npm_install_command_for(tool).map(str::to_owned)
+}
+
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
         "claude" | "codex" | "hermes" => Some("update"),
@@ -552,15 +720,16 @@ fn tool_action_shell_command_for_shell(
         );
     }
 
-    let install = npm_install_command_for(tool)?;
+    // 全局匹配：POSIX 下解析真实 npm + sibling node PATH；Windows 仍用裸 npm.cmd。
+    let install = resolved_npm_install_command_for(tool)?;
     match action {
-        ToolLifecycleAction::Install => Some(install.to_string()),
+        ToolLifecycleAction::Install => Some(install),
         ToolLifecycleAction::Update => match prefers_official_update(tool, shell)
             .then(|| bare_official_update_command(tool))
             .flatten()
         {
-            Some(update) => Some(chain_update_commands(update, install.to_string(), shell)),
-            None => Some(install.to_string()),
+            Some(update) => Some(chain_update_commands(update, install, shell)),
+            None => Some(install),
         },
     }
 }
@@ -1467,12 +1636,77 @@ fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Pat
         return;
     }
 
-    let mise_base = home.join(".local/share/mise");
-    push_unique_path(paths, mise_base.join("shims"));
+    // mise 可能装在 XDG 默认或 ~/.mise（旧布局）
+    for mise_base in [home.join(".local/share/mise"), home.join(".mise")] {
+        push_unique_path(paths, mise_base.join("shims"));
+        let node_installs = mise_base.join("installs").join("node");
+        if node_installs.exists() {
+            if let Ok(entries) = std::fs::read_dir(&node_installs) {
+                for entry in entries.flatten() {
+                    let bin_path = entry.path().join("bin");
+                    if bin_path.exists() {
+                        push_unique_path(paths, bin_path);
+                    }
+                }
+            }
+        }
+    }
+}
 
-    let node_installs = mise_base.join("installs").join("node");
-    if node_installs.exists() {
-        if let Ok(entries) = std::fs::read_dir(&node_installs) {
+/// 全局扩展 node 版本管理器 bin 目录（探测 + 生命周期 PATH 共用）。
+/// 覆盖 nvm / fnm / asdf / n / Homebrew node cellar 等，避免只认单一安装源。
+fn extend_node_version_manager_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
+    if home.as_os_str().is_empty() {
+        return;
+    }
+
+    // nvm：优先 current 软链，再枚举全部 versions（多版本时 sibling 锚定仍优先正确源）
+    let nvm_current = home.join(".nvm/current/bin");
+    if nvm_current.exists() {
+        push_unique_path(paths, nvm_current);
+    }
+    let nvm_base = home.join(".nvm/versions/node");
+    if nvm_base.exists() {
+        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
+            // 按版本名倒序，尽量让较新 node 排在全局 PATH 前面
+            let mut bins: Vec<std::path::PathBuf> = entries
+                .flatten()
+                .map(|e| e.path().join("bin"))
+                .filter(|p| p.exists())
+                .collect();
+            bins.sort_by(|a, b| b.cmp(a));
+            for bin_path in bins {
+                push_unique_path(paths, bin_path);
+            }
+        }
+    }
+
+    // fnm：current + 安装根 + multishells
+    for fnm_root in [
+        home.join(".fnm"),
+        home.join(".local/share/fnm"),
+        home.join("Library/Application Support/fnm"),
+    ] {
+        push_unique_path(paths, fnm_root.join("current/bin"));
+        let aliases_default = fnm_root.join("aliases/default/bin");
+        if aliases_default.exists() {
+            push_unique_path(paths, aliases_default);
+        }
+        let node_versions = fnm_root.join("node-versions");
+        if node_versions.exists() {
+            if let Ok(entries) = std::fs::read_dir(&node_versions) {
+                for entry in entries.flatten() {
+                    let bin_path = entry.path().join("installation/bin");
+                    if bin_path.exists() {
+                        push_unique_path(paths, bin_path);
+                    }
+                }
+            }
+        }
+    }
+    let fnm_multishells = home.join(".local/state/fnm_multishells");
+    if fnm_multishells.exists() {
+        if let Ok(entries) = std::fs::read_dir(&fnm_multishells) {
             for entry in entries.flatten() {
                 let bin_path = entry.path().join("bin");
                 if bin_path.exists() {
@@ -1480,6 +1714,43 @@ fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Pat
                 }
             }
         }
+    }
+
+    // asdf nodejs
+    let asdf_nodejs = home.join(".asdf/installs/nodejs");
+    if asdf_nodejs.exists() {
+        if let Ok(entries) = std::fs::read_dir(&asdf_nodejs) {
+            for entry in entries.flatten() {
+                let bin_path = entry.path().join("bin");
+                if bin_path.exists() {
+                    push_unique_path(paths, bin_path);
+                }
+            }
+        }
+    }
+    push_unique_path(paths, home.join(".asdf/shims"));
+
+    // n (tj/n)
+    push_unique_path(paths, home.join("n/bin"));
+    push_unique_path(
+        paths,
+        std::path::PathBuf::from("/usr/local/n/versions/node"),
+    );
+
+    // Homebrew node formula 的 libexec（M1 /opt/homebrew，Intel /usr/local）
+    for prefix in ["/opt/homebrew", "/usr/local"] {
+        push_unique_path(
+            paths,
+            std::path::PathBuf::from(format!("{prefix}/opt/node/bin")),
+        );
+        push_unique_path(
+            paths,
+            std::path::PathBuf::from(format!("{prefix}/opt/node@22/bin")),
+        );
+        push_unique_path(
+            paths,
+            std::path::PathBuf::from(format!("{prefix}/opt/node@20/bin")),
+        );
     }
 }
 
@@ -1573,29 +1844,8 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         extend_windows_cli_manager_search_paths(&mut search_paths, &home);
     }
 
-    let fnm_base = home.join(".local/state/fnm_multishells");
-    if fnm_base.exists() {
-        if let Ok(entries) = std::fs::read_dir(&fnm_base) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(&mut search_paths, bin_path);
-                }
-            }
-        }
-    }
-
-    let nvm_base = home.join(".nvm/versions/node");
-    if nvm_base.exists() {
-        if let Ok(entries) = std::fs::read_dir(&nvm_base) {
-            for entry in entries.flatten() {
-                let bin_path = entry.path().join("bin");
-                if bin_path.exists() {
-                    push_unique_path(&mut search_paths, bin_path);
-                }
-            }
-        }
-    }
+    // 全局匹配 nvm / fnm / asdf / n / Homebrew node（探测与生命周期 PATH 同一套）
+    extend_node_version_manager_search_paths(&mut search_paths, &home);
 
     if tool == "opencode" {
         let extra_paths = opencode_extra_search_paths(
@@ -1799,25 +2049,8 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
 /// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]
 fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
-    use std::process::Command;
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|s| is_valid_shell(s))
-        .unwrap_or_else(|| "sh".to_string());
-    let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
-        .arg(flag)
-        .arg(format!("command -v {tool}"))
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let first = first_abs_path_line(&raw)?;
-    std::fs::canonicalize(first).ok()
+    // 先取登录 shell 入口（可能是 symlink），再 canonicalize 对齐真身。
+    std::fs::canonicalize(resolve_login_shell_command_path(tool)?).ok()
 }
 
 #[cfg(target_os = "windows")]
@@ -1956,6 +2189,34 @@ fn parent_dir(p: &str) -> String {
         Some(i) if i > 0 => p[..i].to_string(),
         _ => String::new(),
     }
+}
+
+/// 把可执行文件所在 bin 目录前置到命令的 PATH。
+///
+/// 锚定命令已用绝对路径调用 `npm`/`claude`，但这些脚本的 shebang 仍是
+/// `#!/usr/bin/env node`。多版本 nvm/fnm 并存时，仅靠全局 PATH 补齐可能选到
+/// 错误的 node；把 sibling bin 放到最前，保证与探测到的安装源一致。
+#[cfg(not(target_os = "windows"))]
+fn with_bin_dir_on_path(bin_path: &str, command: String) -> String {
+    let dir = parent_dir(bin_path);
+    if dir.is_empty() {
+        command
+    } else {
+        format!("PATH={}:$PATH {command}", shell_single_quote(&dir))
+    }
+}
+
+/// node shebang 脚本（npm 全局包 / Homebrew node 全局包）在 GUI 瘦 PATH 下需要
+/// sibling bin；brew formula 本身由 `brew` 管理，不需要 node PATH。
+#[cfg(not(target_os = "windows"))]
+fn should_run_with_node_bin_on_path(bin_path: &str, real_target: &str) -> bool {
+    if brew_formula_from_path(real_target).is_some() {
+        return false;
+    }
+    matches!(
+        infer_install_source(Path::new(bin_path)),
+        "nvm" | "fnm" | "mise" | "homebrew"
+    )
 }
 
 /// 从 canonicalize 后的真身路径提取 Homebrew formula 名：
@@ -2175,11 +2436,11 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
         return None;
     }
     let npm = sibling_bin(bin_path, "npm")?;
-    let npm = quote_path_if_spaced(&npm);
+    let npm_cmd = quote_path_if_spaced(&npm);
     let pkg = "@openai/codex";
-    Some(format!(
-        "{npm} uninstall -g {pkg} || true; {npm} i -g {pkg}@latest"
-    ))
+    let uninstall = with_bin_dir_on_path(&npm, format!("{npm_cmd} uninstall -g {pkg}"));
+    let install = with_bin_dir_on_path(&npm, format!("{npm_cmd} i -g {pkg}@latest"));
+    Some(format!("{uninstall} || true; {install}"))
 }
 
 /// Windows 暂不做平台分发自愈：Windows 上 codex 的破坏模式不同（EPERM 文件锁 / 版本 bump
@@ -2220,7 +2481,12 @@ fn package_manager_anchored_command_from_paths(
         _ => return None,
     }
     let npm = sibling_bin(bin_path, "npm")?;
-    Some(format!("{} i -g {pkg}@latest", quote_path_if_spaced(&npm)))
+    // 绝对路径调用 npm 仍不够：npm 的 shebang 是 `#!/usr/bin/env node`，
+    // 必须把 sibling bin（含正确版本的 node）前置到 PATH。
+    Some(with_bin_dir_on_path(
+        &npm,
+        format!("{} i -g {pkg}@latest", quote_path_if_spaced(&npm)),
+    ))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -2267,7 +2533,12 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         return package_command;
     }
     if prefers_official_update(tool, LifecycleCommandShell::Posix) {
-        let update = anchored_official_update_command(tool, bin_path)?;
+        let mut update = anchored_official_update_command(tool, bin_path)?;
+        // Claude Code / OpenClaw 等 npm 全局包的 self-update 入口同样依赖
+        // `/usr/bin/env node`；在 nvm/fnm/mise/Homebrew node 安装上补 sibling PATH。
+        if should_run_with_node_bin_on_path(bin_path, real_target) {
+            update = with_bin_dir_on_path(bin_path, update);
+        }
         return Some(match package_command {
             Some(fallback) => chain_update_commands(update, fallback, LifecycleCommandShell::Posix),
             None => update,
@@ -2421,12 +2692,10 @@ fn static_fallback_command(tool: &str) -> String {
 ///   Windows 原生继续走 `tool_action_shell_command` 的 npm/PowerShell 命令;WSL 作为
 ///   Linux 环境复用这套 POSIX 安装优先级。
 fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
-    match npm_install_command_for(tool) {
-        Some(npm) => chain_update_commands(
-            installer.to_string(),
-            npm.to_string(),
-            LifecycleCommandShell::Posix,
-        ),
+    match resolved_npm_install_command_for(tool) {
+        Some(npm) => {
+            chain_update_commands(installer.to_string(), npm, LifecycleCommandShell::Posix)
+        }
         None => installer.to_string(),
     }
 }
@@ -4369,7 +4638,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
                 )
             );
         }
@@ -4379,6 +4648,7 @@ mod tests {
             // Codex 不走 self-update（`codex update` 在 npm 安装上只是裸 `npm install -g`，
             // 却会假成功掩盖平台二进制漏装）——直接锚定到同一个 node 的 npm，而非 PATH
             // 第一个 npm。损坏时的 uninstall+install 自愈见 codex_missing_platform_binary_*。
+            // sibling bin 前置 PATH：GUI 瘦 PATH 下 `/usr/bin/env node` 才能解析。
             let cmd = anchored_command_from_paths(
                 "codex",
                 "/Users/me/.nvm/versions/node/v22.14.0/bin/codex",
@@ -4386,7 +4656,22 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+            );
+        }
+
+        #[test]
+        fn claude_nvm_update_chain_runs_with_node_bin_on_path() {
+            // 用户截图复现：Claude Code 可升级 → 点升级 → env: node: No such file or directory。
+            // nvm 下 claude/npm 都是 `#!/usr/bin/env node`，self-update 与 npm 兜底都必须补 PATH。
+            let cmd = anchored_command_from_paths(
+                "claude",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/claude",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/claude update || PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @anthropic-ai/claude-code@latest")
             );
         }
 
@@ -4394,6 +4679,7 @@ mod tests {
         fn homebrew_npm_global_package_anchors_not_brew() {
             // openclaw 装在 Homebrew node 的全局目录(lib/node_modules，非 Cellar)：
             // 是 npm 全局包，官方 update 失败后走 npm 锚定而非 brew upgrade。
+            // Apple Silicon M1/M2 默认 /opt/homebrew/bin；sibling PATH 保证 env node 可解析。
             let cmd = anchored_command_from_paths(
                 "openclaw",
                 "/opt/homebrew/bin/openclaw",
@@ -4401,7 +4687,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/opt/homebrew/bin/openclaw update --yes || /opt/homebrew/bin/npm i -g openclaw@latest")
+                Some("PATH='/opt/homebrew/bin':$PATH /opt/homebrew/bin/openclaw update --yes || PATH='/opt/homebrew/bin':$PATH /opt/homebrew/bin/npm i -g openclaw@latest")
             );
         }
 
@@ -4528,7 +4814,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                    "PATH='/Users/me/.local/share/fnm_multishells/12345_abc/bin':$PATH /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
             );
         }
@@ -4542,7 +4828,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+                Some("PATH='/Users/my name/.nvm/versions/node/v22/bin':$PATH '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
             );
         }
 
@@ -4649,21 +4935,50 @@ mod tests {
             broken.runnable = false;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
         #[test]
-        fn codex_runnable_uses_plain_npm_not_self_heal() {
-            // 正常（runnable=true）的 codex 升级：锚定 npm，既不重装、也不跑会假成功
-            // 掩盖损坏的 `codex update`。
+        fn codex_runnable_uses_path_scoped_npm_not_self_heal() {
+            // 正常（runnable=true）的 codex 升级：锚定 npm 并补足 sibling node PATH，
+            // 既不重装、也不跑会假成功掩盖损坏的 `codex update`。
             let healthy = inst("/Users/me/.nvm/versions/node/v22.14.0/bin/codex", true);
             let cmd = installs_anchored_command("codex", &[healthy]);
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':$PATH /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("uninstall"));
+        }
+
+        #[test]
+        fn lifecycle_execution_path_includes_homebrew_and_system_bins() {
+            // Apple Silicon 与 Intel macOS 的常见前缀都必须出现，Dock 启动时 slim PATH
+            // 才能解析 `/opt/homebrew/bin/node` 或 `/usr/local/bin/node`。
+            let path = lifecycle_execution_path();
+            assert!(
+                path.contains("/opt/homebrew/bin"),
+                "missing Apple Silicon homebrew bin: {path}"
+            );
+            assert!(
+                path.contains("/usr/local/bin"),
+                "missing Intel/usr local bin: {path}"
+            );
+            assert!(path.contains("/usr/bin"), "missing system bin: {path}");
+        }
+
+        #[test]
+        fn with_bin_dir_on_path_prefixes_sibling_and_preserves_empty_parent() {
+            assert_eq!(
+                with_bin_dir_on_path(
+                    "/Users/me/.nvm/versions/node/v26.3.1/bin/npm",
+                    "npm i -g @anthropic-ai/claude-code@latest".to_string()
+                ),
+                "PATH='/Users/me/.nvm/versions/node/v26.3.1/bin':$PATH npm i -g @anthropic-ai/claude-code@latest"
+            );
+            // 无父目录时保持原命令，避免拼出 `PATH='':$PATH ...`
+            assert_eq!(with_bin_dir_on_path("npm", "npm -v".to_string()), "npm -v");
         }
 
         #[test]
@@ -4785,7 +5100,11 @@ mod tests {
                 !parts[0].contains('|'),
                 "native installer should avoid pipe: {cmd}"
             );
-            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
+            // 全局匹配后 npm 可能是绝对路径 + PATH= sibling，不再要求裸 "npm i -g"
+            assert!(
+                parts[1].contains("i -g") && parts[1].contains("npm"),
+                "npm second: {cmd}"
+            );
         }
 
         #[test]
@@ -4808,52 +5127,58 @@ mod tests {
         }
 
         #[test]
-        fn codex_install_keeps_static_npm() {
-            // OpenAI 暂无独立 native installer,保持原裸 npm,不引入兜底链(无东西可兜底)。
+        fn codex_install_uses_npm_global_match() {
+            // OpenAI 暂无独立 native installer；GUI 下解析真实 npm（可绝对路径 + PATH）。
             let cmd = install_command_for("codex");
-            assert_eq!(cmd, "npm i -g @openai/codex@latest");
+            assert!(
+                cmd.contains("i -g @openai/codex@latest"),
+                "expected npm install of codex: {cmd}"
+            );
             assert!(!cmd.contains("||"));
         }
 
         #[test]
-        fn gemini_install_keeps_static_npm() {
+        fn gemini_install_uses_npm_global_match() {
             // Google 文档同时支持 brew/npm,但本表保持与 update fallback 一致的 npm。
             // 用户若已装 brew gemini-cli,update 路径的锚定会识别 formula → brew upgrade,
             // 所以 install 端不强行替用户决策"用 brew 还是 npm"。
             let cmd = install_command_for("gemini");
-            assert_eq!(cmd, "npm i -g @google/gemini-cli@latest");
+            assert!(
+                cmd.contains("i -g @google/gemini-cli@latest"),
+                "expected npm install of gemini: {cmd}"
+            );
         }
 
         #[test]
-        fn openclaw_install_keeps_static_npm() {
+        fn openclaw_install_uses_npm_global_match() {
             let cmd = install_command_for("openclaw");
-            assert_eq!(cmd, "npm i -g openclaw@latest");
+            assert!(
+                cmd.contains("i -g openclaw@latest"),
+                "expected npm install of openclaw: {cmd}"
+            );
         }
 
         #[test]
         fn update_fallbacks_use_official_cli_only_when_supported() {
-            assert_eq!(
-                static_fallback_command("claude"),
-                "claude update || npm i -g @anthropic-ai/claude-code@latest"
-            );
-            assert_eq!(
-                static_fallback_command("codex"),
-                "npm i -g @openai/codex@latest"
-            );
-            assert!(!static_fallback_command("codex").contains("codex update"));
-            assert_eq!(
-                static_fallback_command("gemini"),
-                "npm i -g @google/gemini-cli@latest"
-            );
-            assert!(!static_fallback_command("gemini").contains("gemini update"));
-            assert_eq!(
-                static_fallback_command("opencode"),
-                "opencode upgrade || npm i -g opencode-ai@latest"
-            );
-            assert_eq!(
-                static_fallback_command("openclaw"),
-                "openclaw update --yes || npm i -g openclaw@latest"
-            );
+            let claude = static_fallback_command("claude");
+            assert!(claude.starts_with("claude update ||") || claude.contains("claude update ||"));
+            assert!(claude.contains("@anthropic-ai/claude-code@latest"));
+
+            let codex = static_fallback_command("codex");
+            assert!(codex.contains("i -g @openai/codex@latest"));
+            assert!(!codex.contains("codex update"));
+
+            let gemini = static_fallback_command("gemini");
+            assert!(gemini.contains("i -g @google/gemini-cli@latest"));
+            assert!(!gemini.contains("gemini update"));
+
+            let opencode = static_fallback_command("opencode");
+            assert!(opencode.contains("opencode upgrade ||"));
+            assert!(opencode.contains("opencode-ai@latest"));
+
+            let openclaw = static_fallback_command("openclaw");
+            assert!(openclaw.contains("openclaw update --yes ||"));
+            assert!(openclaw.contains("openclaw@latest"));
         }
 
         #[test]
