@@ -469,6 +469,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                             : "bg-accent text-muted-foreground hover:bg-accent/80"
                         }`}
                         title={t(descriptionKey)}
+                        aria-label={t(descriptionKey)}
                       >
                         {preset.id}
                       </button>

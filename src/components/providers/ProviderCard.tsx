@@ -463,6 +463,7 @@ export function ProviderCard({
                     : "text-muted-foreground cursor-default",
                 )}
                 title={displayUrl}
+                aria-label={displayUrl}
                 disabled={!isClickableUrl}
               >
                 <span className="min-w-0 truncate">{displayUrl}</span>
@@ -525,6 +526,11 @@ export function ProviderCard({
                   }}
                   className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-500 dark:text-gray-400 flex-shrink-0"
                   title={
+                    isExpanded
+                      ? t("usage.collapse", { defaultValue: "收起" })
+                      : t("usage.expand", { defaultValue: "展开" })
+                  }
+                  aria-label={
                     isExpanded
                       ? t("usage.collapse", { defaultValue: "收起" })
                       : t("usage.expand", { defaultValue: "展开" })

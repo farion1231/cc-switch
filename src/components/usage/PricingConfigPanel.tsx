@@ -309,7 +309,10 @@ export function PricingConfigPanel() {
                         }
                         disabled={isSaving}
                       >
-                        <SelectTrigger className="h-7 w-28">
+                        <SelectTrigger
+                          className="h-7 w-28"
+                          aria-label={`${t(`apps.${app}`)} ${t("settings.globalProxy.pricingModelSourceLabel")}`}
+                        >
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -413,6 +416,7 @@ export function PricingConfigPanel() {
                               setEditingModel(model);
                             }}
                             title={t("common.edit")}
+                            aria-label={t("common.edit")}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -421,6 +425,7 @@ export function PricingConfigPanel() {
                             size="icon"
                             onClick={() => setDeleteConfirm(model.modelId)}
                             title={t("common.delete")}
+                            aria-label={t("common.delete")}
                             className="text-destructive hover:text-destructive"
                           >
                             <Trash2 className="h-4 w-4" />

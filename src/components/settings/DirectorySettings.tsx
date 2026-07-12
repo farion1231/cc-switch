@@ -67,6 +67,7 @@ export function DirectorySettings({
             size="icon"
             onClick={onBrowseAppConfig}
             title={t("settings.browseDirectory")}
+            aria-label={t("settings.browseDirectory")}
           >
             <FolderSearch className="h-4 w-4" />
           </Button>
@@ -76,6 +77,7 @@ export function DirectorySettings({
             size="icon"
             onClick={onResetAppConfig}
             title={t("settings.resetDefault")}
+            aria-label={t("settings.resetDefault")}
           >
             <Undo2 className="h-4 w-4" />
           </Button>
@@ -211,6 +213,7 @@ function DirectoryInput({
           size="icon"
           onClick={onBrowse}
           title={t("settings.browseDirectory")}
+          aria-label={t("settings.browseDirectory")}
         >
           <FolderSearch className="h-4 w-4" />
         </Button>
@@ -220,6 +223,7 @@ function DirectoryInput({
           size="icon"
           onClick={onReset}
           title={t("settings.resetDefault")}
+          aria-label={t("settings.resetDefault")}
         >
           <Undo2 className="h-4 w-4" />
         </Button>

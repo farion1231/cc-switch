@@ -76,6 +76,7 @@ export function RectifierConfigPanel() {
         <Switch
           checked={config.enabled}
           onCheckedChange={(checked) => handleChange({ enabled: checked })}
+          aria-label={t("settings.advanced.rectifier.enabled")}
         />
       </div>
 
@@ -96,6 +97,7 @@ export function RectifierConfigPanel() {
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingSignature: checked })
             }
+            aria-label={t("settings.advanced.rectifier.thinkingSignature")}
           />
         </div>
         <div className="flex items-center justify-between pl-4">
@@ -111,6 +113,7 @@ export function RectifierConfigPanel() {
             onCheckedChange={(checked) =>
               handleChange({ requestThinkingBudget: checked })
             }
+            aria-label={t("settings.advanced.rectifier.thinkingBudget")}
           />
         </div>
         <div className="flex items-center justify-between pl-4">
@@ -126,6 +129,7 @@ export function RectifierConfigPanel() {
             onCheckedChange={(checked) =>
               handleChange({ requestMediaFallback: checked })
             }
+            aria-label={t("settings.advanced.rectifier.mediaFallback")}
           />
         </div>
         <div className="flex items-center justify-between pl-8">
@@ -141,6 +145,7 @@ export function RectifierConfigPanel() {
             onCheckedChange={(checked) =>
               handleChange({ requestMediaHeuristic: checked })
             }
+            aria-label={t("settings.advanced.rectifier.mediaHeuristic")}
           />
         </div>
       </div>
@@ -165,6 +170,7 @@ export function RectifierConfigPanel() {
               onCheckedChange={(checked) =>
                 handleOptimizerChange({ enabled: checked })
               }
+              aria-label={t("settings.advanced.optimizer.enabled")}
             />
           </div>
 
@@ -186,6 +192,7 @@ export function RectifierConfigPanel() {
                 onCheckedChange={(checked) =>
                   handleOptimizerChange({ thinkingOptimizer: checked })
                 }
+                aria-label={t("settings.advanced.optimizer.thinkingOptimizer")}
               />
             </div>
 
@@ -202,6 +209,7 @@ export function RectifierConfigPanel() {
                 onCheckedChange={(checked) =>
                   handleOptimizerChange({ cacheInjection: checked })
                 }
+                aria-label={t("settings.advanced.optimizer.cacheInjection")}
               />
             </div>
 
@@ -219,6 +227,7 @@ export function RectifierConfigPanel() {
                   onChange={(e) =>
                     handleOptimizerChange({ cacheTtl: e.target.value })
                   }
+                  aria-label={t("settings.advanced.optimizer.cacheTtl")}
                 >
                   <option value="5m">
                     {t("settings.advanced.optimizer.cacheTtl5m")}

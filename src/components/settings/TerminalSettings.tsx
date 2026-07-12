@@ -95,7 +95,10 @@ export function TerminalSettings({ value, onChange }: TerminalSettingsProps) {
         </p>
       </header>
       <Select value={currentValue} onValueChange={onChange}>
-        <SelectTrigger className="w-[200px]">
+        <SelectTrigger
+          className="w-[200px]"
+          aria-label={t("settings.terminal.title")}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

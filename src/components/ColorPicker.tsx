@@ -54,6 +54,7 @@ export const ColorPicker: React.FC<ColorPickerProps> = ({
             )}
             style={{ backgroundColor: color }}
             title={color}
+            aria-label={color}
           />
         ))}
       </div>

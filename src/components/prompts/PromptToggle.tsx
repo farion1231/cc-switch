@@ -4,6 +4,7 @@ interface PromptToggleProps {
   enabled: boolean;
   onChange: (enabled: boolean) => void;
   disabled?: boolean;
+  ariaLabel?: string;
 }
 
 /**
@@ -14,12 +15,14 @@ const PromptToggle: React.FC<PromptToggleProps> = ({
   enabled,
   onChange,
   disabled = false,
+  ariaLabel,
 }) => {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
+      aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => onChange(!enabled)}
       className={`

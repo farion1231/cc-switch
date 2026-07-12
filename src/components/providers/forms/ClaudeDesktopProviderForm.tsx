@@ -854,7 +854,12 @@ export function ClaudeDesktopProviderForm({
                       setApiFormat(value as ClaudeApiFormat)
                     }
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger
+                      className="w-full"
+                      aria-label={t("providerForm.apiFormat", {
+                        defaultValue: "API 格式",
+                      })}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1132,6 +1137,7 @@ export function ClaudeDesktopProviderForm({
                                   current.filter((_, i) => i !== index),
                                 )
                               }
+                              aria-label={t("common.delete")}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>

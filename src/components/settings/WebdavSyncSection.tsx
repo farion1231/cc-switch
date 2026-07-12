@@ -979,7 +979,10 @@ export function WebdavSyncSection({
           onValueChange={handleSyncTypeChange}
           disabled={isLoading || isS3Loading}
         >
-          <SelectTrigger className="text-xs flex-1">
+          <SelectTrigger
+            className="text-xs flex-1"
+            aria-label={t("settings.syncType.label")}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1006,7 +1009,10 @@ export function WebdavSyncSection({
                 onValueChange={handlePresetChange}
                 disabled={isLoading}
               >
-                <SelectTrigger className="text-xs flex-1">
+                <SelectTrigger
+                  className="text-xs flex-1"
+                  aria-label={t("settings.webdavSync.presets.label")}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1240,7 +1246,10 @@ export function WebdavSyncSection({
                 onValueChange={handleS3PresetChange}
                 disabled={isS3Loading}
               >
-                <SelectTrigger className="text-xs flex-1">
+                <SelectTrigger
+                  className="text-xs flex-1"
+                  aria-label={t("settings.s3Sync.presets.label")}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

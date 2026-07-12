@@ -1115,7 +1115,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       onValueChange={(v) => handleToolShellChange(toolName, v)}
                       disabled={isToolVersionLoading || isAnyBusy}
                     >
-                      <SelectTrigger className="h-7 w-[82px] text-xs">
+                      <SelectTrigger
+                        className="h-7 w-[82px] text-xs"
+                        aria-label={t("settings.wslShell")}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1134,7 +1137,10 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
                       }
                       disabled={isToolVersionLoading || isAnyBusy}
                     >
-                      <SelectTrigger className="h-7 w-[82px] text-xs">
+                      <SelectTrigger
+                        className="h-7 w-[82px] text-xs"
+                        aria-label={t("settings.wslShellFlag")}
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

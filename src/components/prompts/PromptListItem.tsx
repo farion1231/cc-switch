@@ -32,6 +32,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
           <PromptToggle
             enabled={enabled}
             onChange={(newEnabled) => onToggle(id, newEnabled)}
+            ariaLabel={t("prompts.toggleEnabled", { name: prompt.name })}
           />
         </div>
 
@@ -51,6 +52,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             size="icon"
             onClick={() => onEdit(id)}
             title={t("common.edit")}
+            aria-label={t("common.edit")}
           >
             <Edit3 size={16} />
           </Button>
@@ -61,6 +63,7 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
             onClick={() => onDelete(id)}
             className="hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
             title={t("common.delete")}
+            aria-label={t("common.delete")}
           >
             <Trash2 size={16} />
           </Button>

@@ -367,6 +367,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                 className="h-8 w-8"
                 onClick={isSearchOpen ? closeSearch : openSearch}
                 title={t("workspace.dailyMemory.searchScopeHint")}
+                aria-label={t("workspace.dailyMemory.searchScopeHint")}
               >
                 <Search className="w-4 h-4" />
               </Button>
@@ -405,6 +406,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                     {searchTerm && (
                       <button
                         onClick={() => handleSearchChange("")}
+                        aria-label={t("common.clear")}
                         className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -441,9 +443,20 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
             ) : (
               <div className="space-y-2">
                 {searchResults.map((result) => (
-                  <button
+                  // role="button" 的 div 而非 <button>：内部含真实删除按钮，
+                  // 按钮嵌按钮在 HTML 中非法，会导致删除按钮无法被键盘单独聚焦。
+                  <div
                     key={result.filename}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => openFile(result.filename)}
+                    onKeyDown={(e) => {
+                      if (e.target !== e.currentTarget) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openFile(result.filename);
+                      }
+                    }}
                     className="w-full flex items-start gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors text-left group"
                   >
                     <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
@@ -471,16 +484,18 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                         </p>
                       )}
                     </div>
-                    <div
-                      className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                    <button
+                      type="button"
+                      aria-label={t("common.delete")}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex-shrink-0"
                       onClick={(e) => {
                         e.stopPropagation();
                         setDeletingFile(result.filename);
                       }}
                     >
                       <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive transition-colors" />
-                    </div>
-                  </button>
+                    </button>
+                  </div>
                 ))}
               </div>
             )
@@ -497,9 +512,20 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
           ) : (
             <div className="space-y-2">
               {files.map((file) => (
-                <button
+                // role="button" 的 div 而非 <button>：内部含真实删除按钮，
+                // 按钮嵌按钮在 HTML 中非法，会导致删除按钮无法被键盘单独聚焦。
+                <div
                   key={file.filename}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => openFile(file.filename)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openFile(file.filename);
+                    }
+                  }}
                   className="w-full flex items-start gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors text-left group"
                 >
                   <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
@@ -520,16 +546,18 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                       </p>
                     )}
                   </div>
-                  <div
-                    className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  <button
+                    type="button"
+                    aria-label={t("common.delete")}
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex-shrink-0"
                     onClick={(e) => {
                       e.stopPropagation();
                       setDeletingFile(file.filename);
                     }}
                   >
                     <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive transition-colors" />
-                  </div>
-                </button>
+                  </button>
+                </div>
               ))}
             </div>
           )}

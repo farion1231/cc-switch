@@ -52,10 +52,20 @@ export function ProviderAdvancedConfig({
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-border/50 bg-muted/20">
-        <button
-          type="button"
+        {/* role="button" 的 div 而非 <button>：内部含 Switch，
+            按钮嵌按钮在 HTML 中非法，会导致 Switch 无法被键盘单独聚焦。 */}
+        <div
+          role="button"
+          tabIndex={0}
           className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
           onClick={() => setIsTestConfigOpen(!isTestConfigOpen)}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setIsTestConfigOpen(!isTestConfigOpen);
+            }
+          }}
         >
           <div className="flex items-center gap-3">
             <FlaskConical className="h-4 w-4 text-muted-foreground" />
@@ -93,7 +103,7 @@ export function ProviderAdvancedConfig({
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
             )}
           </div>
-        </button>
+        </div>
         <div
           className={cn(
             "overflow-hidden transition-all duration-200",
@@ -189,10 +199,20 @@ export function ProviderAdvancedConfig({
 
       {/* 计费配置 */}
       <div className="rounded-lg border border-border/50 bg-muted/20">
-        <button
-          type="button"
+        {/* role="button" 的 div 而非 <button>：内部含 Switch，
+            按钮嵌按钮在 HTML 中非法，会导致 Switch 无法被键盘单独聚焦。 */}
+        <div
+          role="button"
+          tabIndex={0}
           className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
           onClick={() => setIsPricingConfigOpen(!isPricingConfigOpen)}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setIsPricingConfigOpen(!isPricingConfigOpen);
+            }
+          }}
         >
           <div className="flex items-center gap-3">
             <Coins className="h-4 w-4 text-muted-foreground" />
@@ -230,7 +250,7 @@ export function ProviderAdvancedConfig({
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
             )}
           </div>
-        </button>
+        </div>
         <div
           className={cn(
             "overflow-hidden transition-all duration-200",

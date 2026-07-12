@@ -420,6 +420,7 @@ export function UsageDateRangePicker({
                     ),
                   )
                 }
+                aria-label={t("usage.previousMonth", "上个月")}
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
@@ -428,6 +429,7 @@ export function UsageDateRangePicker({
                 className="text-sm font-medium hover:text-primary transition-colors"
                 onClick={goToToday}
                 title={t("usage.presetToday", { defaultValue: "当天" })}
+                aria-label={t("usage.presetToday", { defaultValue: "当天" })}
               >
                 {displayMonth.toLocaleDateString(locale, {
                   year: "numeric",
@@ -448,6 +450,7 @@ export function UsageDateRangePicker({
                     ),
                   )
                 }
+                aria-label={t("usage.nextMonth", "下个月")}
               >
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>

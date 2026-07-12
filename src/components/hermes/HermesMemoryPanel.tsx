@@ -73,6 +73,7 @@ const MemoryTabPane: React.FC<MemoryTabPaneProps> = ({
             onCheckedChange={(next) =>
               toggleMutation.mutate({ kind, enabled: next })
             }
+            aria-label={t("hermes.memory.enableToggle")}
           />
           <span className="text-sm">
             {enabled

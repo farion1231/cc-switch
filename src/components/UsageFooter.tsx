@@ -106,6 +106,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("usage.refreshUsage")}
+            aria-label={t("usage.refreshUsage")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
@@ -127,6 +128,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("usage.refreshUsage")}
+            aria-label={t("usage.refreshUsage")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
@@ -160,6 +162,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
             title={t("usage.refreshUsage")}
+            aria-label={t("usage.refreshUsage")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
@@ -213,6 +216,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
             title={t("usage.refreshUsage")}
+            aria-label={t("usage.refreshUsage")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>
@@ -294,6 +298,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
             title={t("usage.refreshUsage")}
+            aria-label={t("usage.refreshUsage")}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
           </button>

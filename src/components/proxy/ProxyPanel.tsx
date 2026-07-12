@@ -253,6 +253,9 @@ export function ProxyPanel({
             checked={isRunning}
             onCheckedChange={onToggleProxy}
             disabled={isProxyPending}
+            aria-label={t("proxyConfig.proxyEnabled", {
+              defaultValue: "代理服务",
+            })}
           />
         </div>
 
@@ -292,6 +295,7 @@ export function ProxyPanel({
                             handleTakeoverChange(appType, checked)
                           }
                           disabled={setTakeoverForApp.isPending}
+                          aria-label={appType}
                         />
                       </div>
                     );
@@ -408,6 +412,9 @@ export function ProxyPanel({
                     checked={globalConfig?.enableLogging ?? true}
                     onCheckedChange={handleLoggingChange}
                     disabled={updateGlobalConfig.isPending}
+                    aria-label={t("proxy.settings.fields.enableLogging.label", {
+                      defaultValue: "启用日志记录",
+                    })}
                   />
                 </div>
               </div>

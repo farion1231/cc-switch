@@ -56,6 +56,7 @@ export function LogConfigPanel() {
         <Switch
           checked={config.enabled}
           onCheckedChange={(checked) => handleChange({ enabled: checked })}
+          aria-label={t("settings.advanced.logConfig.enabled")}
         />
       </div>
 
@@ -73,7 +74,10 @@ export function LogConfigPanel() {
             handleChange({ level: value as LogConfig["level"] })
           }
         >
-          <SelectTrigger className="w-[120px]">
+          <SelectTrigger
+            className="w-[120px]"
+            aria-label={t("settings.advanced.logConfig.level")}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

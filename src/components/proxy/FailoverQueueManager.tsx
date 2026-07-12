@@ -149,6 +149,9 @@ export function FailoverQueueManager({
           checked={isFailoverEnabled}
           onCheckedChange={handleToggleFailover}
           disabled={disabled || setFailoverEnabled.isPending}
+          aria-label={t("proxy.failover.autoSwitch", {
+            defaultValue: "自动故障转移",
+          })}
         />
       </div>
 
@@ -204,6 +207,7 @@ export function FailoverQueueManager({
           disabled={disabled || !selectedProviderId || addToQueue.isPending}
           size="icon"
           variant="outline"
+          aria-label={t("common.add")}
         >
           {addToQueue.isPending ? (
             <Loader2 className="h-4 w-4 animate-spin" />

@@ -443,7 +443,12 @@ export function ClaudeFormFields({
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="shrink-0">
+              <Button
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                aria-label={t("providerForm.selectModelFromList")}
+              >
                 <ChevronDown className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -483,7 +488,13 @@ export function ClaudeFormFields({
             autoComplete="off"
             className="flex-1"
           />
-          <Button variant="outline" size="icon" className="shrink-0" disabled>
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0"
+            disabled
+            aria-label={t("common.loading")}
+          >
             <Loader2 className="h-4 w-4 animate-spin" />
           </Button>
         </div>
@@ -790,7 +801,11 @@ export function ClaudeFormFields({
                   onApiKeyFieldChange(v as ClaudeApiKeyField)
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger
+                  aria-label={t("providerForm.authField", {
+                    defaultValue: "认证字段",
+                  })}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

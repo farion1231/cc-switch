@@ -439,6 +439,9 @@ requires_openai_auth = true`;
                 size="icon"
                 className="absolute right-0 top-0 h-full px-3"
                 onClick={() => setShowApiKey(!showApiKey)}
+                aria-label={
+                  showApiKey ? t("apiKeyInput.hide") : t("apiKeyInput.show")
+                }
               >
                 {showApiKey ? (
                   <EyeOff className="h-4 w-4" />
@@ -492,6 +495,7 @@ requires_openai_auth = true`;
               <Switch
                 checked={claudeEnabled}
                 onCheckedChange={setClaudeEnabled}
+                aria-label="Claude Code"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -502,6 +506,7 @@ requires_openai_auth = true`;
               <Switch
                 checked={codexEnabled}
                 onCheckedChange={setCodexEnabled}
+                aria-label="OpenAI Codex"
               />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
@@ -512,6 +517,7 @@ requires_openai_auth = true`;
               <Switch
                 checked={geminiEnabled}
                 onCheckedChange={setGeminiEnabled}
+                aria-label="Gemini CLI"
               />
             </div>
           </div>

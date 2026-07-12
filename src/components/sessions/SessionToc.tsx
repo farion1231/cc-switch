@@ -85,6 +85,7 @@ export function SessionTocDialog({
         <Button
           size="icon"
           className="fixed bottom-20 right-4 xl:hidden size-10 rounded-full shadow-lg z-30"
+          aria-label={t("sessionManager.tocTitle")}
         >
           <List className="size-4" />
         </Button>

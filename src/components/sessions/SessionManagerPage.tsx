@@ -829,6 +829,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                           setIsSearchOpen(false);
                           setSearch("");
                         }}
+                        aria-label={t("common.clear")}
                       >
                         <X className="size-3" />
                       </Button>
@@ -1006,6 +1007,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   0,
                                 );
                               }}
+                              aria-label={t("sessionManager.searchSessions")}
                             >
                               <Search className="size-3.5" />
                             </Button>
@@ -1127,6 +1129,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               size="icon"
                               className="size-7"
                               onClick={() => void refetch()}
+                              aria-label={t("common.refresh")}
                             >
                               <RefreshCw className="size-3.5" />
                             </Button>
@@ -1587,6 +1590,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                   t("sessionManager.resumeCommandCopied"),
                                 )
                               }
+                              aria-label={t("sessionManager.copyCommand", {
+                                defaultValue: "复制命令",
+                              })}
                             >
                               <Copy className="size-3.5" />
                             </Button>

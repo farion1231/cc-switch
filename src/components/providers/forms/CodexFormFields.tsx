@@ -792,6 +792,9 @@ export function CodexFormFields({
                           className="h-9 w-9 text-muted-foreground hover:text-destructive"
                           onClick={() => handleRemoveCatalogRow(index)}
                           title={t("common.delete", { defaultValue: "删除" })}
+                          aria-label={t("common.delete", {
+                            defaultValue: "删除",
+                          })}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

@@ -527,6 +527,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
               type="button"
               onClick={openDocs}
               className="text-muted-foreground/60 hover:text-foreground flex-shrink-0"
+              aria-label={t("skills.openReadme")}
             >
               <ExternalLink size={12} />
             </button>
@@ -572,6 +573,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
             onClick={onUpdate}
             disabled={isUpdating}
             title={t("skills.update")}
+            aria-label={t("skills.update")}
           >
             {isUpdating ? (
               <Loader2 size={14} className="animate-spin" />
@@ -587,6 +589,7 @@ const InstalledSkillListItem: React.FC<InstalledSkillListItemProps> = ({
           className="h-7 w-7 hover:text-red-500 hover:bg-red-100 dark:hover:text-red-400 dark:hover:bg-red-500/10"
           onClick={onUninstall}
           title={t("skills.uninstall")}
+          aria-label={t("skills.uninstall")}
         >
           <Trash2 size={14} />
         </Button>
