@@ -141,6 +141,16 @@
     "searchCloseAriaLabel": "検索を閉じる",
     "noSearchResults": "一致するプロバイダーがありません。",
     "duplicate": "複製",
+    "copyToApps": {
+      "title": "他のアプリにコピー",
+      "description": "「{{name}}」の設定を選択したアプリにコピーします",
+      "selectAll": "すべて選択",
+      "selectedCount": "{{count}} 個のアプリを選択中",
+      "copy": "{{count}} 個のアプリにコピー",
+      "copying": "コピー中...",
+      "success": "{{count}} 個のアプリにコピーしました",
+      "error": "プロバイダーのコピーに失敗しました"
+    },
     "sortUpdateFailed": "並び順の更新に失敗しました",
     "configureUsage": "利用状況を設定",
     "officialPartner": "公式パートナー",
@@ -149,6 +159,24 @@
     "openTerminal": "ターミナルを開く",
     "terminalOpened": "ターミナルを開きました",
     "terminalOpenFailed": "ターミナルを開けませんでした",
+    "importExport": {
+      "noProviders": "エクスポートするプロバイダーがありません",
+      "exportAll": "すべてエクスポート",
+      "importButton": "インポート",
+      "appSelect": "アプリを選択",
+      "appHint": "選択したアプリのすべてのプロバイダー設定をエクスポート/インポートします（API Key、Base URL などの機密情報を含むため、厳重に保管してください）",
+      "exporting": "エクスポート中...",
+      "importing": "インポート中...",
+      "exportSuccess": "{{count}} 個のプロバイダー設定をエクスポートしました",
+      "importSuccess": "{{count}} 個のプロバイダー設定をインポートしました",
+      "exportError": "プロバイダー設定のエクスポートに失敗しました",
+      "importError": "プロバイダー設定のインポートに失敗しました",
+      "invalidFileType": "JSON ファイルを選択してください",
+      "fileTooLarge": "ファイルが大きすぎます。10MB 未満のファイルを選択してください",
+      "invalidJson": "無効な JSON 形式です",
+      "readError": "ファイルの読み取りに失敗しました",
+      "appTypeMismatch": "インポートファイルのアプリ種別（{{source}}）が選択中のアプリ（{{target}}）と一致しません。クロスアプリ移行には「他のアプリにコピー」機能を使用してください。"
+    },
     "name": "プロバイダー名",
     "namePlaceholder": "例: Claude Official",
     "websiteUrl": "Web サイト URL",
@@ -363,6 +391,10 @@
       "data": {
         "title": "データ管理",
         "description": "ローカル設定データのインポートとエクスポート"
+      },
+      "providerConfig": {
+        "title": "プロバイダー設定管理",
+        "description": "アプリごとにプロバイダー設定（API Key、Base URL など）をインポート/エクスポートし、バックアップやクロスデバイス移行に対応"
       },
       "backup": {
         "title": "バックアップと復元",

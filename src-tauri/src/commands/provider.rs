@@ -4,7 +4,9 @@ use tauri::{Emitter, State};
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{
+    ClaudeDesktopMode, Provider, UniversalProvider, UniversalProviderAppPermission,
+};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
@@ -768,7 +770,6 @@ pub fn update_providers_sort_order(
     ProviderService::update_sort_order(state.inner(), app_type, updates).map_err(|e| e.to_string())
 }
 
-use crate::provider::UniversalProvider;
 use std::collections::HashMap;
 use tauri::AppHandle;
 
@@ -857,6 +858,326 @@ pub fn get_opencode_live_provider_ids() -> Result<Vec<String>, String> {
     crate::opencode_config::get_providers()
         .map(|providers| providers.keys().cloned().collect())
         .map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// 跨应用复制供应商
+// ============================================================================
+
+#[tauri::command]
+pub fn copy_provider_to_apps(
+    state: State<'_, AppState>,
+    source_app: String,
+    provider_id: String,
+    target_apps: Vec<String>,
+) -> Result<usize, String> {
+    let source_app_type = AppType::from_str(&source_app).map_err(|e| e.to_string())?;
+
+    // 获取源供应商
+    let providers =
+        ProviderService::list(state.inner(), source_app_type.clone()).map_err(|e| e.to_string())?;
+    let source_provider = providers
+        .get(&provider_id)
+        .ok_or_else(|| format!("Provider {} not found in {}", provider_id, source_app))?;
+
+    // 从源供应商提取凭证（base_url + api_key），这是跨应用转换的中间表示
+    let (base_url, api_key) = source_provider.resolve_usage_credentials(&source_app_type);
+
+    // OAuth/托管认证（GitHub Copilot、Codex OAuth 等）的凭证是 OAuth token 而非 API Key，
+    // 无法跨应用复制；同时也要拒绝无法提取 API Key 的源（如仅有 base_url 的托管供应商）。
+    if source_provider.uses_managed_account_auth() || api_key.is_empty() {
+        return Err(
+            "无法从源供应商提取 API Key 和 Base URL，可能是官方/OAuth 供应商，不支持跨应用复制"
+                .to_string(),
+        );
+    }
+
+    let mut copied_count = 0;
+
+    // 复制到每个目标应用
+    for target_app in target_apps {
+        let target_app_type = AppType::from_str(&target_app).map_err(|e| e.to_string())?;
+
+        // 同应用直接克隆（格式一致）
+        if target_app_type == source_app_type {
+            let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4());
+            let mut new_provider = source_provider.clone();
+            new_provider.id = new_id;
+            new_provider.created_at = Some(chrono::Utc::now().timestamp_millis());
+
+            match ProviderService::add(state.inner(), target_app_type, new_provider, false) {
+                Ok(_) => copied_count += 1,
+                Err(e) => eprintln!("Failed to copy provider to {}: {}", target_app, e),
+            }
+            continue;
+        }
+
+        // 跨应用：通过 UniversalProvider 中间表示做格式转换
+        let new_id = format!("{}-copy-{}", provider_id, uuid::Uuid::new_v4());
+        let new_provider = match build_converted_provider(
+            source_provider,
+            &source_app_type,
+            &target_app_type,
+            &base_url,
+            &api_key,
+            new_id,
+        ) {
+            Some(p) => p,
+            None => {
+                eprintln!(
+                    "Skipping copy to {}: target app type not supported for conversion",
+                    target_app
+                );
+                continue;
+            }
+        };
+
+        match ProviderService::add(state.inner(), target_app_type, new_provider, false) {
+            Ok(_) => copied_count += 1,
+            Err(e) => {
+                eprintln!("Failed to copy provider to {}: {}", target_app, e);
+            }
+        }
+    }
+
+    Ok(copied_count)
+}
+
+/// 将源供应商的凭证转换为目标应用的配置格式。
+/// 复用 UniversalProvider 的 to_xxx_provider 转换逻辑，保留元数据。
+/// OpenCode/OpenClaw/Hermes 不走 UniversalProvider，而是直接构造对应结构。
+fn build_converted_provider(
+    source: &Provider,
+    source_app: &AppType,
+    target_app: &AppType,
+    base_url: &str,
+    api_key: &str,
+    new_id: String,
+) -> Option<Provider> {
+    use serde_json::json;
+
+    // Claude / Codex / Gemini 走 UniversalProvider 中间表示复用现有转换
+    if matches!(
+        target_app,
+        AppType::Claude | AppType::ClaudeDesktop | AppType::Codex | AppType::Gemini
+    ) {
+        let mut universal = UniversalProvider::new(
+            new_id.clone(),
+            source.name.clone(),
+            "custom".to_string(),
+            base_url.to_string(),
+            api_key.to_string(),
+        );
+
+        // 当目标是 Claude / Codex 时，保留源的 API 格式信息。
+        // - Claude: 否则 Codex/OpenCode 等 OpenAI 兼容源会被 to_claude_provider 默认写成
+        //   Anthropic 原生模式，导致 Claude 向 OpenAI 端点发送错误格式的请求。
+        // - Codex: to_codex_provider 默认 wire_api="responses"，OpenAI 兼容源（chat 格式）
+        //   复制过来会坏。保留 api_format 让 to_codex_provider 据此选择 wire_api。
+        if matches!(
+            target_app,
+            AppType::Claude | AppType::ClaudeDesktop | AppType::Codex
+        ) {
+            let source_api_format = source
+                .meta
+                .as_ref()
+                .and_then(|m| m.api_format.as_deref())
+                .map(str::to_string)
+                .filter(|f| !f.trim().is_empty() && f != "anthropic")
+                .or_else(|| {
+                    // OpenAI 兼容源（Codex/OpenCode/OpenClaw/Hermes）没有 api_format 字段，
+                    // 但其上游是 OpenAI 端点，需要走 openai_chat 转换路径。
+                    if matches!(
+                        source_app,
+                        AppType::Codex | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes
+                    ) {
+                        Some("openai_chat".to_string())
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(api_format) = source_api_format {
+                let meta = universal.meta.get_or_insert_with(Default::default);
+                meta.api_format = Some(api_format);
+            }
+        }
+
+        match target_app {
+            AppType::Claude | AppType::ClaudeDesktop => {
+                universal.apps.claude = UniversalProviderAppPermission::Simple(true);
+            }
+            AppType::Codex => {
+                universal.apps.codex = UniversalProviderAppPermission::Simple(true);
+            }
+            AppType::Gemini => {
+                universal.apps.gemini = UniversalProviderAppPermission::Simple(true);
+            }
+            _ => return None,
+        }
+
+        let mut target = match target_app {
+            AppType::Claude | AppType::ClaudeDesktop => universal.to_claude_provider()?,
+            AppType::Codex => universal.to_codex_provider()?,
+            AppType::Gemini => universal.to_gemini_provider()?,
+            _ => return None,
+        };
+        apply_source_metadata(&mut target, source, new_id);
+        return Some(target);
+    }
+
+    // OpenCode: { npm, name, options: { baseURL, apiKey }, models: {} }
+    let settings_config = match target_app {
+        AppType::OpenCode => json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "name": source.name,
+            "options": {
+                "baseURL": base_url,
+                "apiKey": api_key
+            },
+            "models": {}
+        }),
+        // OpenClaw: { baseUrl, apiKey, api, models: [] }
+        AppType::OpenClaw => json!({
+            "baseUrl": base_url,
+            "apiKey": api_key,
+            "api": "openai-completions",
+            "models": []
+        }),
+        // Hermes: 扁平 snake_case { base_url, api_key, ... }
+        AppType::Hermes => json!({
+            "base_url": base_url,
+            "api_key": api_key,
+            "models": {}
+        }),
+        _ => return None,
+    };
+
+    let mut target = Provider::with_id(
+        new_id.clone(),
+        source.name.clone(),
+        settings_config,
+        source.website_url.clone(),
+    );
+    apply_source_metadata(&mut target, source, new_id);
+    Some(target)
+}
+
+/// 把源供应商的展示元数据复制到目标供应商上（不覆盖 settings_config）
+fn apply_source_metadata(target: &mut Provider, source: &Provider, new_id: String) {
+    target.id = new_id;
+    target.name = source.name.clone();
+    target.notes = source.notes.clone();
+    target.icon = source.icon.clone();
+    target.icon_color = source.icon_color.clone();
+    target.website_url = source.website_url.clone();
+    target.category = Some("custom".to_string());
+    target.created_at = Some(chrono::Utc::now().timestamp_millis());
+}
+
+// ============================================================================
+// 供应商配置导入导出
+// ============================================================================
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ProviderExport {
+    pub version: String,
+    pub exported_at: i64,
+    pub app_type: String,
+    pub providers: Vec<Provider>,
+}
+
+#[tauri::command]
+pub fn export_providers(
+    state: State<'_, AppState>,
+    app: String,
+    provider_ids: Vec<String>,
+) -> Result<String, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let all_providers =
+        ProviderService::list(state.inner(), app_type.clone()).map_err(|e| e.to_string())?;
+
+    let providers: Vec<Provider> = provider_ids
+        .iter()
+        .filter_map(|id| all_providers.get(id).cloned())
+        .collect();
+
+    if providers.is_empty() {
+        return Err("No providers to export".to_string());
+    }
+
+    let export = ProviderExport {
+        version: "1.0".to_string(),
+        exported_at: chrono::Utc::now().timestamp_millis(),
+        app_type: app,
+        providers,
+    };
+
+    serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn import_providers(
+    state: State<'_, AppState>,
+    app: String,
+    json_content: String,
+) -> Result<usize, String> {
+    // Validate JSON size (10MB limit)
+    if json_content.len() > 10_000_000 {
+        return Err("导入文件过大，请选择小于 10MB 的文件".to_string());
+    }
+
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let export: ProviderExport = serde_json::from_str(&json_content)
+        .map_err(|e| format!("Failed to parse import file: {}", e))?;
+
+    // Validate version
+    if export.version != "1.0" {
+        return Err(format!("不支持的导出版本: {}", export.version));
+    }
+
+    // Validate app type match — import is for same-app restore only.
+    // Cross-app migration should use "copy to other apps" which does format conversion.
+    // Returns a structured error code so the frontend can render a localized message.
+    if export.app_type != app {
+        return Err(format!("APP_TYPE_MISMATCH:{}:{}", export.app_type, app));
+    }
+
+    // Validate provider count
+    if export.providers.len() > 1000 {
+        return Err("导入文件包含的供应商数量过多（最多 1000 个）".to_string());
+    }
+
+    let mut imported_count = 0;
+
+    for mut provider in export.providers {
+        // 生成新的 ID 避免冲突（使用完整 UUID）
+        let new_id = format!("{}-imported-{}", provider.id, uuid::Uuid::new_v4());
+        provider.id = new_id;
+        provider.created_at = Some(chrono::Utc::now().timestamp_millis());
+
+        match ProviderService::import_add(
+            state.inner(),
+            app_type.clone(),
+            provider,
+            false, // 不自动添加到 live 配置；即使目标 app 当前无供应商也不自动激活
+        ) {
+            Ok(_) => imported_count += 1,
+            Err(e) => {
+                eprintln!("Failed to import provider: {}", e);
+            }
+        }
+    }
+
+    Ok(imported_count)
+}
+
+/// 将文本内容写入用户通过「另存为」对话框选择的路径。
+/// 仅用于供应商配置导出，路径由前端 dialog::save 返回。
+#[tauri::command]
+pub fn write_text_file_to_path(path: String, content: String) -> Result<(), String> {
+    crate::config::write_text_file(std::path::Path::new(&path), &content)
+        .map_err(|e| format!("写入文件失败: {e}"))
 }
 
 // ============================================================================

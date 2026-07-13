@@ -1946,6 +1946,33 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
+        Self::add_inner(state, app_type, provider, add_to_live, true)
+    }
+
+    /// Import a provider without activating it, even for non-additive apps
+    /// that currently have no provider selected.
+    ///
+    /// `ProviderService::add` only honors `add_to_live` for additive apps
+    /// (OpenCode/OpenClaw); for Claude/Codex/Gemini it sets the first added
+    /// provider as current and writes live config when none is selected.
+    /// Importing a backup into an empty app must not overwrite the user's live
+    /// config, so this variant skips that auto-activation step entirely.
+    pub fn import_add(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+        add_to_live: bool,
+    ) -> Result<bool, AppError> {
+        Self::add_inner(state, app_type, provider, add_to_live, false)
+    }
+
+    fn add_inner(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+        add_to_live: bool,
+        activate_if_empty: bool,
+    ) -> Result<bool, AppError> {
         let mut provider = provider;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
@@ -1978,7 +2005,7 @@ impl ProviderService {
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
-        if current.is_none() {
+        if activate_if_empty && current.is_none() {
             // No current provider, set as current and sync
             state
                 .db
@@ -3680,15 +3707,15 @@ impl ProviderService {
 
         // 删除生成的子供应商
         if let Some(p) = provider {
-            if p.apps.claude {
+            if p.apps.claude.is_enabled() {
                 let claude_id = format!("universal-claude-{id}");
                 let _ = state.db.delete_provider("claude", &claude_id);
             }
-            if p.apps.codex {
+            if p.apps.codex.is_enabled() {
                 let codex_id = format!("universal-codex-{id}");
                 let _ = state.db.delete_provider("codex", &codex_id);
             }
-            if p.apps.gemini {
+            if p.apps.gemini.is_enabled() {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }

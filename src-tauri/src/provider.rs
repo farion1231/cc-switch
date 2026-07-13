@@ -457,10 +457,13 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
-    /// Claude API 格式（仅 Claude 供应商使用）
+    /// API 格式标记（Claude / Codex 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
     /// - "openai_responses": OpenAI Responses API 格式，需要转换
+    ///
+    /// Claude 读取该字段决定是否做格式转换（`get_claude_api_format`）；
+    /// Codex 读取该字段选择 `wire_api`（chat / responses）以及 catalog 工具配置。
     #[serde(rename = "apiFormat", skip_serializing_if = "Option::is_none")]
     pub api_format: Option<String>,
     /// 通用认证绑定（provider_config / managed_account）
@@ -596,15 +599,41 @@ impl ProviderManager {
 // 统一供应商（Universal Provider）- 跨应用共享配置
 // ============================================================================
 
+/// 单个应用的权限配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UniversalProviderAppPermission {
+    /// 简单布尔值（向后兼容）
+    Simple(bool),
+    /// 详细权限配置
+    Detailed { enabled: bool },
+}
+
+impl Default for UniversalProviderAppPermission {
+    fn default() -> Self {
+        Self::Simple(false)
+    }
+}
+
+impl UniversalProviderAppPermission {
+    /// 获取是否启用
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Simple(enabled) => *enabled,
+            Self::Detailed { enabled, .. } => *enabled,
+        }
+    }
+}
+
 /// 统一供应商的应用启用状态
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UniversalProviderApps {
     #[serde(default)]
-    pub claude: bool,
+    pub claude: UniversalProviderAppPermission,
     #[serde(default)]
-    pub codex: bool,
+    pub codex: UniversalProviderAppPermission,
     #[serde(default)]
-    pub gemini: bool,
+    pub gemini: UniversalProviderAppPermission,
 }
 
 /// Claude 模型配置
@@ -735,7 +764,7 @@ impl UniversalProvider {
 
     /// 生成 Claude 供应商配置
     pub fn to_claude_provider(&self) -> Option<Provider> {
-        if !self.apps.claude {
+        if !self.apps.claude.is_enabled() {
             return None;
         }
 
@@ -782,7 +811,7 @@ impl UniversalProvider {
 
     /// 生成 Codex 供应商配置
     pub fn to_codex_provider(&self) -> Option<Provider> {
-        if !self.apps.codex {
+        if !self.apps.codex.is_enabled() {
             return None;
         }
 
@@ -808,6 +837,14 @@ impl UniversalProvider {
             base_trimmed.to_string()
         };
 
+        // 根据源的 API 格式选择 wire_api：
+        // - openai_chat → "chat"（OpenAI Chat Completions 端点，兼容第三方中转）
+        // - 其他/缺省 → "responses"（OpenAI 原生 Responses API）
+        let wire_api = match self.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+            Some("openai_chat") => "chat",
+            _ => "responses",
+        };
+
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
             r#"model_provider = "custom"
@@ -818,7 +855,7 @@ disable_response_storage = true
 [model_providers.custom]
 name = "NewAPI"
 base_url = "{codex_base_url}"
-wire_api = "responses"
+wire_api = "{wire_api}"
 requires_openai_auth = true"#
         );
 
@@ -847,7 +884,7 @@ requires_openai_auth = true"#
 
     /// 生成 Gemini 供应商配置
     pub fn to_gemini_provider(&self) -> Option<Provider> {
-        if !self.apps.gemini {
+        if !self.apps.gemini.is_enabled() {
             return None;
         }
 
@@ -983,6 +1020,7 @@ mod tests {
     use super::{
         ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, LocalProxyRequestOverrides,
         OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        UniversalProviderAppPermission,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1161,7 +1199,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.claude = true;
+        universal.apps.claude = UniversalProviderAppPermission::Simple(true);
         universal.models.claude = Some(ClaudeModelConfig {
             model: Some("claude-main".to_string()),
             haiku_model: Some("claude-haiku".to_string()),
@@ -1226,7 +1264,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.codex = true;
+        universal.apps.codex = UniversalProviderAppPermission::Simple(true);
         universal.models.codex = Some(CodexModelConfig {
             model: Some("gpt-4o-mini".to_string()),
             reasoning_effort: Some("low".to_string()),
@@ -1258,7 +1296,7 @@ mod tests {
             "https://api.example.com/v1".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.codex = true;
+        universal.apps.codex = UniversalProviderAppPermission::Simple(true);
 
         let provider = universal.to_codex_provider().expect("codex provider");
         let config = provider
@@ -1292,7 +1330,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.gemini = true;
+        universal.apps.gemini = UniversalProviderAppPermission::Simple(true);
 
         let provider = universal.to_gemini_provider().expect("gemini provider");
 
@@ -1314,7 +1352,7 @@ mod tests {
             "https://api.example.com".to_string(),
             "api-key".to_string(),
         );
-        universal.apps.gemini = true;
+        universal.apps.gemini = UniversalProviderAppPermission::Simple(true);
         universal.models.gemini = Some(GeminiModelConfig {
             model: Some("gemini-custom".to_string()),
         });
@@ -1351,7 +1389,7 @@ mod tests {
             "https://api.openai.com".to_string(),
             "sk-test".to_string(),
         );
-        p.apps.codex = true;
+        p.apps.codex = UniversalProviderAppPermission::Simple(true);
 
         let provider = p.to_codex_provider().expect("should build codex provider");
         let toml = provider
@@ -1372,7 +1410,7 @@ mod tests {
             "https://example.com/openai".to_string(),
             "sk-test".to_string(),
         );
-        p.apps.codex = true;
+        p.apps.codex = UniversalProviderAppPermission::Simple(true);
 
         let provider = p.to_codex_provider().expect("should build codex provider");
         let toml = provider

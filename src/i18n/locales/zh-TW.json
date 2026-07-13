@@ -141,6 +141,16 @@
     "searchCloseAriaLabel": "關閉供應商搜尋",
     "noSearchResults": "沒有符合搜尋條件的供應商。",
     "duplicate": "複製",
+    "copyToApps": {
+      "title": "複製到其他應用程式",
+      "description": "將「{{name}}」的設定複製到選定的應用程式中",
+      "selectAll": "全選",
+      "selectedCount": "已選擇 {{count}} 個應用程式",
+      "copy": "複製到 {{count}} 個應用程式",
+      "copying": "複製中...",
+      "success": "已成功複製到 {{count}} 個應用程式",
+      "error": "複製供應商失敗"
+    },
     "sortUpdateFailed": "排序更新失敗",
     "configureUsage": "設定用量查詢",
     "officialPartner": "官方合作夥伴",
@@ -149,6 +159,24 @@
     "openTerminal": "開啟終端機",
     "terminalOpened": "終端機已開啟",
     "terminalOpenFailed": "開啟終端機失敗",
+    "importExport": {
+      "noProviders": "沒有可匯出的供應商",
+      "exportAll": "全部匯出",
+      "importButton": "匯入",
+      "appSelect": "選擇應用程式",
+      "appHint": "匯出或匯入所選應用程式的全部供應商設定（含 API Key、Base URL 等敏感資訊，請妥善保管）",
+      "exporting": "匯出中...",
+      "importing": "匯入中...",
+      "exportSuccess": "已匯出 {{count}} 個供應商設定",
+      "importSuccess": "已匯入 {{count}} 個供應商設定",
+      "exportError": "匯出供應商設定失敗",
+      "importError": "匯入供應商設定失敗",
+      "invalidFileType": "請選擇 JSON 檔案",
+      "fileTooLarge": "檔案過大，請選擇小於 10MB 的檔案",
+      "invalidJson": "無效的 JSON 格式",
+      "readError": "讀取檔案失敗",
+      "appTypeMismatch": "匯入檔案的應用程式類型（{{source}}）與目前選擇的應用程式（{{target}}）不符。跨應用程式遷移請使用「複製到其他應用程式」功能。"
+    },
     "name": "供應商名稱",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官網連結",
@@ -363,6 +391,10 @@
       "data": {
         "title": "資料管理",
         "description": "匯入和匯出本地設定資料"
+      },
+      "providerConfig": {
+        "title": "供應商設定管理",
+        "description": "依應用程式匯入/匯出供應商設定（API Key、Base URL 等），便於備份與跨裝置遷移"
       },
       "backup": {
         "title": "備份與還原",

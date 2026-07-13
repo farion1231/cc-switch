@@ -196,6 +196,51 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * 跨应用复制供应商配置
+   * @param sourceApp 源应用
+   * @param providerId 供应商 ID
+   * @param targetApps 目标应用列表
+   * @returns 成功复制的数量
+   */
+  async copyToApps(
+    sourceApp: AppId,
+    providerId: string,
+    targetApps: AppId[],
+  ): Promise<number> {
+    return await invoke("copy_provider_to_apps", {
+      sourceApp,
+      providerId,
+      targetApps,
+    });
+  },
+
+  /**
+   * 导出供应商配置为 JSON
+   * @param appId 应用 ID
+   * @param providerIds 要导出的供应商 ID 列表
+   * @returns JSON 字符串
+   */
+  async exportProviders(appId: AppId, providerIds: string[]): Promise<string> {
+    return await invoke("export_providers", {
+      app: appId,
+      providerIds,
+    });
+  },
+
+  /**
+   * 从 JSON 导入供应商配置
+   * @param appId 应用 ID
+   * @param jsonContent JSON 字符串
+   * @returns 成功导入的数量
+   */
+  async importProviders(appId: AppId, jsonContent: string): Promise<number> {
+    return await invoke("import_providers", {
+      app: appId,
+      jsonContent,
+    });
+  },
 };
 
 // ============================================================================

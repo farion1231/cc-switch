@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import JsonEditor from "@/components/JsonEditor";
 import type { UniversalProvider, UniversalProviderModels } from "@/types";
+import { appEnabled } from "@/types";
 import {
   universalProviderPresets,
   createUniversalProviderFromPreset,
@@ -71,9 +72,9 @@ export function UniversalProviderFormModal({
       setApiKey(editingProvider.apiKey);
       setWebsiteUrl(editingProvider.websiteUrl || "");
       setNotes(editingProvider.notes || "");
-      setClaudeEnabled(editingProvider.apps.claude);
-      setCodexEnabled(editingProvider.apps.codex);
-      setGeminiEnabled(editingProvider.apps.gemini);
+      setClaudeEnabled(appEnabled(editingProvider.apps.claude));
+      setCodexEnabled(appEnabled(editingProvider.apps.codex));
+      setGeminiEnabled(appEnabled(editingProvider.apps.gemini));
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -90,9 +91,9 @@ export function UniversalProviderFormModal({
       setApiKey("");
       setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
-      setClaudeEnabled(defaultPreset.defaultApps.claude);
-      setCodexEnabled(defaultPreset.defaultApps.codex);
-      setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setClaudeEnabled(appEnabled(defaultPreset.defaultApps.claude));
+      setCodexEnabled(appEnabled(defaultPreset.defaultApps.codex));
+      setGeminiEnabled(appEnabled(defaultPreset.defaultApps.gemini));
       setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -103,9 +104,9 @@ export function UniversalProviderFormModal({
       setSelectedPreset(preset);
       if (!isEditMode) {
         setName(preset.name);
-        setClaudeEnabled(preset.defaultApps.claude);
-        setCodexEnabled(preset.defaultApps.codex);
-        setGeminiEnabled(preset.defaultApps.gemini);
+        setClaudeEnabled(appEnabled(preset.defaultApps.claude));
+        setCodexEnabled(appEnabled(preset.defaultApps.codex));
+        setGeminiEnabled(appEnabled(preset.defaultApps.gemini));
         setModels(deepClone(preset.defaultModels));
       }
     },

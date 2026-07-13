@@ -141,6 +141,16 @@
     "searchCloseAriaLabel": "关闭供应商搜索",
     "noSearchResults": "没有符合搜索条件的供应商。",
     "duplicate": "复制",
+    "copyToApps": {
+      "title": "复制到其他应用",
+      "description": "将 \"{{name}}\" 的配置复制到选定的应用中",
+      "selectAll": "全选",
+      "selectedCount": "已选择 {{count}} 个应用",
+      "copy": "复制到 {{count}} 个应用",
+      "copying": "复制中...",
+      "success": "已成功复制到 {{count}} 个应用",
+      "error": "复制供应商失败"
+    },
     "sortUpdateFailed": "排序更新失败",
     "configureUsage": "配置用量查询",
     "officialPartner": "官方合作伙伴",
@@ -149,6 +159,24 @@
     "openTerminal": "打开终端",
     "terminalOpened": "终端已打开",
     "terminalOpenFailed": "打开终端失败",
+    "importExport": {
+      "noProviders": "没有可导出的供应商",
+      "exportAll": "导出全部",
+      "importButton": "导入",
+      "appSelect": "选择应用",
+      "appHint": "导出或导入所选应用的全部供应商配置（含 API Key、Base URL 等敏感信息，请妥善保管）",
+      "exporting": "导出中...",
+      "importing": "导入中...",
+      "exportSuccess": "已导出 {{count}} 个供应商配置",
+      "importSuccess": "已导入 {{count}} 个供应商配置",
+      "exportError": "导出供应商配置失败",
+      "importError": "导入供应商配置失败",
+      "invalidFileType": "请选择 JSON 文件",
+      "fileTooLarge": "文件过大，请选择小于 10MB 的文件",
+      "invalidJson": "无效的 JSON 格式",
+      "readError": "读取文件失败",
+      "appTypeMismatch": "导入文件的应用类型（{{source}}）与当前选择的应用（{{target}}）不匹配。跨应用迁移请使用「复制到其他应用」功能。"
+    },
     "name": "供应商名称",
     "namePlaceholder": "例如：Claude 官方",
     "websiteUrl": "官网链接",
@@ -363,6 +391,10 @@
       "data": {
         "title": "数据管理",
         "description": "导入和导出本地配置数据"
+      },
+      "providerConfig": {
+        "title": "供应商配置管理",
+        "description": "按应用导入/导出供应商配置（API Key、Base URL 等），便于备份与跨设备迁移"
       },
       "backup": {
         "title": "备份与恢复",

@@ -141,6 +141,16 @@
     "searchCloseAriaLabel": "Close provider search",
     "noSearchResults": "No providers match your search.",
     "duplicate": "Duplicate",
+    "copyToApps": {
+      "title": "Copy to Other Apps",
+      "description": "Copy \"{{name}}\" configuration to selected apps",
+      "selectAll": "Select All",
+      "selectedCount": "{{count}} apps selected",
+      "copy": "Copy to {{count}} apps",
+      "copying": "Copying...",
+      "success": "Successfully copied to {{count}} apps",
+      "error": "Failed to copy provider"
+    },
     "sortUpdateFailed": "Failed to update sort order",
     "configureUsage": "Configure usage query",
     "officialPartner": "Official Partner",
@@ -149,6 +159,24 @@
     "openTerminal": "Open Terminal",
     "terminalOpened": "Terminal opened",
     "terminalOpenFailed": "Failed to open terminal",
+    "importExport": {
+      "noProviders": "No providers to export",
+      "exportAll": "Export All",
+      "importButton": "Import",
+      "appSelect": "Select App",
+      "appHint": "Export or import all provider configurations for the selected app (contains sensitive data like API Key and Base URL — keep it safe)",
+      "exporting": "Exporting...",
+      "importing": "Importing...",
+      "exportSuccess": "Exported {{count}} provider configurations",
+      "importSuccess": "Imported {{count}} provider configurations",
+      "exportError": "Failed to export provider configurations",
+      "importError": "Failed to import provider configurations",
+      "invalidFileType": "Please select a JSON file",
+      "fileTooLarge": "File too large, please select a file under 10MB",
+      "invalidJson": "Invalid JSON format",
+      "readError": "Failed to read file",
+      "appTypeMismatch": "The imported file's app type ({{source}}) does not match the selected app ({{target}}). For cross-app migration, use the \"Copy to other apps\" feature."
+    },
     "name": "Provider Name",
     "namePlaceholder": "e.g., Claude Official",
     "websiteUrl": "Website URL",
@@ -363,6 +391,10 @@
       "data": {
         "title": "Data Management",
         "description": "Import and export local configuration data"
+      },
+      "providerConfig": {
+        "title": "Provider Config Management",
+        "description": "Import/export provider configurations (API Key, Base URL, etc.) per app, for backup and cross-device migration"
       },
       "backup": {
         "title": "Backup & Restore",
