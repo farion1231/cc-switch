@@ -481,7 +481,9 @@ impl Database {
                         Self::set_user_version(conn, 12)?;
                     }
                     12 => {
-                        log::info!("迁移数据库从 v12 到 v13（CodeFree-O 支持：添加 enabled_codefree 列）");
+                        log::info!(
+                            "迁移数据库从 v12 到 v13（CodeFree-O 支持：添加 enabled_codefree 列）"
+                        );
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
                     }

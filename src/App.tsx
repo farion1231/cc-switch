@@ -275,7 +275,10 @@ function App() {
     takeoverStatus,
     status: proxyStatus,
   } = useProxyStatus();
-  const isCurrentAppTakeoverActive = (takeoverStatus as unknown as Record<string, boolean | undefined>)?.[activeApp] || false;
+  const isCurrentAppTakeoverActive =
+    (takeoverStatus as unknown as Record<string, boolean | undefined>)?.[
+      activeApp
+    ] || false;
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
       (t) => t.app_type === activeApp,
@@ -1160,7 +1163,8 @@ function App() {
             className="flex items-center gap-1"
             style={{ WebkitAppRegion: "no-drag" } as any}
           >
-            {currentView !== "providers" && !(currentView === "sessions" && sharedFeatureApp === "codefree") ? (
+            {currentView !== "providers" &&
+            !(currentView === "sessions" && sharedFeatureApp === "codefree") ? (
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
@@ -1199,7 +1203,8 @@ function App() {
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
                 </h1>
               </div>
-            ) : currentView === "sessions" && sharedFeatureApp === "codefree" ? (
+            ) : currentView === "sessions" &&
+              sharedFeatureApp === "codefree" ? (
               <div className="flex items-center gap-2">
                 <div className="relative inline-flex items-center">
                   <a
@@ -1437,7 +1442,9 @@ function App() {
                     )}
                   </>
                 )}
-            {(currentView === "providers" && activeApp !== "codefree") || (currentView === "sessions" && sharedFeatureApp === "codefree") ? (
+                {(currentView === "providers" && activeApp !== "codefree") ||
+                (currentView === "sessions" &&
+                  sharedFeatureApp === "codefree") ? (
                   <>
                     <AppSwitcher
                       activeApp={activeApp}

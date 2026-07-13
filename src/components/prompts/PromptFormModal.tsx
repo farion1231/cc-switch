@@ -38,7 +38,8 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
     opencode: "AGENTS.md",
     hermes: "AGENTS.md",
   };
-  const filename = filenameMap[appId as Exclude<AppId, "openclaw" | "codefree">];
+  const filename =
+    filenameMap[appId as Exclude<AppId, "openclaw" | "codefree">];
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");

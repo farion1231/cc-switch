@@ -495,7 +495,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
-        "codefree" => Some("npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/"),
+        "codefree" => {
+            Some("npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/")
+        }
         _ => None,
     }
 }
