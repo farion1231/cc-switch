@@ -2696,6 +2696,9 @@ impl ProxyService {
                         .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
                 crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
                     .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                crate::codex_config::sync_codex_desktop_available_models_cache_from_settings(
+                    config,
+                );
                 return Ok(());
             }
         }
