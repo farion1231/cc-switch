@@ -181,7 +181,9 @@
   },
   "codex": {
     "needsRouting": "Needs Routing",
-    "noRoutingSupport": "No Routing Support"
+    "noRoutingSupport": "No Routing Support",
+    "officialRouting": "Official Account Routing",
+    "nativeLogin": "Codex Sign-in"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop official providers use the built-in 1P sign-in. No API key or endpoint URL is required.",
@@ -299,11 +301,6 @@
       "message": "Usage query requires a custom script or API parameters. Please make sure you have obtained the necessary information from your provider.\n\nIf unsure how to configure, please consult your provider's documentation first.",
       "confirm": "I understand, configure"
     },
-    "streamCheck": {
-      "title": "Model Health Check",
-      "message": "Health check tests provider connectivity by sending a direct API request. The following may cause check failures:\n\n• Official providers (uses OAuth login, no standalone API Key)\n• Some relay services (verify requests come from Claude Code CLI)\n• AWS Bedrock (uses IAM signature authentication)\n\nA failed check does not mean the provider is unusable — it only means it cannot be verified via a standalone request. Please refer to actual behavior within the application.",
-      "confirm": "I understand, proceed"
-    },
     "autoSync": {
       "title": "Enable Auto Sync",
       "message": "When auto sync is enabled, every database change will be automatically uploaded to the WebDAV server.\n\nThis may result in significant network traffic. Please ensure your network and WebDAV service can handle frequent data transfers.",
@@ -344,9 +341,9 @@
         "running": "Running",
         "stopped": "Stopped"
       },
-      "modelTest": {
-        "title": "Model Test Config",
-        "description": "Configure default models and prompts for model testing"
+      "connectivityCheck": {
+        "title": "Connectivity Check Settings",
+        "description": "Configure timeout, retries, and the slow-response threshold for provider reachability checks"
       },
       "failover": {
         "title": "Auto Failover",
@@ -385,8 +382,8 @@
         "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once",
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
-        "mediaHeuristic": "Heuristic Text-Only Model Detection",
-        "mediaHeuristicDescription": "Predictively strips images before sending based on a built-in model-name list. When off, only the declared-text-only and upstream-error fallback paths remain, preventing the built-in list from misclassifying a multimodal model as text-only and silently dropping images"
+        "mediaHeuristic": "Text-Only Model Preflight",
+        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",
@@ -395,10 +392,7 @@
         "thinkingOptimizer": "Thinking Optimization",
         "thinkingOptimizerDescription": "Automatically enable Adaptive Thinking for Opus/Sonnet, and inject Extended Thinking for legacy models",
         "cacheInjection": "Cache Injection",
-        "cacheInjectionDescription": "Automatically inject cache breakpoints at key positions in requests to reduce duplicate token billing",
-        "cacheTtl": "Cache TTL",
-        "cacheTtl5m": "5 minutes",
-        "cacheTtl1h": "1 hour"
+        "cacheInjectionDescription": "Automatically inject standard 5-minute cache breakpoints at key positions to reduce duplicate token billing"
       },
       "logConfig": {
         "title": "Log Management",
@@ -683,8 +677,8 @@
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
     "skipClaudeOnboardingDescription": "When enabled, Claude Code will skip the first-run confirmation",
     "codexAuth": "Codex App Enhancements",
-    "preserveCodexOfficialAuthOnSwitch": "Keep official login when switching third-party providers",
-    "preserveCodexOfficialAuthOnSwitchDescription": "When enabled, you can use the Codex app's official plugins, mobile remote control, and other features while using third-party APIs.",
+    "preserveCodexOfficialAuthOnSwitch": "Keep official login for direct switches",
+    "preserveCodexOfficialAuthOnSwitchDescription": "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.",
     "unifyCodexSessionHistory": "Unified Codex session history",
     "unifyCodexSessionHistoryDescription": "When enabled, the official subscription runs under the shared \"custom\" provider id so official and third-party sessions appear in one history list, optionally migrating existing official sessions in (backed up first). When turning it off, the migrated sessions can be restored from backup. Note: resuming an old session across providers may fail because its encrypted_content reasoning can only be decrypted by the backend that created it.",
     "unifyCodexHistoryRestoreCompleted": "Official session history restored from backup ({{files}} session files, {{rows}} index rows)",
@@ -697,7 +691,9 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "showProfileSwitcher": "Show project switcher",
+      "showProfileSwitcherDescription": "Show the project switcher in the main page header"
     },
     "skillStorage": {
       "title": "Skill Storage Location",
@@ -1006,6 +1002,7 @@
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
+      "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 4.8, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
       "code0": "code0.ai is an AI coding service platform for developers, supporting Claude Code, Codex, and Gemini. Exclusive for CC Switch users: contact support via the official website to claim free trial credits!",
       "nekocode": "NekoCode gives developers a stable, efficient, and reliable API relay for Claude, Codex, and other AI models, with transparent pay-as-you-go pricing. Exclusive 10% off for CC Switch users: register via the link above and enter promo code cc-switch at recharge to save 10%!",
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
@@ -1238,15 +1235,6 @@
     "empty": "No endpoints"
   },
   "providerAdvanced": {
-    "testConfig": "Model Test Config",
-    "useCustomConfig": "Use separate config",
-    "testConfigDesc": "Configure separate model testing parameters for this provider. Uses global settings when disabled.",
-    "testModel": "Test Model",
-    "testModelPlaceholder": "Leave empty to use global config",
-    "timeoutSecs": "Timeout (seconds)",
-    "testPrompt": "Test Prompt",
-    "degradedThreshold": "Degraded Threshold (ms)",
-    "maxRetries": "Max Retries",
     "pricingConfig": "Pricing Config",
     "useCustomPricing": "Use separate config",
     "pricingConfigDesc": "Configure separate pricing parameters for this provider. Uses global defaults when disabled.",
@@ -1296,6 +1284,11 @@
     "maxOutputTokensLabel": "Max output tokens",
     "maxOutputTokensPlaceholder": "Leave empty to use the default 8192",
     "maxOutputTokensHint": "Codex does not forward model_max_output_tokens in the request body, so the default 8192 ceiling can truncate long or thinking-heavy responses (stop_reason=max_tokens). This value overrides the request's max_tokens on the Anthropic path. Do not exceed the real output ceiling of the model/gateway or it may 400. Leave empty to use the default 8192.",
+    "promptCacheRoutingLabel": "Prompt cache routing",
+    "promptCacheRoutingAuto": "Auto (recommended)",
+    "promptCacheRoutingEnabled": "Enabled",
+    "promptCacheRoutingDisabled": "Disabled",
+    "promptCacheRoutingHint": "Auto sends prompt_cache_key only to known-compatible upstreams. Enable it for other compatible gateways, or disable it if a strict gateway rejects unknown fields with HTTP 400. Only a stable client-provided session ID is used.",
     "upstreamModelName": "Upstream Model Name",
     "upstreamModelNameHint": "For Chat format, enter the real upstream model here; routing converts Codex Responses requests to Chat Completions while keeping this model.",
     "modelNamePlaceholder": "e.g., gpt-5-codex",
@@ -1307,6 +1300,11 @@
     "autoCompactLimitHint": "Auto-compacts history when context reaches this token limit",
     "modelMetadataAdvanced": "Model Metadata Advanced Options",
     "modelMetadataAdvancedHint": "Overrides Codex metadata for unknown models; clearing a field removes the matching config.toml entry.",
+    "defaultModelLabel": "Default Model",
+    "defaultModelPlaceholder": "e.g. gpt-5.6",
+    "defaultModelHint": "The model Codex requests by default; change it anytime without waiting for a preset update. If left empty while model mapping is configured, the first mapping row is used.",
+    "defaultModelNotInCatalog": "This model is not in the model mapping, so the Codex /model menu won't list it (direct requests still work).",
+    "addToModelMapping": "Add to mapping",
     "modelMappingTitle": "Model Mapping",
     "modelMappingHint": "Generates Codex model_catalog_json so /model can show these third-party model names; entries are saved exactly as listed. Codex must be restarted to refresh the model list after changes.",
     "addCatalogModel": "Add Model",
@@ -2443,9 +2441,6 @@
   "agents": {
     "title": "Agents"
   },
-  "modelTest": {
-    "testProvider": "Test model"
-  },
   "health": {
     "operational": "Operational",
     "degraded": "Degraded",
@@ -2653,35 +2648,13 @@
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
     "connectivityNote": "Connectivity check only probes whether the provider address is reachable; it does not send a real model request. Any response counts as \"reachable\" — which does not guarantee that auth or model settings are correct.",
-    "configSaved": "Health check config saved",
+    "configSaved": "Connectivity check settings saved",
     "configSaveFailed": "Save failed",
-    "testModels": "Test Models",
-    "claudeModel": "Claude Model",
-    "codexModel": "Codex Model",
-    "geminiModel": "Gemini Model",
     "checkParams": "Check Parameters",
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
-    "degradedThreshold": "Degraded Threshold (ms)",
-    "testPrompt": "Test Prompt",
-    "operational": "{{providerName}} is operational ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} is slow ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} check failed: {{message}}",
-    "rejected": "{{providerName}} check rejected: {{message}}",
-    "error": "{{providerName}} check error: {{error}}",
-    "modelNotFound": "{{providerName}} test model {{model}} does not exist or has been deprecated",
-    "modelNotFoundHint": "This model may have been retired by the provider. Update the default test model in \"Model Test Config\".",
-    "quotaExceeded": "{{providerName}} Coding Plan quota has been exceeded",
-    "quotaExceededHint": "Baidu Qianfan returned a Coding Plan quota-limit error. Wait for the 5-hour, weekly, or monthly quota refresh, or adjust the plan in the Qianfan console.",
-    "httpHint": {
-      "400": "Provider rejected request format. Health check probe may differ from actual usage.",
-      "401": "API key may be invalid, or provider uses OAuth auth. Check failure doesn't mean it's unusable.",
-      "402": "Account quota or billing issue.",
-      "403": "Provider blocked this request. Some verify client identity; may work fine in actual use.",
-      "404": "Endpoint not found. Check base URL and API path.",
-      "429": "Too many requests. Try again later.",
-      "5xx": "Provider internal error. Likely temporary."
-    }
+    "degradedThreshold": "Slow-response threshold (ms)",
+    "error": "{{providerName}} check error: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",

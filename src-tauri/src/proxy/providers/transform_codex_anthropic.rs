@@ -14,7 +14,7 @@ use super::transform_codex_chat::{
     build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
     response_tool_call_item_id_from_chat_name, CodexToolContext,
 };
-use super::transform_responses::sanitize_anthropic_tool_use_input;
+use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
@@ -65,7 +65,16 @@ fn reasoning_explicitly_disabled(effort: Option<&str>) -> bool {
 /// tool-result request. The prefix keeps unrelated providers' ciphertext isolated.
 pub(crate) fn encode_anthropic_thinking_block(block: &Value) -> Option<String> {
     match block.get("type").and_then(|value| value.as_str()) {
-        Some("thinking" | "redacted_thinking") => {}
+        Some("thinking")
+            if block
+                .get("signature")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty()) => {}
+        Some("redacted_thinking")
+            if block
+                .get("data")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty()) => {}
         _ => return None,
     }
     let bytes = serde_json::to_vec(block).ok()?;
@@ -79,10 +88,9 @@ pub(crate) fn decode_anthropic_thinking_block(encrypted_content: &str) -> Option
     let encoded = encrypted_content.strip_prefix(ANTHROPIC_THINKING_ENCRYPTED_PREFIX)?;
     let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
     let block: Value = serde_json::from_slice(&bytes).ok()?;
-    match block.get("type").and_then(|value| value.as_str()) {
-        Some("thinking" | "redacted_thinking") => Some(block),
-        _ => None,
-    }
+    // Reuse the encoder's validation so legacy/malformed bridge envelopes cannot
+    // replay an unsigned thinking block into an Anthropic tool turn.
+    encode_anthropic_thinking_block(&block).map(|_| block)
 }
 
 pub(crate) fn responses_reasoning_item_from_anthropic_block(
@@ -125,19 +133,14 @@ pub(crate) fn map_anthropic_stop_reason_to_status(
 
 /// Builds Responses usage from Anthropic usage.
 ///
-/// Anthropic's `input_tokens` is the "cache-excluded" fresh input; OpenAI/Responses'
-/// `input_tokens` includes cache hits. To keep downstream metering correct, this
-/// adds them (symmetric to the subtraction done for the Claude side in
-/// `transform_responses`):
-///   input_tokens = input + cache_read
+/// Anthropic's `input_tokens` is the cache-excluded fresh input. OpenAI Responses
+/// reports total input and exposes cache reads/writes as subsets:
+///   input_tokens = fresh + cache_read + cache_creation
 ///   input_tokens_details.cached_tokens = cache_read
+///   input_tokens_details.cache_write_tokens = cache_creation
 ///
-/// Note: **do not** fold `cache_creation` into `input_tokens`. The Codex billing
-/// calculator (usage/calculator.rs) only subtracts `cache_read` for codex
-/// (`billable = input - cache_read`), and separately lists cache-creation cost via
-/// `cache_creation_input_tokens`; if creation were also added into
-/// `input_tokens`, it would be double-charged at both the input price and the
-/// cache-creation price.
+/// The internal billing parser subtracts both subsets before charging the normal
+/// input rate, then prices cache reads and writes separately.
 pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Value {
     let u = match usage {
         Some(v) if v.is_object() => v,
@@ -166,10 +169,10 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
-    let input_tokens = fresh_input.saturating_add(cache_read);
-    let total_tokens = input_tokens
-        .saturating_add(cache_creation)
-        .saturating_add(output);
+    let input_tokens = fresh_input
+        .saturating_add(cache_read)
+        .saturating_add(cache_creation);
+    let total_tokens = input_tokens.saturating_add(output);
 
     let mut result = json!({
         "input_tokens": input_tokens,
@@ -177,10 +180,14 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
         "total_tokens": total_tokens,
         "output_tokens_details": { "reasoning_tokens": reasoning }
     });
-    if cache_read > 0 {
-        result["input_tokens_details"] = json!({ "cached_tokens": cache_read });
+    if cache_read > 0 || cache_creation > 0 {
+        result["input_tokens_details"] = json!({
+            "cached_tokens": cache_read,
+            "cache_write_tokens": cache_creation
+        });
     }
-    // Explicitly pass through cache_creation so the downstream usage parser (from_codex_response) attributes billing correctly.
+    // Keep the legacy top-level alias for one compatibility window. New code reads
+    // the official nested cache_write_tokens field first.
     if cache_creation > 0 {
         result["cache_creation_input_tokens"] = json!(cache_creation);
     }
@@ -191,6 +198,28 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
 ///
 /// `default_max_tokens`: injected when the Responses body has no
 /// `max_output_tokens` (Anthropic's `max_tokens` is required; missing it yields a 400).
+fn responses_system_text(item: &Value) -> Vec<String> {
+    match item.get("content") {
+        Some(Value::String(text)) if is_meaningful_text(text) => {
+            vec![text.trim().to_string()]
+        }
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| {
+                matches!(
+                    part.get("type").and_then(Value::as_str),
+                    Some("input_text" | "output_text" | "text")
+                )
+                .then(|| part.get("text").and_then(Value::as_str))
+                .flatten()
+                .filter(|text| is_meaningful_text(text))
+                .map(|text| text.trim().to_string())
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
@@ -207,11 +236,27 @@ pub fn responses_request_to_anthropic(
         result["model"] = json!(model);
     }
 
-    // instructions → system
+    // instructions and historical system/developer messages → Anthropic system.
+    // Anthropic messages only accept user/assistant roles; degrading these items to
+    // user silently changes instruction precedence.
+    let mut system_parts = Vec::new();
     if let Some(instructions) = body.get("instructions").and_then(|v| v.as_str()) {
-        if !instructions.is_empty() {
-            result["system"] = json!(instructions);
+        if is_meaningful_text(instructions) {
+            system_parts.push(instructions.trim().to_string());
         }
+    }
+    if let Some(items) = body.get("input").and_then(Value::as_array) {
+        for item in items {
+            if matches!(
+                item.get("role").and_then(Value::as_str),
+                Some("system" | "developer")
+            ) {
+                system_parts.extend(responses_system_text(item));
+            }
+        }
+    }
+    if !system_parts.is_empty() {
+        result["system"] = json!(system_parts.join("\n\n"));
     }
 
     // input → messages
@@ -458,7 +503,24 @@ fn convert_input_to_messages(
     let mut messages: Vec<Value> = Vec::new();
 
     for item in items {
-        match item.get("type").and_then(|t| t.as_str()) {
+        let item_type = item.get("type").and_then(|t| t.as_str());
+        if matches!(
+            item_type,
+            Some("function_call" | "custom_tool_call" | "tool_search_call")
+        ) && item.get("status").and_then(Value::as_str) == Some("incomplete")
+        {
+            log::warn!(
+                "[Codex/Anthropic] Dropping incomplete historical tool call: type={}, call_id={}",
+                item_type.unwrap_or("unknown"),
+                item.get("call_id")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("id").and_then(Value::as_str))
+                    .unwrap_or("")
+            );
+            continue;
+        }
+
+        match item_type {
             Some("function_call") => {
                 let call_id = item
                     .get("call_id")
@@ -472,8 +534,17 @@ fn convert_input_to_messages(
                 let input: Value = if args_str.trim().is_empty() {
                     json!({})
                 } else {
-                    serde_json::from_str(args_str).unwrap_or(json!({}))
+                    serde_json::from_str(args_str).map_err(|error| {
+                        ProxyError::InvalidRequest(format!(
+                            "Invalid function_call arguments for '{name}': {error}"
+                        ))
+                    })?
                 };
+                if !input.is_object() {
+                    return Err(ProxyError::InvalidRequest(format!(
+                        "Function call arguments for '{name}' must be a JSON object"
+                    )));
+                }
                 let input = sanitize_anthropic_tool_use_input(name, input);
                 push_block(
                     &mut messages,
@@ -533,14 +604,15 @@ fn convert_input_to_messages(
             Some("function_call_output" | "custom_tool_call_output" | "tool_search_output") => {
                 let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
                 let output = tool_result_content_from_responses_item(item);
-                push_tool_result_block(
-                    &mut messages,
-                    json!({
-                        "type": "tool_result",
-                        "tool_use_id": call_id,
-                        "content": output
-                    }),
-                );
+                let mut block = json!({
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "content": output.content
+                });
+                if output.is_error {
+                    block["is_error"] = json!(true);
+                }
+                push_tool_result_block(&mut messages, block);
             }
             Some("input_text") => {
                 if let Some(text) = item
@@ -572,6 +644,9 @@ fn convert_input_to_messages(
             // message item or an item carrying a role
             _ => {
                 let role = item.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+                if matches!(role, "system" | "developer") {
+                    continue;
+                }
                 let anth_role = if role == "assistant" {
                     "assistant"
                 } else {
@@ -620,6 +695,11 @@ fn convert_input_to_messages(
                                         push_block(&mut messages, anth_role, block);
                                     }
                                 }
+                                "input_file" => {
+                                    if let Some(block) = document_block_from_input_file(part) {
+                                        push_block(&mut messages, anth_role, block);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -633,29 +713,70 @@ fn convert_input_to_messages(
     Ok(messages)
 }
 
-fn tool_result_content_from_responses_item(item: &Value) -> Value {
+struct ToolResultContent {
+    content: Value,
+    is_error: bool,
+}
+
+fn tool_result_content_from_responses_item(item: &Value) -> ToolResultContent {
     match item.get("output") {
-        Some(Value::String(text)) => json!(text),
+        Some(Value::String(text)) => ToolResultContent {
+            content: json!(text),
+            is_error: false,
+        },
         Some(Value::Array(parts)) => {
-            let content: Vec<Value> = parts
-                .iter()
-                .filter_map(|part| match part.get("type").and_then(Value::as_str) {
-                    Some("input_text" | "output_text") => part
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .map(|text| json!({ "type": "text", "text": text })),
-                    Some("input_image") => image_block_from_input_image(part),
-                    _ => None,
-                })
-                .collect();
-            if content.is_empty() {
-                json!(canonical_json_string(&Value::Array(parts.clone())))
-            } else {
-                Value::Array(content)
+            let mut content = Vec::new();
+            let mut is_error = false;
+            for part in parts {
+                match part.get("type").and_then(Value::as_str) {
+                    Some("input_text" | "output_text") => {
+                        if let Some(text) = part.get("text").and_then(Value::as_str) {
+                            if text == TOOL_RESULT_ERROR_MARKER {
+                                is_error = true;
+                            } else {
+                                content.push(json!({"type":"text","text":text}));
+                            }
+                        }
+                    }
+                    Some("input_image") => {
+                        if let Some(image) = image_block_from_input_image(part) {
+                            content.push(image);
+                        } else {
+                            content.push(json!({
+                                "type":"text",
+                                "text":canonical_json_string(part)
+                            }));
+                        }
+                    }
+                    Some("input_file") => {
+                        if let Some(document) = document_block_from_input_file(part) {
+                            content.push(document);
+                        } else {
+                            content.push(json!({
+                                "type":"text",
+                                "text":canonical_json_string(part)
+                            }));
+                        }
+                    }
+                    _ => content.push(json!({
+                        "type":"text",
+                        "text":canonical_json_string(part)
+                    })),
+                }
+            }
+            ToolResultContent {
+                content: Value::Array(content),
+                is_error,
             }
         }
-        Some(value) => json!(canonical_json_string(value)),
-        None => json!(canonical_json_string(item)),
+        Some(value) => ToolResultContent {
+            content: json!(canonical_json_string(value)),
+            is_error: false,
+        },
+        None => ToolResultContent {
+            content: json!(canonical_json_string(item)),
+            is_error: false,
+        },
     }
 }
 
@@ -967,6 +1088,46 @@ fn image_block_from_input_image(part: &Value) -> Option<Value> {
     } else {
         None
     }
+}
+
+/// Responses' input_file → Anthropic document block.
+fn document_block_from_input_file(part: &Value) -> Option<Value> {
+    let filename = part
+        .get("filename")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+
+    let mut block = if let Some(file_url) = part
+        .get("file_url")
+        .and_then(Value::as_str)
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+    {
+        json!({
+            "type":"document",
+            "source":{"type":"url","url":file_url}
+        })
+    } else {
+        let file_data = part.get("file_data").and_then(Value::as_str)?;
+        let rest = file_data.strip_prefix("data:")?;
+        let (meta, data) = rest.split_once(',')?;
+        if data.is_empty() {
+            return None;
+        }
+        let media_type = meta.split(';').next().unwrap_or("application/pdf");
+        json!({
+            "type":"document",
+            "source":{
+                "type":"base64",
+                "media_type":media_type,
+                "data":data
+            }
+        })
+    };
+
+    if let Some(filename) = filename {
+        block["title"] = json!(filename);
+    }
+    Some(block)
 }
 
 /// Anthropic Messages response → OpenAI Responses response (non-streaming)
@@ -1332,6 +1493,27 @@ mod tests {
     }
 
     #[test]
+    fn test_request_system_and_developer_history_are_hoisted() {
+        let input = json!({
+            "model":"claude",
+            "instructions":"base",
+            "input":[
+                {"role":"system","content":"system history"},
+                {"role":"developer","content":[{"type":"input_text","text":"developer history"}]},
+                {"role":"user","content":"hi"}
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        assert_eq!(
+            result["system"],
+            "base\n\nsystem history\n\ndeveloper history"
+        );
+        assert_eq!(result["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(result["messages"][0]["role"], "user");
+    }
+
+    #[test]
     fn test_request_no_instructions_no_system() {
         let input = json!({
             "model": "claude",
@@ -1609,6 +1791,47 @@ mod tests {
         let result = responses_request_to_anthropic(input, 4096).unwrap();
         // function_call at the head → a synthetic user is prepended, tool_use is in the second assistant message.
         assert_eq!(result["messages"][1]["content"][0]["input"], json!({}));
+    }
+
+    #[test]
+    fn test_request_invalid_or_non_object_arguments_error() {
+        for arguments in ["{broken", "[1,2]"] {
+            let input = json!({
+                "model":"c",
+                "input":[
+                    {"type":"function_call","call_id":"c1","name":"t","arguments":arguments},
+                    {"type":"function_call_output","call_id":"c1","output":"ok"}
+                ]
+            });
+            assert!(matches!(
+                responses_request_to_anthropic(input, 4096),
+                Err(ProxyError::InvalidRequest(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn test_request_drops_incomplete_tool_call_and_orphaned_output() {
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"role":"user","content":[{"type":"input_text","text":"run it"}]},
+                {
+                    "type":"function_call",
+                    "call_id":"c1",
+                    "name":"exec",
+                    "arguments":"{\"cmd\":",
+                    "status":"incomplete"
+                },
+                {"type":"function_call_output","call_id":"c1","output":"never ran"}
+            ]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let serialized = result["messages"].to_string();
+        assert!(!serialized.contains("tool_use"));
+        assert!(!serialized.contains("tool_result"));
+        assert!(serialized.contains("run it"));
     }
 
     #[test]
@@ -2038,7 +2261,7 @@ mod tests {
         let input = json!({
             "id": "msg_1",
             "content": [
-                { "type": "thinking", "thinking": "Let me think" },
+                { "type": "thinking", "thinking": "Let me think", "signature": "sig" },
                 { "type": "text", "text": "answer" }
             ],
             "stop_reason": "end_turn",
@@ -2048,6 +2271,22 @@ mod tests {
         assert_eq!(result["output"][0]["type"], "reasoning");
         assert_eq!(result["output"][0]["summary"][0]["text"], "Let me think");
         assert_eq!(result["output"][1]["type"], "message");
+    }
+
+    #[test]
+    fn test_unsigned_thinking_is_not_replayed_as_encrypted_reasoning() {
+        let input = json!({
+            "id":"msg_unsigned",
+            "content":[
+                {"type":"thinking","thinking":"unsigned"},
+                {"type":"text","text":"answer"}
+            ],
+            "stop_reason":"end_turn"
+        });
+
+        let result = anthropic_response_to_responses(input).unwrap();
+        assert_eq!(result["output"].as_array().unwrap().len(), 1);
+        assert_eq!(result["output"][0]["type"], "message");
     }
 
     #[test]
@@ -2078,19 +2317,21 @@ mod tests {
             }
         });
         let result = anthropic_response_to_responses(input).unwrap();
-        // input_tokens = fresh + cache_read = 20 + 60 = 80 (excluding cache_creation).
-        // The Codex billing calculator only subtracts cache_read from input (→ billable=fresh=20),
-        // and separately lists cache-creation cost via cache_creation_input_tokens; folding creation into input would double-charge.
-        assert_eq!(result["usage"]["input_tokens"], 80);
+        // Responses input_tokens is the inclusive total: fresh + read + write.
+        assert_eq!(result["usage"]["input_tokens"], 100);
         assert_eq!(result["usage"]["output_tokens"], 5);
         assert_eq!(
             result["usage"]["output_tokens_details"]["reasoning_tokens"],
             3
         );
-        // total still includes everything: 80 + cache_creation 20 + output 5 = 105
+        // total includes input total + output exactly once.
         assert_eq!(result["usage"]["total_tokens"], 105);
         assert_eq!(result["usage"]["input_tokens_details"]["cached_tokens"], 60);
-        // cache_creation is passed through explicitly for downstream billing attribution (counted only once)
+        assert_eq!(
+            result["usage"]["input_tokens_details"]["cache_write_tokens"],
+            20
+        );
+        // Aggregate cache creation is exposed for downstream billing attribution (counted only once).
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 20);
     }
 
@@ -2271,6 +2512,40 @@ mod tests {
         let content = &response["messages"][2]["content"][0]["content"];
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["type"], "image");
+    }
+
+    #[test]
+    fn test_structured_tool_output_restores_error_file_and_unknown_parts() {
+        let response = responses_request_to_anthropic(
+            json!({
+                "model":"c",
+                "input":[
+                    {"type":"function_call","call_id":"c1","name":"inspect","arguments":"{}"},
+                    {"type":"function_call_output","call_id":"c1","output":[
+                        {"type":"input_text","text":TOOL_RESULT_ERROR_MARKER},
+                        {"type":"input_text","text":"failed"},
+                        {"type":"input_file","file_url":"https://example.com/log.pdf","filename":"log.pdf"},
+                        {"type":"future_part","payload":{"x":1}}
+                    ]}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+
+        let tool_result = &response["messages"][2]["content"][0];
+        assert_eq!(tool_result["is_error"], true);
+        assert_eq!(
+            tool_result["content"][0],
+            json!({"type":"text","text":"failed"})
+        );
+        assert_eq!(tool_result["content"][1]["type"], "document");
+        assert_eq!(tool_result["content"][1]["source"]["type"], "url");
+        assert_eq!(tool_result["content"][2]["type"], "text");
+        assert!(tool_result["content"][2]["text"]
+            .as_str()
+            .unwrap()
+            .contains("future_part"));
     }
 
     // ==================== Request normalization: non-empty & first is user ====================

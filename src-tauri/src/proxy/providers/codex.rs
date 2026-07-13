@@ -84,6 +84,81 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+/// Whether a converted Codex Responses request may send `prompt_cache_key` to
+/// its Chat Completions upstream. Unknown OpenAI-compatible gateways default to
+/// false because many reject unsupported request fields with HTTP 400.
+pub fn should_send_codex_chat_prompt_cache_key(provider: &Provider) -> bool {
+    match provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.prompt_cache_routing.as_deref())
+        .unwrap_or("auto")
+    {
+        "enabled" => return true,
+        "disabled" => return false,
+        _ => {}
+    }
+
+    let base_url = provider
+        .settings_config
+        .get("base_url")
+        .or_else(|| provider.settings_config.get("baseURL"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(|value| value.as_str())
+                .and_then(extract_codex_base_url_from_toml)
+        });
+
+    let Some(base_url) = base_url else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(&base_url) else {
+        return false;
+    };
+
+    match url.host_str() {
+        Some("api.openai.com") => true,
+        Some("api.kimi.com") => {
+            let path = url.path().trim_end_matches('/');
+            path == "/coding" || path.starts_with("/coding/")
+        }
+        _ => false,
+    }
+}
+
+/// Add a stable cache-routing key after Responses -> Chat conversion. An
+/// explicit client key wins; otherwise only a real client-provided session ID
+/// is eligible. Generated per-request UUIDs must never be used here.
+pub fn inject_codex_chat_prompt_cache_key(
+    provider: &Provider,
+    chat_body: &mut JsonValue,
+    explicit_key: Option<&str>,
+    client_session_id: Option<&str>,
+) -> bool {
+    if !should_send_codex_chat_prompt_cache_key(provider) {
+        return false;
+    }
+
+    let key = explicit_key
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .or_else(|| {
+            client_session_id
+                .map(str::trim)
+                .filter(|session_id| !session_id.is_empty())
+        });
+    let Some(key) = key else {
+        return false;
+    };
+
+    chat_body["prompt_cache_key"] = JsonValue::String(key.to_string());
+    true
+}
+
 /// Whether this Codex provider's real upstream speaks the native Anthropic
 /// Messages protocol (`/v1/messages`). The local Codex client always talks to CC
 /// Switch through the Responses API, so CC Switch bridges Responses ⇄ Anthropic.
@@ -131,6 +206,14 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
     ) && codex_provider_uses_anthropic(provider)
 }
 
+/// The single built-in official Codex provider.  Unlike managed Codex OAuth
+/// providers used by Claude, this route receives authentication from the
+/// calling Codex client (`requires_openai_auth = true`).
+pub fn is_codex_official_provider(provider: &Provider) -> bool {
+    provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID
+        && provider.category.as_deref() == Some("official")
+}
+
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
 /// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
 /// generated catalog never disagrees with the routed transform. A provider whose
@@ -142,6 +225,9 @@ pub fn resolve_codex_catalog_tool_profile(
     provider: &Provider,
 ) -> crate::codex_config::CodexCatalogToolProfile {
     use crate::codex_config::CodexCatalogToolProfile;
+    if is_codex_official_provider(provider) {
+        return CodexCatalogToolProfile::NativeResponses;
+    }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
     }
@@ -559,6 +645,10 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        if is_codex_official_provider(provider) {
+            return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
+        }
+
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -704,6 +794,124 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    #[test]
+    fn official_provider_uses_fixed_chatgpt_backend_without_stored_key() {
+        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+        let adapter = CodexAdapter::new();
+
+        assert!(is_codex_official_provider(&provider));
+        assert_eq!(
+            adapter
+                .extract_base_url(&provider)
+                .expect("official base url"),
+            "https://chatgpt.com/backend-api/codex"
+        );
+        assert!(adapter.extract_auth(&provider).is_none());
+        assert_eq!(
+            adapter.build_url(
+                "https://chatgpt.com/backend-api/codex",
+                "/responses/compact"
+            ),
+            "https://chatgpt.com/backend-api/codex/responses/compact"
+        );
+    }
+
+    #[test]
+    fn prompt_cache_routing_auto_enables_known_upstreams_only() {
+        let kimi = create_provider(json!({
+            "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.kimi.com/coding/v1"
+wire_api = "responses"
+"#
+        }));
+        let openai = create_provider(json!({
+            "base_url": "https://api.openai.com/v1"
+        }));
+        let unknown = create_provider(json!({
+            "base_url": "https://strict.example.com/v1"
+        }));
+
+        assert!(should_send_codex_chat_prompt_cache_key(&kimi));
+        assert!(should_send_codex_chat_prompt_cache_key(&openai));
+        assert!(!should_send_codex_chat_prompt_cache_key(&unknown));
+    }
+
+    #[test]
+    fn prompt_cache_routing_user_override_wins_over_auto_detection() {
+        let mut kimi = create_provider(json!({
+            "base_url": "https://api.kimi.com/coding/v1"
+        }));
+        kimi.meta = Some(crate::provider::ProviderMeta {
+            prompt_cache_routing: Some("disabled".to_string()),
+            ..Default::default()
+        });
+        assert!(!should_send_codex_chat_prompt_cache_key(&kimi));
+
+        let mut unknown = create_provider(json!({
+            "base_url": "https://strict.example.com/v1"
+        }));
+        unknown.meta = Some(crate::provider::ProviderMeta {
+            prompt_cache_routing: Some("enabled".to_string()),
+            ..Default::default()
+        });
+        assert!(should_send_codex_chat_prompt_cache_key(&unknown));
+    }
+
+    #[test]
+    fn prompt_cache_key_prefers_explicit_key_then_real_session() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.kimi.com/coding/v1"
+        }));
+        let mut explicit_body = json!({ "model": "kimi-for-coding" });
+        assert!(inject_codex_chat_prompt_cache_key(
+            &provider,
+            &mut explicit_body,
+            Some("request-key"),
+            Some("session-key"),
+        ));
+        assert_eq!(explicit_body["prompt_cache_key"], "request-key");
+
+        let mut session_body = json!({ "model": "kimi-for-coding" });
+        assert!(inject_codex_chat_prompt_cache_key(
+            &provider,
+            &mut session_body,
+            None,
+            Some("session-key"),
+        ));
+        assert_eq!(session_body["prompt_cache_key"], "session-key");
+    }
+
+    #[test]
+    fn prompt_cache_key_is_not_injected_without_real_session_or_support() {
+        let kimi = create_provider(json!({
+            "base_url": "https://api.kimi.com/coding/v1"
+        }));
+        let mut no_session_body = json!({ "model": "kimi-for-coding" });
+        assert!(!inject_codex_chat_prompt_cache_key(
+            &kimi,
+            &mut no_session_body,
+            None,
+            None,
+        ));
+        assert!(no_session_body.get("prompt_cache_key").is_none());
+
+        let unknown = create_provider(json!({
+            "base_url": "https://strict.example.com/v1"
+        }));
+        let mut unsupported_body = json!({ "model": "other" });
+        assert!(!inject_codex_chat_prompt_cache_key(
+            &unknown,
+            &mut unsupported_body,
+            Some("request-key"),
+            Some("session-key"),
+        ));
+        assert!(unsupported_body.get("prompt_cache_key").is_none());
     }
 
     #[test]

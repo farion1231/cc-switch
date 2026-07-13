@@ -181,7 +181,9 @@
   },
   "codex": {
     "needsRouting": "需要路由",
-    "noRoutingSupport": "不支持路由"
+    "noRoutingSupport": "不支持路由",
+    "officialRouting": "官方账号路由",
+    "nativeLogin": "Codex 登录"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供应商使用应用内置的 1P 登录，无需配置 API Key 和接口地址。",
@@ -299,11 +301,6 @@
       "message": "用量查询需要配置专用的查询脚本或 API 参数，请确保您已从供应商处获取相关信息。\n\n如不确定如何配置，请先查阅供应商文档。",
       "confirm": "我已了解，继续配置"
     },
-    "streamCheck": {
-      "title": "模型健康检测",
-      "message": "健康检测通过直接发送 API 请求来测试供应商连通性，以下情况可能导致检测失败：\n\n• 官方供应商（使用 OAuth 登录，无独立 API Key）\n• 部分中转服务（会校验请求是否来自 Claude Code CLI）\n• AWS Bedrock（使用 IAM 签名认证）\n\n检测失败不代表供应商不可用，仅表示无法通过独立请求验证。请以应用内的实际情况为准。",
-      "confirm": "我已了解，继续检测"
-    },
     "autoSync": {
       "title": "开启自动同步",
       "message": "开启自动同步后，每次数据库变更都会自动上传到 WebDAV 服务器。\n\n这可能会产生较高的网络流量消耗，请确保您的网络环境和 WebDAV 服务支持频繁的数据传输。",
@@ -344,9 +341,9 @@
         "running": "运行中",
         "stopped": "已停止"
       },
-      "modelTest": {
-        "title": "模型测试配置",
-        "description": "配置模型测试使用的默认模型和提示词"
+      "connectivityCheck": {
+        "title": "连通检测配置",
+        "description": "配置供应商地址探测的超时、重试和较慢阈值"
       },
       "failover": {
         "title": "自动故障转移",
@@ -385,8 +382,8 @@
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次",
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
-        "mediaHeuristic": "启发式纯文本模型识别",
-        "mediaHeuristicDescription": "发送前按内置模型名列表预测性剥离图片。关闭后仅保留「已声明纯文本」与「上游报错兜底」两条事实驱动路径，避免内置列表把多模态模型误判为纯文本而静默丢图"
+        "mediaHeuristic": "纯文本模型预判",
+        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",
@@ -395,10 +392,7 @@
         "thinkingOptimizer": "Thinking 优化",
         "thinkingOptimizerDescription": "自动为 Opus/Sonnet 启用 Adaptive Thinking，为旧模型注入 Extended Thinking",
         "cacheInjection": "Cache 注入",
-        "cacheInjectionDescription": "自动在请求关键位置注入 Cache 断点，减少重复 token 计费",
-        "cacheTtl": "Cache TTL",
-        "cacheTtl5m": "5 分钟",
-        "cacheTtl1h": "1 小时"
+        "cacheInjectionDescription": "自动在请求关键位置注入标准 5 分钟 Cache 断点，减少重复 token 计费"
       },
       "logConfig": {
         "title": "日志管理",
@@ -683,8 +677,8 @@
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
     "skipClaudeOnboardingDescription": "开启后跳过 Claude Code 初次安装确认",
     "codexAuth": "Codex 应用增强",
-    "preserveCodexOfficialAuthOnSwitch": "切换第三方时保留官方登录",
-    "preserveCodexOfficialAuthOnSwitchDescription": "开启后可以在使用第三方 API 的时候使用 Codex 应用的官方插件、手机远程操作等功能",
+    "preserveCodexOfficialAuthOnSwitch": "非接管切换时保留官方登录",
+    "preserveCodexOfficialAuthOnSwitchDescription": "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留",
     "unifyCodexSessionHistory": "统一 Codex 会话历史",
     "unifyCodexSessionHistoryDescription": "开启后，官方订阅将以共享的 custom 供应商标识运行，官方与第三方会话出现在同一历史列表中，并可选择把现有官方会话一并迁入（迁移前自动备份）。关闭开关时可按备份恢复迁入的会话。注意：跨供应商继续旧会话时，对方后端可能无法解密会话中的 encrypted_content 推理内容，导致继续失败",
     "unifyCodexHistoryRestoreCompleted": "已按备份还原官方会话历史（{{files}} 个会话文件、{{rows}} 条索引记录）",
@@ -697,7 +691,9 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "showProfileSwitcher": "显示项目切换",
+      "showProfileSwitcherDescription": "在主页面顶部显示项目切换入口"
     },
     "skillStorage": {
       "title": "Skills 存储位置",
@@ -1006,6 +1002,7 @@
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 4.8，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
       "code0": "code0.ai 是面向开发者的 AI 编程服务平台，支持 Claude Code、Codex、Gemini。CC Switch 用户专属福利：通过官网联系客服即可领取测试额度！",
       "nekocode": "NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明、按量计费。CC Switch 用户专享 9 折：通过上方链接注册，充值时输入优惠码 cc-switch 即享 9 折优惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
@@ -1238,15 +1235,6 @@
     "empty": "暂无端点"
   },
   "providerAdvanced": {
-    "testConfig": "模型测试配置",
-    "useCustomConfig": "使用单独配置",
-    "testConfigDesc": "为此供应商配置单独的模型测试参数，不启用时使用全局配置。",
-    "testModel": "测试模型",
-    "testModelPlaceholder": "留空使用全局配置",
-    "timeoutSecs": "超时时间（秒）",
-    "testPrompt": "测试提示词",
-    "degradedThreshold": "降级阈值（毫秒）",
-    "maxRetries": "最大重试次数",
     "pricingConfig": "计费配置",
     "useCustomPricing": "使用单独配置",
     "pricingConfigDesc": "为此供应商配置单独的计费参数，不启用时使用全局默认配置。",
@@ -1296,6 +1284,11 @@
     "maxOutputTokensLabel": "最大输出 tokens",
     "maxOutputTokensPlaceholder": "留空则使用默认 8192",
     "maxOutputTokensHint": "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+    "promptCacheRoutingLabel": "提示词缓存路由",
+    "promptCacheRoutingAuto": "自动（推荐）",
+    "promptCacheRoutingEnabled": "开启",
+    "promptCacheRoutingDisabled": "关闭",
+    "promptCacheRoutingHint": "自动模式仅对已确认兼容的上游发送 prompt_cache_key；开启可用于其他兼容网关，关闭可避免严格网关因未知字段返回 400。只使用客户端提供的稳定会话 ID。",
     "upstreamModelName": "上游模型名称",
     "upstreamModelNameHint": "Chat 格式下这里填写真实上游模型；路由会把 Codex 的 Responses 请求转换为 Chat Completions 并保持该模型。",
     "modelNamePlaceholder": "例如: gpt-5-codex",
@@ -1307,6 +1300,11 @@
     "autoCompactLimitHint": "上下文 token 数达到此阈值时自动压缩历史",
     "modelMetadataAdvanced": "模型元数据高级选项",
     "modelMetadataAdvancedHint": "用于未知模型的 Codex 元数据覆盖；清空字段会从 config.toml 删除对应配置。",
+    "defaultModelLabel": "默认模型",
+    "defaultModelPlaceholder": "例如: gpt-5.6",
+    "defaultModelHint": "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
+    "defaultModelNotInCatalog": "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
+    "addToModelMapping": "加入映射",
     "modelMappingTitle": "模型映射",
     "modelMappingHint": "生成 Codex model_catalog_json，让 /model 命令显示这些第三方模型名；表中条目按填写内容原样保存。修改后需要重启 Codex 才能刷新模型列表。",
     "addCatalogModel": "添加模型",
@@ -2443,9 +2441,6 @@
   "agents": {
     "title": "智能体"
   },
-  "modelTest": {
-    "testProvider": "测试模型"
-  },
   "health": {
     "operational": "正常",
     "degraded": "降级",
@@ -2653,35 +2648,13 @@
     "unreachable": "{{providerName}} 无法连通: {{message}}",
     "unreachableHint": "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
     "connectivityNote": "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
-    "configSaved": "健康检查配置已保存",
+    "configSaved": "连通检测配置已保存",
     "configSaveFailed": "保存失败",
-    "testModels": "测试模型",
-    "claudeModel": "Claude 模型",
-    "codexModel": "Codex 模型",
-    "geminiModel": "Gemini 模型",
     "checkParams": "检查参数",
     "timeout": "超时时间（秒）",
     "maxRetries": "最大重试次数",
-    "degradedThreshold": "降级阈值（毫秒）",
-    "testPrompt": "检查提示词",
-    "operational": "{{providerName}} 运行正常 ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} 响应较慢 ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} 检查失败: {{message}}",
-    "rejected": "{{providerName}} 检查被拒: {{message}}",
-    "error": "{{providerName}} 检查出错: {{error}}",
-    "modelNotFound": "{{providerName}} 测试模型 {{model}} 不存在或已下架",
-    "modelNotFoundHint": "该模型可能已被供应商弃用。请在\"模型测试配置\"中更新默认测试模型。",
-    "quotaExceeded": "{{providerName}} Coding Plan 额度已用尽",
-    "quotaExceededHint": "百度千帆返回了 Coding Plan 超额错误。请等待 5 小时/每周/每月额度刷新，或在千帆控制台切换套餐。",
-    "httpHint": {
-      "400": "供应商拒绝了请求格式。健康检查的探测格式可能与实际使用不同。",
-      "401": "API Key 可能无效，或供应商使用 OAuth 等认证方式。检查失败不代表实际不可用。",
-      "402": "账户配额或计费问题。",
-      "403": "供应商拒绝了此请求。部分供应商会校验客户端身份，检查失败但实际使用可能正常。",
-      "404": "接口地址不存在，请检查 Base URL 和 API 路径。",
-      "429": "请求频率过高，请稍后重试。",
-      "5xx": "供应商内部错误，通常是临时问题。"
-    }
+    "degradedThreshold": "较慢阈值（毫秒）",
+    "error": "{{providerName}} 检查出错: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由总开关",

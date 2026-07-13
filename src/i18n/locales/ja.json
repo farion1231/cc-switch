@@ -181,7 +181,9 @@
   },
   "codex": {
     "needsRouting": "ルーティングが必要",
-    "noRoutingSupport": "ルーティング非対応"
+    "noRoutingSupport": "ルーティング非対応",
+    "officialRouting": "公式アカウントルーティング",
+    "nativeLogin": "Codex ログイン"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop の公式プロバイダーは内蔵の 1P サインインを使用します。API キーやエンドポイントの設定は不要です。",
@@ -299,11 +301,6 @@
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
       "confirm": "理解しました、設定する"
     },
-    "streamCheck": {
-      "title": "モデルヘルスチェック",
-      "message": "ヘルスチェックは API リクエストを直接送信してプロバイダーの接続性をテストします。以下の場合、チェックが失敗する可能性があります：\n\n• 公式プロバイダー（OAuth ログイン使用、独立した API キーなし）\n• 一部の中継サービス（リクエストが Claude Code CLI からのものか検証）\n• AWS Bedrock（IAM 署名認証を使用）\n\nチェック失敗はプロバイダーが使用不能であることを意味しません。独立したリクエストでの検証ができないことを示すだけです。アプリ内の実際の動作を基準にしてください。",
-      "confirm": "理解しました、続行する"
-    },
     "autoSync": {
       "title": "自動同期を有効にする",
       "message": "自動同期を有効にすると、データベースの変更ごとに WebDAV サーバーへ自動アップロードされます。\n\nネットワークトラフィックが大幅に増加する可能性があります。ネットワーク環境と WebDAV サービスが頻繁なデータ転送に対応できることをご確認ください。",
@@ -344,9 +341,9 @@
         "running": "実行中",
         "stopped": "停止中"
       },
-      "modelTest": {
-        "title": "モデルテスト設定",
-        "description": "モデルテストで使用するデフォルトモデルとプロンプトを設定"
+      "connectivityCheck": {
+        "title": "接続チェック設定",
+        "description": "プロバイダー接続チェックのタイムアウト、リトライ、低速判定しきい値を設定"
       },
       "failover": {
         "title": "自動フェイルオーバー",
@@ -385,8 +382,8 @@
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
         "mediaFallback": "非対応画像フォールバック",
         "mediaFallbackDescription": "プロバイダーが画像入力に対応していない場合（テキストのみの能力が宣言されている、または上流が画像非対応エラーを返した場合）、画像ブロックを [Unsupported Image] マーカーに自動置換し、会話を中断させません",
-        "mediaHeuristic": "ヒューリスティックなテキスト専用モデル判定",
-        "mediaHeuristicDescription": "送信前に内蔵モデル名リストに基づいて画像を予測的に削除します。オフにすると「宣言済みテキスト専用」と「上流エラー時のフォールバック」のみが残り、内蔵リストがマルチモーダルモデルをテキスト専用と誤判定して画像を静かに削除するのを防ぎます"
+        "mediaHeuristic": "テキスト専用モデルの事前判定",
+        "mediaHeuristicDescription": "送信前に、内蔵の確認済みテキスト専用モデル登録に基づいて画像を除去します。オフにしても無効になるのはプロキシの登録ベース事前処理だけで、宣言済みテキスト専用モデルの処理と上流エラー時のフォールバックは残り、Codex モデルカタログの能力宣言は変わりません"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",
@@ -395,10 +392,7 @@
         "thinkingOptimizer": "Thinking 最適化",
         "thinkingOptimizerDescription": "Opus/Sonnet に Adaptive Thinking を自動的に有効化し、レガシーモデルに Extended Thinking を注入",
         "cacheInjection": "Cache 注入",
-        "cacheInjectionDescription": "リクエストの重要な位置に Cache ブレークポイントを自動注入し、重複トークンの課金を削減",
-        "cacheTtl": "Cache TTL",
-        "cacheTtl5m": "5 分",
-        "cacheTtl1h": "1 時間"
+        "cacheInjectionDescription": "リクエストの重要な位置に標準の 5 分間 Cache ブレークポイントを自動注入し、重複トークンの課金を削減"
       },
       "logConfig": {
         "title": "ログ管理",
@@ -683,8 +677,8 @@
     "skipClaudeOnboarding": "Claude Code の初回確認をスキップ",
     "skipClaudeOnboardingDescription": "オンにすると Claude Code の初回インストール確認をスキップします",
     "codexAuth": "Codex アプリ拡張",
-    "preserveCodexOfficialAuthOnSwitch": "サードパーティ切替時に公式ログインを保持",
-    "preserveCodexOfficialAuthOnSwitchDescription": "オンにすると、サードパーティ API を使用する際に Codex アプリの公式プラグインやスマホからのリモート操作などの機能を利用できます。",
+    "preserveCodexOfficialAuthOnSwitch": "直接切替時に公式ログインを保持",
+    "preserveCodexOfficialAuthOnSwitchDescription": "ローカルルーティングが無効な場合のサードパーティ切替を制御します。ルーティング接管中は常に Codex の公式ログインを保持します。",
     "unifyCodexSessionHistory": "Codex セッション履歴を統一",
     "unifyCodexSessionHistoryDescription": "オンにすると、公式サブスクリプションも共有の custom プロバイダー ID で動作し、公式とサードパーティのセッションが同じ履歴リストに表示されます。既存の公式セッションの移行も選択できます（移行前に自動バックアップ）。オフにする際はバックアップから復元できます。注意：プロバイダーをまたいで古いセッションを再開すると、encrypted_content の推論内容を相手のバックエンドが復号できず、再開に失敗する場合があります。",
     "unifyCodexHistoryRestoreCompleted": "バックアップから公式セッション履歴を復元しました（セッションファイル {{files}} 件、インデックス {{rows}} 行）",
@@ -697,7 +691,9 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "showProfileSwitcher": "プロジェクト切り替えを表示",
+      "showProfileSwitcherDescription": "メイン画面上部にプロジェクト切り替えを表示します"
     },
     "skillStorage": {
       "title": "スキル保存場所",
@@ -1006,6 +1002,7 @@
     "officialHint": "💡 公式プロバイダーはブラウザログインで、API Key は不要です",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
+      "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 4.8、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
       "code0": "code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini に対応。CC Switch ユーザー限定特典：公式サイトからサポートに連絡してテストクレジットを受け取れます！",
       "nekocode": "NekoCode は Claude や Codex などの AI モデルに対応した、安定・高効率で信頼性の高い API 中継サービスを提供します。明瞭な従量課金制。CC Switch ユーザー限定 10%オフ：上のリンクから登録し、チャージ時にクーポンコード cc-switch を入力すると 10%オフ！",
       "packycode": "PackyCode は CC Switch の公式パートナーです。登録後チャージ時に \"cc-switch\" を入力すると 10% オフ",
@@ -1238,15 +1235,6 @@
     "empty": "エンドポイントがありません"
   },
   "providerAdvanced": {
-    "testConfig": "モデルテスト設定",
-    "useCustomConfig": "個別設定を使用",
-    "testConfigDesc": "このプロバイダーに個別のモデルテストパラメータを設定します。無効の場合はグローバル設定を使用します。",
-    "testModel": "テストモデル",
-    "testModelPlaceholder": "空白の場合はグローバル設定を使用",
-    "timeoutSecs": "タイムアウト（秒）",
-    "testPrompt": "テストプロンプト",
-    "degradedThreshold": "低下閾値（ミリ秒）",
-    "maxRetries": "最大リトライ回数",
     "pricingConfig": "課金設定",
     "useCustomPricing": "個別設定を使用",
     "pricingConfigDesc": "このプロバイダーに個別の課金パラメータを設定します。無効の場合はグローバル設定を使用します。",
@@ -1296,6 +1284,11 @@
     "maxOutputTokensLabel": "最大出力トークン",
     "maxOutputTokensPlaceholder": "空欄の場合はデフォルトの 8192 を使用",
     "maxOutputTokensHint": "Codex は model_max_output_tokens をリクエストボディに含めないため、デフォルト上限 8192 では長い回答や深い思考時に切り詰められることがあります（stop_reason=max_tokens）。この値は Anthropic 経路で max_tokens を上書きします。モデル／ゲートウェイの実際の出力上限を超えると 400 になる場合があります。空欄でデフォルトの 8192 を使用します。",
+    "promptCacheRoutingLabel": "プロンプトキャッシュルーティング",
+    "promptCacheRoutingAuto": "自動（推奨）",
+    "promptCacheRoutingEnabled": "有効",
+    "promptCacheRoutingDisabled": "無効",
+    "promptCacheRoutingHint": "自動モードでは、互換性を確認済みの上流にのみ prompt_cache_key を送信します。他の互換ゲートウェイでは有効にし、未知のフィールドを 400 で拒否する厳格なゲートウェイでは無効にしてください。クライアントが提供した安定したセッション ID のみを使用します。",
     "upstreamModelName": "上流モデル名",
     "upstreamModelNameHint": "Chat 形式ではここに実際の上流モデルを入力します。ルーティングで Codex の Responses リクエストを Chat Completions に変換し、このモデルを維持します。",
     "modelNamePlaceholder": "例: gpt-5-codex",
@@ -1307,6 +1300,11 @@
     "autoCompactLimitHint": "コンテキストトークン数がこのしきい値に達すると履歴を自動圧縮",
     "modelMetadataAdvanced": "モデルメタデータ詳細オプション",
     "modelMetadataAdvancedHint": "未知のモデル向けに Codex メタデータを上書きします。空にすると対応する config.toml 設定を削除します。",
+    "defaultModelLabel": "デフォルトモデル",
+    "defaultModelPlaceholder": "例: gpt-5.6",
+    "defaultModelHint": "Codex がデフォルトでリクエストするモデルです。プリセットの更新を待たずにいつでも変更できます。空欄のままモデルマッピングを設定している場合は、マッピングの先頭行が使われます。",
+    "defaultModelNotInCatalog": "このモデルはモデルマッピングにないため、Codex の /model メニューには表示されません（直接リクエストは有効です）。",
+    "addToModelMapping": "マッピングに追加",
     "modelMappingTitle": "モデルマッピング",
     "modelMappingHint": "Codex model_catalog_json を生成し、/model コマンドでこれらの第三者モデル名を表示できるようにします。リストの内容はそのまま保存されます。変更後、モデルリストを更新するには Codex の再起動が必要です。",
     "addCatalogModel": "モデルを追加",
@@ -2443,9 +2441,6 @@
   "agents": {
     "title": "エージェント"
   },
-  "modelTest": {
-    "testProvider": "モデルテスト"
-  },
   "health": {
     "operational": "正常",
     "degraded": "低下",
@@ -2653,35 +2648,13 @@
     "unreachable": "{{providerName}} に接続できません: {{message}}",
     "unreachableHint": "接続を確立できませんでした（DNS / 接続 / TLS / タイムアウト）。base_url とネットワークを確認してください。",
     "connectivityNote": "接続チェックはプロバイダーのアドレスに到達できるかを確認するだけで、実際のモデルリクエストは送信しません。何らかの応答があれば「到達可能」とみなされますが、認証やモデル設定が正しいことを保証するものではありません。",
-    "configSaved": "ヘルスチェック設定を保存しました",
+    "configSaved": "接続チェック設定を保存しました",
     "configSaveFailed": "保存に失敗しました",
-    "testModels": "テストモデル",
-    "claudeModel": "Claude モデル",
-    "codexModel": "Codex モデル",
-    "geminiModel": "Gemini モデル",
     "checkParams": "チェックパラメーター",
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
-    "degradedThreshold": "劣化しきい値（ミリ秒）",
-    "testPrompt": "テストプロンプト",
-    "operational": "{{providerName}} は正常に動作しています ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} の応答が遅いです ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} のチェックに失敗しました: {{message}}",
-    "rejected": "{{providerName}} のチェックが拒否されました: {{message}}",
-    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
-    "modelNotFound": "{{providerName}} のテストモデル {{model}} は存在しないか廃止されています",
-    "modelNotFoundHint": "このモデルはプロバイダーにより廃止された可能性があります。「モデルテスト設定」でデフォルトのテストモデルを更新してください。",
-    "quotaExceeded": "{{providerName}} の Coding Plan 利用枠を超過しました",
-    "quotaExceededHint": "Baidu Qianfan が Coding Plan の利用枠超過エラーを返しました。5時間・週次・月次の利用枠更新を待つか、Qianfan コンソールでプランを確認してください。",
-    "httpHint": {
-      "400": "リクエスト形式が拒否されました。ヘルスチェックの形式は実際の使用と異なる場合があります。",
-      "401": "APIキーが無効か、OAuthなどの認証方式を使用しています。チェック失敗は実際に使えないことを意味しません。",
-      "402": "アカウントの利用枠または請求の問題です。",
-      "403": "プロバイダーがリクエストを拒否しました。実際の使用では正常に動作する場合があります。",
-      "404": "エンドポイントが見つかりません。Base URLとAPIパスを確認してください。",
-      "429": "リクエストが多すぎます。しばらくしてからお試しください。",
-      "5xx": "プロバイダーの内部エラーです。一時的な問題の可能性が高いです。"
-    }
+    "degradedThreshold": "低速判定しきい値（ミリ秒）",
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "ルーティング総スイッチ",

@@ -1183,7 +1183,7 @@ mod tests {
     }
 
     fn proto_varint_field(field: u32, value: u64) -> Vec<u8> {
-        let mut out = proto_varint(((field as u64) << 3) | 0);
+        let mut out = proto_varint((field as u64) << 3);
         out.extend(proto_varint(value));
         out
     }
