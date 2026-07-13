@@ -40,6 +40,7 @@ export interface PluginMarketplace {
   sourceType?: string;
   source?: string;
   root?: string;
+  supportsRefresh: boolean;
 }
 
 export interface PluginActionResult {

@@ -89,6 +89,7 @@ pub struct PluginMarketplace {
     pub source_type: Option<String>,
     pub source: Option<String>,
     pub root: Option<String>,
+    pub supports_refresh: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,7 +185,19 @@ async fn run_cli(app: PluginApp, args: &[&str], cwd: Option<&str>) -> Result<Str
     if output.status.success() {
         Ok(stdout)
     } else {
-        Err(if stderr.is_empty() { stdout } else { stderr })
+        let message = if stderr.is_empty() { stdout } else { stderr };
+        Err(concise_cli_error(&message))
+    }
+}
+
+fn concise_cli_error(message: &str) -> String {
+    let lowercase = message.to_ascii_lowercase();
+    let end = lowercase.find("stack backtrace:").unwrap_or(message.len());
+    let summary = message[..end].trim();
+    if summary.is_empty() {
+        message.trim().to_string()
+    } else {
+        summary.to_string()
     }
 }
 
@@ -319,14 +332,20 @@ pub fn parse_marketplaces_json(
         .filter_map(|value| {
             let name = string_field(value, &["name"])?;
             let nested_source = value.get("marketplaceSource");
+            let source_type = string_field(value, &["sourceType", "source"])
+                .or_else(|| nested_source.and_then(|s| string_field(s, &["sourceType"])));
+            let supports_refresh = app == PluginApp::Claude
+                || source_type
+                    .as_deref()
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("git"));
             Some(PluginMarketplace {
                 name,
                 app,
-                source_type: string_field(value, &["sourceType", "source"])
-                    .or_else(|| nested_source.and_then(|s| string_field(s, &["sourceType"]))),
+                source_type,
                 source: string_field(value, &["url", "repo"])
                     .or_else(|| nested_source.and_then(|s| string_field(s, &["source"]))),
                 root: string_field(value, &["root", "installLocation"]),
+                supports_refresh,
             })
         })
         .collect())
@@ -446,6 +465,16 @@ pub async fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActio
 
 pub async fn refresh_marketplace(app: PluginApp, name: &str) -> Result<PluginActionResult, String> {
     validate_nonempty(name, "marketplace name")?;
+    let marketplace = list_marketplaces(app)
+        .await?
+        .into_iter()
+        .find(|marketplace| marketplace.name == name)
+        .ok_or_else(|| format!("Marketplace not found: {name}"))?;
+    if !marketplace.supports_refresh {
+        return Err(format!(
+            "Marketplace '{name}' is local or built in and cannot be refreshed manually"
+        ));
+    }
     let verb = if app == PluginApp::Codex {
         "upgrade"
     } else {
@@ -671,6 +700,51 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "ponytail");
         assert_eq!(parsed[0].source.as_deref(), Some("DietrichGebert/ponytail"));
+        assert!(parsed[0].supports_refresh);
+    }
+
+    #[test]
+    fn codex_only_refreshes_git_marketplaces() {
+        let marketplaces = serde_json::json!({
+            "marketplaces": [
+                {
+                    "name": "openai-bundled",
+                    "marketplaceSource": {
+                        "sourceType": "local",
+                        "source": "/tmp/openai-bundled"
+                    }
+                },
+                {
+                    "name": "openai-curated",
+                    "root": "/tmp/plugins"
+                },
+                {
+                    "name": "ponytail",
+                    "marketplaceSource": {
+                        "sourceType": "git",
+                        "source": "https://github.com/DietrichGebert/ponytail.git"
+                    }
+                }
+            ]
+        })
+        .to_string();
+
+        let parsed = parse_marketplaces_json(PluginApp::Codex, &marketplaces).unwrap();
+
+        assert!(!parsed[0].supports_refresh);
+        assert!(!parsed[1].supports_refresh);
+        assert!(parsed[2].supports_refresh);
+    }
+
+    #[test]
+    fn cli_errors_hide_rust_backtraces() {
+        let error = concise_cli_error(
+            "Error: marketplace is not configured as a Git marketplace\nStack backtrace:\n0: frame",
+        );
+        assert_eq!(
+            error,
+            "Error: marketplace is not configured as a Git marketplace"
+        );
     }
 
     #[test]

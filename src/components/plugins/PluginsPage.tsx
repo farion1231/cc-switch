@@ -374,14 +374,14 @@ export default function PluginsPage() {
       </div>
 
       <Dialog open={marketplacesOpen} onOpenChange={setMarketplacesOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" zIndex="alert">
           <DialogHeader>
             <DialogTitle>{t("plugins.marketplaces.title")}</DialogTitle>
             <DialogDescription>
               {t("plugins.marketplaces.description")}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-4 overflow-y-auto px-6 py-4">
+          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto px-6 py-4">
             <Tabs
               value={marketplaceApp}
               onValueChange={(value) => setMarketplaceApp(value as PluginApp)}
@@ -428,20 +428,22 @@ export default function PluginsPage() {
                         marketplace.sourceType}
                     </div>
                   </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    title={t("plugins.marketplaces.refresh")}
-                    onClick={() =>
-                      void run({
-                        action: "refreshMarketplace",
-                        app: marketplace.app,
-                        name: marketplace.name,
-                      })
-                    }
-                  >
-                    <RefreshCw className="size-4" />
-                  </Button>
+                  {marketplace.supportsRefresh && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title={t("plugins.marketplaces.refresh")}
+                      onClick={() =>
+                        void run({
+                          action: "refreshMarketplace",
+                          app: marketplace.app,
+                          name: marketplace.name,
+                        })
+                      }
+                    >
+                      <RefreshCw className="size-4" />
+                    </Button>
+                  )}
                   <Button
                     size="icon"
                     variant="ghost"

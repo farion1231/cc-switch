@@ -8,6 +8,7 @@ const mutationMock = vi.hoisted(() => ({
   mutateAsync: vi.fn(),
 }));
 const pluginsMock = vi.hoisted(() => vi.fn());
+const marketplacesMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/usePlugins", () => ({
   usePluginStatuses: () => ({
@@ -17,7 +18,7 @@ vi.mock("@/hooks/usePlugins", () => ({
     ],
   }),
   usePlugins: pluginsMock,
-  usePluginMarketplaces: () => ({ data: [] }),
+  usePluginMarketplaces: marketplacesMock,
   usePluginMutation: () => mutationMock,
 }));
 
@@ -62,6 +63,7 @@ const projectInstalledClaudePlugin = {
 describe("PluginsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    marketplacesMock.mockReturnValue({ data: [] });
     pluginsMock.mockImplementation((app: string, includeAvailable: boolean) => {
       if (includeAvailable) return { data: [], isLoading: false };
       if (app === "claude") {
@@ -137,14 +139,60 @@ describe("PluginsPage", () => {
     await user.click(
       screen.getByRole("button", { name: "plugins.marketplaces.title" }),
     );
-    const dialog = within(screen.getByRole("dialog"));
+    const dialogElement = screen.getByRole("dialog");
+    const dialog = within(dialogElement);
     const codex = dialog.getByRole("tab", { name: "plugins.apps.codex" });
     const claude = dialog.getByRole("tab", { name: "plugins.apps.claude" });
     expect(codex).toHaveAttribute("data-state", "active");
+    expect(dialogElement).toHaveClass("z-[60]");
 
     await user.click(claude);
 
     expect(claude).toHaveAttribute("data-state", "active");
     expect(codex).toHaveAttribute("data-state", "inactive");
+  });
+
+  it("only offers refresh for supported marketplaces", async () => {
+    marketplacesMock.mockImplementation((app: string) => ({
+      data:
+        app === "codex"
+          ? [
+              {
+                name: "openai-bundled",
+                app: "codex",
+                sourceType: "local",
+                root: "/tmp/openai-bundled",
+                supportsRefresh: false,
+              },
+              {
+                name: "openai-curated",
+                app: "codex",
+                root: "/tmp/plugins",
+                supportsRefresh: false,
+              },
+              {
+                name: "ponytail",
+                app: "codex",
+                sourceType: "git",
+                source: "https://github.com/DietrichGebert/ponytail.git",
+                supportsRefresh: true,
+              },
+            ]
+          : [],
+    }));
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: "plugins.marketplaces.title" }),
+    );
+
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getAllByTitle("plugins.marketplaces.refresh")).toHaveLength(
+      1,
+    );
+    expect(dialog.getByText("openai-bundled")).toBeInTheDocument();
+    expect(dialog.getByText("openai-curated")).toBeInTheDocument();
+    expect(dialog.getByText("ponytail")).toBeInTheDocument();
   });
 });
