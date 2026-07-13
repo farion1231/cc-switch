@@ -222,10 +222,7 @@ impl StreamCheckService {
         timeout: std::time::Duration,
         custom_ua: Option<HeaderValue>,
     ) -> Result<u16, AppError> {
-        let url = base_url.trim();
-        if url.is_empty() {
-            return Err(AppError::Message("base_url 为空".to_string()));
-        }
+        let url = Self::normalize_probe_url(base_url)?;
 
         let mut req = client
             .get(url)
@@ -241,6 +238,24 @@ impl StreamCheckService {
             Ok(resp) => Ok(resp.status().as_u16()),
             Err(e) => Err(Self::map_request_error(e)),
         }
+    }
+
+    /// Probe API base paths as directories. Some upstreams redirect `/v1` to
+    /// an insecure `http://.../v1/`; following that second hop can time out on
+    /// networks that already reached the original HTTPS endpoint successfully.
+    fn normalize_probe_url(base_url: &str) -> Result<String, AppError> {
+        let base_url = base_url.trim();
+        if base_url.is_empty() {
+            return Err(AppError::Message("base_url 为空".to_string()));
+        }
+
+        let mut url = url::Url::parse(base_url)
+            .map_err(|e| AppError::Message(format!("Invalid base_url: {e}")))?;
+        if !url.path().ends_with('/') {
+            let directory_path = format!("{}/", url.path());
+            url.set_path(&directory_path);
+        }
+        Ok(url.into())
     }
 
     /// 将探测原始结果包装成 `StreamCheckResult`。
@@ -472,6 +487,23 @@ mod tests {
         let r = StreamCheckService::build_result(Ok(200), 3000, 1500);
         assert!(r.success);
         assert_eq!(r.status, HealthStatus::Degraded);
+    }
+
+    #[test]
+    fn test_normalize_probe_url_adds_directory_slash_without_losing_url_parts() {
+        assert_eq!(
+            StreamCheckService::normalize_probe_url("https://api.minimaxi.com/v1").unwrap(),
+            "https://api.minimaxi.com/v1/"
+        );
+        assert_eq!(
+            StreamCheckService::normalize_probe_url("https://localhost:8443/api?region=cn")
+                .unwrap(),
+            "https://localhost:8443/api/?region=cn"
+        );
+        assert_eq!(
+            StreamCheckService::normalize_probe_url("https://api.minimax.io/v1/").unwrap(),
+            "https://api.minimax.io/v1/"
+        );
     }
 
     #[test]
