@@ -456,6 +456,17 @@ pub struct ProviderMeta {
     /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
+    /// When `true`, suppresses `reasoning_effort` injection during
+    /// Anthropic → OpenAI Chat Completions conversion.
+    ///
+    /// Use for OpenAI-compatible endpoints (e.g. Azure OpenAI gpt-5.5,
+    /// gpt-5.6-*) that reject `reasoning_effort` when `tools` are present:
+    /// "400 Function tools with reasoning_effort are not supported ...".
+    #[serde(
+        rename = "suppressReasoningEffort",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub suppress_reasoning_effort: Option<bool>,
     /// Prompt cache key for OpenAI Responses-compatible endpoints.
     /// When set, injected into converted Responses requests to improve cache hit rate.
     /// If not set, Claude -> Responses conversions use a client-provided session/thread

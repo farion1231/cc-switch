@@ -316,6 +316,10 @@ function ProviderFormFull({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [localSuppressReasoningEffort, setLocalSuppressReasoningEffort] =
+    useState<boolean>(
+      () => initialData?.meta?.suppressReasoningEffort ?? false,
+    );
 
   const [pricingConfig, setPricingConfig] = useState<{
     enabled: boolean;
@@ -351,6 +355,9 @@ function ProviderFormFull({
     setEndpointAutoSelect(initialData?.meta?.endpointAutoSelect ?? true);
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
+    );
+    setLocalSuppressReasoningEffort(
+      initialData?.meta?.suppressReasoningEffort ?? false,
     );
     setPricingConfig({
       enabled:
@@ -1555,6 +1562,13 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      suppressReasoningEffort:
+        appId === "claude" &&
+        category !== "official" &&
+        localApiFormat === "openai_chat" &&
+        localSuppressReasoningEffort
+          ? true
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1831,6 +1845,7 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    setLocalSuppressReasoningEffort(false);
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2159,6 +2174,8 @@ function ProviderFormFull({
               onApiKeyFieldChange={handleApiKeyFieldChange}
               isFullUrl={localIsFullUrl}
               onFullUrlChange={setLocalIsFullUrl}
+              suppressReasoningEffort={localSuppressReasoningEffort}
+              onSuppressReasoningEffortChange={setLocalSuppressReasoningEffort}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
               localProxyHeadersOverride={localProxyHeadersOverride}

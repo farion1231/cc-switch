@@ -206,6 +206,9 @@ export interface ProviderMeta {
   apiKeyField?: ClaudeApiKeyField;
   // 是否将 base_url 视为完整 API 端点（代理直接使用此 URL，不拼接路径）
   isFullUrl?: boolean;
+  // 抑制 Anthropic → OpenAI Chat 转换时的 reasoning_effort 注入
+  // （兼容拒绝 reasoning_effort 与 tools 并存的端点，如 Azure gpt-5.5/5.6）
+  suppressReasoningEffort?: boolean;
   // Prompt cache key for OpenAI Responses-compatible endpoints (improves cache hit rate)
   promptCacheKey?: string;
   // Session-based prompt-cache routing for Codex Responses -> Chat conversions.

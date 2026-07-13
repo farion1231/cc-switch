@@ -1093,6 +1093,8 @@
     "anthropicSmallFastModel": "快速模型",
     "apiFormat": "API 格式",
     "apiFormatHint": "选择供应商 API 的输入格式",
+    "suppressReasoningEffort": "不注入 reasoning_effort",
+    "suppressReasoningEffortHint": "部分端点（如 Azure gpt-5.5/5.6）拒绝 reasoning_effort 与 tools 同时使用，开启后转换时跳过注入该字段",
     "customUserAgent": "自定义 User-Agent",
     "customUserAgentHint": "仅在开启本地路由/代理接管后生效，会替换转发到供应商 API 请求中的 User-Agent。",
     "customUserAgentInvalid": "User-Agent 不能包含控制字符（如换行符），否则将被忽略。",

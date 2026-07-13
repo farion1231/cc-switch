@@ -117,7 +117,7 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
 /// 消费者），但保留其转换逻辑与下方测试套件，供代理转换路径复用 / 未来接线。
 #[allow(dead_code)]
 pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
-    anthropic_to_openai_with_reasoning_content(body, false)
+    anthropic_to_openai_with_reasoning_content(body, false, false)
 }
 
 /// Anthropic 请求 → OpenAI Chat Completions 请求
@@ -125,9 +125,14 @@ pub fn anthropic_to_openai(body: Value) -> Result<Value, ProxyError> {
 /// `preserve_reasoning_content` 仅用于明确需要 Moonshot/Kimi/DeepSeek
 /// `reasoning_content` 兼容字段的 provider。默认转换保持通用 OpenAI-compatible
 /// 请求体，避免向严格后端发送未知字段。
+///
+/// `suppress_reasoning_effort` skips the `reasoning_effort` injection for
+/// providers whose upstream rejects `reasoning_effort` together with `tools`
+/// (e.g. Azure OpenAI gpt-5.5 / gpt-5.6-* on Chat Completions).
 pub fn anthropic_to_openai_with_reasoning_content(
     body: Value,
     preserve_reasoning_content: bool,
+    suppress_reasoning_effort: bool,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
 
@@ -193,8 +198,9 @@ pub fn anthropic_to_openai_with_reasoning_content(
         result["stream"] = v.clone();
     }
 
-    // Map Anthropic thinking → OpenAI reasoning_effort
-    if supports_reasoning_effort(model) {
+    // Map Anthropic thinking → OpenAI reasoning_effort. Skip when the provider
+    // suppresses it (e.g. upstreams rejecting reasoning_effort with tools).
+    if supports_reasoning_effort(model) && !suppress_reasoning_effort {
         if let Some(effort) = resolve_reasoning_effort(&body) {
             result["reasoning_effort"] = json!(effort);
         }
@@ -1021,7 +1027,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result = anthropic_to_openai_with_reasoning_content(input, true, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -1042,7 +1048,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result = anthropic_to_openai_with_reasoning_content(input, true, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["role"], "assistant");
         assert_eq!(msg["reasoning_content"], "tool call");
@@ -1064,7 +1070,7 @@ mod tests {
             }]
         });
 
-        let result = anthropic_to_openai_with_reasoning_content(input, true).unwrap();
+        let result = anthropic_to_openai_with_reasoning_content(input, true, false).unwrap();
         let msg = &result["messages"][0];
         assert_eq!(msg["reasoning_content"], "[redacted thinking]");
         assert_eq!(msg["tool_calls"][0]["id"], "call_123");
@@ -1254,7 +1260,8 @@ mod tests {
                 "content": anthropic_response["content"].clone()
             }]
         });
-        let replayed = anthropic_to_openai_with_reasoning_content(follow_up_request, true).unwrap();
+        let replayed =
+            anthropic_to_openai_with_reasoning_content(follow_up_request, true, false).unwrap();
         let msg = &replayed["messages"][0];
 
         assert_eq!(
@@ -1655,6 +1662,33 @@ mod tests {
     }
 
     // ── Integration: anthropic_to_openai with resolve_reasoning_effort ──
+
+    #[test]
+    fn test_suppress_reasoning_effort_with_tools() {
+        let input = json!({
+            "model": "o5.6-luna",
+            "max_tokens": 100,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "bash", "description": "run",
+                       "input_schema": {"type": "object", "properties": {}}}]
+        });
+
+        let result = anthropic_to_openai_with_reasoning_content(input, false, true).unwrap();
+        assert!(
+            result.get("reasoning_effort").is_none(),
+            "reasoning_effort should not be injected when suppressed"
+        );
+        assert!(
+            result.get("tools").is_some(),
+            "tools should still be present"
+        );
+        assert!(
+            result.get("max_completion_tokens").is_some(),
+            "max_completion_tokens should still be set for o-series model"
+        );
+    }
 
     #[test]
     fn test_non_reasoning_model_no_reasoning_effort() {

@@ -1093,6 +1093,8 @@
     "anthropicSmallFastModel": "高速モデル",
     "apiFormat": "API フォーマット",
     "apiFormatHint": "プロバイダー API の入力フォーマットを選択",
+    "suppressReasoningEffort": "reasoning_effort を注入しない",
+    "suppressReasoningEffortHint": "一部のエンドポイント（Azure gpt-5.5/5.6 など）は reasoning_effort と tools の併用を拒否します。有効にすると変換時にこのフィールドの注入をスキップします",
     "customUserAgent": "カスタム User-Agent",
     "customUserAgentHint": "ローカルルーティング/プロキシ引き継ぎが有効な場合にのみ適用され、プロバイダー API へ転送するリクエストの User-Agent を置き換えます。",
     "customUserAgentInvalid": "User-Agent に制御文字（改行など）を含めることはできません。含まれている場合は無視されます。",
