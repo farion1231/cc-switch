@@ -20,9 +20,10 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
-mod office_gateway;
 mod openclaw_config;
 mod opencode_config;
+#[rustfmt::skip]
+mod office_gateway;
 mod panic_hook;
 mod prompt;
 mod prompt_files;
