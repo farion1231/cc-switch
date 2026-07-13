@@ -918,6 +918,15 @@ fn apply_codex_model_reasoning_metadata(
     entry_obj.insert("reasoning_levels".to_string(), Value::Null);
 }
 
+fn apply_codex_model_input_modalities(entry_obj: &mut serde_json::Map<String, Value>, model: &str) {
+    if matches!(
+        model.trim().to_ascii_lowercase().as_str(),
+        "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.5"
+    ) {
+        entry_obj.insert("input_modalities".to_string(), json!(["text", "image"]));
+    }
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
@@ -940,6 +949,7 @@ fn codex_catalog_model_entry(
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
     apply_codex_model_reasoning_metadata(entry_obj, &spec.model);
+    apply_codex_model_input_modalities(entry_obj, &spec.model);
 
     if profile != CodexCatalogToolProfile::ProxyChat {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
@@ -3064,6 +3074,36 @@ base_url = "https://production.api/v1"
             .map(|model| model["default_reasoning_level"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(defaults, vec!["low", "medium", "medium", "medium"]);
+    }
+
+    #[test]
+    fn codex_native_responses_catalog_marks_known_models_multimodal_by_default() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "gpt-5.6-terra" },
+                    { "model": "gpt-5.6-luna" },
+                    { "model": "gpt-5.5" }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should succeed")
+        .expect("model catalog should be generated");
+
+        for model in catalog["models"].as_array().expect("models array") {
+            assert_eq!(
+                model.get("input_modalities"),
+                Some(&json!(["text", "image"])),
+                "known multimodal Codex models should allow screenshot input"
+            );
+        }
     }
 
     #[test]
