@@ -1,7 +1,7 @@
 use crate::codex_config::{read_and_validate_codex_config_text, write_codex_live_config_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
@@ -280,6 +280,28 @@ pub fn parse_plugins_json(
     Ok(plugins.into_values().collect())
 }
 
+fn merge_contextual_plugin_states(
+    plugins: &mut [UnifiedPlugin],
+    contextual_plugins: &[UnifiedPlugin],
+    project_path: &str,
+) {
+    for plugin in plugins
+        .iter_mut()
+        .filter(|plugin| plugin.project_path.as_deref() == Some(project_path))
+    {
+        let Some(contextual) = contextual_plugins.iter().find(|candidate| {
+            candidate.plugin_id == plugin.plugin_id
+                && candidate.scope == plugin.scope
+                && candidate.project_path == plugin.project_path
+        }) else {
+            continue;
+        };
+        plugin.enabled = contextual.enabled;
+        plugin.supported_actions.enable = plugin.installed && !plugin.enabled;
+        plugin.supported_actions.disable = plugin.installed && plugin.enabled;
+    }
+}
+
 pub fn parse_marketplaces_json(
     app: PluginApp,
     raw: &str,
@@ -359,7 +381,28 @@ pub async fn list_plugins(
             run_cli(app, &["plugin", "list", "--available", "--json"], None).await?
         }
     };
-    parse_plugins_json(app, &raw, include_available)
+    let mut plugins = parse_plugins_json(app, &raw, include_available)?;
+    if app == PluginApp::Claude {
+        let project_paths = plugins
+            .iter()
+            .filter(|plugin| matches!(plugin.scope.as_deref(), Some("project" | "local")))
+            .filter_map(|plugin| plugin.project_path.clone())
+            .collect::<BTreeSet<_>>();
+        for project_path in project_paths {
+            if !Path::new(&project_path).is_dir() {
+                continue;
+            }
+            let Ok(contextual_raw) =
+                run_cli(app, &["plugin", "list", "--json"], Some(&project_path)).await
+            else {
+                continue;
+            };
+            if let Ok(contextual_plugins) = parse_plugins_json(app, &contextual_raw, false) {
+                merge_contextual_plugin_states(&mut plugins, &contextual_plugins, &project_path);
+            }
+        }
+    }
+    Ok(plugins)
 }
 
 pub async fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, String> {
@@ -628,6 +671,30 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, "ponytail");
         assert_eq!(parsed[0].source.as_deref(), Some("DietrichGebert/ponytail"));
+    }
+
+    #[test]
+    fn merges_project_plugin_state_from_its_own_directory() {
+        let outside_project = r#"[{
+            "id":"ponytail@ponytail",
+            "scope":"project",
+            "enabled":false,
+            "projectPath":"/tmp/the_old_days"
+        }]"#;
+        let inside_project = r#"[{
+            "id":"ponytail@ponytail",
+            "scope":"project",
+            "enabled":true,
+            "projectPath":"/tmp/the_old_days"
+        }]"#;
+        let mut plugins = parse_plugins_json(PluginApp::Claude, outside_project, false).unwrap();
+        let contextual = parse_plugins_json(PluginApp::Claude, inside_project, false).unwrap();
+
+        merge_contextual_plugin_states(&mut plugins, &contextual, "/tmp/the_old_days");
+
+        assert!(plugins[0].enabled);
+        assert!(!plugins[0].supported_actions.enable);
+        assert!(plugins[0].supported_actions.disable);
     }
 
     #[test]
