@@ -33,6 +33,31 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     v
 }
 
+fn ensure_claude_auth_token_for_live(settings: &mut Value) {
+    let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+        return;
+    };
+
+    let has_auth_token = env
+        .get("ANTHROPIC_AUTH_TOKEN")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if has_auth_token {
+        return;
+    }
+
+    if let Some(api_key) = env
+        .get("ANTHROPIC_API_KEY")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(api_key));
+    }
+}
+
 pub(crate) fn provider_exists_in_live_config(
     app_type: &AppType,
     provider_id: &str,
@@ -783,7 +808,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
-            let settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            let mut settings = sanitize_claude_settings_for_live(&provider.settings_config);
+            ensure_claude_auth_token_for_live(&mut settings);
             write_json_file(&path, &settings)?;
         }
         AppType::ClaudeDesktop => {
@@ -1773,6 +1799,39 @@ base_url = "https://a.example/v1"
         assert!(
             removed.contains("notifications = false"),
             "user-modified value must survive removal, got: {removed}"
+        );
+    }
+
+    #[test]
+    fn claude_live_settings_mirror_api_key_to_auth_token_only_for_live_output() {
+        let mut settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://example.com",
+                "ANTHROPIC_API_KEY": "sk-test"
+            }
+        });
+
+        ensure_claude_auth_token_for_live(&mut settings);
+
+        assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], json!("sk-test"));
+        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], json!("sk-test"));
+    }
+
+    #[test]
+    fn claude_live_settings_keep_existing_auth_token() {
+        let mut settings = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-api-key",
+                "ANTHROPIC_AUTH_TOKEN": "sk-auth-token"
+            }
+        });
+
+        ensure_claude_auth_token_for_live(&mut settings);
+
+        assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], json!("sk-api-key"));
+        assert_eq!(
+            settings["env"]["ANTHROPIC_AUTH_TOKEN"],
+            json!("sk-auth-token")
         );
     }
 
