@@ -26,6 +26,7 @@ pub use claude::{
 pub use codex::{
     import_from_codex, remove_server_from_codex, sync_enabled_to_codex, sync_single_server_to_codex,
 };
+pub(crate) use codex::{merge_codex_runtime_subtables, strip_codex_runtime_subtables};
 pub use gemini::{
     import_from_gemini, remove_server_from_gemini, sync_enabled_to_gemini,
     sync_single_server_to_gemini,
