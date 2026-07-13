@@ -767,14 +767,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     category: "third_party",
-    baseUrl: "https://sudocode.us",
+    baseUrl: "https://api.sudocode.chat",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    endpointCandidates: ["https://api.sudocode.chat"],
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {

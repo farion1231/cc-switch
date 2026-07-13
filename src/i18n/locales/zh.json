@@ -1005,6 +1005,7 @@
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
+      "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 4.8，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
       "code0": "code0.ai 是面向开发者的 AI 编程服务平台，支持 Claude Code、Codex、Gemini。CC Switch 用户专属福利：通过官网联系客服即可领取测试额度！",
       "nekocode": "NekoCode 为开发者提供稳定、高效、可靠的 Claude、Codex 等 AI 模型 API 中转服务，价格透明、按量计费。CC Switch 用户专享 9 折：通过上方链接注册，充值时输入优惠码 cc-switch 即享 9 折优惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作伙伴，使用此链接注册并在充值时填写 \"cc-switch\" 优惠码，可以享受9折优惠",
