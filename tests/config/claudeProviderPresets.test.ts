@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
-import { applyTemplateValues } from "@/utils/providerConfigUtils";
 
 describe("Kimi For Coding Provider Preset", () => {
   const kimiForCoding = providerPresets.find(
@@ -23,38 +22,12 @@ describe("Kimi For Coding Provider Preset", () => {
     });
   });
 
-  it("should use matching context and auto-compact placeholders", () => {
+  // 预设直接钉值，不再暴露表单输入框；要调整的用户直接改 JSON 编辑框
+  it("should pin the 256K context envs without exposing form fields", () => {
     const env = (kimiForCoding!.settingsConfig as any).env;
-    expect(env).toHaveProperty(
-      "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-      "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}",
-    );
-    expect(env).toHaveProperty(
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-      "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
-    );
-  });
-
-  it("should expose matching 256K context and auto-compact values", () => {
-    const values = kimiForCoding!.templateValues as any;
-    expect(values?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toMatchObject({
-      defaultValue: "262144",
-      editorValue: "262144",
-    });
-    expect(values?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toMatchObject({
-      defaultValue: "262144",
-      editorValue: "262144",
-      label: "Auto Compact Window",
-    });
-  });
-
-  it("should resolve both Kimi context placeholders", () => {
-    const config = applyTemplateValues(
-      kimiForCoding!.settingsConfig,
-      kimiForCoding!.templateValues,
-    ) as any;
-    expect(config.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
-    expect(config.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("262144");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("262144");
+    expect(kimiForCoding!.templateValues).toBeUndefined();
   });
 });
 
@@ -65,37 +38,12 @@ describe("Codex Provider Preset", () => {
     expect(codex).toBeDefined();
   });
 
-  it("should override Claude Code's 200K fallback for GPT models", () => {
+  // 预设直接钉 Codex 目录的 372K 窗口（openai/codex#31860），不暴露表单输入框
+  it("should pin the Codex-catalog 372K window without exposing form fields", () => {
     const env = (codex!.settingsConfig as any).env;
-    expect(env).toHaveProperty(
-      "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
-      "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}",
-    );
-    expect(env).toHaveProperty(
-      "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
-      "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
-    );
-  });
-
-  it("should expose the Codex-catalog 372K window for both context knobs", () => {
-    const values = codex!.templateValues as any;
-    expect(values?.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toMatchObject({
-      defaultValue: "372000",
-      editorValue: "372000",
-    });
-    expect(values?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toMatchObject({
-      defaultValue: "372000",
-      editorValue: "372000",
-    });
-  });
-
-  it("should resolve both context placeholders into Claude Code env values", () => {
-    const config = applyTemplateValues(
-      codex!.settingsConfig,
-      codex!.templateValues,
-    ) as any;
-    expect(config.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("372000");
-    expect(config.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("372000");
+    expect(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("372000");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("372000");
+    expect(codex!.templateValues).toBeUndefined();
   });
 });
 

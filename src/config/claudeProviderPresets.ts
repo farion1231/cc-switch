@@ -492,22 +492,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-for-coding",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-for-coding",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-for-coding",
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}",
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
-      },
-    },
-    templateValues: {
-      CLAUDE_CODE_MAX_CONTEXT_TOKENS: {
-        label: "Max Context Tokens",
-        placeholder: "262144",
-        defaultValue: "262144",
-        editorValue: "262144",
-      },
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: {
-        label: "Auto Compact Window",
-        placeholder: "262144",
-        defaultValue: "262144",
-        editorValue: "262144",
+        // 双键钉 256K：压缩窗口=min(模型窗口,值)，与窗口同值时行为等价于不设，
+        // 但显式钉住可屏蔽远程实验下发的更小压缩点；调整直接改 JSON，不出表单字段
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144",
       },
     },
     category: "cn_official",
@@ -1247,25 +1235,12 @@ export const providerPresets: ProviderPreset[] = [
         // Claude Code falls back to a 200K context window for unrecognized
         // non-Claude model ids. The ChatGPT Codex backend catalogs gpt-5.6
         // at a 372K window with a ~353K effective budget (openai/codex#31860),
-        // not the 1.05M API window. Declare 372K for both knobs: Claude Code's
-        // built-in output reserve and compact buffer already keep the compact
-        // trigger below the effective budget.
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "${CLAUDE_CODE_MAX_CONTEXT_TOKENS}",
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "${CLAUDE_CODE_AUTO_COMPACT_WINDOW}",
-      },
-    },
-    templateValues: {
-      CLAUDE_CODE_MAX_CONTEXT_TOKENS: {
-        label: "Max Context Tokens",
-        placeholder: "372000",
-        defaultValue: "372000",
-        editorValue: "372000",
-      },
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW: {
-        label: "Auto Compact Window",
-        placeholder: "372000",
-        defaultValue: "372000",
-        editorValue: "372000",
+        // not the 1.05M API window. Pin both knobs: the compact window equals
+        // min(model window, value), so matching the window is behavior-neutral
+        // today but shields the compact trigger from remote-config experiments.
+        // Tweak these directly in the JSON editor; no form fields on purpose.
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "372000",
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "372000",
       },
     },
     category: "third_party",
