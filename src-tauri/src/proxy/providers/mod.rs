@@ -263,6 +263,58 @@ pub fn get_adapter_for_provider_type(provider_type: &ProviderType) -> Box<dyn Pr
     }
 }
 
+pub fn apply_gemini_openai_thought_signature_fix(body: &mut serde_json::Value) {
+    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages {
+            // Fix tool_calls
+            if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
+                for tool_call in tool_calls {
+                    let google = tool_call
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("extra_content")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("google")
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .unwrap();
+                    
+                    if !google.contains_key("thought_signature") {
+                        google.insert(
+                            "thought_signature".to_string(),
+                            serde_json::json!("skip_thought_signature_validator"),
+                        );
+                    }
+                }
+            }
+
+            // Fix function_call
+            if let Some(function_call) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
+                let google = msg
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("extra_content")
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("google")
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .unwrap();
+
+                if !google.contains_key("thought_signature") {
+                    google.insert(
+                        "thought_signature".to_string(),
+                        serde_json::json!("skip_thought_signature_validator"),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

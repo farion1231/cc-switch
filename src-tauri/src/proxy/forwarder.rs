@@ -1478,6 +1478,9 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
+            if base_url.contains("generativelanguage.googleapis.com") {
+                super::providers::apply_gemini_openai_thought_signature_fix(&mut mapped_body);
+            }
             mapped_body
         };
 
