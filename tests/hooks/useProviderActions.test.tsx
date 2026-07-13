@@ -55,6 +55,8 @@ vi.mock("@/lib/query", () => ({
 
 const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
+const providersApiGetCurrentMock = vi.fn();
+const proxyApiSetProxyTakeoverForAppMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
 const openclawApiGetModelCatalogMock = vi.fn();
@@ -66,6 +68,11 @@ vi.mock("@/lib/api", () => ({
     update: (...args: unknown[]) => providersApiUpdateMock(...args),
     updateTrayMenu: (...args: unknown[]) =>
       providersApiUpdateTrayMenuMock(...args),
+    getCurrent: (...args: unknown[]) => providersApiGetCurrentMock(...args),
+  },
+  proxyApi: {
+    setProxyTakeoverForApp: (...args: unknown[]) =>
+      proxyApiSetProxyTakeoverForAppMock(...args),
   },
   settingsApi: {
     get: (...args: unknown[]) => settingsApiGetMock(...args),
@@ -113,6 +120,8 @@ beforeEach(() => {
   switchProviderMutateAsync.mockReset();
   providersApiUpdateMock.mockReset();
   providersApiUpdateTrayMenuMock.mockReset();
+  providersApiGetCurrentMock.mockReset();
+  proxyApiSetProxyTakeoverForAppMock.mockReset();
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
   openclawApiGetModelCatalogMock.mockReset();
@@ -155,6 +164,37 @@ describe("useProviderActions", () => {
     expect(addProviderMutateAsync).toHaveBeenCalledWith(providerInput);
   });
 
+  it("enables proxy takeover when the first added Codex image model provider becomes current", async () => {
+    const addedProvider = createProvider({
+      category: "custom",
+      meta: { imageModel: "qwen3.7-plus" },
+    });
+    const providerInput = {
+      name: addedProvider.name,
+      settingsConfig: addedProvider.settingsConfig,
+      category: addedProvider.category,
+      meta: addedProvider.meta,
+    } as Omit<Provider, "id">;
+    addProviderMutateAsync.mockResolvedValueOnce(addedProvider);
+    providersApiGetCurrentMock.mockResolvedValueOnce(addedProvider.id);
+    proxyApiSetProxyTakeoverForAppMock.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.addProvider(providerInput);
+    });
+
+    expect(providersApiGetCurrentMock).toHaveBeenCalledWith("codex");
+    expect(proxyApiSetProxyTakeoverForAppMock).toHaveBeenCalledWith(
+      "codex",
+      true,
+    );
+  });
+
   it("should update tray menu when calling updateProvider", async () => {
     updateProviderMutateAsync.mockResolvedValueOnce(undefined);
     providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
@@ -174,6 +214,154 @@ describe("useProviderActions", () => {
       originalId: undefined,
     });
     expect(providersApiUpdateTrayMenuMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not enable proxy takeover when updating an inactive image model provider", async () => {
+    updateProviderMutateAsync.mockResolvedValueOnce(undefined);
+    providersApiGetCurrentMock.mockResolvedValueOnce("active-provider");
+    providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      id: "inactive-provider",
+      category: "custom",
+      meta: { imageModel: "qwen3.7-plus" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.updateProvider(provider);
+    });
+
+    expect(providersApiGetCurrentMock).toHaveBeenCalledWith("claude");
+    expect(proxyApiSetProxyTakeoverForAppMock).not.toHaveBeenCalled();
+  });
+
+  it("reports takeover failure without failing an active provider update", async () => {
+    updateProviderMutateAsync.mockResolvedValueOnce(undefined);
+    providersApiGetCurrentMock.mockResolvedValueOnce("provider-1");
+    proxyApiSetProxyTakeoverForAppMock.mockRejectedValueOnce(
+      new Error("takeover failed"),
+    );
+    providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { imageModel: "qwen3.7-plus" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.updateProvider(provider);
+    });
+
+    expect(toastErrorMock).toHaveBeenCalledWith("takeover failed", {
+      duration: 4200,
+    });
+    expect(providersApiUpdateTrayMenuMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reject update when current provider lookup fails", async () => {
+    updateProviderMutateAsync.mockResolvedValueOnce(undefined);
+    providersApiGetCurrentMock.mockRejectedValueOnce(
+      new Error("lookup failed"),
+    );
+    providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { imageModel: "qwen3.7-plus" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.updateProvider(provider),
+      ).resolves.toBeUndefined();
+    });
+
+    expect(toastErrorMock).toHaveBeenCalledWith("lookup failed", {
+      duration: 4200,
+    });
+    expect(providersApiUpdateTrayMenuMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("enables proxy takeover when switching to a Codex image model provider", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    proxyApiSetProxyTakeoverForAppMock.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { imageModel: "qwen3.7-plus" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(proxyApiSetProxyTakeoverForAppMock).toHaveBeenCalledWith(
+      "codex",
+      true,
+    );
+  });
+
+  it("does not enable proxy takeover for an official provider with imageModel", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "official",
+      meta: { imageModel: "vision-model" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(proxyApiSetProxyTakeoverForAppMock).not.toHaveBeenCalled();
+  });
+
+  it("reports takeover failure and completes a Codex provider switch", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    proxyApiSetProxyTakeoverForAppMock.mockRejectedValueOnce(
+      new Error("takeover failed"),
+    );
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { imageModel: "qwen3.7-plus" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", true), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastErrorMock).toHaveBeenCalledWith("takeover failed", {
+      duration: 4200,
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，请重启客户端以生效",
+      { closeButton: true },
+    );
   });
 
   it("should not request plugin sync when switching non-Claude provider", async () => {
