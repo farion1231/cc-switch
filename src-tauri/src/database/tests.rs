@@ -800,6 +800,96 @@ fn schema_model_pricing_is_seeded_on_init() {
 }
 
 #[test]
+fn schema_model_pricing_includes_latest_official_text_models() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price = |model_id: &str| -> (String, String, String, String) {
+        conn.query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = ?1",
+            [model_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap_or_else(|_| panic!("missing seeded pricing for {model_id}"))
+    };
+
+    assert_eq!(
+        price("gpt-5.6-sol"),
+        (
+            "5".to_string(),
+            "30".to_string(),
+            "0.50".to_string(),
+            "6.25".to_string()
+        )
+    );
+    assert_eq!(
+        price("gpt-5.6-terra"),
+        (
+            "2.50".to_string(),
+            "15".to_string(),
+            "0.25".to_string(),
+            "3.125".to_string()
+        )
+    );
+    assert_eq!(
+        price("glm-5-turbo"),
+        (
+            "1.2".to_string(),
+            "4".to_string(),
+            "0.24".to_string(),
+            "0".to_string()
+        )
+    );
+    assert_eq!(
+        price("deepseek-chat"),
+        (
+            "0.14".to_string(),
+            "0.28".to_string(),
+            "0.0028".to_string(),
+            "0".to_string()
+        )
+    );
+    assert_eq!(
+        price("gemini-3.5-flash"),
+        (
+            "2.70".to_string(),
+            "16.20".to_string(),
+            "0.27".to_string(),
+            "0".to_string()
+        )
+    );
+    assert_eq!(
+        price("gemini-3.1-pro-preview-customtools"),
+        (
+            "2".to_string(),
+            "12".to_string(),
+            "0.20".to_string(),
+            "0".to_string()
+        )
+    );
+    assert_eq!(
+        price("grok-4.5"),
+        (
+            "2".to_string(),
+            "6".to_string(),
+            "0.50".to_string(),
+            "0".to_string()
+        )
+    );
+    assert_eq!(
+        price("mistral-small-2603"),
+        (
+            "0.15".to_string(),
+            "0.60".to_string(),
+            "0".to_string(),
+            "0".to_string()
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
     let db = Database::memory().expect("create memory db");
 
@@ -825,6 +915,46 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
             [],
         )
         .expect("set custom GLM price");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.27',
+                 output_cost_per_million = '1.10',
+                 cache_read_cost_per_million = '0.07',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'deepseek-chat'",
+            [],
+        )
+        .expect("restore old DeepSeek chat alias price");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '0.10',
+                 output_cost_per_million = '0.30',
+                 cache_read_cost_per_million = '0.01',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'mistral-small-4'",
+            [],
+        )
+        .expect("restore old Mistral Small 4 price");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '1.50',
+                 output_cost_per_million = '9.00',
+                 cache_read_cost_per_million = '0.15',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gemini-3.5-flash'",
+            [],
+        )
+        .expect("restore old Gemini 3.5 Flash price");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '3',
+                 output_cost_per_million = '15',
+                 cache_read_cost_per_million = '0.75',
+                 cache_creation_cost_per_million = '0'
+             WHERE model_id = 'grok-4'",
+            [],
+        )
+        .expect("restore old Grok 4 alias price");
     }
 
     db.ensure_model_pricing_seeded()
@@ -857,6 +987,55 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         )
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
+
+    let repaired_aliases: Vec<(String, String, String, String)> =
+        [
+            "deepseek-chat",
+            "mistral-small-4",
+            "gemini-3.5-flash",
+            "grok-4",
+        ]
+            .into_iter()
+            .map(|model_id| {
+                conn.query_row(
+                    "SELECT input_cost_per_million, output_cost_per_million,
+                            cache_read_cost_per_million, cache_creation_cost_per_million
+                     FROM model_pricing WHERE model_id = ?1",
+                    [model_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap_or_else(|_| panic!("query repaired price for {model_id}"))
+            })
+            .collect();
+    assert_eq!(
+        repaired_aliases,
+        vec![
+            (
+                "0.14".to_string(),
+                "0.28".to_string(),
+                "0.0028".to_string(),
+                "0".to_string(),
+            ),
+            (
+                "0.15".to_string(),
+                "0.60".to_string(),
+                "0".to_string(),
+                "0".to_string(),
+            ),
+            (
+                "2.70".to_string(),
+                "16.20".to_string(),
+                "0.27".to_string(),
+                "0".to_string(),
+            ),
+            (
+                "1.25".to_string(),
+                "2.50".to_string(),
+                "0.20".to_string(),
+                "0".to_string(),
+            ),
+        ]
+    );
 }
 
 #[test]
