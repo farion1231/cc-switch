@@ -988,25 +988,24 @@ fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
         .expect("query GLM price");
     assert_eq!(glm, ("9".to_string(), "9".to_string(), "9".to_string()));
 
-    let repaired_aliases: Vec<(String, String, String, String)> =
-        [
-            "deepseek-chat",
-            "mistral-small-4",
-            "gemini-3.5-flash",
-            "grok-4",
-        ]
-            .into_iter()
-            .map(|model_id| {
-                conn.query_row(
-                    "SELECT input_cost_per_million, output_cost_per_million,
+    let repaired_aliases: Vec<(String, String, String, String)> = [
+        "deepseek-chat",
+        "mistral-small-4",
+        "gemini-3.5-flash",
+        "grok-4",
+    ]
+    .into_iter()
+    .map(|model_id| {
+        conn.query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
                             cache_read_cost_per_million, cache_creation_cost_per_million
                      FROM model_pricing WHERE model_id = ?1",
-                    [model_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )
-                .unwrap_or_else(|_| panic!("query repaired price for {model_id}"))
-            })
-            .collect();
+            [model_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap_or_else(|_| panic!("query repaired price for {model_id}"))
+    })
+    .collect();
     assert_eq!(
         repaired_aliases,
         vec![
