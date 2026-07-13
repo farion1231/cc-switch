@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PluginsPage from "@/components/plugins/PluginsPage";
@@ -52,6 +52,13 @@ const installedPlugin = {
   },
 };
 
+const projectInstalledClaudePlugin = {
+  ...installedPlugin,
+  app: "claude" as const,
+  scope: "project" as const,
+  projectPath: "/tmp/the_old_days",
+};
+
 describe("PluginsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,5 +89,62 @@ describe("PluginsPage", () => {
     await user.click(screen.getByText("common.cancel"));
 
     expect(mutationMock.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("keeps project-installed Claude plugins discoverable for another scope", async () => {
+    pluginsMock.mockImplementation((app: string, includeAvailable: boolean) => {
+      if (!includeAvailable || app === "codex") {
+        return { data: [], isLoading: false };
+      }
+      return { data: [projectInstalledClaudePlugin], isLoading: false };
+    });
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(
+      screen.getByRole("tab", { name: "plugins.tabs.discover" }),
+    );
+    await user.type(screen.getByPlaceholderText("plugins.search"), "ponytail");
+
+    expect(screen.getByText("ponytail")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "plugins.install" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("ponytail@ponytail");
+    expect(screen.getByRole("combobox")).toHaveTextContent(
+      "plugins.scope.user",
+    );
+  });
+
+  it("shows the selected client filter", async () => {
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    const all = screen.getByRole("tab", { name: "common.all" });
+    const claude = screen.getByRole("tab", {
+      name: "plugins.apps.claude",
+    });
+    expect(all).toHaveAttribute("data-state", "active");
+
+    await user.click(claude);
+
+    expect(claude).toHaveAttribute("data-state", "active");
+    expect(all).toHaveAttribute("data-state", "inactive");
+  });
+
+  it("uses the same selected state in marketplace client tabs", async () => {
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: "plugins.marketplaces.title" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    const codex = dialog.getByRole("tab", { name: "plugins.apps.codex" });
+    const claude = dialog.getByRole("tab", { name: "plugins.apps.claude" });
+    expect(codex).toHaveAttribute("data-state", "active");
+
+    await user.click(claude);
+
+    expect(claude).toHaveAttribute("data-state", "active");
+    expect(codex).toHaveAttribute("data-state", "inactive");
   });
 });

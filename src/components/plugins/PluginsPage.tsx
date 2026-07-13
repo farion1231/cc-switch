@@ -94,7 +94,9 @@ export default function PluginsPage() {
     for (const plugin of plugins) {
       if (appFilter !== "all" && plugin.app !== appFilter) continue;
       if (tab === "installed" && !plugin.installed) continue;
-      if (tab === "discover" && plugin.installed) continue;
+      if (tab === "discover" && plugin.installed && plugin.app !== "claude") {
+        continue;
+      }
       const haystack =
         `${plugin.name} ${plugin.pluginId} ${plugin.description ?? ""}`.toLowerCase();
       if (!haystack.includes(search.trim().toLowerCase())) continue;
@@ -206,18 +208,18 @@ export default function PluginsPage() {
             placeholder={t("plugins.search")}
             className="min-w-56 flex-1"
           />
-          <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-            {(["all", ...APPS] as const).map((app) => (
-              <Button
-                key={app}
-                size="sm"
-                variant={appFilter === app ? "secondary" : "ghost"}
-                onClick={() => setAppFilter(app)}
-              >
-                {app === "all" ? t("common.all") : t(`plugins.apps.${app}`)}
-              </Button>
-            ))}
-          </div>
+          <Tabs
+            value={appFilter}
+            onValueChange={(value) => setAppFilter(value as typeof appFilter)}
+          >
+            <TabsList>
+              {(["all", ...APPS] as const).map((app) => (
+                <TabsTrigger key={app} value={app}>
+                  {app === "all" ? t("common.all") : t(`plugins.apps.${app}`)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
 
         {sourceQueries.map((query, index) =>
@@ -277,7 +279,7 @@ export default function PluginsPage() {
                       {plugin.scope ? ` · ${plugin.scope}` : ""}
                     </span>
                     <div className="ml-auto flex items-center gap-2">
-                      {plugin.installed && (
+                      {tab === "installed" && plugin.installed && (
                         <Switch
                           checked={plugin.enabled}
                           disabled={mutation.isPending}
@@ -294,62 +296,68 @@ export default function PluginsPage() {
                           }
                         />
                       )}
-                      {plugin.supportedActions.update && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={mutation.isPending}
-                          onClick={() =>
-                            void run({
-                              action: "update",
-                              app: plugin.app,
-                              pluginId: plugin.pluginId,
-                              scope: plugin.scope,
-                              projectPath: plugin.projectPath,
-                            })
-                          }
-                        >
-                          <RefreshCw
-                            data-icon="inline-start"
-                            className="size-4"
-                          />
-                          {t("plugins.update")}
-                        </Button>
-                      )}
-                      {plugin.supportedActions.install && (
-                        <Button
-                          size="sm"
-                          disabled={mutation.isPending}
-                          onClick={() => {
-                            if (plugin.app === "claude") {
-                              setInstallScope("user");
-                              setInstallProjectPath("");
-                              setInstallTarget(plugin);
-                            } else {
-                              void install(plugin);
+                      {tab === "installed" &&
+                        plugin.supportedActions.update && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={mutation.isPending}
+                            onClick={() =>
+                              void run({
+                                action: "update",
+                                app: plugin.app,
+                                pluginId: plugin.pluginId,
+                                scope: plugin.scope,
+                                projectPath: plugin.projectPath,
+                              })
                             }
-                          }}
-                        >
-                          <Download
-                            data-icon="inline-start"
-                            className="size-4"
-                          />
-                          {t("plugins.install")}
-                        </Button>
-                      )}
-                      {plugin.supportedActions.uninstall && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          disabled={mutation.isPending}
-                          title={t("plugins.uninstall")}
-                          onClick={() =>
-                            setConfirmAction({ type: "uninstall", plugin })
-                          }
-                        >
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
-                      )}
+                          >
+                            <RefreshCw
+                              data-icon="inline-start"
+                              className="size-4"
+                            />
+                            {t("plugins.update")}
+                          </Button>
+                        )}
+                      {tab === "discover" &&
+                        (plugin.supportedActions.install ||
+                          plugin.app === "claude") && (
+                          <Button
+                            size="sm"
+                            disabled={mutation.isPending}
+                            onClick={() => {
+                              if (plugin.app === "claude") {
+                                setInstallScope(
+                                  plugin.scope === "user" ? "project" : "user",
+                                );
+                                setInstallProjectPath("");
+                                setInstallTarget(plugin);
+                              } else {
+                                void install(plugin);
+                              }
+                            }}
+                          >
+                            <Download
+                              data-icon="inline-start"
+                              className="size-4"
+                            />
+                            {t("plugins.install")}
+                          </Button>
+                        )}
+                      {tab === "installed" &&
+                        plugin.supportedActions.uninstall && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            disabled={mutation.isPending}
+                            title={t("plugins.uninstall")}
+                            onClick={() =>
+                              setConfirmAction({ type: "uninstall", plugin })
+                            }
+                          >
+                            <Trash2 className="size-4 text-destructive" />
+                          </Button>
+                        )}
                     </div>
                   </div>
                 ))}
@@ -374,18 +382,18 @@ export default function PluginsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4 overflow-y-auto px-6 py-4">
-            <div className="flex gap-2">
-              {APPS.map((app) => (
-                <Button
-                  key={app}
-                  size="sm"
-                  variant={marketplaceApp === app ? "secondary" : "outline"}
-                  onClick={() => setMarketplaceApp(app)}
-                >
-                  {t(`plugins.apps.${app}`)}
-                </Button>
-              ))}
-            </div>
+            <Tabs
+              value={marketplaceApp}
+              onValueChange={(value) => setMarketplaceApp(value as PluginApp)}
+            >
+              <TabsList>
+                {APPS.map((app) => (
+                  <TabsTrigger key={app} value={app}>
+                    {t(`plugins.apps.${app}`)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
             <div className="flex gap-2">
               <Input
                 value={marketplaceSource}
