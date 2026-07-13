@@ -21,6 +21,43 @@ export function useGeminiConfigState({
   const [envError, setEnvError] = useState("");
   const [configError, setConfigError] = useState("");
 
+  const replaceEnvFieldInPlace = useCallback(
+    (envString: string, key: string, value: string): string => {
+      const lines = envString.split("\n");
+      const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const linePattern = new RegExp(
+        `^(\\s*${escapedKey}\\s*=\\s*)(.*?)(\\s+#.*)?$`,
+      );
+      let replaced = false;
+
+      const nextLines = lines.map((line) => {
+        if (/^\s*#/.test(line)) {
+          return line;
+        }
+
+        const match = line.match(linePattern);
+        if (!match) {
+          return line;
+        }
+
+        replaced = true;
+        return `${match[1]}${value}${match[3] ?? ""}`;
+      });
+
+      if (replaced) {
+        return nextLines.join("\n");
+      }
+
+      if (!envString) {
+        return `${key}=${value}`;
+      }
+
+      const separator = envString.endsWith("\n") ? "" : "\n";
+      return `${envString}${separator}${key}=${value}`;
+    },
+    [],
+  );
+
   // 将 JSON env 对象转换为 .env 格式字符串
   // 保留所有环境变量，已知 key 优先显示
   const envObjToString = useCallback(
@@ -156,12 +193,9 @@ export function useGeminiConfigState({
       const trimmed = key.trim();
       setGeminiApiKey(trimmed);
 
-      const envObj = envStringToObj(geminiEnv);
-      envObj.GEMINI_API_KEY = trimmed;
-      const newEnv = envObjToString(envObj);
-      setGeminiEnv(newEnv);
+      setGeminiEnv(replaceEnvFieldInPlace(geminiEnv, "GEMINI_API_KEY", trimmed));
     },
-    [geminiEnv, envStringToObj, envObjToString, setGeminiEnv],
+    [geminiEnv, replaceEnvFieldInPlace, setGeminiEnv],
   );
 
   // 处理 Gemini Base URL 变化
@@ -170,12 +204,15 @@ export function useGeminiConfigState({
       const sanitized = url.trim().replace(/\/+$/, "");
       setGeminiBaseUrl(sanitized);
 
-      const envObj = envStringToObj(geminiEnv);
-      envObj.GOOGLE_GEMINI_BASE_URL = sanitized;
-      const newEnv = envObjToString(envObj);
-      setGeminiEnv(newEnv);
+      setGeminiEnv(
+        replaceEnvFieldInPlace(
+          geminiEnv,
+          "GOOGLE_GEMINI_BASE_URL",
+          sanitized,
+        ),
+      );
     },
-    [geminiEnv, envStringToObj, envObjToString, setGeminiEnv],
+    [geminiEnv, replaceEnvFieldInPlace, setGeminiEnv],
   );
 
   // 处理 Gemini Model 变化
@@ -184,12 +221,9 @@ export function useGeminiConfigState({
       const trimmed = model.trim();
       setGeminiModel(trimmed);
 
-      const envObj = envStringToObj(geminiEnv);
-      envObj.GEMINI_MODEL = trimmed;
-      const newEnv = envObjToString(envObj);
-      setGeminiEnv(newEnv);
+      setGeminiEnv(replaceEnvFieldInPlace(geminiEnv, "GEMINI_MODEL", trimmed));
     },
-    [geminiEnv, envStringToObj, envObjToString, setGeminiEnv],
+    [geminiEnv, replaceEnvFieldInPlace, setGeminiEnv],
   );
 
   // 处理 env 变化

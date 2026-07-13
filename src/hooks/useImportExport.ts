@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { settingsApi } from "@/lib/api";
@@ -39,6 +39,7 @@ export function useImportExport(
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [backupId, setBackupId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const importInFlightRef = useRef(false);
 
   const clearSelection = useCallback(() => {
     setSelectedFile("");
@@ -75,8 +76,9 @@ export function useImportExport(
       return;
     }
 
-    if (isImporting) return;
+    if (importInFlightRef.current) return;
 
+    importInFlightRef.current = true;
     setIsImporting(true);
     setStatus("importing");
     setErrorMessage(null);
@@ -136,9 +138,10 @@ export function useImportExport(
         }),
       );
     } finally {
+      importInFlightRef.current = false;
       setIsImporting(false);
     }
-  }, [isImporting, onImportSuccess, selectedFile, t]);
+  }, [onImportSuccess, selectedFile, t]);
 
   const exportConfig = useCallback(async () => {
     try {

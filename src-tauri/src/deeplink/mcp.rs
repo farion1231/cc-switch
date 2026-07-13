@@ -112,6 +112,12 @@ pub fn import_mcp_from_deeplink(
             if target_apps.gemini {
                 merged_apps.gemini = true;
             }
+            if target_apps.opencode {
+                merged_apps.opencode = true;
+            }
+            if target_apps.hermes {
+                merged_apps.hermes = true;
+            }
 
             McpServer {
                 id: existing.id.clone(),

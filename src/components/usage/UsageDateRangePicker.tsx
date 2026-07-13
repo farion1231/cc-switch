@@ -78,16 +78,21 @@ function parseTimeInput(ts: number, value: string): number {
   );
 }
 
-function setDateKeepTime(ts: number, day: Date): number {
-  const base = fromTs(ts);
-  return toTs(
+function normalizeStartTs(day: Date): number {
+  return toTs(new Date(day.getFullYear(), day.getMonth(), day.getDate()));
+}
+
+function normalizeEndTs(day: Date): number {
+  return Math.floor(
     new Date(
       day.getFullYear(),
       day.getMonth(),
       day.getDate(),
-      base.getHours(),
-      base.getMinutes(),
-    ),
+      23,
+      59,
+      59,
+      999,
+    ).getTime() / 1000,
   );
 }
 
@@ -188,31 +193,32 @@ export function UsageDateRangePicker({
 
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
-      const nextTs = setDateKeepTime(draftStart, day);
+      const nextTs = normalizeStartTs(day);
       setDraftStart(nextTs);
       return;
     }
 
-    const nextTs = setDateKeepTime(
-      activeField === "start" ? draftStart : draftEnd,
-      day,
-    );
-
     if (activeField === "start") {
-      setDraftStart(nextTs);
+      const nextStartTs = normalizeStartTs(day);
+      const nextEndTs = normalizeEndTs(day);
+
+      setDraftStart(nextStartTs);
       // Auto-swap if start > end
-      if (nextTs > draftEnd) {
-        setDraftEnd(nextTs);
+      if (nextStartTs > draftEnd) {
+        setDraftEnd(nextEndTs);
       }
       // Auto-advance to end field
       setActiveField("end");
     } else {
+      const nextStartTs = normalizeStartTs(day);
+      const nextEndTs = normalizeEndTs(day);
+
       // If picked end < start, treat as new start and auto-advance
-      if (nextTs < draftStart) {
-        setDraftStart(nextTs);
+      if (nextEndTs < draftStart) {
+        setDraftStart(nextStartTs);
         setActiveField("end");
       } else {
-        setDraftEnd(nextTs);
+        setDraftEnd(nextEndTs);
       }
     }
 

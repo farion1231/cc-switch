@@ -58,7 +58,7 @@ export function useApiKeyState({
 
       const configString = setApiKeyInConfig(
         initialConfig || "{}",
-        key.trim(),
+        key,
         {
           // 最佳实践：仅在"非官方/非云厂商类别"时补齐缺失字段
           // - 官方类别：不创建字段（UI 也会禁用输入框）

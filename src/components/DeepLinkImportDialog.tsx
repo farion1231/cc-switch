@@ -277,6 +277,18 @@ export function DeepLinkImportDialog() {
     }
   }, [request?.config, request?.app]);
 
+  const decodedUsageScript = useMemo(() => {
+    if (!request?.usageScript) return "";
+    try {
+      return b64ToUtf8(request.usageScript);
+    } catch (error) {
+      console.error("Failed to decode usage script:", error);
+      return "";
+    }
+  }, [request?.usageScript]);
+
+  const usageScriptEnabled = request?.usageEnabled ?? false;
+
   // Helper to mask sensitive values
   const maskValue = (key: string, value: string): string => {
     const sensitiveKeys = ["TOKEN", "KEY", "SECRET", "PASSWORD"];
@@ -634,12 +646,12 @@ export function DeepLinkImportDialog() {
                         <div className="col-span-2 text-sm">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
-                              request.usageEnabled !== false
+                              usageScriptEnabled
                                 ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
                                 : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
                             }`}
                           >
-                            {request.usageEnabled !== false
+                            {usageScriptEnabled
                               ? t("deeplink.usageScriptEnabled", {
                                   defaultValue: "已启用",
                                 })
@@ -649,6 +661,21 @@ export function DeepLinkImportDialog() {
                           </span>
                         </div>
                       </div>
+
+                      {decodedUsageScript.trim().length > 0 && (
+                        <div className="grid grid-cols-3 items-start gap-4">
+                          <div className="font-medium text-sm text-muted-foreground">
+                            {t("deeplink.usageScriptCode", {
+                              defaultValue: "Script content",
+                            })}
+                          </div>
+                          <div className="col-span-2">
+                            <pre className="text-xs font-mono bg-background p-2 rounded overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+                              {decodedUsageScript}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Usage API Key (if different from provider) */}
                       {request.usageApiKey &&

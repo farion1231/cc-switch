@@ -286,6 +286,14 @@ fn s3_status_error(op: &str, status: StatusCode, url: &str) -> AppError {
     AppError::localized("s3.http.status", zh, en)
 }
 
+fn sync_conflict_error(url: &str) -> AppError {
+    let safe_url = redact_url(url);
+    let message = format!(
+        "Remote data was updated by another device. Download first or force upload: {safe_url}"
+    );
+    AppError::localized("sync.conflict", message.clone(), message)
+}
+
 fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {
     let max_mb = max_bytes / 1024 / 1024;
     AppError::localized(
@@ -364,6 +372,8 @@ pub(crate) async fn put_object(
     key: &str,
     bytes: Vec<u8>,
     content_type: &str,
+    if_match: Option<&str>,
+    if_none_match_star: bool,
 ) -> Result<(), AppError> {
     let url_str = build_object_url(creds, key);
     let url = Url::parse(&url_str).map_err(|e| {
@@ -378,6 +388,11 @@ pub(crate) async fn put_object(
     let body_hash = sha256_hex(&bytes);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", content_type.parse().unwrap());
+    if let Some(etag) = if_match {
+        headers.insert("if-match", etag.parse().unwrap());
+    } else if if_none_match_star {
+        headers.insert("if-none-match", "*".parse().unwrap());
+    }
     sign_request(
         "PUT",
         &url,
@@ -396,6 +411,9 @@ pub(crate) async fn put_object(
         .await
         .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
 
+    if resp.status() == StatusCode::PRECONDITION_FAILED {
+        return Err(sync_conflict_error(&url_str));
+    }
     if resp.status().is_success() {
         return Ok(());
     }
@@ -898,7 +916,7 @@ mod integration_tests {
         let data = br#"{"test":true,"ts":12345}"#;
 
         // PUT
-        let r = put_object(&creds, key, data.to_vec(), "application/json").await;
+        let r = put_object(&creds, key, data.to_vec(), "application/json", None, false).await;
         assert!(r.is_ok(), "PUT failed: {:?}", r.err());
         println!("PASS: put_object {} bytes", data.len());
 

@@ -81,10 +81,7 @@ export function useInstallSkill() {
       // 直接更新 installed 缓存
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],
-        (oldData) => {
-          if (!oldData) return [installedSkill];
-          return [...oldData, installedSkill];
-        },
+        (oldData) => mergeImportedSkills(oldData, [installedSkill]),
       );
 
       // 更新 discoverable 缓存中对应技能的 installed 状态
@@ -281,10 +278,7 @@ export function useInstallSkillsFromZip() {
       // 直接更新 installed 缓存
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],
-        (oldData) => {
-          if (!oldData) return installedSkills;
-          return [...oldData, ...installedSkills];
-        },
+        (oldData) => mergeImportedSkills(oldData, installedSkills),
       );
     },
   });

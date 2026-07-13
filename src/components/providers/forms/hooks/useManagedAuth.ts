@@ -54,6 +54,13 @@ export function useManagedAuth(
     };
   }, [stopPolling]);
 
+  useEffect(() => {
+    stopPolling();
+    setPollingState("idle");
+    setDeviceCode(null);
+    setError(null);
+  }, [authProvider, githubDomain, stopPolling]);
+
   const startLoginMutation = useMutation({
     mutationFn: () => authApi.authStartLogin(authProvider, githubDomain),
     onSuccess: async (response) => {
