@@ -242,6 +242,28 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
+  it("warns when switching a Codex Anthropic-format provider without proxy", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { apiFormat: "anthropic" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Anthropic Messages"),
+    );
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     settingsApiGetMock.mockResolvedValueOnce({
