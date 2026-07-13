@@ -381,32 +381,30 @@ pub async fn queryProviderUsage(
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     // inner 可能以两种形式失败：
-    //   1) 返回 Ok(UsageResult { success: false, .. }) —— 业务失败（401、脚本报错等）
-    //   2) 返回 Err(String) —— RPC/DB/Copilot fetch_usage 等 transport 层失败
-    // 两种都要把"失败"写进 UsageCache 并刷新托盘，让 format_script_summary 的
-    // success 守卫生效、suffix 自然消失，避免旧 success 快照长期滞留。
-    // 同时保持原始 Err 返回给前端 React Query 的 onError 回调，不吞错误。
+    //   1) 返回 Ok(UsageResult { success: false, .. }) —— 确定性失败（401、脚本
+    //      报错、未知供应商等）。写进 UsageCache 并刷新托盘，让
+    //      format_script_summary 的 success 守卫生效、suffix 自然消失。
+    //   2) 返回 Err(String) —— 瞬时传输失败（网络/超时）及 DB/Copilot fetch 等。
+    //      不写失败快照、不 emit：保留上一份托盘快照，与前端 react-query reject
+    //      保留上次 data 的语义一致；否则失败快照会经 useUsageCacheBridge 盲写
+    //      回 query 缓存，抹掉 reject 本该保留的旧值。
     let inner =
         query_provider_usage_inner(&state, &copilot_state, app_type.clone(), &providerId).await;
-    let snapshot = match &inner {
-        Ok(r) => r.clone(),
-        Err(err_msg) => crate::provider::UsageResult {
-            success: false,
-            data: None,
-            error: Some(err_msg.clone()),
-        },
-    };
-    let payload = serde_json::json!({
-        "kind": "script",
-        "appType": app_type.as_str(),
-        "providerId": &providerId,
-        "data": &snapshot,
-    });
-    if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
-        log::error!("emit usage-cache-updated (script) 失败: {e}");
+    if let Ok(snapshot) = &inner {
+        let payload = serde_json::json!({
+            "kind": "script",
+            "appType": app_type.as_str(),
+            "providerId": &providerId,
+            "data": snapshot,
+        });
+        if let Err(e) = app_handle.emit("usage-cache-updated", payload) {
+            log::error!("emit usage-cache-updated (script) 失败: {e}");
+        }
+        state
+            .usage_cache
+            .put_script(app_type, providerId, snapshot.clone());
+        crate::tray::schedule_tray_refresh(&app_handle);
     }
-    state.usage_cache.put_script(app_type, providerId, snapshot);
-    crate::tray::schedule_tray_refresh(&app_handle);
     inner
 }
 
@@ -518,12 +516,20 @@ async fn query_provider_usage_inner(
         // 其他供应商为 None，service 层沿用 api_key。
         let access_key_id = usage_script.and_then(|s| s.access_key_id.clone());
         let secret_access_key = usage_script.and_then(|s| s.secret_access_key.clone());
+        // 智谱团队版：显式 provider 标识 + 组织/项目 ID（与个人版智谱 base_url 相同，
+        // 靠 coding_plan_provider == "zhipu_team" 在 service 层路由）。
+        let coding_plan_provider = usage_script.and_then(|s| s.coding_plan_provider.clone());
+        let team_organization_id = usage_script.and_then(|s| s.team_organization_id.clone());
+        let team_project_id = usage_script.and_then(|s| s.team_project_id.clone());
 
         let quota = crate::services::coding_plan::get_coding_plan_quota(
             &base_url,
             &api_key,
             access_key_id.as_deref(),
             secret_access_key.as_deref(),
+            coding_plan_provider.as_deref(),
+            team_organization_id.as_deref(),
+            team_project_id.as_deref(),
         )
         .await
         .map_err(|e| format!("Failed to query coding plan: {e}"))?;
@@ -1081,6 +1087,8 @@ mod native_query_credentials_tests {
             coding_plan_provider: coding_plan_provider.map(str::to_string),
             access_key_id: None,
             secret_access_key: None,
+            team_organization_id: None,
+            team_project_id: None,
         }
     }
 

@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 ///
 /// 三路径分发：
 /// - skip: haiku 模型直接跳过
-/// - adaptive: opus-4-8 / opus-4-7 / opus-4-6 / sonnet-4-6 使用 adaptive thinking
+/// - adaptive: current adaptive-thinking Claude models use adaptive thinking
 /// - legacy: 其他模型注入 enabled thinking + budget_tokens
 pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     if !config.thinking_optimizer {
@@ -73,11 +73,40 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 }
 
-fn uses_adaptive_thinking(model: &str) -> bool {
-    let normalized = model.replace('.', "-");
-    ["opus-4-8", "opus-4-7", "opus-4-6", "sonnet-4-6"]
+pub(crate) fn uses_adaptive_thinking(model: &str) -> bool {
+    let normalized = normalize_model_name(model);
+    [
+        "fable-5",
+        "mythos-5",
+        "mythos-preview",
+        "sonnet-5",
+        "opus-4-8",
+        "opus-4-7",
+        "opus-4-6",
+        "sonnet-4-6",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+/// Models where omitting `thinking` still leaves adaptive thinking enabled.
+pub(crate) fn adaptive_thinking_is_default(model: &str) -> bool {
+    let normalized = normalize_model_name(model);
+    ["fable-5", "mythos-5", "mythos-preview", "sonnet-5"]
         .iter()
         .any(|needle| normalized.contains(needle))
+}
+
+/// Models that reject `thinking: {"type":"disabled"}`.
+pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
+    let normalized = normalize_model_name(model);
+    ["fable-5", "mythos-5"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
+fn normalize_model_name(model: &str) -> String {
+    model.trim().to_ascii_lowercase().replace(['.', '_'], "-")
 }
 
 /// 追加 beta 标识到 anthropic_beta 数组（去重）
@@ -137,6 +166,21 @@ mod tests {
         assert_eq!(body["output_config"]["effort"], "max");
         let betas = body["anthropic_beta"].as_array().unwrap();
         assert!(betas.iter().any(|v| v == "context-1m-2025-08-07"));
+    }
+
+    #[test]
+    fn current_generation_models_use_adaptive_thinking() {
+        for model in [
+            "claude-sonnet-5",
+            "anthropic/claude-fable-5",
+            "claude-mythos-5",
+            "claude-opus-4.8",
+        ] {
+            assert!(uses_adaptive_thinking(model), "model={model}");
+        }
+        assert!(adaptive_thinking_is_default("claude-sonnet-5"));
+        assert!(thinking_cannot_be_disabled("claude-fable-5"));
+        assert!(!thinking_cannot_be_disabled("claude-sonnet-5"));
     }
 
     #[test]
