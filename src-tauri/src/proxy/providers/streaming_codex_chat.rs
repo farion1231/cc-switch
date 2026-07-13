@@ -356,7 +356,9 @@ impl ChatToResponsesState {
         {
             let state = self.tools.entry(chat_index).or_default();
             if let Some(id) = id_delta {
-                state.call_id = id;
+                if !id.is_empty() {
+                    state.call_id = id;
+                }
             }
             if let Some(ref name) = name_delta {
                 if !name.is_empty() {
