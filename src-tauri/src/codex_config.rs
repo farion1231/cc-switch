@@ -591,30 +591,23 @@ fn merge_codex_desktop_statsig_available_models(wrapper: &mut Value, model_ids: 
         return false;
     };
     let Some(dynamic_configs) = data_obj
-        .entry("dynamic_configs")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
+        .get_mut("dynamic_configs")
+        .and_then(Value::as_object_mut)
     else {
         return false;
     };
     let Some(config) = dynamic_configs
-        .entry(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
-        .or_insert_with(|| json!({ "value": {} }))
-        .as_object_mut()
+        .get_mut(CODEX_DESKTOP_STATSIG_MODELS_CONFIG_ID)
+        .and_then(Value::as_object_mut)
     else {
         return false;
     };
-    let Some(value) = config
-        .entry("value")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-    else {
+    let Some(value) = config.get_mut("value").and_then(Value::as_object_mut) else {
         return false;
     };
     let Some(available_models) = value
-        .entry("available_models")
-        .or_insert_with(|| json!([]))
-        .as_array_mut()
+        .get_mut("available_models")
+        .and_then(Value::as_array_mut)
     else {
         return false;
     };
@@ -3144,6 +3137,28 @@ base_url = "https://production.api/v1"
             &mut wrapper,
             &models
         ));
+    }
+
+    #[test]
+    fn codex_desktop_statsig_merge_skips_entries_without_models_config() {
+        let data = json!({
+            "dynamic_configs": {
+                "unrelated-config": {
+                    "value": { "enabled": true }
+                }
+            }
+        });
+        let mut wrapper = json!({
+            "source": "NetworkNotModified",
+            "data": data.to_string()
+        });
+        let original = wrapper.clone();
+
+        assert!(!merge_codex_desktop_statsig_available_models(
+            &mut wrapper,
+            &["gpt-5.6-sol".to_string()]
+        ));
+        assert_eq!(wrapper, original);
     }
 
     #[test]
