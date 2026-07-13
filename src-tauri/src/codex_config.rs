@@ -398,6 +398,24 @@ pub fn codex_auth_has_oauth_login_material(auth: &Value) -> bool {
     })
 }
 
+pub(crate) fn sanitize_codex_official_auth(auth: &Value) -> Value {
+    let mut sanitized = auth.clone();
+    if let Some(obj) = sanitized.as_object_mut() {
+        // OAuth auth.json may carry OPENAI_API_KEY: null. Keep that canonical
+        // placeholder, but never let a provider key string enter official auth.
+        if obj.get("OPENAI_API_KEY").is_some_and(Value::is_string) {
+            obj.remove("OPENAI_API_KEY");
+        }
+    }
+    sanitized
+}
+
+pub(crate) fn sanitize_codex_official_settings(settings: &mut Value) {
+    if let Some(auth) = settings.get_mut("auth") {
+        *auth = sanitize_codex_official_auth(auth);
+    }
+}
+
 pub fn should_restore_codex_provider_token_for_backfill(
     category: Option<&str>,
     template_settings: &Value,
@@ -1540,7 +1558,8 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 
 /// Route a Codex live write between full auth+config or config-only.
 ///
-/// Official providers with usable login material own `auth.json`. Third-party
+/// Official providers own an API-key-free `auth.json`. Their stored OAuth login
+/// wins; otherwise any OAuth login already in Live is retained. Third-party
 /// providers only touch `config.toml` when the compatibility setting is enabled
 /// so the user's ChatGPT login cache survives provider switches.
 ///
@@ -1561,11 +1580,23 @@ pub fn write_codex_live_for_provider(
         };
     let config_text = unified_official_config.as_deref().or(config_text);
 
-    let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
-        || (category != Some("official")
-            && !crate::settings::preserve_codex_official_auth_on_switch());
+    if category == Some("official") {
+        let stored_auth = sanitize_codex_official_auth(auth);
+        let official_auth = if codex_auth_has_oauth_login_material(&stored_auth) {
+            stored_auth
+        } else {
+            let auth_path = get_codex_auth_path();
+            if auth_path.exists() {
+                let live_auth: Value = read_json_file(&auth_path)?;
+                sanitize_codex_official_auth(&live_auth)
+            } else {
+                stored_auth
+            }
+        };
+        return write_codex_live_atomic(&official_auth, config_text);
+    }
 
-    if should_write_auth {
+    if !crate::settings::preserve_codex_official_auth_on_switch() {
         write_codex_live_atomic(auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;

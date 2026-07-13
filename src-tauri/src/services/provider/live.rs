@@ -630,6 +630,10 @@ fn restore_live_settings_for_provider_backfill(
         );
     }
 
+    if provider.category.as_deref() == Some("official") {
+        crate::codex_config::sanitize_codex_official_settings(&mut settings);
+    }
+
     // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
     // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
     if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {
@@ -1970,6 +1974,46 @@ base_url = "https://a.example/v1"
             result.get("modelCatalog"),
             live_settings.get("modelCatalog"),
             "backfill must keep the Live-reconstructed catalog when the DB has none"
+        );
+    }
+
+    #[test]
+    fn codex_official_backfill_drops_third_party_api_key() {
+        let mut provider = Provider::with_id(
+            "official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({
+                "auth": {},
+                "config": ""
+            }),
+            None,
+        );
+        provider.category = Some("official".to_string());
+
+        let live_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "OPENAI_API_KEY": "third-party-key",
+                "tokens": {
+                    "access_token": "official-oauth-token"
+                }
+            },
+            "config": ""
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert!(
+            result.pointer("/auth/OPENAI_API_KEY").is_none(),
+            "official provider backfill must not store a third-party API key"
+        );
+        assert_eq!(
+            result
+                .pointer("/auth/tokens/access_token")
+                .and_then(Value::as_str),
+            Some("official-oauth-token"),
+            "official OAuth material must survive backfill"
         );
     }
 

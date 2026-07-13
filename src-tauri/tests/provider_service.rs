@@ -882,6 +882,59 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_switch_codex_official_drops_previous_custom_api_key() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    write_codex_live_atomic(
+        &json!({ "OPENAI_API_KEY": "third-party-key" }),
+        Some("model_provider = \"custom\"\n"),
+    )
+    .expect("seed custom provider live config");
+
+    let mut initial_config = MultiAppConfig::default();
+    {
+        let manager = initial_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "third-party".to_string();
+        manager.providers.insert(
+            "third-party".to_string(),
+            Provider::with_id(
+                "third-party".to_string(),
+                "Third Party".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "third-party-key" },
+                    "config": "model_provider = \"custom\"\n"
+                }),
+                None,
+            ),
+        );
+        let mut official = Provider::with_id(
+            "official".to_string(),
+            "OpenAI Official".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        official.category = Some("official".to_string());
+        manager.providers.insert("official".to_string(), official);
+    }
+
+    let state = create_test_state_with_config(&initial_config).expect("create test state");
+
+    ProviderService::switch(&state, AppType::Codex, "official")
+        .expect("switch to official provider");
+
+    let auth: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read official auth");
+    assert!(
+        auth.get("OPENAI_API_KEY").is_none(),
+        "official auth must not inherit the previous custom provider key"
+    );
+}
+
+#[test]
 fn reapply_codex_official_live_resyncs_mcp_servers() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
