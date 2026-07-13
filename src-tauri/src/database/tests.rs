@@ -799,6 +799,41 @@ fn schema_model_pricing_is_seeded_on_init() {
     );
 }
 
+/// 验证 GPT-5.6 三档 Standard 定价及裸别名均按官方价格写入数据库。
+#[test]
+fn schema_seeds_gpt_5_6_standard_pricing() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    for (model_id, expected) in [
+        ("gpt-5.6", ("5", "30", "0.50", "6.25")),
+        ("gpt-5.6-sol", ("5", "30", "0.50", "6.25")),
+        ("gpt-5.6-terra", ("2.50", "15", "0.25", "3.125")),
+        ("gpt-5.6-luna", ("1", "6", "0.10", "1.25")),
+    ] {
+        let actual: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap_or_else(|error| panic!("query {model_id} pricing: {error}"));
+
+        assert_eq!(
+            actual,
+            (
+                expected.0.to_string(),
+                expected.1.to_string(),
+                expected.2.to_string(),
+                expected.3.to_string(),
+            ),
+            "unexpected pricing for {model_id}",
+        );
+    }
+}
+
 #[test]
 fn model_pricing_seed_repairs_known_outdated_builtin_prices() {
     let db = Database::memory().expect("create memory db");
