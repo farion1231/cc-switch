@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Codex Image Capabilities Are Inferred Without a User Toggle**: Generated Codex model catalogs now advertise only models in CC Switch's confirmed, exact text-only registry as `input_modalities = ["text"]`; GPT, aliases, new suffix variants, and all unknown models fail open to `["text", "image"]`. The rectifier's “Text-Only Model Preflight” switch continues to control only proactive proxy request-body replacement and does not change Codex's catalog declaration. Live catalog reverse-import also collapses inferred modalities instead of persisting them as hidden row overrides, so a later registry correction or a model's multimodal upgrade takes effect automatically; only declarations that differ from inference survive a DB-missing/import round-trip.
+
 ## [3.16.5] - 2026-07-01
 
 Development since v3.16.4 reworks the Codex native-Responses path — restoring a generated model catalog for proxy-less direct-connect, decoupling model mapping from the local-routing toggle, and adding a host/model-prefix blacklist that disables Codex's built-in web_search on gateways that reject it — alongside a broad wave of new provider presets (Qiniu and Code0.ai across all seven apps, the FennoAI/ZetaAPI/TeamoRouter/NekoCode partners, and the non-partner Amux), Claude Sonnet 5 pricing plus a default-tier bump to it, a categorized two-level session view with group-level batch selection, live auto-sync of the shared Claude common config on switch, and a run of credential-safety, tool-detection, Doubao model-id, branding, and icon-size fixes.

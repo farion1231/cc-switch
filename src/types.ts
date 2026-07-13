@@ -260,9 +260,9 @@ export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
-  // Native Responses (direct) profile overrides for the generated
-  // model-catalogs.json. Ignored by the chat/proxy profile.
-  // e.g. MiniMax: supportsParallelToolCalls=true, inputModalities=["text","image"].
+  // Hidden provider capability metadata for the generated model catalog.
+  // supportsParallelToolCalls is native-profile-only; inputModalities wins over
+  // automatic text-only model detection for every profile.
   supportsParallelToolCalls?: boolean;
   inputModalities?: string[];
   // Vendor's OFFICIAL base_instructions (model identity / system preamble).

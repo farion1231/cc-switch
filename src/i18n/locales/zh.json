@@ -382,8 +382,8 @@
         "thinkingBudgetDescription": "当 Anthropic 类型供应商返回 budget_tokens 约束错误（如至少 1024）时，自动将 thinking 规范为 enabled 并将 budget 设为 32000，同时在需要时将 max_tokens 设为 64000，然后重试一次",
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
-        "mediaHeuristic": "启发式纯文本模型识别",
-        "mediaHeuristicDescription": "发送前按内置模型名列表预测性剥离图片。关闭后仅保留「已声明纯文本」与「上游报错兜底」两条事实驱动路径，避免内置列表把多模态模型误判为纯文本而静默丢图"
+        "mediaHeuristic": "纯文本模型预判",
+        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
       },
       "optimizer": {
         "title": "Bedrock 请求优化器",

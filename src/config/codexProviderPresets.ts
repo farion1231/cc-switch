@@ -80,8 +80,9 @@ function modelCatalog(
         displayName?: string;
         contextWindow?: number;
         // Native Responses (direct) overrides for the generated
-        // model-catalogs.json; omit to inherit the native template defaults
-        // (supports_parallel_tool_calls=false, input_modalities=["text"]).
+        // model-catalogs.json. Omitted input modalities are inferred by the
+        // backend: confirmed text-only models stay text-only; everything else
+        // defaults to text+image.
         supportsParallelToolCalls?: boolean;
         inputModalities?: string[];
         // Vendor's OFFICIAL base_instructions; omit to inherit the neutral

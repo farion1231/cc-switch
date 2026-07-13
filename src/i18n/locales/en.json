@@ -382,8 +382,8 @@
         "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once",
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
-        "mediaHeuristic": "Heuristic Text-Only Model Detection",
-        "mediaHeuristicDescription": "Predictively strips images before sending based on a built-in model-name list. When off, only the declared-text-only and upstream-error fallback paths remain, preventing the built-in list from misclassifying a multimodal model as text-only and silently dropping images"
+        "mediaHeuristic": "Text-Only Model Preflight",
+        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
       },
       "optimizer": {
         "title": "Bedrock Request Optimizer",

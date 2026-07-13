@@ -382,8 +382,8 @@
         "thinkingBudgetDescription": "Anthropic タイプのプロバイダーが budget_tokens 制約エラー（例: 1024 以上）を返した場合、thinking を enabled に正規化し、thinking 予算を 32000 に設定し、必要に応じて max_tokens を 64000 に引き上げて 1 回リトライします",
         "mediaFallback": "非対応画像フォールバック",
         "mediaFallbackDescription": "プロバイダーが画像入力に対応していない場合（テキストのみの能力が宣言されている、または上流が画像非対応エラーを返した場合）、画像ブロックを [Unsupported Image] マーカーに自動置換し、会話を中断させません",
-        "mediaHeuristic": "ヒューリスティックなテキスト専用モデル判定",
-        "mediaHeuristicDescription": "送信前に内蔵モデル名リストに基づいて画像を予測的に削除します。オフにすると「宣言済みテキスト専用」と「上流エラー時のフォールバック」のみが残り、内蔵リストがマルチモーダルモデルをテキスト専用と誤判定して画像を静かに削除するのを防ぎます"
+        "mediaHeuristic": "テキスト専用モデルの事前判定",
+        "mediaHeuristicDescription": "送信前に、内蔵の確認済みテキスト専用モデル登録に基づいて画像を除去します。オフにしても無効になるのはプロキシの登録ベース事前処理だけで、宣言済みテキスト専用モデルの処理と上流エラー時のフォールバックは残り、Codex モデルカタログの能力宣言は変わりません"
       },
       "optimizer": {
         "title": "Bedrock リクエストオプティマイザー",

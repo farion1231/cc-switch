@@ -20,6 +20,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
