@@ -127,7 +127,9 @@ interface ClaudeFormFieldsProps {
   defaultFableModel: string;
   defaultFableModelName: string;
   subagentModel: string;
+  imageModel?: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
+  onImageModelChange?: (value: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -198,7 +200,9 @@ export function ClaudeFormFields({
   defaultFableModel,
   defaultFableModelName,
   subagentModel,
+  imageModel = "",
   onModelChange,
+  onImageModelChange = () => {},
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -224,6 +228,7 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
+    imageModel ||
     apiFormat !== "anthropic" ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
@@ -400,12 +405,15 @@ export function ClaudeFormFields({
   const renderModelInput = (
     id: string,
     value: string,
-    field: ClaudeModelEnvField,
+    field: ClaudeModelEnvField | null,
     placeholder?: string,
     onValueChange?: (value: string) => void,
   ) => {
     const updateValue =
-      onValueChange ?? ((next: string) => onModelChange(field, next));
+      onValueChange ??
+      ((next: string) => {
+        if (field) onModelChange(field, next);
+      });
 
     if (isCodexOauthPreset) {
       return (
@@ -978,6 +986,22 @@ export function ClaudeFormFields({
                   </div>
                 );
               })}
+            </div>
+
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="claudeImageModel">
+                {t("providerForm.imageModelLabel")}
+              </FormLabel>
+              {renderModelInput(
+                "claudeImageModel",
+                imageModel,
+                null,
+                t("providerForm.imageModelPlaceholder"),
+                onImageModelChange,
+              )}
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("providerForm.imageModelHint")}
+              </p>
             </div>
 
             <div className="space-y-2 border-t pt-4">

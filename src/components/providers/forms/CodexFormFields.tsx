@@ -89,6 +89,8 @@ interface CodexFormFieldsProps {
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
   onCatalogModelsChange?: (models: CodexCatalogModel[]) => void;
+  imageModel?: string;
+  onImageModelChange?: (value: string) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -178,6 +180,8 @@ export function CodexFormFields({
   onCodexChatReasoningChange,
   catalogModels = [],
   onCatalogModelsChange,
+  imageModel = "",
+  onImageModelChange = () => {},
   speedTestEndpoints,
   customUserAgent,
   onCustomUserAgentChange,
@@ -214,7 +218,8 @@ export function CodexFormFields({
     isAnthropicFormat ||
     supportsThinking ||
     supportsEffort ||
-    !!maxOutputTokens;
+    !!maxOutputTokens ||
+    !!imageModel;
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -801,6 +806,30 @@ export function CodexFormFields({
                 )}
               </div>
             )}
+
+            <div className="space-y-1.5 border-t border-border-default pt-3">
+              <FormLabel htmlFor="codex-image-model">
+                {t("providerForm.imageModelLabel")}
+              </FormLabel>
+              <div className="flex gap-1">
+                <Input
+                  id="codex-image-model"
+                  value={imageModel}
+                  onChange={(event) => onImageModelChange(event.target.value)}
+                  placeholder={t("providerForm.imageModelPlaceholder")}
+                  className="flex-1"
+                />
+                {fetchedModels.length > 0 && (
+                  <ModelDropdown
+                    models={fetchedModels}
+                    onSelect={onImageModelChange}
+                  />
+                )}
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t("providerForm.imageModelHint")}
+              </p>
+            </div>
 
             <div
               className={cn(

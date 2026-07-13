@@ -62,13 +62,22 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
     };
 
     let message = extract_error_text(body);
-    let message = message.to_ascii_lowercase();
+    let message = message.to_lowercase();
 
     // 自证性表述：这类短语本身就断言了"仅接受文本"，属于模态拒绝，无需再要求
     // 错误提到 image/media 等字样——火山方舟等网关的报错是
     // "Model only support text input"，全程不出现 image（issue #5025）。
     // 国产网关的英文常缺三单 s，因此带 s / 不带 s 两种形式都要列。
-    const TEXT_ONLY_SELF_EVIDENT_HINTS: &[&str] = &["only support text", "only supports text"];
+    const TEXT_ONLY_SELF_EVIDENT_HINTS: &[&str] = &[
+        "only support text",
+        "only supports text",
+        "仅支持文本",
+        "只支持文本",
+        "仅接受文本",
+        "只接受文本",
+        "只能处理文本",
+        "只能接受文本",
+    ];
     if TEXT_ONLY_SELF_EVIDENT_HINTS
         .iter()
         .any(|hint| message.contains(hint))
@@ -83,7 +92,13 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         || message.contains("modality")
         || message.contains("modalities")
         || message.contains("media")
-        || message.contains("attachment");
+        || message.contains("attachment")
+        || message.contains("图片")
+        || message.contains("图像")
+        || message.contains("视觉")
+        || message.contains("多模态")
+        || message.contains("多媒体")
+        || message.contains("附件");
 
     if !mentions_image {
         return false;
@@ -108,6 +123,16 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "can't process",
         "can't handle",
         "unable to process",
+        "不支持",
+        "暂不支持",
+        "无法处理",
+        "不能处理",
+        "无法识别",
+        "不能识别",
+        "不支持处理",
+        "不支持识别",
+        "不被支持",
+        "格式不支持",
     ];
 
     UNSUPPORTED_HINTS.iter().any(|hint| message.contains(hint))
@@ -119,8 +144,7 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        is_image_block_type(block.get("type").and_then(Value::as_str))
-            || block.get("content").is_some_and(content_has_image_blocks)
+        is_image_block(block) || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
 
@@ -155,7 +179,7 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
 
     let mut replaced = 0usize;
     for block in blocks {
-        if is_image_block_type(block.get("type").and_then(Value::as_str)) {
+        if is_image_block(block) {
             replace_image_block_with_text_marker(block, text_type);
             replaced += 1;
             continue;
@@ -189,7 +213,7 @@ fn responses_input_has_image_blocks(input: Option<&Value>) -> bool {
 }
 
 fn responses_input_item_has_image_blocks(item: &Value) -> bool {
-    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+    if is_image_block(item) {
         return true;
     }
 
@@ -210,7 +234,7 @@ fn replace_images_in_responses_input(input: &mut Value) -> usize {
 fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
     let mut replaced = 0usize;
 
-    if item.get("type").and_then(Value::as_str) == Some("input_image") {
+    if is_image_block(item) {
         replace_image_block_with_text_marker(item, "input_text");
         replaced += 1;
     }
@@ -224,6 +248,52 @@ fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
 
 fn is_image_block_type(block_type: Option<&str>) -> bool {
     matches!(block_type, Some("image" | "image_url" | "input_image"))
+}
+
+fn is_image_block(block: &Value) -> bool {
+    is_image_block_type(block.get("type").and_then(Value::as_str)) || has_image_payload(block)
+}
+
+fn has_image_payload(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+
+    data_url_value_is_image(object.get("image_url"))
+        || data_url_value_is_image(object.get("url"))
+        || data_url_value_is_image(object.get("file_data"))
+        || object
+            .get("source")
+            .is_some_and(nested_mime_payload_is_image)
+        || nested_mime_payload_is_image(value)
+}
+
+fn data_url_value_is_image(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::String(value)) => is_image_data_url(value),
+        Some(Value::Object(object)) => object
+            .get("url")
+            .and_then(Value::as_str)
+            .is_some_and(is_image_data_url),
+        _ => false,
+    }
+}
+
+fn is_image_data_url(value: &str) -> bool {
+    let value = value.trim_start().to_ascii_lowercase();
+    value.starts_with("data:image/")
+}
+
+fn nested_mime_payload_is_image(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+
+    ["media_type", "mime_type", "mimeType"]
+        .into_iter()
+        .filter_map(|key| object.get(key).and_then(Value::as_str))
+        .map(str::trim)
+        .any(|mime| mime.to_ascii_lowercase().starts_with("image/"))
 }
 
 fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
@@ -501,6 +571,94 @@ mod tests {
     }
 
     #[test]
+    fn known_text_only_models_replace_openai_image_data_url_without_type() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "text": "look" },
+                    { "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn known_text_only_models_replace_openai_input_file_image_data_url() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    { "type": "input_file", "file_data": "data:image/jpeg;base64,abc" }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn known_text_only_models_replace_nested_image_mime_payloads() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "source": { "media_type": "image/webp", "data": "abc" } },
+                    { "mimeType": "image/png", "data": "abc" }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 2);
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+    }
+
+    #[test]
+    fn non_image_data_urls_are_not_replaced() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "deepseek-v4-flash",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_file", "file_data": "data:application/pdf;base64,abc" }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 0);
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_file");
+    }
+
+    #[test]
     fn longcat_models_are_classified_text_only() {
         // LongCat-2.0 (like the retired Flash Chat) is a text-only model; the
         // preset ships it in mixed case, so the classifier must normalize first.
@@ -755,6 +913,43 @@ mod tests {
         };
 
         assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_chinese_unsupported_image_errors() {
+        let errors = [
+            r#"{"error":{"message":"当前模型不支持图片输入，请切换为视觉模型"}}"#,
+            r#"{"message":"该模型暂不支持处理图像内容"}"#,
+            r#"{"detail":"多模态附件无法识别"}"#,
+        ];
+
+        for body in errors {
+            let error = ProxyError::UpstreamError {
+                status: 400,
+                body: Some(body.to_string()),
+            };
+            assert!(is_unsupported_image_error(&error), "{body}");
+        }
+    }
+
+    #[test]
+    fn detects_chinese_text_only_errors_without_image_mention() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"当前模型仅支持文本输入"}}"#.to_string()),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn ignores_unrelated_chinese_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"请求参数不支持该取值"}}"#.to_string()),
+        };
+
+        assert!(!is_unsupported_image_error(&error));
     }
 
     #[test]

@@ -2,7 +2,13 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  settingsApi,
+  openclawApi,
+  proxyApi,
+  type AppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -43,6 +49,40 @@ export function useProviderActions(
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
   const switchProviderMutation = useSwitchProviderMutation(activeApp);
 
+  const providerNeedsProxy = useCallback(
+    (provider: Provider) =>
+      (activeApp === "claude" || activeApp === "codex") &&
+      provider.category !== "official" &&
+      Boolean(provider.meta?.imageModel?.trim()),
+    [activeApp],
+  );
+
+  const ensureProxyTakeover = useCallback(async () => {
+    if (activeApp !== "claude" && activeApp !== "codex") return;
+
+    try {
+      await proxyApi.setProxyTakeoverForApp(activeApp, true);
+      await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["proxyTakeoverStatus"],
+      });
+      toast.success(
+        t("notifications.imageModelProxyTakeoverEnabled", {
+          defaultValue: "已启用当前应用的本地代理接管，重启应用后生效",
+        }),
+        { closeButton: true },
+      );
+    } catch (error) {
+      const detail =
+        extractErrorMessage(error) ||
+        t("proxy.switchFailed", {
+          detail: "",
+          defaultValue: "切换路由状态失败",
+        });
+      toast.error(detail, { duration: 4200 });
+    }
+  }, [activeApp, queryClient, t]);
+
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
     async (provider: Provider) => {
@@ -81,7 +121,23 @@ export function useProviderActions(
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
-      await addProviderMutation.mutateAsync(enhanced);
+      const addedProvider = await addProviderMutation.mutateAsync(enhanced);
+      if (addedProvider && providerNeedsProxy(addedProvider)) {
+        try {
+          const currentProviderId = await providersApi.getCurrent(activeApp);
+          if (currentProviderId === addedProvider.id) {
+            await ensureProxyTakeover();
+          }
+        } catch (error) {
+          const detail =
+            extractErrorMessage(error) ||
+            t("proxy.switchFailed", {
+              detail: "",
+              defaultValue: "切换路由状态失败",
+            });
+          toast.error(detail, { duration: 4200 });
+        }
+      }
 
       // OpenClaw: register models to allowlist after adding provider
       if (activeApp === "openclaw" && provider.suggestedDefaults) {
@@ -129,13 +185,41 @@ export function useProviderActions(
         }
       }
     },
-    [addProviderMutation, activeApp, queryClient, t],
+    [
+      activeApp,
+      addProviderMutation,
+      ensureProxyTakeover,
+      providerNeedsProxy,
+      queryClient,
+      t,
+    ],
   );
 
   // 更新供应商
   const updateProvider = useCallback(
     async (provider: Provider, originalId?: string) => {
       await updateProviderMutation.mutateAsync({ provider, originalId });
+      if (providerNeedsProxy(provider)) {
+        // provider 已成功更新；current 查询或 takeover 失败不应回滚更新，
+        // 只提示错误，避免编辑弹窗因 takeover 异常无法关闭。
+        try {
+          const currentProviderId = await providersApi.getCurrent(activeApp);
+          if (
+            currentProviderId === provider.id ||
+            (originalId !== undefined && currentProviderId === originalId)
+          ) {
+            await ensureProxyTakeover();
+          }
+        } catch (error) {
+          const detail =
+            extractErrorMessage(error) ||
+            t("proxy.switchFailed", {
+              detail: "",
+              defaultValue: "切换路由状态失败",
+            });
+          toast.error(detail, { duration: 4200 });
+        }
+      }
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -147,7 +231,12 @@ export function useProviderActions(
         );
       }
     },
-    [updateProviderMutation],
+    [
+      activeApp,
+      ensureProxyTakeover,
+      providerNeedsProxy,
+      updateProviderMutation,
+    ],
   );
 
   // 切换供应商
@@ -250,6 +339,9 @@ export function useProviderActions(
 
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
+        if (providerNeedsProxy(provider)) {
+          await ensureProxyTakeover();
+        }
         await syncClaudePlugin(provider);
 
         // Show backfill warning if present
@@ -294,7 +386,9 @@ export function useProviderActions(
     [
       switchProviderMutation,
       syncClaudePlugin,
+      ensureProxyTakeover,
       activeApp,
+      providerNeedsProxy,
       isProxyRunning,
       isProxyTakeover,
       t,

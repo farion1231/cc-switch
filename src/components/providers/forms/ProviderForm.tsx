@@ -311,6 +311,9 @@ function ProviderFormFull({
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
   });
+  const [localImageModel, setLocalImageModel] = useState<string>(
+    () => initialData?.meta?.imageModel ?? "",
+  );
 
   const [testConfig, setTestConfig] = useState<ProviderTestConfig>(
     () => initialData?.meta?.testConfig ?? { enabled: false },
@@ -350,6 +353,7 @@ function ProviderFormFull({
     setLocalIsFullUrl(
       supportsFullUrl ? (initialData?.meta?.isFullUrl ?? false) : false,
     );
+    setLocalImageModel(initialData?.meta?.imageModel ?? "");
     setTestConfig(initialData?.meta?.testConfig ?? { enabled: false });
     setPricingConfig({
       enabled:
@@ -1535,6 +1539,12 @@ function ProviderFormFull({
         supportsFullUrl && category !== "official" && localIsFullUrl
           ? true
           : undefined,
+      imageModel:
+        (appId === "claude" || appId === "codex") &&
+        category !== "official" &&
+        localImageModel.trim()
+          ? localImageModel.trim()
+          : undefined,
     };
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
@@ -1653,6 +1663,10 @@ function ProviderFormFull({
           codexApiFormatFromWireApi(extractCodexWireApi(template.config)) ??
             "openai_responses",
         );
+        setLocalImageModel("");
+      }
+      if (appId === "claude") {
+        setLocalImageModel("");
       }
       if (appId === "gemini") {
         resetGeminiConfig({}, {});
@@ -1690,6 +1704,7 @@ function ProviderFormFull({
 
       resetCodexConfig(auth, config, preset.modelCatalog ?? []);
       setCodexChatReasoning(preset.codexChatReasoning ?? {});
+      setLocalImageModel("");
       setLocalCodexApiFormat(
         preset.apiFormat ??
           codexApiFormatFromWireApi(extractCodexWireApi(config)) ??
@@ -1809,6 +1824,7 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    setLocalImageModel("");
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2129,7 +2145,9 @@ function ProviderFormFull({
               defaultFableModel={defaultFableModel}
               defaultFableModelName={defaultFableModelName}
               subagentModel={subagentModel}
+              imageModel={localImageModel}
               onModelChange={handleModelChange}
+              onImageModelChange={setLocalImageModel}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}
@@ -2180,6 +2198,8 @@ function ProviderFormFull({
               onCodexChatReasoningChange={setCodexChatReasoning}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
+              imageModel={localImageModel}
+              onImageModelChange={setLocalImageModel}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
