@@ -189,6 +189,7 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -275,6 +276,7 @@ impl Database {
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
@@ -478,6 +480,11 @@ impl Database {
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
                     }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（记录输入 token 缓存语义）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -650,6 +657,7 @@ impl Database {
             request_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -1322,6 +1330,30 @@ impl Database {
         Ok(())
     }
 
+    /// v12 -> v13：记录 input_tokens 是否包含缓存写入。
+    ///
+    /// 默认 0 表示旧版/未知语义；旧 Codex 行只包含 cache read，不包含
+    /// cache creation。新代理行会显式写入 1(total-inclusive) 或 2(fresh)。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
     /// 插入默认模型定价数据
     /// 格式: (model_id, display_name, input, output, cache_read, cache_creation)
     /// 注意: model_id 使用短横线格式（如 claude-haiku-4-5），与 API 返回的模型名称标准化后一致
@@ -1455,6 +1487,25 @@ impl Database {
                 "0.30",
                 "3.75",
             ),
+            // GPT-5.6 系列（Sol / Terra / Luna，2026-06 发布）
+            // 5.6 家族起 cache write 收 1.25× 输入价（此前 GPT 模型写缓存免费，勿回填旧系列）
+            ("gpt-5.6-sol", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2.50",
+                "15",
+                "0.25",
+                "3.125",
+            ),
+            ("gpt-5.6-luna", "GPT-5.6 Luna", "1", "6", "0.10", "1.25"),
+            // 裸名 gpt-5.6 是 sol 的官方别名；effort 后缀对齐 gpt-5.5 系列的记账形态
+            ("gpt-5.6", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-low", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-medium", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-high", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-xhigh", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
+            ("gpt-5.6-minimal", "GPT-5.6 Sol", "5", "30", "0.50", "6.25"),
             // GPT-5.5 系列
             ("gpt-5.5", "GPT-5.5", "5", "30", "0.50", "0"),
             ("gpt-5.5-low", "GPT-5.5", "5", "30", "0.50", "0"),
@@ -1892,6 +1943,9 @@ impl Database {
                 "0.19",
                 "0",
             ),
+            // 腾讯混元 (Tencent Hunyuan)（官方 CNY 1/4/0.25 按 1 USD ≈ 7.14 折算；Hy3 阶梯计价取最低档）
+            ("hunyuan-hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
+            ("hy3", "Hunyuan Hy3", "0.14", "0.56", "0.035", "0"),
             // MiniMax 系列
             ("minimax-m2.1", "MiniMax M2.1", "0.27", "0.95", "0.03", "0"),
             (
@@ -2187,6 +2241,44 @@ impl Database {
 
     fn repair_current_model_pricing(conn: &Connection) -> Result<(), AppError> {
         let pricing_fixes = [
+            // 2026-07-12 GPT-5.6 家族 cache write=1.25× 输入价（OpenAI 5.6 起的新规），
+            // 修正早期 seed 的 0 值；只匹配未被用户改过的行
+            (
+                "gpt-5.6-sol",
+                "GPT-5.6 Sol",
+                "5",
+                "30",
+                "0.50",
+                "6.25",
+                "5",
+                "30",
+                "0.50",
+                "0",
+            ),
+            (
+                "gpt-5.6-terra",
+                "GPT-5.6 Terra",
+                "2.50",
+                "15",
+                "0.25",
+                "3.125",
+                "2.50",
+                "15",
+                "0.25",
+                "0",
+            ),
+            (
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                "1",
+                "6",
+                "0.10",
+                "1.25",
+                "1",
+                "6",
+                "0.10",
+                "0",
+            ),
             // 2026-06-10 全量核价（厂商官方 list 价；CNY 按 ~7.14 折算）
             // GLM 4.6/4.7：旧值是中转/OpenRouter 折扣价，统一到 Z.ai 官方（与 glm-5/5.1 一致）
             (
@@ -2652,5 +2744,47 @@ impl Database {
             .map_err(|e| AppError::Database(format!("为表 {table} 添加列 {column} 失败: {e}")))?;
         log::info!("已为表 {table} 添加缺失列 {column}");
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_v12_to_v13_adds_input_token_semantics_columns() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE proxy_request_logs (request_id TEXT PRIMARY KEY)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE usage_daily_rollups (date TEXT PRIMARY KEY)",
+            [],
+        )?;
+        Database::set_user_version(&conn, 12)?;
+
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert_eq!(Database::get_user_version(&conn)?, 13);
+        assert!(Database::has_column(
+            &conn,
+            "proxy_request_logs",
+            "input_token_semantics"
+        )?);
+        assert!(Database::has_column(
+            &conn,
+            "usage_daily_rollups",
+            "input_token_semantics"
+        )?);
+        let log_default: i64 = conn.query_row(
+            "SELECT dflt_value = '0' FROM pragma_table_info('proxy_request_logs')
+             WHERE name = 'input_token_semantics'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(log_default, 1);
+
+        Ok(())
     }
 }

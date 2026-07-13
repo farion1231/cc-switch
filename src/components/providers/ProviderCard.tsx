@@ -22,8 +22,10 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
   extractCodexWireApi,
+  isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
+import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 
@@ -207,8 +209,14 @@ export function ProviderCard({
   //     并不兑现（绕过 UI 即可切换）→ 属虚保护，却以误伤 category 缺失的自定义供应商为代价。
   //  3) 预设导入的官方一定带 category="official"，category 缺失的「真官方」现实中≈不存在。
   // 真官方就该有显式 category；手动新建官方应引导标注，而不是靠空字段猜。
+  const supportsOfficialRouting = supportsOfficialProxyTakeover(
+    appId,
+    provider,
+  );
   const isOfficialBlockedByProxy =
-    isProxyTakeover && provider.category === "official";
+    isProxyTakeover &&
+    provider.category === "official" &&
+    !supportsOfficialRouting;
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
@@ -220,11 +228,16 @@ export function ProviderCard({
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   const codexNeedsRouting = useMemo(() => {
     if (appId !== "codex" || provider.category === "official") return false;
-    if (provider.meta?.apiFormat === "openai_chat") return true;
+    if (
+      provider.meta?.apiFormat === "openai_chat" ||
+      provider.meta?.apiFormat === "anthropic"
+    )
+      return true;
     const config = (provider.settingsConfig as Record<string, any>)?.config;
     return (
       typeof config === "string" &&
-      isCodexChatWireApi(extractCodexWireApi(config))
+      (isCodexChatWireApi(extractCodexWireApi(config)) ||
+        isCodexAnthropicWireApi(extractCodexWireApi(config)))
     );
   }, [
     appId,
@@ -399,13 +412,27 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "codex" && provider.category === "official" && (
-                <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
-                  {t("codex.noRoutingSupport", {
-                    defaultValue: "不支持路由",
-                  })}
+              {appId === "codex" && supportsOfficialRouting && (
+                <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                  {isProxyTakeover
+                    ? t("codex.officialRouting", {
+                        defaultValue: "官方账号路由",
+                      })
+                    : t("codex.nativeLogin", {
+                        defaultValue: "Codex 登录",
+                      })}
                 </span>
               )}
+
+              {appId === "codex" &&
+                provider.category === "official" &&
+                !supportsOfficialRouting && (
+                  <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                    {t("codex.noRoutingSupport", {
+                      defaultValue: "不支持路由",
+                    })}
+                  </span>
+                )}
 
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
