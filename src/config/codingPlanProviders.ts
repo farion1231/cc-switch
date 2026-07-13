@@ -11,14 +11,7 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id:
-    | "kimi"
-    | "zhipu"
-    | "zhipu_team"
-    | "minimax"
-    | "zenmux"
-    | "volcengine"
-    | "tokenhub";
+  id: "kimi" | "zhipu" | "zhipu_team" | "minimax" | "zenmux" | "volcengine";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -59,15 +52,6 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
     pattern: /volces\.com\/api\/coding/i,
-  },
-  {
-    // 腾讯云 TokenHub Token Plan。base_url 形如
-    // tokenhub.tencentmaas.com/plan/v3（企业版）或
-    // api.lkeap.cloud.tencent.com/plan/v3（个人版）。
-    id: "tokenhub",
-    label: "TokenHub (腾讯云)",
-    pattern:
-      /tokenhub\.tencentmaas\.com\/plan|lkeap\.cloud\.tencent\.com\/plan/i,
   },
 ] as const;
 
