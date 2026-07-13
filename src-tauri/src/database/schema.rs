@@ -488,6 +488,11 @@ impl Database {
                         Self::migrate_v11_to_v12(conn)?;
                         Self::set_user_version(conn, 12)?;
                     }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（添加 MimoCode 支持）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1314,12 +1319,8 @@ impl Database {
         Ok(())
     }
 
-    /// v11 -> v12 迁移：添加项目 Profiles 表与 MimoCode 支持。
-    ///
-    /// 包含：
-    /// 1) 新增 profiles 表；
-    /// 2) 为 mcp_servers / skills 添加 enabled_mimocode 列；
-    /// 3) 重建 proxy_config 表并确保包含 mimo app_type。
+    /// v11 -> v12 迁移：添加项目 Profiles 表
+    /// 与 create_tables_on_conn 中的建表语句保持一致（IF NOT EXISTS 保证幂等）
     fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS profiles (
@@ -1334,6 +1335,16 @@ impl Database {
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
 
+        log::info!("v11 -> v12 迁移完成：已添加项目 Profiles 表");
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：添加 MimoCode 支持。
+    ///
+    /// 包含：
+    /// 1) 为 mcp_servers / skills 添加 enabled_mimocode 列；
+    /// 2) 重建 proxy_config 表并确保包含 mimo app_type。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
         // 为 mcp_servers 表添加 enabled_mimocode 列
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
@@ -1441,7 +1452,7 @@ impl Database {
             )?;
         }
 
-        log::info!("v11 -> v12 迁移完成：已添加项目 Profiles 表与 MimoCode 支持");
+        log::info!("v12 -> v13 迁移完成：已添加 MimoCode 支持");
         Ok(())
     }
 

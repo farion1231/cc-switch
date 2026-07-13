@@ -2124,7 +2124,7 @@ impl ProxyService {
                 serde_json::to_string(&env_backup)
                     .map_err(|e| format!("序列化 Gemini 配置失败: {e}"))?
             }
-            AppType::MimoCode | _ => return Err(format!("未知的应用类型: {app_type}")),
+            _ => return Err(format!("未知的应用类型: {app_type}")),
         };
 
         self.db

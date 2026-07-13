@@ -206,7 +206,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
-        "mimo" => vec![mimocode::get_mimocode_storage_dir().join("storage")],
+        "mimo" => vec![mimocode::get_mimocode_storage_dir()],
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

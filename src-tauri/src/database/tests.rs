@@ -427,6 +427,73 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn migration_v12_to_v13_adds_mimocode_support() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            server_config TEXT NOT NULL,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+        );
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            enabled_claude BOOLEAN NOT NULL DEFAULT 0,
+            enabled_codex BOOLEAN NOT NULL DEFAULT 0,
+            enabled_gemini BOOLEAN NOT NULL DEFAULT 0,
+            enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            installed_at INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE proxy_config (
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            max_retries INTEGER NOT NULL DEFAULT 3
+        );
+        INSERT INTO proxy_config (app_type, max_retries) VALUES ('claude', 6);
+        INSERT INTO proxy_config (app_type, max_retries) VALUES ('codex', 3);
+        INSERT INTO proxy_config (app_type, max_retries) VALUES ('gemini', 5);
+        "#,
+    )
+    .expect("seed v12 schema without mimocode support");
+
+    Database::set_user_version(&conn, 12).expect("set user_version=12");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert!(
+        Database::has_column(&conn, "mcp_servers", "enabled_mimocode")
+            .expect("check mcp_servers.enabled_mimocode"),
+        "mcp_servers.enabled_mimocode should exist after v12->v13"
+    );
+    assert!(
+        Database::has_column(&conn, "skills", "enabled_mimocode")
+            .expect("check skills.enabled_mimocode"),
+        "skills.enabled_mimocode should exist after v12->v13"
+    );
+
+    let mimo_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'mimo'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count mimo row");
+    assert_eq!(mimo_rows, 1, "proxy_config should contain mimo row");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn schema_create_tables_repairs_dev_global_profile_marker() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
