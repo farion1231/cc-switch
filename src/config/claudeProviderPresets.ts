@@ -1380,4 +1380,30 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "Huawei Cloud MaaS",
+    nameKey: "providerForm.presets.huaweiMaas",
+    websiteUrl:
+      "https://www.huaweicloud.com/intl/en-us/product/modelarts/studio.html",
+    apiKeyUrl:
+      "https://console-intl.huaweicloud.com/modelarts/",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://api-ap-southeast-1.modelarts-maas.com/openai/v1",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "glm-5.2",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.2",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.2",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.2",
+      },
+    },
+    category: "cloud_provider",
+    apiFormat: "openai_chat",
+    endpointCandidates: [
+      "https://api-ap-southeast-1.modelarts-maas.com/openai/v1",
+    ],
+    icon: "huawei",
+    iconColor: "#FF0000",
+  },
 ];
