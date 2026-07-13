@@ -392,10 +392,7 @@
         "thinkingOptimizer": "Thinking 最佳化",
         "thinkingOptimizerDescription": "自動為 Opus/Sonnet 啟用 Adaptive Thinking，為舊模型注入 Extended Thinking",
         "cacheInjection": "Cache 注入",
-        "cacheInjectionDescription": "自動在請求關鍵位置注入 Cache 斷點，減少重複 token 計費",
-        "cacheTtl": "Cache TTL",
-        "cacheTtl5m": "5 分鐘",
-        "cacheTtl1h": "1 小時"
+        "cacheInjectionDescription": "自動在請求關鍵位置注入標準 5 分鐘 Cache 斷點，減少重複 token 計費"
       },
       "logConfig": {
         "title": "日誌管理",

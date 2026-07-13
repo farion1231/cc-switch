@@ -2859,13 +2859,13 @@ fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
 /// Prompt caching is part of the Codex→Anthropic protocol bridge rather than an
 /// optional Bedrock optimizer. Codex requests do not contain Anthropic
 /// `cache_control`, so keep bridge caching on by default while still honoring the
-/// dedicated cache-injection switch and configured TTL.
+/// dedicated cache-injection switch. Injected breakpoints always use Anthropic's
+/// standard 5-minute TTL.
 fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
     OptimizerConfig {
         enabled: true,
         thinking_optimizer: false,
         cache_injection: config.cache_injection,
-        cache_ttl: config.cache_ttl.clone(),
     }
 }
 
@@ -4233,7 +4233,6 @@ mod tests {
         let default = codex_anthropic_cache_config(&OptimizerConfig::default());
         assert!(default.enabled);
         assert!(default.cache_injection);
-        assert_eq!(default.cache_ttl, "1h");
 
         let disabled = codex_anthropic_cache_config(&OptimizerConfig {
             cache_injection: false,

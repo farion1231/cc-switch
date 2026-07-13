@@ -448,8 +448,6 @@ fn insert_session_log_entry(
         output_tokens: msg.output_tokens,
         cache_read_tokens: msg.cache_read_tokens,
         cache_creation_tokens: msg.cache_creation_tokens,
-        cache_creation_5m_tokens: 0,
-        cache_creation_1h_tokens: 0,
         model: Some(msg.model.clone()),
         message_id: None,
     };

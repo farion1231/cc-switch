@@ -264,13 +264,6 @@ pub struct OptimizerConfig {
     /// Cache 注入子开关（总开关开启后默认生效）
     #[serde(default = "default_true")]
     pub cache_injection: bool,
-    /// Cache TTL: "5m" | "1h"（默认 "1h"）
-    #[serde(default = "default_cache_ttl")]
-    pub cache_ttl: String,
-}
-
-fn default_cache_ttl() -> String {
-    "1h".to_string()
 }
 
 impl Default for OptimizerConfig {
@@ -279,7 +272,6 @@ impl Default for OptimizerConfig {
             enabled: false,
             thinking_optimizer: true,
             cache_injection: true,
-            cache_ttl: "1h".to_string(),
         }
     }
 }

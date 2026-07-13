@@ -191,11 +191,6 @@ pub(crate) fn build_responses_usage_from_anthropic(usage: Option<&Value>) -> Val
     if cache_creation > 0 {
         result["cache_creation_input_tokens"] = json!(cache_creation);
     }
-    if let Some(cache_creation_details) = u.get("cache_creation") {
-        // Preserve Anthropic's TTL buckets as a compatibility extension. The usage
-        // parser consumes these to distinguish 5-minute and 1-hour write pricing.
-        result["cache_creation"] = cache_creation_details.clone();
-    }
     result
 }
 
@@ -2318,11 +2313,7 @@ mod tests {
                 "output_tokens": 5,
                 "output_tokens_details": {"thinking_tokens": 3},
                 "cache_read_input_tokens": 60,
-                "cache_creation_input_tokens": 20,
-                "cache_creation": {
-                    "ephemeral_5m_input_tokens": 5,
-                    "ephemeral_1h_input_tokens": 15
-                }
+                "cache_creation_input_tokens": 20
             }
         });
         let result = anthropic_response_to_responses(input).unwrap();
@@ -2340,12 +2331,8 @@ mod tests {
             result["usage"]["input_tokens_details"]["cache_write_tokens"],
             20
         );
-        // cache_creation is passed through explicitly for downstream billing attribution (counted only once)
+        // Aggregate cache creation is exposed for downstream billing attribution (counted only once).
         assert_eq!(result["usage"]["cache_creation_input_tokens"], 20);
-        assert_eq!(
-            result["usage"]["cache_creation"]["ephemeral_1h_input_tokens"],
-            15
-        );
     }
 
     #[test]

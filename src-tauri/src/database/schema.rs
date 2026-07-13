@@ -189,7 +189,6 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-            cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
             input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -485,11 +484,6 @@ impl Database {
                         log::info!("迁移数据库从 v12 到 v13（记录输入 token 缓存语义）");
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
-                    }
-                    13 => {
-                        log::info!("迁移数据库从 v13 到 v14（记录 1 小时缓存写入 token）");
-                        Self::migrate_v13_to_v14(conn)?;
-                        Self::set_user_version(conn, 14)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1354,22 +1348,6 @@ impl Database {
                 conn,
                 "usage_daily_rollups",
                 "input_token_semantics",
-                "INTEGER NOT NULL DEFAULT 0",
-            )?;
-        }
-        Ok(())
-    }
-
-    /// v13 -> v14：持久化 Anthropic 1-hour cache-write bucket。
-    /// 5-minute/unknown writes can be derived from aggregate cache_creation_tokens;
-    /// storing only the premium bucket keeps existing aggregate APIs stable while
-    /// allowing later cost backfills to retain correct TTL pricing.
-    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
-        if Self::table_exists(conn, "proxy_request_logs")? {
-            Self::add_column_if_missing(
-                conn,
-                "proxy_request_logs",
-                "cache_creation_1h_tokens",
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
         }
@@ -2788,7 +2766,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 14);
+        assert_eq!(Database::get_user_version(&conn)?, 13);
         assert!(Database::has_column(
             &conn,
             "proxy_request_logs",
@@ -2798,11 +2776,6 @@ mod tests {
             &conn,
             "usage_daily_rollups",
             "input_token_semantics"
-        )?);
-        assert!(Database::has_column(
-            &conn,
-            "proxy_request_logs",
-            "cache_creation_1h_tokens"
         )?);
         let log_default: i64 = conn.query_row(
             "SELECT dflt_value = '0' FROM pragma_table_info('proxy_request_logs')

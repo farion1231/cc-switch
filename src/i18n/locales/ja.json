@@ -392,10 +392,7 @@
         "thinkingOptimizer": "Thinking 最適化",
         "thinkingOptimizerDescription": "Opus/Sonnet に Adaptive Thinking を自動的に有効化し、レガシーモデルに Extended Thinking を注入",
         "cacheInjection": "Cache 注入",
-        "cacheInjectionDescription": "リクエストの重要な位置に Cache ブレークポイントを自動注入し、重複トークンの課金を削減",
-        "cacheTtl": "Cache TTL",
-        "cacheTtl5m": "5 分",
-        "cacheTtl1h": "1 時間"
+        "cacheInjectionDescription": "リクエストの重要な位置に標準の 5 分間 Cache ブレークポイントを自動注入し、重複トークンの課金を削減"
       },
       "logConfig": {
         "title": "ログ管理",

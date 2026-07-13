@@ -22,19 +22,9 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
         );
     }
 
-    // 升级已有断点的 TTL
-    upgrade_existing_ttl(body, &config.cache_ttl);
-
     let mut budget = 4_usize.saturating_sub(existing);
     if budget == 0 {
-        if existing > 0 {
-            log::info!(
-                "[OPT] cache: ttl-upgrade({existing}->{},existing={existing})",
-                config.cache_ttl
-            );
-        } else {
-            log::info!("[OPT] cache: no-op(existing={existing})");
-        }
+        log::info!("[OPT] cache: no-op(existing={existing})");
         return;
     }
 
@@ -46,10 +36,7 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
             if let Some(last) = tools.last_mut() {
                 if last.get("cache_control").is_none() {
                     if let Some(o) = last.as_object_mut() {
-                        o.insert(
-                            "cache_control".to_string(),
-                            make_cache_control(&config.cache_ttl),
-                        );
+                        o.insert("cache_control".to_string(), make_cache_control());
                     }
                     budget -= 1;
                     injected.push("tools");
@@ -73,10 +60,7 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
             if let Some(last) = system.last_mut() {
                 if last.get("cache_control").is_none() {
                     if let Some(o) = last.as_object_mut() {
-                        o.insert(
-                            "cache_control".to_string(),
-                            make_cache_control(&config.cache_ttl),
-                        );
+                        o.insert("cache_control".to_string(), make_cache_control());
                     }
                     budget -= 1;
                     injected.push("system");
@@ -90,7 +74,7 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
     if budget > 0 {
         if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
             for message in messages.iter_mut().rev() {
-                if inject_message_breakpoint(message, &config.cache_ttl) {
+                if inject_message_breakpoint(message) {
                     budget -= 1;
                     injected.push("msgs-latest");
                     break;
@@ -108,7 +92,7 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
                     }
                     user_count += 1;
                     if user_count == 2 {
-                        if inject_message_breakpoint(message, &config.cache_ttl) {
+                        if inject_message_breakpoint(message) {
                             injected.push("msgs-prior-user");
                         }
                         break;
@@ -122,11 +106,11 @@ pub fn inject(body: &mut Value, config: &OptimizerConfig) {
         "[OPT] cache: {}bp({},{},pre={existing})",
         injected.len(),
         injected.join("+"),
-        config.cache_ttl,
+        "5m",
     );
 }
 
-fn inject_message_breakpoint(message: &mut Value, ttl: &str) -> bool {
+fn inject_message_breakpoint(message: &mut Value) -> bool {
     let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
         return false;
     };
@@ -144,16 +128,12 @@ fn inject_message_breakpoint(message: &mut Value, ttl: &str) -> bool {
     let Some(object) = block.as_object_mut() else {
         return false;
     };
-    object.insert("cache_control".to_string(), make_cache_control(ttl));
+    object.insert("cache_control".to_string(), make_cache_control());
     true
 }
 
-fn make_cache_control(ttl: &str) -> Value {
-    if ttl == "5m" {
-        json!({"type": "ephemeral"})
-    } else {
-        json!({"type": "ephemeral", "ttl": ttl})
-    }
+fn make_cache_control() -> Value {
+    json!({"type": "ephemeral"})
 }
 
 fn count_existing(body: &Value) -> usize {
@@ -187,40 +167,6 @@ fn count_existing(body: &Value) -> usize {
     count
 }
 
-fn upgrade_existing_ttl(body: &mut Value, ttl: &str) {
-    let upgrade = |val: &mut Value| {
-        if let Some(cc) = val.get_mut("cache_control").and_then(|c| c.as_object_mut()) {
-            if ttl == "5m" {
-                cc.remove("ttl");
-            } else {
-                cc.insert("ttl".to_string(), json!(ttl));
-            }
-        }
-    };
-
-    if let Some(tools) = body.get_mut("tools").and_then(|t| t.as_array_mut()) {
-        for tool in tools.iter_mut() {
-            upgrade(tool);
-        }
-    }
-
-    if let Some(system) = body.get_mut("system").and_then(|s| s.as_array_mut()) {
-        for block in system.iter_mut() {
-            upgrade(block);
-        }
-    }
-
-    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
-        for msg in messages.iter_mut() {
-            if let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
-                for block in content.iter_mut() {
-                    upgrade(block);
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,7 +177,6 @@ mod tests {
             enabled: true,
             thinking_optimizer: true,
             cache_injection: true,
-            cache_ttl: "1h".to_string(),
         }
     }
 
@@ -262,7 +207,7 @@ mod tests {
 
         // tools last element
         assert!(body["tools"][1].get("cache_control").is_some());
-        assert_eq!(body["tools"][1]["cache_control"]["ttl"], "1h");
+        assert!(body["tools"][1]["cache_control"].get("ttl").is_none());
         // system last element
         assert!(body["system"][0].get("cache_control").is_some());
         // assistant last non-thinking block
@@ -296,26 +241,26 @@ mod tests {
     }
 
     #[test]
-    fn test_existing_four_breakpoints_only_upgrades_ttl() {
+    fn test_existing_four_breakpoints_preserve_caller_ttl() {
         let mut body = json!({
             "model": "test",
             "tools": [
-                {"name": "t1", "cache_control": {"type": "ephemeral", "ttl": "5m"}},
-                {"name": "t2", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+                {"name": "t1", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+                {"name": "t2", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
             ],
             "system": [
-                {"type": "text", "text": "sys", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+                {"type": "text", "text": "sys", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
             ],
             "messages": [
                 {"role": "assistant", "content": [
-                    {"type": "text", "text": "ok", "cache_control": {"type": "ephemeral", "ttl": "5m"}}
+                    {"type": "text", "text": "ok", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
                 ]}
             ]
         });
 
         inject(&mut body, &default_config());
 
-        // All TTLs upgraded to 1h, no new breakpoints
+        // Existing markers are caller-owned; only newly injected markers are fixed to 5m.
         assert_eq!(body["tools"][0]["cache_control"]["ttl"], "1h");
         assert_eq!(body["tools"][1]["cache_control"]["ttl"], "1h");
         assert_eq!(body["system"][0]["cache_control"]["ttl"], "1h");
@@ -393,18 +338,14 @@ mod tests {
     }
 
     #[test]
-    fn test_ttl_5m_no_ttl_field() {
-        let config = OptimizerConfig {
-            cache_ttl: "5m".to_string(),
-            ..default_config()
-        };
+    fn test_standard_five_minute_cache_control_omits_ttl() {
         let mut body = json!({
             "model": "test",
             "tools": [{"name": "tool1"}],
             "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
         });
 
-        inject(&mut body, &config);
+        inject(&mut body, &default_config());
 
         let cc = &body["tools"][0]["cache_control"];
         assert_eq!(cc["type"], "ephemeral");
