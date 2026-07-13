@@ -2015,8 +2015,8 @@ impl ProxyService {
             .await
     }
 
-    /// 仅供已持有 per-app 切换锁的调用方使用。
-    async fn update_live_backup_from_provider_inner(
+    /// 仅供已持有 per-app 切换锁的调用方使用（避免在外层已持锁时再次 `lock_for_app` 死锁）。
+    pub(crate) async fn update_live_backup_from_provider_inner(
         &self,
         app_type: &str,
         provider: &Provider,

@@ -1691,6 +1691,322 @@ wire_api = "responses"
 }
 
 #[test]
+fn update_current_codex_provider_with_stale_live_backup_writes_config_toml() {
+    // Regression: editing the active Codex provider while a live backup row still
+    // exists (takeover fully off, live not proxy-owned) used to only refresh the
+    // backup and skip writing ~/.codex/config.toml. UI toast said "saved" but the
+    // on-disk config and reopened form (via live settings) kept the old values.
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access",
+            "id_token": "oauth-id"
+        }
+    });
+    let old_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+    let new_config = r#"model_provider = "deepseek"
+model = "deepseek-reasoner"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+
+    write_codex_live_atomic(&oauth_auth, Some(old_config)).expect("seed codex live");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "deepseek".to_string();
+
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "old-key"},
+                "config": old_config
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        manager.providers.insert("deepseek".to_string(), provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    futures::executor::block_on(
+        state.db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": oauth_auth,
+                "config": old_config
+            }))
+            .expect("serialize backup"),
+        ),
+    )
+    .expect("seed stale Codex live backup without active takeover");
+
+    let mut updated = state
+        .db
+        .get_provider_by_id("deepseek", AppType::Codex.as_str())
+        .expect("load provider")
+        .expect("provider exists");
+    updated.settings_config = json!({
+        "auth": {"OPENAI_API_KEY": "new-key"},
+        "config": new_config
+    });
+
+    ProviderService::update(&state, AppType::Codex, Some("deepseek"), updated)
+        .expect("update current Codex provider");
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        live_config.contains("deepseek-reasoner"),
+        "stale-backup path must still write the edited config.toml; got:\n{live_config}"
+    );
+    assert!(
+        live_config.contains("new-key") || live_config.contains("experimental_bearer_token"),
+        "edited API key must reach live config via experimental_bearer_token; got:\n{live_config}"
+    );
+    assert!(
+        !live_config.contains("deepseek-chat"),
+        "old model value must not remain in live config; got:\n{live_config}"
+    );
+
+    let stored = state
+        .db
+        .get_provider_by_id("deepseek", AppType::Codex.as_str())
+        .expect("reload provider")
+        .expect("provider exists");
+    assert_eq!(
+        stored
+            .settings_config
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str()),
+        Some("new-key"),
+        "database SSOT must store the edited API key"
+    );
+
+    let backup = futures::executor::block_on(state.db.get_live_backup("codex"))
+        .expect("get backup")
+        .expect("backup still exists");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup");
+    let backup_config = backup_value
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        backup_config.contains("deepseek-reasoner"),
+        "restore backup should also reflect the edit"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "this integration-style test must serialize global test HOME and settings mutations across async takeover calls"
+)]
+async fn update_current_codex_provider_during_takeover_syncs_proxy_live_and_backup() {
+    // Editing the active Codex provider while takeover owns live must refresh
+    // both the restore backup and the proxy-shaped live config (same as hot_switch).
+    // Main only reprojects takeover-owned Codex live while the proxy process is running.
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let _home = ensure_test_home();
+
+    let oauth_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "oauth-access",
+            "id_token": "oauth-id"
+        }
+    });
+    let provider_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+    let edited_config = r#"model_provider = "deepseek"
+model = "deepseek-reasoner"
+
+[model_providers.deepseek]
+name = "DeepSeek Edited"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+    let proxy_live_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+"#;
+
+    write_codex_live_atomic(&oauth_auth, Some(proxy_live_config))
+        .expect("seed taken-over Codex live config");
+
+    let mut config = MultiAppConfig::default();
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = "deepseek".to_string();
+
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": {"OPENAI_API_KEY": "old-key"},
+                "config": provider_config
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        manager.providers.insert("deepseek".to_string(), provider);
+    }
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    state
+        .db
+        .save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": oauth_auth,
+                "config": provider_config
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed Codex live backup");
+
+    // ProxyConfig is crate-internal; mutate via get/update so the integration
+    // test does not need the type in the public API surface.
+    let mut global = state
+        .db
+        .get_proxy_config()
+        .await
+        .expect("get global proxy config");
+    global.live_takeover_active = true;
+    global.listen_port = 0;
+    state
+        .db
+        .update_proxy_config(global)
+        .await
+        .expect("set global proxy takeover flags");
+    let mut proxy_config = state
+        .db
+        .get_proxy_config_for_app("codex")
+        .await
+        .expect("get proxy config");
+    proxy_config.enabled = true;
+    state
+        .db
+        .update_proxy_config_for_app(proxy_config)
+        .await
+        .expect("enable codex takeover");
+
+    state
+        .proxy_service
+        .start()
+        .await
+        .expect("start proxy service");
+    assert!(
+        state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&AppType::Codex),
+        "seeded live must be recognized as takeover-owned before update"
+    );
+
+    let mut updated = state
+        .db
+        .get_provider_by_id("deepseek", AppType::Codex.as_str())
+        .expect("load provider")
+        .expect("provider exists");
+    updated.name = "DeepSeek Edited".to_string();
+    updated.settings_config = json!({
+        "auth": {"OPENAI_API_KEY": "new-key"},
+        "config": edited_config
+    });
+
+    let update_result = ProviderService::update(&state, AppType::Codex, Some("deepseek"), updated);
+    state
+        .proxy_service
+        .stop()
+        .await
+        .expect("stop proxy service");
+    update_result.expect("update current Codex provider under takeover");
+
+    let live_config =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
+    assert!(
+        live_config.contains("127.0.0.1") && live_config.contains("/v1"),
+        "takeover live must stay pointed at the local proxy; got:\n{live_config}"
+    );
+    assert!(
+        live_config.contains("PROXY_MANAGED"),
+        "takeover live must keep the proxy bearer placeholder"
+    );
+    assert!(
+        live_config.contains("deepseek-reasoner")
+            && live_config.contains(r#"name = "DeepSeek Edited""#),
+        "takeover live must pick up edited model/label; got:\n{live_config}"
+    );
+    assert!(
+        !live_config.contains("https://api.deepseek.com/v1"),
+        "normal provider base_url must not overwrite taken-over live config"
+    );
+
+    let backup = state
+        .db
+        .get_live_backup("codex")
+        .await
+        .expect("get Codex backup")
+        .expect("backup exists");
+    let backup_value: serde_json::Value =
+        serde_json::from_str(&backup.original_config).expect("parse backup");
+    // preserve_codex_official_auth_on_switch keeps OAuth material in backup auth
+    // and projects the provider API key into config as experimental_bearer_token.
+    assert_eq!(
+        backup_value.get("auth"),
+        Some(&oauth_auth),
+        "restore backup must keep official OAuth auth under preserve-official-auth mode"
+    );
+    let backup_config = backup_value
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        backup_config.contains("deepseek-reasoner")
+            && backup_config.contains("DeepSeek Edited")
+            && backup_config.contains("new-key"),
+        "restore backup config must be rebuilt from the edited provider (model/label/key); got:\n{backup_config}"
+    );
+}
+
+#[test]
 fn explicitly_cleared_common_snippet_is_not_auto_extracted() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
