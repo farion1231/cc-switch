@@ -35,6 +35,64 @@ export function setClaudeOneMMarker(model: string, enabled: boolean): string {
   return enabled ? `${base}${CLAUDE_ONE_M_MARKER}` : base;
 }
 
+// ---- 通用后缀解析器（泛化 [1M] 布尔标记为任意粒度窗口后缀）----
+
+export interface ModelSuffixResult {
+  slug: string;
+  window?: number;
+}
+
+function parseWindowToken(token: string): number | undefined {
+  const trimmed = token.trim();
+  if (!trimmed) return undefined;
+  const last = trimmed[trimmed.length - 1];
+  let numPart: string;
+  let multiplier: number;
+  if (last === "K" || last === "k") {
+    numPart = trimmed.slice(0, -1);
+    multiplier = 1000;
+  } else if (last === "M" || last === "m") {
+    numPart = trimmed.slice(0, -1);
+    multiplier = 1000000;
+  } else {
+    numPart = trimmed;
+    multiplier = 1;
+  }
+  const value = Number.parseInt(numPart.trim(), 10);
+  if (Number.isNaN(value) || value <= 0) return undefined;
+  return value * multiplier;
+}
+
+export function parseModelSuffix(model: string): ModelSuffixResult {
+  const trimmed = model.trim();
+  const close = trimmed.lastIndexOf("]");
+  if (close !== trimmed.length - 1) {
+    return { slug: model, window: undefined };
+  }
+  const open = trimmed.lastIndexOf("[", close);
+  if (open <= 0) return { slug: model, window: undefined };
+  const slug = trimmed.slice(0, open).trim();
+  if (!slug) return { slug: model, window: undefined };
+  const window = parseWindowToken(trimmed.slice(open + 1, close));
+  if (window === undefined) return { slug: model, window: undefined };
+  return { slug, window };
+}
+
+export function stripModelSuffix(model: string): string {
+  return parseModelSuffix(model).slug;
+}
+
+export function setModelSuffix(model: string, windowStr: string): string {
+  const base = stripModelSuffix(model).trim();
+  if (!base) return "";
+  const trimmed = windowStr.trim();
+  if (!trimmed) return base;
+  const window = parseWindowToken(trimmed);
+  if (window === undefined) return base;
+  // 统一小写写入
+  return `${base}[${trimmed.toLowerCase()}]`;
+}
+
 /**
  * Parse model values from settings config JSON
  */
