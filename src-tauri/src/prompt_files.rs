@@ -21,6 +21,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
+        AppType::Grok => crate::grok_config::get_grok_config_dir(),
         AppType::Gemini => get_gemini_dir(),
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
@@ -31,6 +32,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     let filename = match app {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
+        AppType::Grok => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),

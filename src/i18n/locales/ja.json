@@ -877,7 +877,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "grok": "Grok Build"
   },
   "sessionManager": {
     "title": "セッション管理",
@@ -1247,6 +1248,24 @@
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
     "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+  },
+  "grokConfig": {
+    "authJson": "Grok API Key (JSON) *",
+    "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"xai-your-api-key\"\n}",
+    "authJsonHint": "プロバイダー共通 API Key。各 [model.*] に api_key または env_key も設定できます",
+    "profileToml": "Grok Profile (TOML)",
+    "profileTomlHint": "endpoints、models、subagents、model.* を管理し、その他の Grok グローバル設定は保持します",
+    "defaultModelPlaceholder": "例: grok-4.5",
+    "defaultModelHint": "Grok Build がデフォルトで使用するモデルです。いつでも変更でき、空欄の場合は現在の Profile のデフォルトを保持します。",
+    "advancedSectionHint": "Grok ネイティブ API Backend、User-Agent、ローカルプロキシ上書きを含みます。",
+    "editGlobalConfig": "Grok グローバル設定を編集",
+    "addToGlobalConfig": "グローバル設定に追加",
+    "addedToGlobalConfig": "現在の Grok Profile をグローバル設定に追加しました",
+    "globalConfigTitle": "Grok Build グローバル config.toml",
+    "globalConfigHint": "ローカルの実設定を編集します。プロバイダー切替では endpoints、models、subagents、model.* のみ置換し、その他の設定は保持され、保存時に自動バックアップされます。",
+    "globalConfigSaved": "Grok グローバル設定を保存しました",
+    "applyPrivacy": "プライバシー保護を適用",
+    "privacyApplied": "プライバシー保護設定を適用しました"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

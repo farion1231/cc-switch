@@ -157,6 +157,17 @@ impl Provider {
                     .unwrap_or_default();
                 (base_url, api_key)
             }
+            AppType::Grok => {
+                let auth = settings.get("auth");
+                let api_key =
+                    first_non_empty(auth, &["OPENAI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"]);
+                let base_url = settings
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .and_then(crate::grok_config::active_base_url)
+                    .unwrap_or_default();
+                (base_url, api_key)
+            }
             // Gemini uses Google-specific env keys (with a legacy GOOGLE_API_KEY fallback).
             AppType::Gemini => {
                 let env = settings.get("env");

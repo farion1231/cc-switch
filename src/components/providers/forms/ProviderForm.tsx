@@ -33,6 +33,10 @@ import {
   type CodexProviderPreset,
 } from "@/config/codexProviderPresets";
 import {
+  getGrokCustomTemplate,
+  grokProviderPresets,
+} from "@/config/grokProviderPresets";
+import {
   geminiProviderPresets,
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
@@ -67,6 +71,10 @@ import {
   setCodexModelName as setCodexModelNameInConfig,
 } from "@/utils/providerConfigUtils";
 import { isNonNegativeDecimalString } from "@/types/usage";
+import {
+  extractGrokApiBackend,
+  setGrokApiBackend,
+} from "@/utils/grokConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -271,6 +279,7 @@ function ProviderFormFull({
   const showCommonConfigNotice =
     settingsData != null && settingsData.commonConfigConfirmed !== true;
   const isDarkMode = useDarkMode();
+  const isCodexLike = appId === "codex" || appId === "grok";
 
   const handleCommonConfigConfirm = async () => {
     try {
@@ -307,7 +316,7 @@ function ProviderFormFull({
   const [endpointAutoSelect, setEndpointAutoSelect] = useState<boolean>(
     () => initialData?.meta?.endpointAutoSelect ?? true,
   );
-  const supportsFullUrl = appId === "claude" || appId === "codex";
+  const supportsFullUrl = appId === "claude" || isCodexLike;
   const [localIsFullUrl, setLocalIsFullUrl] = useState<boolean>(() => {
     if (!supportsFullUrl) return false;
     return initialData?.meta?.isFullUrl ?? false;
@@ -379,7 +388,7 @@ function ProviderFormFull({
       notes: initialData?.notes ?? "",
       settingsConfig: initialData?.settingsConfig
         ? JSON.stringify(initialData.settingsConfig, null, 2)
-        : appId === "codex"
+        : isCodexLike
           ? CODEX_DEFAULT_CONFIG
           : appId === "gemini"
             ? GEMINI_DEFAULT_CONFIG
@@ -567,8 +576,19 @@ function ProviderFormFull({
     handleCodexModelChange,
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
-  } = useCodexConfigState({ initialData });
+  } = useCodexConfigState({
+    appId: appId === "grok" ? "grok" : "codex",
+    initialData: isCodexLike ? initialData : undefined,
+  });
 
+  const initialGrokBackend =
+    appId === "grok"
+      ? extractGrokApiBackend(
+          typeof initialData?.settingsConfig?.config === "string"
+            ? initialData.settingsConfig.config
+            : "",
+        )
+      : undefined;
   const initialCodexApiFormat: CodexApiFormat =
     initialData?.meta?.apiFormat === "openai_chat"
       ? "openai_chat"
@@ -576,13 +596,17 @@ function ProviderFormFull({
         ? "anthropic"
         : initialData?.meta?.apiFormat === "openai_responses"
           ? "openai_responses"
-          : (codexApiFormatFromWireApi(
-              extractCodexWireApi(
-                typeof initialData?.settingsConfig?.config === "string"
-                  ? initialData.settingsConfig.config
-                  : "",
-              ),
-            ) ?? "openai_responses");
+          : initialGrokBackend === "chat_completions"
+            ? "openai_chat"
+            : initialGrokBackend === "responses"
+              ? "openai_responses"
+              : (codexApiFormatFromWireApi(
+                  extractCodexWireApi(
+                    typeof initialData?.settingsConfig?.config === "string"
+                      ? initialData.settingsConfig.config
+                      : "",
+                  ),
+                ) ?? "openai_responses");
 
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(initialCodexApiFormat);
@@ -623,6 +647,15 @@ function ProviderFormFull({
   const handleCodexApiFormatChange = useCallback(
     (format: CodexApiFormat) => {
       setLocalCodexApiFormat(format);
+      if (appId === "grok") {
+        setCodexConfig((prev) =>
+          setGrokApiBackend(
+            prev,
+            format === "openai_chat" ? "chat_completions" : "responses",
+          ),
+        );
+        return;
+      }
       // wire_api is always "responses" for Codex; format controls proxy-layer conversion
       setCodexConfig((prev) => {
         const updated = setCodexWireApi(prev, "responses");
@@ -630,12 +663,13 @@ function ProviderFormFull({
         return updated;
       });
     },
-    [setCodexConfig, debouncedValidate],
+    [appId, setCodexConfig, debouncedValidate],
   );
 
   useEffect(() => {
-    if (appId === "codex" && !initialData && selectedPresetId === "custom") {
-      const template = getCodexCustomTemplate();
+    if (isCodexLike && !initialData && selectedPresetId === "custom") {
+      const template =
+        appId === "grok" ? getGrokCustomTemplate() : getCodexCustomTemplate();
       resetCodexConfig(template.auth, template.config);
       setCodexChatReasoning({});
       setPromptCacheRouting("auto");
@@ -669,6 +703,11 @@ function ProviderFormFull({
     if (appId === "codex") {
       return codexProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `codex-${index}`,
+        preset,
+      }));
+    } else if (appId === "grok") {
+      return grokProviderPresets.map<PresetEntry>((preset, index) => ({
+        id: `grok-${index}`,
         preset,
       }));
     } else if (appId === "gemini") {
@@ -741,6 +780,7 @@ function ProviderFormFull({
     handleExtract: handleCodexExtract,
     clearCommonConfigError: clearCodexCommonConfigError,
   } = useCodexCommonConfig({
+    enabled: appId === "codex",
     codexConfig,
     onConfigChange: handleCodexConfigChange,
     initialData: appId === "codex" ? initialData : undefined,
@@ -989,7 +1029,7 @@ function ProviderFormFull({
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
 
   const shouldApplyLocalProxyRequestOverrides =
-    (appId === "claude" || appId === "codex") && category !== "official";
+    (appId === "claude" || isCodexLike) && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
     const overridesResult = shouldApplyLocalProxyRequestOverrides
@@ -1208,7 +1248,7 @@ function ProviderFormFull({
             }),
           );
         }
-      } else if (appId === "codex") {
+      } else if (isCodexLike) {
         if (!codexBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
@@ -1316,6 +1356,15 @@ function ProviderFormFull({
         }
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
+        settingsConfig = values.settingsConfig.trim();
+      }
+    } else if (appId === "grok") {
+      try {
+        settingsConfig = JSON.stringify({
+          auth: JSON.parse(codexAuth || "{}"),
+          config: codexConfig ?? "",
+        });
+      } catch {
         settingsConfig = values.settingsConfig.trim();
       }
     } else if (appId === "gemini") {
@@ -1500,7 +1549,7 @@ function ProviderFormFull({
           ? promptCacheRouting
           : undefined,
       customUserAgent:
-        (appId === "claude" || appId === "codex") && category !== "official"
+        (appId === "claude" || isCodexLike) && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
@@ -1516,7 +1565,7 @@ function ProviderFormFull({
       apiFormat:
         appId === "claude" && category !== "official"
           ? localApiFormat
-          : appId === "codex" && category !== "official"
+          : isCodexLike && category !== "official"
             ? localCodexApiFormat
             : undefined,
       apiKeyField:
@@ -1661,8 +1710,9 @@ function ProviderFormFull({
       setActivePreset(null);
       form.reset(defaultValues);
 
-      if (appId === "codex") {
-        const template = getCodexCustomTemplate();
+      if (isCodexLike) {
+        const template =
+          appId === "grok" ? getGrokCustomTemplate() : getCodexCustomTemplate();
         resetCodexConfig(template.auth, template.config);
         setCodexChatReasoning({});
         setPromptCacheRouting("auto");
@@ -1700,7 +1750,7 @@ function ProviderFormFull({
       partnerPromotionKey: entry.preset.partnerPromotionKey,
     });
 
-    if (appId === "codex") {
+    if (isCodexLike) {
       const preset = entry.preset as CodexProviderPreset;
       const auth = preset.auth ?? {};
       const config = preset.config ?? "";
@@ -2164,8 +2214,9 @@ function ProviderFormFull({
             />
           )}
 
-          {appId === "codex" && (
+          {isCodexLike && (
             <CodexFormFields
+              appId={appId === "grok" ? "grok" : "codex"}
               providerId={providerId}
               codexApiKey={codexApiKey}
               onApiKeyChange={handleCodexApiKeyChange}
@@ -2196,12 +2247,18 @@ function ProviderFormFull({
               onImpersonateClaudeCodeChange={setLocalCodexImpersonateClaudeCode}
               maxOutputTokens={localCodexMaxOutputTokens}
               onMaxOutputTokensChange={setLocalCodexMaxOutputTokens}
-              codexChatReasoning={codexChatReasoning}
-              onCodexChatReasoningChange={setCodexChatReasoning}
+              codexChatReasoning={
+                appId === "codex" ? codexChatReasoning : undefined
+              }
+              onCodexChatReasoningChange={
+                appId === "codex" ? setCodexChatReasoning : undefined
+              }
               promptCacheRouting={promptCacheRouting}
               onPromptCacheRoutingChange={setPromptCacheRouting}
-              catalogModels={codexCatalogModels}
-              onCatalogModelsChange={setCodexCatalogModels}
+              catalogModels={appId === "codex" ? codexCatalogModels : []}
+              onCatalogModelsChange={
+                appId === "codex" ? setCodexCatalogModels : undefined
+              }
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
@@ -2330,9 +2387,11 @@ function ProviderFormFull({
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {appId === "codex" ? (
+          {isCodexLike ? (
             <>
               <CodexConfigEditor
+                appId={appId === "grok" ? "grok" : "codex"}
+                showCodexFeatures={appId === "codex"}
                 authValue={codexAuth}
                 configValue={codexConfig}
                 providerName={form.watch("name")}

@@ -132,7 +132,9 @@ export function useProxyStatus() {
             ? "Codex"
             : variables.appType === "gemini"
               ? "Gemini"
-              : "OpenCode";
+              : variables.appType === "grok"
+                ? "Grok Build"
+                : "OpenCode";
 
       toast.success(
         variables.enabled

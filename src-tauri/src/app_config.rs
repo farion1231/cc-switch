@@ -25,6 +25,7 @@ impl McpApps {
         match app {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
+            AppType::Grok => false,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
@@ -38,6 +39,7 @@ impl McpApps {
         match app {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
+            AppType::Grok => {}
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
@@ -94,6 +96,7 @@ impl SkillApps {
         match app {
             AppType::Claude => self.claude,
             AppType::Codex => self.codex,
+            AppType::Grok => false,
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
@@ -107,6 +110,7 @@ impl SkillApps {
         match app {
             AppType::Claude => self.claude = enabled,
             AppType::Codex => self.codex = enabled,
+            AppType::Grok => {}
             AppType::Gemini => self.gemini = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
@@ -270,6 +274,8 @@ pub struct McpRoot {
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub codex: McpConfig,
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub grok: McpConfig,
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub gemini: McpConfig,
     /// OpenCode MCP 配置（v4.0.0+，实际使用 opencode.json）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
@@ -291,6 +297,7 @@ impl Default for McpRoot {
             claude: McpConfig::default(),
             claude_desktop: McpConfig::default(),
             codex: McpConfig::default(),
+            grok: McpConfig::default(),
             gemini: McpConfig::default(),
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
@@ -321,6 +328,8 @@ pub struct PromptRoot {
     #[serde(default)]
     pub codex: PromptConfig,
     #[serde(default)]
+    pub grok: PromptConfig,
+    #[serde(default)]
     pub gemini: PromptConfig,
     #[serde(default)]
     pub opencode: PromptConfig,
@@ -347,6 +356,7 @@ pub enum AppType {
     )]
     ClaudeDesktop,
     Codex,
+    Grok,
     Gemini,
     OpenCode,
     OpenClaw,
@@ -359,6 +369,7 @@ impl AppType {
             AppType::Claude => "claude",
             AppType::ClaudeDesktop => "claude-desktop",
             AppType::Codex => "codex",
+            AppType::Grok => "grok",
             AppType::Gemini => "gemini",
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
@@ -383,6 +394,7 @@ impl AppType {
             AppType::Claude,
             AppType::ClaudeDesktop,
             AppType::Codex,
+            AppType::Grok,
             AppType::Gemini,
             AppType::OpenCode,
             AppType::OpenClaw,
@@ -401,14 +413,15 @@ impl FromStr for AppType {
             "claude" => Ok(AppType::Claude),
             "claude-desktop" | "claude_desktop" | "claudedesktop" => Ok(AppType::ClaudeDesktop),
             "codex" => Ok(AppType::Codex),
+            "grok" => Ok(AppType::Grok),
             "gemini" => Ok(AppType::Gemini),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, opencode, openclaw, hermes."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, grok, gemini, opencode, openclaw, hermes。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, grok, gemini, opencode, openclaw, hermes."),
             )),
         }
     }
@@ -443,6 +456,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude.as_ref(),
             AppType::ClaudeDesktop => None,
             AppType::Codex => self.codex.as_ref(),
+            AppType::Grok => None,
             AppType::Gemini => self.gemini.as_ref(),
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
@@ -456,6 +470,7 @@ impl CommonConfigSnippets {
             AppType::Claude => self.claude = snippet,
             AppType::ClaudeDesktop => {}
             AppType::Codex => self.codex = snippet,
+            AppType::Grok => {}
             AppType::Gemini => self.gemini = snippet,
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
@@ -499,6 +514,7 @@ impl Default for MultiAppConfig {
         apps.insert("claude".to_string(), ProviderManager::default());
         apps.insert("claude-desktop".to_string(), ProviderManager::default());
         apps.insert("codex".to_string(), ProviderManager::default());
+        apps.insert("grok".to_string(), ProviderManager::default());
         apps.insert("gemini".to_string(), ProviderManager::default());
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
@@ -591,6 +607,13 @@ impl MultiAppConfig {
             updated = true;
         }
 
+        if !config.apps.contains_key("grok") {
+            config
+                .apps
+                .insert("grok".to_string(), ProviderManager::default());
+            updated = true;
+        }
+
         // 执行 MCP 迁移（v3.6.x → v3.7.0）
         let migrated = config.migrate_mcp_to_unified()?;
         if migrated {
@@ -661,6 +684,7 @@ impl MultiAppConfig {
             AppType::Claude => &self.mcp.claude,
             AppType::ClaudeDesktop => &self.mcp.claude_desktop,
             AppType::Codex => &self.mcp.codex,
+            AppType::Grok => &self.mcp.grok,
             AppType::Gemini => &self.mcp.gemini,
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
@@ -674,6 +698,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut self.mcp.claude,
             AppType::ClaudeDesktop => &mut self.mcp.claude_desktop,
             AppType::Codex => &mut self.mcp.codex,
+            AppType::Grok => &mut self.mcp.grok,
             AppType::Gemini => &mut self.mcp.gemini,
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
@@ -800,6 +825,7 @@ impl MultiAppConfig {
             AppType::Claude => &mut config.prompts.claude.prompts,
             AppType::ClaudeDesktop => &mut config.prompts.claude_desktop.prompts,
             AppType::Codex => &mut config.prompts.codex.prompts,
+            AppType::Grok => &mut config.prompts.grok.prompts,
             AppType::Gemini => &mut config.prompts.gemini.prompts,
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
@@ -842,6 +868,7 @@ impl MultiAppConfig {
                 AppType::Claude => &self.mcp.claude.servers,
                 AppType::ClaudeDesktop => continue, // Claude Desktop 3P profiles don't use MCP here
                 AppType::Codex => &self.mcp.codex.servers,
+                AppType::Grok => continue,
                 AppType::Gemini => &self.mcp.gemini.servers,
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip

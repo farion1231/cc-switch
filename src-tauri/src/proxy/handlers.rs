@@ -754,6 +754,97 @@ pub async fn handle_chat_completions(
     .await
 }
 
+async fn handle_openai_passthrough_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+    default_endpoint: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
+    let uri = parts.uri;
+    let mut headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let endpoint = endpoint_with_query(&uri, default_endpoint);
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let forwarder = ctx.create_forwarder(&state);
+    let mut result = match forwarder
+        .forward_with_retry(
+            &app_type,
+            method,
+            &endpoint,
+            body,
+            headers,
+            extensions,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, is_stream, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+        }
+    };
+
+    let connection_guard = result.connection_guard.take();
+    ctx.outbound_model = result.outbound_model.take();
+    ctx.provider = result.provider;
+    process_response(
+        result.response,
+        &ctx,
+        &state,
+        &OPENAI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
+}
+
+/// Grok Build Chat Completions：原生透传，不进入 Codex Responses 转换链。
+pub async fn handle_grok_chat_completions(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_openai_passthrough_for_app(
+        state,
+        request,
+        AppType::Grok,
+        "Grok",
+        "grok",
+        "/chat/completions",
+    )
+    .await
+}
+
+/// Grok Build Responses：xAI 原生 Responses 透传，不转换为 Chat Completions。
+pub async fn handle_grok_responses(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_openai_passthrough_for_app(state, request, AppType::Grok, "Grok", "grok", "/responses")
+        .await
+}
+
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
 pub async fn handle_responses(
     State(state): State<ProxyState>,

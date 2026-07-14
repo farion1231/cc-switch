@@ -131,6 +131,49 @@ describe("Common config modals", () => {
     expect(disabledConfig).not.toContain("goals = true");
   });
 
+  it("separates Grok global config from Codex-only controls", () => {
+    render(
+      <CodexConfigEditor
+        appId="grok"
+        showCodexFeatures={false}
+        authValue="{}"
+        configValue={'[model.ccswitch]\nmodel = "grok-4.5"'}
+        onAuthChange={() => {}}
+        onConfigChange={() => {}}
+        useCommonConfig={false}
+        onCommonConfigToggle={() => {}}
+        commonConfigSnippet=""
+        onCommonConfigSnippetChange={() => true}
+        onCommonConfigErrorClear={() => {}}
+        commonConfigError=""
+        authError=""
+        configError=""
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", {
+        name: /codexConfig.editCommonConfig|编辑通用配置/,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /grokConfig.editGlobalConfig|编辑 Grok 全局配置/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /grokConfig.addToGlobalConfig|加入全局配置/,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "codexConfig.enableGoalMode",
+      }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
   it("keeps the Gemini common config modal closed after user closes it with an error present", async () => {
     render(
       <GeminiConfigEditor

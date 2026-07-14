@@ -14,6 +14,7 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod lightweight;
@@ -1219,6 +1220,10 @@ pub fn run() {
             commands::set_common_config_snippet,
             commands::update_toml_common_config_snippet,
             commands::extract_common_config_snippet,
+            commands::read_grok_global_config,
+            commands::write_grok_global_config,
+            commands::merge_grok_profile_into_global_config,
+            commands::apply_grok_privacy_protection,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
@@ -1743,7 +1748,7 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let mut apps_to_restore = Vec::new();
-    for app_type in ["claude", "codex", "gemini"] {
+    for app_type in ["claude", "codex", "grok", "gemini"] {
         if let Ok(config) = state.db.get_proxy_config_for_app(app_type).await {
             if config.enabled {
                 apps_to_restore.push(app_type);

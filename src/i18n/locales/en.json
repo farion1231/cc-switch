@@ -877,7 +877,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "grok": "Grok Build"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -1247,6 +1248,24 @@
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
     "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
+  },
+  "grokConfig": {
+    "authJson": "Grok API Key (JSON) *",
+    "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"xai-your-api-key\"\n}",
+    "authJsonHint": "Shared provider API key; each [model.*] may also define api_key or env_key",
+    "profileToml": "Grok Profile (TOML)",
+    "profileTomlHint": "Manages endpoints, models, subagents and model.* while preserving other global Grok settings",
+    "defaultModelPlaceholder": "e.g. grok-4.5",
+    "defaultModelHint": "The model used by Grok Build by default. Change it anytime, or leave it blank to preserve the current Profile default.",
+    "advancedSectionHint": "Includes the native Grok API backend, User-Agent and local proxy request overrides.",
+    "editGlobalConfig": "Edit Grok Global Config",
+    "addToGlobalConfig": "Add to Global Config",
+    "addedToGlobalConfig": "The current Grok Profile was added to the global config",
+    "globalConfigTitle": "Grok Build global config.toml",
+    "globalConfigHint": "Edits the live local config. Provider switches only replace endpoints, models, subagents and model.*; other settings are preserved and every save is backed up.",
+    "globalConfigSaved": "Grok global config saved",
+    "applyPrivacy": "Apply Privacy Protection",
+    "privacyApplied": "Privacy protection settings applied"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

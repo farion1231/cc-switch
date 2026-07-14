@@ -3,6 +3,30 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type AppType = "claude" | "codex" | "gemini" | "omo" | "omo_slim";
 
+export interface GrokGlobalConfig {
+  path: string;
+  content: string;
+  exists: boolean;
+}
+
+export async function readGrokGlobalConfig(): Promise<GrokGlobalConfig> {
+  return invoke<GrokGlobalConfig>("read_grok_global_config");
+}
+
+export async function writeGrokGlobalConfig(content: string): Promise<void> {
+  return invoke("write_grok_global_config", { content });
+}
+
+export async function mergeGrokProfileIntoGlobalConfig(
+  profileContent: string,
+): Promise<void> {
+  return invoke("merge_grok_profile_into_global_config", { profileContent });
+}
+
+export async function applyGrokPrivacyProtection(): Promise<string> {
+  return invoke<string>("apply_grok_privacy_protection");
+}
+
 /**
  * 获取 Claude 通用配置片段（已废弃，使用 getCommonConfigSnippet）
  * @returns 通用配置片段（JSON 字符串），如果不存在则返回 null

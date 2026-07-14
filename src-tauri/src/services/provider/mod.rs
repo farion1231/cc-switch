@@ -2992,6 +2992,7 @@ impl ProviderService {
             AppType::Claude => Self::extract_claude_common_config(&provider.settings_config),
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
+            AppType::Grok => Ok(String::new()),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
@@ -3008,6 +3009,7 @@ impl ProviderService {
             AppType::Claude => Self::extract_claude_common_config(settings_config),
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
+            AppType::Grok => Ok(String::new()),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
@@ -3475,6 +3477,40 @@ impl ProviderService {
                     }
                 }
             }
+            AppType::Grok => {
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
+                        "provider.grok.settings.not_object",
+                        "Grok 配置必须是 JSON 对象",
+                        "Grok configuration must be a JSON object",
+                    )
+                })?;
+                let auth = settings.get("auth").ok_or_else(|| {
+                    AppError::localized(
+                        "provider.grok.auth.missing",
+                        format!("供应商 {} 缺少 auth 配置", provider.id),
+                        format!("Provider {} is missing auth configuration", provider.id),
+                    )
+                })?;
+                if !auth.is_object() {
+                    return Err(AppError::localized(
+                        "provider.grok.auth.not_object",
+                        "Grok auth 配置必须是 JSON 对象",
+                        "Grok auth configuration must be a JSON object",
+                    ));
+                }
+                let config = settings
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grok.config.missing",
+                            "Grok config 字段必须是 TOML 字符串",
+                            "Grok config must be a TOML string",
+                        )
+                    })?;
+                crate::grok_config::validate_config_toml(config)?;
+            }
             AppType::Gemini => {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
@@ -3637,6 +3673,45 @@ impl ProviderService {
                     ));
                 };
 
+                Ok((api_key, base_url))
+            }
+            AppType::Grok => {
+                let auth = provider
+                    .settings_config
+                    .get("auth")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grok.auth.missing",
+                            "配置格式错误: 缺少 auth",
+                            "Invalid configuration: missing auth section",
+                        )
+                    })?;
+                let api_key = ["OPENAI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"]
+                    .into_iter()
+                    .find_map(|key| auth.get(key).and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grok.api_key.missing",
+                            "缺少 API Key",
+                            "API key is missing",
+                        )
+                    })?
+                    .to_string();
+                let config = provider
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let base_url = crate::grok_config::active_base_url(config).ok_or_else(|| {
+                    AppError::localized(
+                        "provider.grok.base_url.missing",
+                        "Grok config.toml 中缺少 base_url 配置",
+                        "base_url is missing from Grok config.toml",
+                    )
+                })?;
                 Ok((api_key, base_url))
             }
             AppType::Gemini => {

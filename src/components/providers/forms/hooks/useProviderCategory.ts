@@ -7,6 +7,7 @@ import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { opencodeProviderPresets } from "@/config/opencodeProviderPresets";
 import { openclawProviderPresets } from "@/config/openclawProviderPresets";
 import { hermesProviderPresets } from "@/config/hermesProviderPresets";
+import { grokProviderPresets } from "@/config/grokProviderPresets";
 
 interface UseProviderCategoryProps {
   appId: AppId;
@@ -46,7 +47,7 @@ export function useProviderCategory({
 
     // 从预设 ID 提取索引
     const match = selectedPresetId.match(
-      /^(claude|codex|gemini|opencode|openclaw|hermes)-(\d+)$/,
+      /^(claude|codex|gemini|opencode|openclaw|hermes|grok)-(\d+)$/,
     );
     if (!match) return;
 
@@ -59,6 +60,11 @@ export function useProviderCategory({
         setCategory(
           preset.category || (preset.isOfficial ? "official" : undefined),
         );
+      }
+    } else if (type === "grok" && appId === "grok") {
+      const preset = grokProviderPresets[index];
+      if (preset) {
+        setCategory(preset.category || undefined);
       }
     } else if (type === "claude" && appId === "claude") {
       const preset = providerPresets[index];
