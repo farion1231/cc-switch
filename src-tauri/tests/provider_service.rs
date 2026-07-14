@@ -354,6 +354,102 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_service_add_update_preserves_codex_native_responses_v1_base_url() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let bailian_config = r#"model_provider = "custom"
+model = "qwen3-coder-plus"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "bailian"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+    let mut provider = Provider::with_id(
+        "bailian".to_string(),
+        "Bailian".to_string(),
+        json!({
+            "auth": {"OPENAI_API_KEY": "sk-bailian"},
+            "config": bailian_config,
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "qwen3-coder-plus",
+                        "displayName": "Qwen3 Coder Plus",
+                        "contextWindow": 1048576
+                    }
+                ]
+            }
+        }),
+        Some("https://bailian.console.aliyun.com".to_string()),
+    );
+    provider.category = Some("cn_official".to_string());
+    provider.meta = Some(ProviderMeta {
+        api_format: Some("openai_responses".to_string()),
+        ..ProviderMeta::default()
+    });
+
+    let mut state_config = MultiAppConfig::default();
+    {
+        let manager = state_config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.current = String::new();
+    }
+    let state = create_test_state_with_config(&state_config).expect("create test state");
+
+    ProviderService::add(&state, AppType::Codex, provider.clone(), false)
+        .expect("add Bailian provider");
+
+    let saved_after_add = state
+        .db
+        .get_provider_by_id("bailian", AppType::Codex.as_str())
+        .expect("query provider after add")
+        .expect("provider should exist after add");
+    let stored_config_after_add = saved_after_add
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .expect("stored Codex config after add");
+    assert!(
+        stored_config_after_add
+            .contains("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "stored config must keep Bailian's native Responses /v1 path after add, got: {stored_config_after_add}"
+    );
+
+    let live_after_add =
+        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read live config");
+    assert!(
+        live_after_add.contains("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "live config must keep Bailian's native Responses /v1 path after add, got: {live_after_add}"
+    );
+
+    ProviderService::update(&state, AppType::Codex, None, saved_after_add.clone())
+        .expect("re-save Bailian provider");
+
+    let saved_after_update = state
+        .db
+        .get_provider_by_id("bailian", AppType::Codex.as_str())
+        .expect("query provider after update")
+        .expect("provider should still exist after update");
+    let stored_config_after_update = saved_after_update
+        .settings_config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .expect("stored Codex config after update");
+    assert!(
+        stored_config_after_update
+            .contains("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "stored config must keep Bailian's native Responses /v1 path after re-save, got: {stored_config_after_update}"
+    );
+}
+
+#[test]
 fn provider_service_switch_codex_preserves_oauth_and_backfills_api_key_from_live_token() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
