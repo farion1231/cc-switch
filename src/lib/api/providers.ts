@@ -19,6 +19,8 @@ export interface ProviderSwitchEvent {
 
 export interface SwitchResult {
   warnings: string[];
+  seamless: boolean;
+  restartRequired: boolean;
 }
 
 export interface OpenTerminalOptions {
@@ -87,8 +89,15 @@ export const providersApi = {
     return await invoke("remove_provider_from_live_config", { id, app: appId });
   },
 
-  async switch(id: string, appId: AppId): Promise<SwitchResult> {
-    return await invoke("switch_provider", { id, app: appId });
+  async switch(
+    id: string,
+    appId: AppId,
+    seamless = false,
+  ): Promise<SwitchResult> {
+    return await invoke(
+      seamless ? "switch_provider_seamless" : "switch_provider",
+      { id, app: appId },
+    );
   },
 
   async importDefault(appId: AppId): Promise<boolean> {

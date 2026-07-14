@@ -177,7 +177,11 @@ describe("useProviderActions", () => {
   });
 
   it("should not request plugin sync when switching non-Claude provider", async () => {
-    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: true,
+      restartRequired: false,
+    });
     const { wrapper } = createWrapper();
     const provider = createProvider({ category: "custom" });
 
@@ -189,17 +193,47 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: true,
+    });
     expect(settingsApiGetMock).not.toHaveBeenCalled();
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalledWith(
-      "切换成功，请重启客户端以生效",
-      { closeButton: true },
+      "切换成功，下一次请求使用新供应商，无需重启",
+      { closeButton: true, duration: 6000 },
     );
   });
 
-  it("warns but still switches providers that require proxy when proxy is not running", async () => {
-    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+  it("explains the one-time restart when seamless takeover is first activated", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: true,
+      restartRequired: true,
+    });
+    const { wrapper } = createWrapper();
+    const provider = createProvider({ category: "custom" });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "无感切换已启用。请重启一次 Codex 载入本地代理，之后切换无需重启",
+      { closeButton: true, duration: 6000 },
+    );
+  });
+
+  it("automatically uses seamless switching for Claude third-party providers", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: true,
+      restartRequired: false,
+    });
     const { wrapper } = createWrapper();
     const provider = createProvider({
       category: "custom",
@@ -216,18 +250,88 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(toastWarningMock).toHaveBeenCalledTimes(1);
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: true,
+    });
   });
 
-  it("warns but still switches Codex full URL providers when proxy is not running", async () => {
-    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+  it("automatically uses seamless switching for Claude Desktop proxy providers", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: true,
+      restartRequired: false,
+    });
     const { wrapper } = createWrapper();
     const provider = createProvider({
       category: "custom",
       meta: {
-        isFullUrl: true,
+        claudeDesktopMode: "proxy",
       },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude-desktop", false),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: true,
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，下一次请求使用新供应商，无需重启",
+      { closeButton: true, duration: 6000 },
+    );
+  });
+
+  it("keeps Claude Desktop direct providers on the restart-required normal path", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: false,
+      restartRequired: false,
+    });
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { claudeDesktopMode: "direct" },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude-desktop", false),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: false,
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "切换成功，重启 Claude Desktop 后生效",
+      { closeButton: true },
+    );
+  });
+
+  it("automatically uses seamless switching for Codex full URL providers", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: true,
+      restartRequired: false,
+    });
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { isFullUrl: true },
     });
 
     const { result } = renderHook(() => useProviderActions("codex", false), {
@@ -238,12 +342,19 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(toastWarningMock).toHaveBeenCalledTimes(1);
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: true,
+    });
   });
 
-  it("warns when switching a Codex Anthropic-format provider without proxy", async () => {
-    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+  it("automatically uses seamless switching for Codex Anthropic-format providers", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: [],
+      seamless: true,
+      restartRequired: false,
+    });
     const { wrapper } = createWrapper();
     const provider = createProvider({
       category: "custom",
@@ -258,10 +369,11 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(toastWarningMock).toHaveBeenCalledWith(
-      expect.stringContaining("Anthropic Messages"),
-    );
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: true,
+    });
   });
 
   it("allows the built-in Codex official provider during takeover", async () => {
@@ -281,7 +393,10 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith("codex-official");
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: "codex-official",
+      seamless: false,
+    });
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
@@ -341,7 +456,10 @@ describe("useProviderActions", () => {
       await result.current.switchProvider(provider);
     });
 
-    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith({
+      providerId: provider.id,
+      seamless: false,
+    });
     expect(settingsApiGetMock).toHaveBeenCalledTimes(1);
     expect(settingsApiApplyMock).toHaveBeenCalledWith({ official: true });
   });

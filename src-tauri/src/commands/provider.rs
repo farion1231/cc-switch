@@ -109,6 +109,27 @@ pub fn switch_provider(
     switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn switch_provider_seamless(
+    state: State<'_, AppState>,
+    app: String,
+    id: String,
+) -> Result<SwitchResult, String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ProviderService::switch_seamless(&state, app_type, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
+pub async fn switch_provider_seamless_test_hook(
+    state: &AppState,
+    app_type: AppType,
+    id: &str,
+) -> Result<SwitchResult, AppError> {
+    ProviderService::switch_seamless(state, app_type, id).await
+}
+
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     let imported = ProviderService::import_default_config(state, app_type.clone())?;
 

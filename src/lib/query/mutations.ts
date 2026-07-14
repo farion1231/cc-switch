@@ -265,8 +265,14 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (providerId: string): Promise<SwitchResult> => {
-      return await providersApi.switch(providerId, appId);
+    mutationFn: async ({
+      providerId,
+      seamless = false,
+    }: {
+      providerId: string;
+      seamless?: boolean;
+    }): Promise<SwitchResult> => {
+      return await providersApi.switch(providerId, appId, seamless);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });

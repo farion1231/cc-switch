@@ -231,6 +231,8 @@
     "providerDeleted": "プロバイダーを削除しました",
     "switchSuccess": "切り替え成功！",
     "codexRestartRequired": "切り替えました。反映するにはクライアントを再起動してください",
+    "seamlessSwitchActivated": "シームレス切り替えを有効にしました。ローカルプロキシを読み込むために {{app}} を一度再起動してください。以降の切り替えでは再起動は不要です。",
+    "seamlessSwitchSuccess": "切り替えました。次のリクエストから新しいプロバイダーが使用され、再起動は不要です。",
     "claudeDesktopRestartRequired": "切り替えました。反映するには Claude Desktop を再起動してください",
     "claudeDesktopProxyRestartRequired": "切り替えました。CC Switch を起動したまま Claude Desktop を再起動してください",
     "addToConfigSuccess": "設定に追加しました",

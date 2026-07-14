@@ -155,6 +155,12 @@ export function useProviderActions(
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      const useSeamlessSwitch =
+        provider.category !== "official" &&
+        (activeApp === "claude" ||
+          activeApp === "codex" ||
+          (activeApp === "claude-desktop" &&
+            provider.meta?.claudeDesktopMode === "proxy"));
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
@@ -181,7 +187,11 @@ export function useProviderActions(
 
       // Determine why this provider requires the proxy
       let proxyRequiredReason: string | null = null;
-      if (!isProxyRunning && provider.category !== "official") {
+      if (
+        !useSeamlessSwitch &&
+        !isProxyRunning &&
+        provider.category !== "official"
+      ) {
         if (isCopilotProvider) {
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
@@ -260,7 +270,10 @@ export function useProviderActions(
       }
 
       try {
-        const result = await switchProviderMutation.mutateAsync(provider.id);
+        const result = await switchProviderMutation.mutateAsync({
+          providerId: provider.id,
+          seamless: useSeamlessSwitch,
+        });
         await syncClaudePlugin(provider);
 
         // Show backfill warning if present
@@ -274,8 +287,26 @@ export function useProviderActions(
           );
         }
 
-        // 若已弹过 proxyRequired 警告则不再弹 success
-        if (!proxyRequiredReason) {
+        if (result?.seamless) {
+          toast.success(
+            result.restartRequired
+              ? t("notifications.seamlessSwitchActivated", {
+                  app:
+                    activeApp === "codex"
+                      ? "Codex"
+                      : activeApp === "claude-desktop"
+                        ? "Claude Desktop"
+                        : "Claude Code",
+                  defaultValue:
+                    "无感切换已启用。请重启一次 {{app}} 载入本地代理，之后切换无需重启",
+                })
+              : t("notifications.seamlessSwitchSuccess", {
+                  defaultValue: "切换成功，下一次请求使用新供应商，无需重启",
+                }),
+            { closeButton: true, duration: 6000 },
+          );
+        } else if (!proxyRequiredReason) {
+          // 若已弹过 proxyRequired 警告则不再弹 success
           let messageKey = "notifications.switchSuccess";
           let defaultMessage = "切换成功！";
           if (activeApp === "codex") {
