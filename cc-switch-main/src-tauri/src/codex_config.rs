@@ -425,7 +425,14 @@ pub fn should_restore_codex_provider_token_for_backfill(
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     match value {
         Some(Value::Number(n)) => n.as_u64().filter(|v| *v > 0),
-        Some(Value::String(s)) => s.trim().parse::<u64>().ok().filter(|v| *v > 0),
+        Some(Value::String(s)) => {
+            let trimmed = s.trim();
+            // Try multi-format (1M / 200K) first, then fall back to pure number
+            if let Some(w) = crate::claude_desktop_config::parse_window_token(trimmed) {
+                return Some(w);
+            }
+            trimmed.parse::<u64>().ok().filter(|v| *v > 0)
+        }
         _ => None,
     }
 }
@@ -465,6 +472,15 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(spec.display_name));
     entry_obj.insert("context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    entry_obj.insert("effective_context_window_percent".to_string(), json!(100));
+    entry_obj.insert("auto_compact_token_limit".to_string(), Value::Null);
+
+    // truncation_policy.limit follows context_window (issue #4832/#5110)
+    let truncation_limit = if spec.context_window > 0 { spec.context_window } else { 10_000 };
+    entry_obj.insert(
+        "truncation_policy".to_string(),
+        json!({ "mode": "bytes", "limit": truncation_limit }),
+    );
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -3493,5 +3509,102 @@ model_catalog_json = "cc-switch-model-catalog.json"
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
         );
+    }
+    #[test]
+    fn catalog_entry_has_auto_compact_token_limit_null() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "1000000" }
+                ]
+            }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .expect("catalog generation")
+        .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["effective_context_window_percent"], json!(100));
+        assert_eq!(entry["auto_compact_token_limit"], json!(null));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_follows_context_window() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "1000000" }
+                ]
+            }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .expect("catalog generation")
+        .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
+        assert_eq!(entry["truncation_policy"]["mode"], json!("bytes"));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_follows_default_context_window() {
+        // When no explicit contextWindow is set, the default (128000) is used
+        // and truncation_policy.limit should follow it.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro" }
+                ]
+            }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .expect("catalog generation")
+        .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        let cw = entry["context_window"].as_u64().expect("context_window");
+        assert_eq!(entry["truncation_policy"]["limit"].as_u64(), Some(cw));
+    }
+
+    #[test]
+    fn parse_codex_positive_u64_accepts_multi_format() {
+        assert_eq!(parse_codex_positive_u64(Some(&json!("1M"))), Some(1000000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("200K"))), Some(200000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("200k"))), Some(200000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("128000"))), Some(128000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!(128000))), Some(128000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("0"))), None);
+        assert_eq!(parse_codex_positive_u64(Some(&json!("invalid"))), None);
+        assert_eq!(parse_codex_positive_u64(None), None);
+    }
+
+    #[test]
+    fn catalog_entry_context_window_from_multi_format() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "test-model", "contextWindow": "1M" }
+                ]
+            }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::ProxyChat,
+        )
+        .expect("catalog generation")
+        .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["context_window"], json!(1000000));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
     }
 }
