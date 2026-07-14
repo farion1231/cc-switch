@@ -25,6 +25,7 @@ import {
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
+import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -78,6 +79,7 @@ export function useProviderActions(
         suggestedDefaults?: OpenClawSuggestedDefaults;
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
+        ensureCodexOfficialSeed?: boolean;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
@@ -236,8 +238,17 @@ export function useProviderActions(
         );
       }
 
-      // Block official providers when proxy takeover is active
-      if (isProxyTakeover && provider.category === "official") {
+      // The built-in Codex official provider can reuse Codex's native ChatGPT
+      // login through local routing. Other official providers remain blocked.
+      const officialSupportsTakeover = supportsOfficialProxyTakeover(
+        activeApp,
+        provider,
+      );
+      if (
+        isProxyTakeover &&
+        provider.category === "official" &&
+        !officialSupportsTakeover
+      ) {
         toast.error(
           t("notifications.officialBlockedByProxy", {
             defaultValue:

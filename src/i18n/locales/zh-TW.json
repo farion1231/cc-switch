@@ -181,7 +181,9 @@
   },
   "codex": {
     "needsRouting": "需要路由",
-    "noRoutingSupport": "不支援路由"
+    "noRoutingSupport": "不支援路由",
+    "officialRouting": "官方帳號路由",
+    "nativeLogin": "Codex 登入"
   },
   "claudeDesktop": {
     "officialNotice": "Claude Desktop 官方供應商使用應用程式內建的 1P 登入，無需設定 API Key 和 API 位址。",
@@ -299,11 +301,6 @@
       "message": "用量查詢需要設定專用的查詢腳本或 API 參數，請確保您已從供應商處取得相關資訊。\n\n如不確定如何設定，請先查閱供應商文件。",
       "confirm": "我已了解，繼續設定"
     },
-    "streamCheck": {
-      "title": "模型健康檢測",
-      "message": "健康檢測透過直接發送 API 請求來測試供應商連線能力，以下情況可能導致檢測失敗：\n\n• 官方供應商（使用 OAuth 登入，無獨立 API Key）\n• 部分中繼服務（會驗證請求是否來自 Claude Code CLI）\n• AWS Bedrock（使用 IAM 簽章驗證）\n\n檢測失敗不代表供應商不可用，僅表示無法透過獨立請求驗證。請以應用程式內的實際情況為準。",
-      "confirm": "我已了解，繼續檢測"
-    },
     "autoSync": {
       "title": "開啟自動同步",
       "message": "開啟自動同步後，每次資料庫變更都會自動上傳至 WebDAV 伺服器。\n\n這可能會產生較高的網路流量消耗，請確保您的網路環境和 WebDAV 服務支援頻繁的資料傳輸。",
@@ -344,9 +341,9 @@
         "running": "執行中",
         "stopped": "已停止"
       },
-      "modelTest": {
-        "title": "模型測試設定",
-        "description": "設定模型測試使用的預設模型和提示詞"
+      "connectivityCheck": {
+        "title": "連通檢測設定",
+        "description": "設定供應商位址探測的逾時、重試與緩慢閾值"
       },
       "failover": {
         "title": "自動故障轉移",
@@ -385,8 +382,8 @@
         "thinkingBudgetDescription": "當 Anthropic 類型供應商回傳 budget_tokens 限制錯誤（如至少 1024）時，自動將 thinking 規範為 enabled，並將 budget 設為 32000，同時在需要時將 max_tokens 設為 64000，然後重試一次",
         "mediaFallback": "不支援圖片降級",
         "mediaFallbackDescription": "當供應商不支援圖片輸入時（已宣告純文字能力，或上游回傳不支援圖片的錯誤），自動將圖片區塊替換為 [Unsupported Image] 標記，使對話不中斷",
-        "mediaHeuristic": "啟發式純文字模型辨識",
-        "mediaHeuristicDescription": "傳送前依內建模型名稱清單預測性地移除圖片。關閉後僅保留「已宣告純文字」與「上游錯誤兜底」兩條事實驅動路徑，避免內建清單將多模態模型誤判為純文字而靜默丟失圖片"
+        "mediaHeuristic": "純文字模型預判",
+        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
       },
       "optimizer": {
         "title": "Bedrock 請求最佳化工具",
@@ -395,10 +392,7 @@
         "thinkingOptimizer": "Thinking 最佳化",
         "thinkingOptimizerDescription": "自動為 Opus/Sonnet 啟用 Adaptive Thinking，為舊模型注入 Extended Thinking",
         "cacheInjection": "Cache 注入",
-        "cacheInjectionDescription": "自動在請求關鍵位置注入 Cache 斷點，減少重複 token 計費",
-        "cacheTtl": "Cache TTL",
-        "cacheTtl5m": "5 分鐘",
-        "cacheTtl1h": "1 小時"
+        "cacheInjectionDescription": "自動在請求關鍵位置注入標準 5 分鐘 Cache 斷點，減少重複 token 計費"
       },
       "logConfig": {
         "title": "日誌管理",
@@ -683,8 +677,8 @@
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
     "skipClaudeOnboardingDescription": "開啟後跳過 Claude Code 初次安裝確認",
     "codexAuth": "Codex 應用增強",
-    "preserveCodexOfficialAuthOnSwitch": "切換第三方時保留官方登入",
-    "preserveCodexOfficialAuthOnSwitchDescription": "開啟後可以在使用第三方 API 的時候使用 Codex 應用的官方外掛、手機遠端操作等功能",
+    "preserveCodexOfficialAuthOnSwitch": "非接管切換時保留官方登入",
+    "preserveCodexOfficialAuthOnSwitchDescription": "控制未開啟本機路由時切換第三方供應商是否保留 Codex 官方登入；路由接管期間一律保留",
     "unifyCodexSessionHistory": "統一 Codex 會話歷史",
     "unifyCodexSessionHistoryDescription": "開啟後，官方訂閱將以共享的 custom 供應商標識執行，官方與第三方會話出現在同一歷史清單中，並可選擇把現有官方會話一併遷入（遷移前自動備份）。關閉開關時可按備份恢復遷入的會話。注意：跨供應商繼續舊會話時，對方後端可能無法解密會話中的 encrypted_content 推理內容，導致繼續失敗",
     "unifyCodexHistoryRestoreCompleted": "已按備份還原官方會話歷史（{{files}} 個會話檔案、{{rows}} 條索引記錄）",
@@ -697,7 +691,9 @@
       "claudeDesc": "Anthropic Claude Code CLI",
       "codexDesc": "OpenAI Codex CLI",
       "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI"
+      "opencodeDesc": "OpenCode CLI",
+      "showProfileSwitcher": "顯示專案切換",
+      "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口"
     },
     "skillStorage": {
       "title": "Skills 儲存位置",
@@ -977,6 +973,7 @@
     "officialHint": "官方供應商使用瀏覽器登入，無需設定 API Key",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
+      "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 4.8，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
       "code0": "code0.ai 是面向開發者的 AI 程式設計服務平台，支援 Claude Code、Codex、Gemini。CC Switch 使用者專屬福利：透過官網聯繫客服即可領取測試額度！",
       "nekocode": "NekoCode 為開發者提供穩定、高效、可靠的 Claude、Codex 等 AI 模型 API 中轉服務，價格透明、按量計費。CC Switch 使用者專享 9 折：透過上方連結註冊，儲值時輸入優惠碼 cc-switch 即享 9 折優惠！",
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
@@ -1210,15 +1207,6 @@
     "empty": "暫無端點"
   },
   "providerAdvanced": {
-    "testConfig": "模型測試設定",
-    "useCustomConfig": "使用獨立設定",
-    "testConfigDesc": "為此供應商設定獨立的模型測試參數，不啟用時使用全域設定。",
-    "testModel": "測試模型",
-    "testModelPlaceholder": "留空使用全域設定",
-    "timeoutSecs": "逾時時間（秒）",
-    "testPrompt": "測試提示詞",
-    "degradedThreshold": "降級閾值（毫秒）",
-    "maxRetries": "最大重試次數",
     "pricingConfig": "計費設定",
     "useCustomPricing": "使用獨立設定",
     "pricingConfigDesc": "為此供應商設定獨立的計費參數，不啟用時使用全域預設設定。",
@@ -1273,6 +1261,16 @@
     "maxOutputTokensLabel": "最大輸出 tokens",
     "maxOutputTokensPlaceholder": "留空則使用預設 8192",
     "maxOutputTokensHint": "Codex 不會把 model_max_output_tokens 寫進請求體，預設上限 8192 容易在長回答或深度思考時被截斷（stop_reason=max_tokens）。此處設定會作為 Anthropic 的 max_tokens 覆蓋請求值。請勿超過該模型／閘道的真實輸出上限，否則可能 400。留空使用預設 8192。",
+    "promptCacheRoutingLabel": "提示詞快取路由",
+    "promptCacheRoutingAuto": "自動（建議）",
+    "promptCacheRoutingEnabled": "開啟",
+    "promptCacheRoutingDisabled": "關閉",
+    "promptCacheRoutingHint": "自動模式僅對已確認相容的上游傳送 prompt_cache_key；開啟可用於其他相容閘道，關閉可避免嚴格閘道因未知欄位回傳 400。只使用客戶端提供的穩定工作階段 ID。",
+    "defaultModelLabel": "預設模型",
+    "defaultModelPlaceholder": "例如: gpt-5.6",
+    "defaultModelHint": "Codex 預設請求的模型，隨時可改，無需等待軟體更新供應商範本。留空且設定了模型映射時，預設使用映射第一行。",
+    "defaultModelNotInCatalog": "該模型不在模型映射中，Codex 的 /model 選單不會列出它（直接請求仍然有效）。",
+    "addToModelMapping": "加入映射",
     "modelMappingTitle": "模型映射",
     "modelMappingHint": "產生 Codex model_catalog_json，讓 /model 指令顯示這些第三方模型名；表中條目按填寫內容原樣儲存。修改後需要重新啟動 Codex 才能重新整理模型清單。",
     "addCatalogModel": "新增模型",
@@ -2415,9 +2413,6 @@
   "agents": {
     "title": "Agent"
   },
-  "modelTest": {
-    "testProvider": "測試模型"
-  },
   "health": {
     "operational": "正常",
     "degraded": "降級",
@@ -2625,35 +2620,13 @@
     "unreachable": "{{providerName}} 無法連通: {{message}}",
     "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
     "connectivityNote": "連通檢測僅探測供應商位址是否可達，不發送真實模型請求。收到任意回應即視為「可達」——這不代表驗證或模型設定一定正確。",
-    "configSaved": "健康檢測設定已儲存",
+    "configSaved": "連通檢測設定已儲存",
     "configSaveFailed": "儲存失敗",
-    "testModels": "測試模型",
-    "claudeModel": "Claude 模型",
-    "codexModel": "Codex 模型",
-    "geminiModel": "Gemini 模型",
     "checkParams": "檢查參數",
     "timeout": "逾時時間（秒）",
     "maxRetries": "最大重試次數",
-    "degradedThreshold": "降級閾值（毫秒）",
-    "testPrompt": "檢查提示詞",
-    "operational": "{{providerName}} 執行正常 ({{responseTimeMs}}ms)",
-    "degraded": "{{providerName}} 回應較慢 ({{responseTimeMs}}ms)",
-    "failed": "{{providerName}} 檢查失敗：{{message}}",
-    "rejected": "{{providerName}} 檢查被拒：{{message}}",
-    "error": "{{providerName}} 檢查出錯：{{error}}",
-    "modelNotFound": "{{providerName}} 測試模型 {{model}} 不存在或已下架",
-    "modelNotFoundHint": "該模型可能已被供應商棄用。請在「模型測試設定」中更新預設測試模型。",
-    "quotaExceeded": "{{providerName}} Coding Plan 額度已用盡",
-    "quotaExceededHint": "百度千帆回傳了 Coding Plan 超額錯誤。請等待 5 小時 / 每週 / 每月額度重新整理，或在千帆控制台切換方案。",
-    "httpHint": {
-      "400": "供應商拒絕了請求格式。健康檢測的探測格式可能與實際使用不同。",
-      "401": "API Key 可能無效，或供應商使用 OAuth 等驗證方式。檢查失敗不代表實際不可用。",
-      "402": "帳號配額或計費問題。",
-      "403": "供應商拒絕了此請求。部分供應商會驗證用戶端身分，檢查失敗但實際使用可能正常。",
-      "404": "API 位址不存在，請檢查 Base URL 和 API 路徑。",
-      "429": "請求頻率過高，請稍後重試。",
-      "5xx": "供應商內部錯誤，通常是臨時問題。"
-    }
+    "degradedThreshold": "緩慢閾值（毫秒）",
+    "error": "{{providerName}} 檢查出錯：{{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",
