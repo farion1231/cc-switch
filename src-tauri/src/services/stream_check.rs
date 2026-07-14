@@ -48,18 +48,26 @@ pub struct StreamCheckConfig {
     /// 是否启用大模型可用性真实调用检测
     #[serde(default)]
     pub enable_model_check: bool,
+    /// 真实测试的模型名称，设为 "auto" 时自动获取，为空时使用环境变量或默认值
+    #[serde(default)]
+    pub test_model: Option<String>,
+    /// 真实测试的提示词，为空时使用 "hi" 或 "ping"
+    #[serde(default)]
+    pub test_prompt: Option<String>,
 }
 
 impl Default for StreamCheckConfig {
     fn default() -> Self {
         // 可达性探测打的是 base_url 的小请求（仅读响应头），不等待模型生成，故超时远小于
-        // 旧的真实请求检查（45s → 8s）；降级阈值沿用旧尺度 6000ms——探测 TTFB 一般远低于
+        // 旧 of 真实请求检查（45s → 8s）；降级阈值沿用旧尺度 6000ms——探测 TTFB 一般远低于
         // 此，仅在确实很慢时才标"较慢"，避免把 1 秒多的正常延迟误判为降级。
         Self {
             timeout_secs: 8,
             max_retries: 1,
             degraded_threshold_ms: 6000,
             enable_model_check: false,
+            test_model: None,
+            test_prompt: None,
         }
     }
 }
@@ -152,7 +160,7 @@ impl StreamCheckService {
         let ua = Self::custom_user_agent(provider);
 
         let result = if config.enable_model_check {
-            Self::probe_model_availability(&client, app_type, provider, &base_url, timeout).await
+            Self::probe_model_availability(&client, app_type, provider, &base_url, timeout, config).await
         } else {
             Self::probe_reachability(&client, &base_url, timeout, ua).await
         };
@@ -296,6 +304,92 @@ impl StreamCheckService {
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
     }
 
+    /// 尝试从 /models 接口动态获取可用模型
+    async fn fetch_model_from_api(
+        client: &Client,
+        app_type: &AppType,
+        base_url: &str,
+        api_key: &str,
+        timeout: std::time::Duration,
+    ) -> Option<String> {
+        let is_openai_compat = base_url.contains("/v1") 
+            || base_url.contains("openai") 
+            || base_url.contains("deepseek") 
+            || base_url.contains("dashscope")
+            || base_url.contains("openrouter");
+
+        if *app_type == AppType::Gemini {
+            let url = if base_url.contains("googleapis.com") {
+                format!("https://generativelanguage.googleapis.com/v1beta/models?key={}", api_key)
+            } else {
+                format!("{}/v1beta/models?key={}", base_url.trim_end_matches('/'), api_key)
+            };
+            let req = client.get(&url).timeout(timeout);
+            if let Ok(resp) = req.send().await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(models) = json.get("models").and_then(|m| m.as_array()) {
+                            for m in models {
+                                if let Some(name) = m.get("name").and_then(|n| n.as_str()) {
+                                    return Some(name.trim_start_matches("models/").to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if *app_type == AppType::Claude && !is_openai_compat {
+            let url = if base_url.contains("/v1") {
+                base_url.to_string() + "/models"
+            } else {
+                format!("{}/v1/models", base_url.trim_end_matches('/'))
+            };
+            let req = client.get(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .timeout(timeout);
+            if let Ok(resp) = req.send().await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                            for m in data {
+                                if let Some(id) = m.get("id").and_then(|i| i.as_str()) {
+                                    return Some(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            let url = if base_url.ends_with("/v1") {
+                base_url.to_string() + "/models"
+            } else if base_url.contains("/v1") {
+                format!("{}/models", base_url.trim_end_matches('/'))
+            } else {
+                format!("{}/v1/models", base_url.trim_end_matches('/'))
+            };
+            
+            let req = client.get(&url)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .timeout(timeout);
+            if let Ok(resp) = req.send().await {
+                if resp.status().is_success() {
+                    if let Ok(json) = resp.json::<serde_json::Value>().await {
+                        if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                            for m in data {
+                                if let Some(id) = m.get("id").and_then(|i| i.as_str()) {
+                                    return Some(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// 执行真实大模型可用性握手检测
     async fn probe_model_availability(
         client: &Client,
@@ -303,6 +397,7 @@ impl StreamCheckService {
         provider: &Provider,
         base_url: &str,
         timeout: std::time::Duration,
+        config: &StreamCheckConfig,
     ) -> Result<u16, AppError> {
         // 1. 提取 API Key
         let api_key = match app_type {
@@ -323,22 +418,41 @@ impl StreamCheckService {
         };
 
         // 2. 提取 Model
-        let model = match app_type {
-            AppType::ClaudeDesktop | AppType::Claude => {
-                Self::extract_env_value(provider, &["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"])
-                    .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string())
+        let mut model = config.test_model.clone().filter(|s| !s.trim().is_empty());
+        
+        // 如果 testModel 为 "auto" 或者未配置，尝试通过 API 动态探测
+        if model.as_deref() == Some("auto") || model.is_none() {
+            if let Some(api_model) = Self::fetch_model_from_api(client, app_type, base_url, &api_key, timeout).await {
+                model = Some(api_model);
             }
-            AppType::Gemini => {
-                Self::extract_env_value(provider, &["GEMINI_MODEL"])
-                    .unwrap_or_else(|| "gemini-2.5-pro".to_string())
-            }
-            _ => {
-                Self::extract_env_value(provider, &["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"])
-                    .unwrap_or_else(|| "gpt-4o".to_string())
+        }
+
+        let model = match model {
+            Some(m) => m,
+            None => {
+                match app_type {
+                    AppType::ClaudeDesktop | AppType::Claude => {
+                        Self::extract_env_value(provider, &["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"])
+                            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string())
+                    }
+                    AppType::Gemini => {
+                        Self::extract_env_value(provider, &["GEMINI_MODEL"])
+                            .unwrap_or_else(|| "gemini-2.5-flash".to_string())
+                    }
+                    _ => {
+                        Self::extract_env_value(provider, &["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"])
+                            .unwrap_or_else(|| "gpt-4o-mini".to_string())
+                    }
+                }
             }
         };
 
-        // 3. 根据接口格式进行探测
+        // 3. 提取 Prompt
+        let prompt = config.test_prompt.clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "hi".to_string());
+
+        // 4. 根据接口格式进行探测
         let is_openai_compat = base_url.contains("/v1") 
             || base_url.contains("openai") 
             || base_url.contains("deepseek") 
@@ -346,11 +460,11 @@ impl StreamCheckService {
             || base_url.contains("openrouter");
 
         if *app_type == AppType::Gemini {
-            Self::probe_gemini_api(client, base_url, &api_key, &model, timeout).await
+            Self::probe_gemini_api(client, base_url, &api_key, &model, &prompt, timeout).await
         } else if *app_type == AppType::Claude && !is_openai_compat {
-            Self::probe_anthropic_api(client, base_url, &api_key, &model, timeout).await
+            Self::probe_anthropic_api(client, base_url, &api_key, &model, &prompt, timeout).await
         } else {
-            Self::probe_openai_api(client, base_url, &api_key, &model, timeout).await
+            Self::probe_openai_api(client, base_url, &api_key, &model, &prompt, timeout).await
         }
     }
 
@@ -364,7 +478,6 @@ impl StreamCheckService {
                 }
             }
         }
-        // 模糊搜索支持自定义或多态命名的环境变量
         for (k, v) in env {
             if let Some(val_str) = v.as_str() {
                 let trimmed = val_str.trim().to_string();
@@ -387,6 +500,7 @@ impl StreamCheckService {
         base_url: &str,
         key: &str,
         model: &str,
+        prompt: &str,
         timeout: std::time::Duration,
     ) -> Result<u16, AppError> {
         let mut url = base_url.trim().to_string();
@@ -396,7 +510,7 @@ impl StreamCheckService {
         
         let payload = serde_json::json!({
             "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 5
         });
 
@@ -431,6 +545,7 @@ impl StreamCheckService {
         base_url: &str,
         key: &str,
         model: &str,
+        prompt: &str,
         timeout: std::time::Duration,
     ) -> Result<u16, AppError> {
         let mut url = base_url.trim().to_string();
@@ -440,7 +555,7 @@ impl StreamCheckService {
         
         let payload = serde_json::json!({
             "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 5
         });
 
@@ -477,10 +592,11 @@ impl StreamCheckService {
         base_url: &str,
         key: &str,
         model: &str,
+        prompt: &str,
         timeout: std::time::Duration,
     ) -> Result<u16, AppError> {
         if !base_url.contains("googleapis.com") && (base_url.contains("/v1") || !base_url.contains("/v1beta")) {
-            return Self::probe_openai_api(client, base_url, key, model, timeout).await;
+            return Self::probe_openai_api(client, base_url, key, model, prompt, timeout).await;
         }
         
         let separator = if base_url.contains('?') { "&" } else { "?" };
@@ -493,7 +609,7 @@ impl StreamCheckService {
         );
 
         let payload = serde_json::json!({
-            "contents": [{"parts": [{"text": "ping"}]}],
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": 5}
         });
 

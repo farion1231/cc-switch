@@ -2662,7 +2662,11 @@
     "authErrorHint": "认证失败，请检查您的 API 密钥 (API Key) 配置。",
     "quotaErrorHint": "频控受限或额度用尽，请检查账户可用额度。",
     "modelErrorHint": "请求模型不存在，或当前渠道未开通该模型访问权限。",
-    "apiErrorHint": "大模型接口调用失败，请根据具体返回的 HTTP 错误进行排查。"
+    "apiErrorHint": "大模型接口调用失败，请根据具体返回的 HTTP 错误进行排查。",
+    "testModel": "测试的模型名称",
+    "testModelHint": "留空或填入 auto 时，测试程序会向供应商请求并解析 /models 可用列表（仅限支持模型查询的渠道），自适应测试可用模型名称。",
+    "testPrompt": "测试提示词 (Prompt)",
+    "testPromptHint": "发送给模型的真实测试输入文本。建议填入极简词汇，以尽量减少测试所消耗的 Token 额度（1~2 个 Token）。"
   },
   "proxyConfig": {
     "proxyEnabled": "路由总开关",

@@ -15,6 +15,10 @@ export interface StreamCheckConfig {
   degradedThresholdMs: number;
   /** 是否启用大模型可用性真实调用检测 */
   enableModelCheck?: boolean;
+  /** 真实测试的模型名称 */
+  testModel?: string;
+  /** 真实测试的提示词 */
+  testPrompt?: string;
 }
 
 export interface StreamCheckResult {

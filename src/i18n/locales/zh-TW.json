@@ -2634,7 +2634,11 @@
     "authErrorHint": "認證失敗，請檢查您的 API 金鑰 (API Key) 配置。",
     "quotaErrorHint": "頻控受限或額度用盡，請檢查帳戶可用額度。",
     "modelErrorHint": "請求模型不存在，或當前渠道未開通該模型訪問權限。",
-    "apiErrorHint": "大模型接口調用失敗，請根據具體返回的 HTTP 錯誤進行排查。"
+    "apiErrorHint": "大模型接口調用失敗，請根據具體返回的 HTTP 錯誤進行排查。",
+    "testModel": "測試的模型名稱",
+    "testModelHint": "留空或填入 auto 時，測試程序會向供應商請求並解析 /models 可用列表（僅限支援模型查詢的渠道），自適應測試可用模型名稱。",
+    "testPrompt": "測試提示詞 (Prompt)",
+    "testPromptHint": "發送給模型的真實測試輸入文本。建議填入極簡詞彙，以儘量減少測試所消耗的 Token 額度（1~2 個 Token）。"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",
