@@ -272,30 +272,32 @@ export function ProxyPanel({
                     defaultValue: "应用接管",
                   })}
                 </p>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {(["claude", "codex", "gemini"] as const).map((appType) => {
-                    const isEnabled =
-                      takeoverStatus?.[
-                        appType as keyof typeof takeoverStatus
-                      ] ?? false;
-                    return (
-                      <div
-                        key={appType}
-                        className="flex items-center justify-between rounded-md border border-primary/20 bg-background/60 px-3 py-2"
-                      >
-                        <span className="text-sm font-medium capitalize">
-                          {appType}
-                        </span>
-                        <Switch
-                          checked={isEnabled}
-                          onCheckedChange={(checked) =>
-                            handleTakeoverChange(appType, checked)
-                          }
-                          disabled={setTakeoverForApp.isPending}
-                        />
-                      </div>
-                    );
-                  })}
+                <div className="grid gap-2 sm:grid-cols-4">
+                  {(["claude", "codex", "gemini", "grok"] as const).map(
+                    (appType) => {
+                      const isEnabled =
+                        takeoverStatus?.[
+                          appType as keyof typeof takeoverStatus
+                        ] ?? false;
+                      return (
+                        <div
+                          key={appType}
+                          className="flex items-center justify-between rounded-md border border-primary/20 bg-background/60 px-3 py-2"
+                        >
+                          <span className="text-sm font-medium">
+                            {appType === "grok" ? "Grok Build" : appType}
+                          </span>
+                          <Switch
+                            checked={isEnabled}
+                            onCheckedChange={(checked) =>
+                              handleTakeoverChange(appType, checked)
+                            }
+                            disabled={setTakeoverForApp.isPending}
+                          />
+                        </div>
+                      );
+                    },
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {t("proxy.takeover.hint", {

@@ -120,9 +120,9 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 8. Proxy Config 表（三行结构，app_type 主键）
+        // 8. Proxy Config 表（每应用一行，app_type 主键）
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_config (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','grok','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -136,7 +136,7 @@ impl Database {
             created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 初始化三行数据（每应用不同默认值）
+        // 初始化每应用数据（每应用不同默认值）
         //
         // 兼容旧数据库：
         // - 老版本 proxy_config 是单例表（没有 app_type 列），此时不能执行三行 seed insert；
@@ -151,6 +151,25 @@ impl Database {
                 [],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+            let proxy_config_supports_grok = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proxy_config'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map(|sql| sql.contains("'grok'"))
+                .unwrap_or(false);
+            if proxy_config_supports_grok {
+                conn.execute(
+                    "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+                    streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                    circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                    circuit_error_rate_threshold, circuit_min_requests)
+                    VALUES ('grok', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+                    [],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
             conn.execute(
                 "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
@@ -485,6 +504,11 @@ impl Database {
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
                     }
+                    13 => {
+                        log::info!("迁移数据库从 v13 到 v14（添加 Grok 代理配置）");
+                        Self::migrate_v13_to_v14(conn)?;
+                        Self::set_user_version(conn, 14)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -786,6 +810,19 @@ impl Database {
                 old_cb.4,
             ),
             (
+                "grok",
+                get_bool("proxy_takeover_grok"),
+                get_bool("auto_failover_enabled_grok"),
+                3,
+                old_config.4,
+                old_config.5,
+                old_cb.0,
+                old_cb.1,
+                old_cb.2,
+                old_cb.3,
+                old_cb.4,
+            ),
+            (
                 "gemini",
                 get_bool("proxy_takeover_gemini"),
                 get_bool("auto_failover_enabled_gemini"),
@@ -803,7 +840,7 @@ impl Database {
         // 创建新表
         conn.execute("DROP TABLE IF EXISTS proxy_config_new", [])?;
         conn.execute("CREATE TABLE proxy_config_new (
-            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','gemini')),
+            app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','grok','gemini')),
             proxy_enabled INTEGER NOT NULL DEFAULT 0, listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
             listen_port INTEGER NOT NULL DEFAULT 15721, enable_logging INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 0, auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
@@ -1351,6 +1388,109 @@ impl Database {
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
         }
+        Ok(())
+    }
+
+    /// v13 -> v14：扩展 proxy_config 的 app_type CHECK，并初始化 Grok 行。
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_config")? {
+            return Ok(());
+        }
+
+        let table_sql = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proxy_config'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|e| AppError::Database(format!("读取 proxy_config 定义失败: {e}")))?;
+
+        if !table_sql.contains("'grok'") {
+            conn.execute_batch(
+                "ALTER TABLE proxy_config RENAME TO proxy_config_v13;
+                 CREATE TABLE proxy_config (
+                     app_type TEXT PRIMARY KEY CHECK (app_type IN ('claude','codex','grok','gemini')),
+                     proxy_enabled INTEGER NOT NULL DEFAULT 0,
+                     listen_address TEXT NOT NULL DEFAULT '127.0.0.1',
+                     listen_port INTEGER NOT NULL DEFAULT 15721,
+                     enable_logging INTEGER NOT NULL DEFAULT 1,
+                     enabled INTEGER NOT NULL DEFAULT 0,
+                     auto_failover_enabled INTEGER NOT NULL DEFAULT 0,
+                     max_retries INTEGER NOT NULL DEFAULT 3,
+                     streaming_first_byte_timeout INTEGER NOT NULL DEFAULT 60,
+                     streaming_idle_timeout INTEGER NOT NULL DEFAULT 120,
+                     non_streaming_timeout INTEGER NOT NULL DEFAULT 600,
+                     circuit_failure_threshold INTEGER NOT NULL DEFAULT 4,
+                     circuit_success_threshold INTEGER NOT NULL DEFAULT 2,
+                     circuit_timeout_seconds INTEGER NOT NULL DEFAULT 60,
+                     circuit_error_rate_threshold REAL NOT NULL DEFAULT 0.6,
+                     circuit_min_requests INTEGER NOT NULL DEFAULT 10,
+                     default_cost_multiplier TEXT NOT NULL DEFAULT '1',
+                     pricing_model_source TEXT NOT NULL DEFAULT 'response',
+                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                     live_takeover_active INTEGER NOT NULL DEFAULT 0
+                 );",
+            )
+            .map_err(|e| AppError::Database(format!("v13 -> v14 重建 proxy_config 失败: {e}")))?;
+
+            let columns = [
+                ("app_type", "'codex'"),
+                ("proxy_enabled", "0"),
+                ("listen_address", "'127.0.0.1'"),
+                ("listen_port", "15721"),
+                ("enable_logging", "1"),
+                ("enabled", "0"),
+                ("auto_failover_enabled", "0"),
+                ("max_retries", "3"),
+                ("streaming_first_byte_timeout", "60"),
+                ("streaming_idle_timeout", "120"),
+                ("non_streaming_timeout", "600"),
+                ("circuit_failure_threshold", "4"),
+                ("circuit_success_threshold", "2"),
+                ("circuit_timeout_seconds", "60"),
+                ("circuit_error_rate_threshold", "0.6"),
+                ("circuit_min_requests", "10"),
+                ("default_cost_multiplier", "'1'"),
+                ("pricing_model_source", "'response'"),
+                ("created_at", "datetime('now')"),
+                ("updated_at", "datetime('now')"),
+                ("live_takeover_active", "0"),
+            ];
+            let names = columns.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+            let mut values = Vec::with_capacity(columns.len());
+            for (name, fallback) in columns {
+                values.push(if Self::has_column(conn, "proxy_config_v13", name)? {
+                    name.to_string()
+                } else {
+                    fallback.to_string()
+                });
+            }
+            conn.execute(
+                &format!(
+                    "INSERT INTO proxy_config ({}) SELECT {} FROM proxy_config_v13",
+                    names.join(", "),
+                    values.join(", ")
+                ),
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("v13 -> v14 复制 proxy_config 失败: {e}")))?;
+            conn.execute("DROP TABLE proxy_config_v13", [])
+                .map_err(|e| {
+                    AppError::Database(format!("v13 -> v14 清理旧 proxy_config 失败: {e}"))
+                })?;
+        }
+
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (app_type, max_retries,
+             streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+             circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+             circuit_error_rate_threshold, circuit_min_requests)
+             VALUES ('grok', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("初始化 Grok proxy_config 失败: {e}")))?;
+
         Ok(())
     }
 
@@ -2766,7 +2906,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 13);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         assert!(Database::has_column(
             &conn,
             "proxy_request_logs",

@@ -119,6 +119,9 @@ impl McpService {
                 // Codex uses TOML format, must use the correct function
                 mcp::sync_single_server_to_codex(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::Grok => {
+                log::debug!("Grok MCP sync is not managed by CC Switch, skipping");
+            }
             AppType::Gemini => {
                 mcp::sync_single_server_to_gemini(&Default::default(), &server.id, &server.server)?;
             }
@@ -161,6 +164,9 @@ impl McpService {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
+            AppType::Grok => {
+                log::debug!("Grok MCP sync is not managed by CC Switch, skipping");
+            }
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
             AppType::OpenCode => {
                 mcp::remove_server_from_opencode(id)?;

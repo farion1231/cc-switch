@@ -161,10 +161,10 @@ describe("Codex Chat provider presets", () => {
     }
   });
 
-  it("uses native Responses API for migrated CN providers without local route mapping", () => {
+  it("uses native Responses API for providers without protocol conversion", () => {
     const nativeResponsesPresets = new Map<
       string,
-      { contextWindows: Record<string, number> }
+      { baseUrl?: string; contextWindows: Record<string, number> }
     >([
       [
         "DouBaoSeed",

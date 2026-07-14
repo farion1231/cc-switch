@@ -327,6 +327,13 @@ impl ProxyServer {
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            // Grok Build 独立 OpenAI-compatible 路由。Responses 与 Chat 均原生透传，
+            // 不复用 Codex 的 Responses -> Chat 转换分支。
+            .route(
+                "/grok/v1/chat/completions",
+                post(handlers::handle_grok_chat_completions),
+            )
+            .route("/grok/v1/responses", post(handlers::handle_grok_responses))
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",

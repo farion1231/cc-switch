@@ -523,7 +523,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::Grok
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -593,9 +597,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::Grok
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -650,9 +656,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::Grok
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -932,6 +940,9 @@ pub(crate) enum LiveSnapshot {
         auth: Option<Value>,
         config: Option<String>,
     },
+    Grok {
+        config: Option<String>,
+    },
     Gemini {
         env: Option<HashMap<String, String>>,
         config: Option<Value>,
@@ -963,6 +974,14 @@ impl LiveSnapshot {
                     crate::config::write_text_file(&config_path, text)?;
                 } else if config_path.exists() {
                     delete_file(&config_path)?;
+                }
+            }
+            LiveSnapshot::Grok { config } => {
+                let path = crate::grok_config::get_grok_config_path();
+                if let Some(text) = config {
+                    crate::config::write_text_file(&path, text)?;
+                } else if path.exists() {
+                    delete_file(&path)?;
                 }
             }
             LiveSnapshot::Gemini { env, .. } => {
@@ -1032,6 +1051,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 config_str,
                 profile,
             )?;
+        }
+        AppType::Grok => {
+            crate::grok_config::write_grok_provider_live(provider)?;
         }
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
@@ -1303,6 +1325,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             }
             Ok(result)
         }
+        AppType::Grok => crate::grok_config::read_grok_live_settings(),
         AppType::Claude => {
             let path = get_claude_settings_path();
             if !path.exists() {
@@ -1435,6 +1458,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
+        AppType::Grok => crate::grok_config::read_grok_live_settings()?,
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
             if !settings_path.exists() {
@@ -1526,6 +1550,16 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
         .to_string(),
     );
+
+    if matches!(app_type, AppType::Grok) {
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .api_format = Some(
+            crate::grok_config::infer_api_format_from_settings(&provider.settings_config)
+                .to_string(),
+        );
+    }
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     state

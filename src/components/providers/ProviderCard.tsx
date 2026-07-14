@@ -226,13 +226,18 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
-  const codexNeedsRouting = useMemo(() => {
-    if (appId !== "codex" || provider.category === "official") return false;
+  const openAiCompatibleNeedsRouting = useMemo(() => {
+    if (
+      (appId !== "codex" && appId !== "grok") ||
+      provider.category === "official"
+    )
+      return false;
     if (
       provider.meta?.apiFormat === "openai_chat" ||
-      provider.meta?.apiFormat === "anthropic"
+      (appId === "codex" && provider.meta?.apiFormat === "anthropic")
     )
       return true;
+    if (appId === "grok") return false;
     const config = (provider.settingsConfig as Record<string, any>)?.config;
     return (
       typeof config === "string" &&
@@ -396,7 +401,7 @@ export function ProviderCard({
                   </span>
                 )}
 
-              {codexNeedsRouting && (
+              {openAiCompatibleNeedsRouting && (
                 <span className="inline-flex items-center rounded-md bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
                   {t("codex.needsRouting", {
                     defaultValue: "需要路由",

@@ -16,6 +16,7 @@ import { UniversalProviderFormModal } from "@/components/universal/UniversalProv
 import { UniversalProviderPanel } from "@/components/universal";
 import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
+import { grokProviderPresets } from "@/config/grokProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
@@ -198,6 +199,10 @@ export function AddProviderDialog({
                 preset.endpointCandidates.forEach(addUrl);
               }
             }
+          } else if (appId === "grok") {
+            const presetIndex = parseInt(values.presetId.replace("grok-", ""));
+            const preset = grokProviderPresets[presetIndex];
+            preset?.endpointCandidates?.forEach(addUrl);
           } else if (appId === "gemini") {
             const presets = geminiProviderPresets;
             const presetIndex = parseInt(
@@ -242,7 +247,7 @@ export function AddProviderDialog({
           if (env?.ANTHROPIC_BASE_URL) {
             addUrl(env.ANTHROPIC_BASE_URL);
           }
-        } else if (appId === "codex") {
+        } else if (appId === "codex" || appId === "grok") {
           const config = parsedConfig.config as string | undefined;
           if (config) {
             const extractedBaseUrl = extractCodexBaseUrl(config);

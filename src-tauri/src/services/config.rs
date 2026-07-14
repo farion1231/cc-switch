@@ -120,6 +120,7 @@ impl ConfigService {
 
         match app_type {
             AppType::Codex => Self::sync_codex_live(config, &current_id, &provider)?,
+            AppType::Grok => crate::grok_config::write_grok_provider_live(&provider)?,
             AppType::Claude => Self::sync_claude_live(config, &current_id, &provider)?,
             AppType::ClaudeDesktop => {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.

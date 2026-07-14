@@ -876,7 +876,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "grok": "Grok Build"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -1246,6 +1247,24 @@
     "pricingModelSourceRequest": "请求模型",
     "pricingModelSourceResponse": "返回模型",
     "pricingModelSourceHint": "选择按请求模型还是返回模型进行定价匹配"
+  },
+  "grokConfig": {
+    "authJson": "Grok API Key (JSON) *",
+    "authJsonPlaceholder": "{\n  \"OPENAI_API_KEY\": \"xai-your-api-key\"\n}",
+    "authJsonHint": "供应商共享 API Key；每个 [model.*] 也可单独设置 api_key 或 env_key",
+    "profileToml": "Grok Profile (TOML)",
+    "profileTomlHint": "管理 endpoints、models、subagents 和 model.*；切换时保留其它 Grok 全局配置",
+    "defaultModelPlaceholder": "例如: grok-4.5",
+    "defaultModelHint": "Grok Build 默认使用的模型，可随时修改。留空时保留当前 Profile 的默认模型。",
+    "advancedSectionHint": "包含 Grok 原生 API Backend、User-Agent 与本地代理请求覆盖。",
+    "editGlobalConfig": "编辑 Grok 全局配置",
+    "addToGlobalConfig": "加入全局配置",
+    "addedToGlobalConfig": "当前 Grok Profile 已加入全局配置",
+    "globalConfigTitle": "Grok Build 全局 config.toml",
+    "globalConfigHint": "这里编辑本机实际配置。供应商切换只替换 endpoints、models、subagents 与 model.*，其它设置会保留；每次保存都会自动备份。",
+    "globalConfigSaved": "Grok 全局配置已保存",
+    "applyPrivacy": "应用隐私保护",
+    "privacyApplied": "隐私保护配置已写入"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

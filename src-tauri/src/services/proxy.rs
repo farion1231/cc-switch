@@ -598,6 +598,12 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
+        let grok_enabled = self
+            .db
+            .get_proxy_config_for_app("grok")
+            .await
+            .map(|c| c.enabled)
+            .unwrap_or(false);
         let gemini_enabled = self
             .db
             .get_proxy_config_for_app("gemini")
@@ -611,6 +617,7 @@ impl ProxyService {
         Ok(ProxyTakeoverStatus {
             claude: claude_enabled,
             codex: codex_enabled,
+            grok: grok_enabled,
             gemini: gemini_enabled,
             opencode: opencode_enabled,
             openclaw: openclaw_enabled,
@@ -852,6 +859,7 @@ impl ProxyService {
         let live_config = match app_type {
             AppType::Claude => self.read_claude_live()?,
             AppType::Codex => self.read_codex_live()?,
+            AppType::Grok => self.read_grok_live()?,
             AppType::Gemini => self.read_gemini_live()?,
             _ => return Err("该应用不支持代理功能".to_string()),
         };
@@ -1019,6 +1027,43 @@ impl ProxyService {
                     }
                 }
             }
+            AppType::Grok => {
+                let provider_id =
+                    crate::settings::get_effective_current_provider(&self.db, &AppType::Grok)
+                        .map_err(|e| format!("获取 Grok 当前供应商失败: {e}"))?;
+                if let Some(provider_id) = provider_id {
+                    if let Ok(Some(mut provider)) = self.db.get_provider_by_id(&provider_id, "grok")
+                    {
+                        if let Some(config_text) = live_config.get("config").and_then(Value::as_str)
+                        {
+                            let settings =
+                                crate::grok_config::settings_from_config_text(config_text)
+                                    .map_err(|e| format!("解析 Grok Live 配置失败: {e}"))?;
+                            let token = settings
+                                .pointer("/auth/OPENAI_API_KEY")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            if !token.is_empty()
+                                && token != crate::grok_config::GROK_PROXY_TOKEN_PLACEHOLDER
+                            {
+                                provider.settings_config = settings;
+                                provider
+                                    .meta
+                                    .get_or_insert_with(Default::default)
+                                    .api_format = Some(
+                                    crate::grok_config::infer_api_format_from_settings(
+                                        &provider.settings_config,
+                                    )
+                                    .to_string(),
+                                );
+                                self.db
+                                    .save_provider("grok", &provider)
+                                    .map_err(|e| format!("同步 Grok Token 到数据库失败: {e}"))?;
+                            }
+                        }
+                    }
+                }
+            }
             AppType::Gemini => {
                 let provider_id =
                     crate::settings::get_effective_current_provider(&self.db, &AppType::Gemini)
@@ -1090,6 +1135,11 @@ impl ProxyService {
                 .await?;
         }
 
+        if let Ok(live_config) = self.read_grok_live() {
+            self.sync_live_config_to_provider(&AppType::Grok, &live_config)
+                .await?;
+        }
+
         if let Ok(live_config) = self.read_gemini_live() {
             self.sync_live_config_to_provider(&AppType::Gemini, &live_config)
                 .await?;
@@ -1147,7 +1197,7 @@ impl ProxyService {
             .map_err(|e| format!("清除接管状态失败: {e}"))?;
 
         // 4. 清除所有应用的 enabled 状态（用户手动关闭，不需要下次自动恢复）
-        for app_type in ["claude", "codex", "gemini"] {
+        for app_type in ["claude", "codex", "grok", "gemini"] {
             if let Ok(mut config) = self.db.get_proxy_config_for_app(app_type).await {
                 if config.enabled {
                     config.enabled = false;
@@ -1244,6 +1294,20 @@ impl ProxyService {
             }
         }
 
+        // Grok Build
+        if let Ok(config) = self.read_grok_live() {
+            if Self::live_has_proxy_placeholder_for_app(&AppType::Grok, &config) {
+                log::warn!("grok Live 已被代理接管，不备份；下次 stop 会从 SSOT 重建 Live");
+            } else {
+                let json_str = serde_json::to_string(&config)
+                    .map_err(|e| format!("序列化 Grok 配置失败: {e}"))?;
+                self.db
+                    .save_live_backup("grok", &json_str)
+                    .await
+                    .map_err(|e| format!("备份 Grok 配置失败: {e}"))?;
+            }
+        }
+
         // Gemini
         if let Ok(config) = self.read_gemini_live() {
             if Self::live_has_proxy_placeholder_for_app(&AppType::Gemini, &config) {
@@ -1267,6 +1331,7 @@ impl ProxyService {
         let (app_type_str, config) = match app_type {
             AppType::Claude => ("claude", self.read_claude_live()?),
             AppType::Codex => ("codex", self.read_codex_live()?),
+            AppType::Grok => ("grok", self.read_grok_live()?),
             AppType::Gemini => ("gemini", self.read_gemini_live()?),
             _ => return Err("该应用不支持代理功能".to_string()),
         };
@@ -1339,6 +1404,7 @@ impl ProxyService {
     /// 因此不需要在 URL 中添加应用前缀。
     async fn takeover_live_configs(&self) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
+        let proxy_grok_base_url = format!("{}/grok/v1", proxy_url.trim_end_matches('/'));
 
         // Claude: 修改 ANTHROPIC_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_claude_live() {
@@ -1366,6 +1432,13 @@ impl ProxyService {
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
 
+        if self.read_grok_live().is_ok() {
+            let grok_provider = self.require_current_provider_for_app(&AppType::Grok)?;
+            crate::grok_config::write_grok_takeover_live(&grok_provider, &proxy_grok_base_url)
+                .map_err(|e| format!("写入 Grok 接管配置失败: {e}"))?;
+            log::info!("Grok Live 配置已接管，代理地址: {proxy_grok_base_url}");
+        }
+
         // Gemini: 修改 GOOGLE_GEMINI_BASE_URL，使用占位符替代真实 Token（代理会注入真实 Token）
         if let Ok(mut live_config) = self.read_gemini_live() {
             if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
@@ -1388,6 +1461,7 @@ impl ProxyService {
     /// 接管指定应用的 Live 配置（严格模式：目标配置不存在则返回错误）
     async fn takeover_live_config_strict(&self, app_type: &AppType) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
+        let proxy_grok_base_url = format!("{}/grok/v1", proxy_url.trim_end_matches('/'));
 
         match app_type {
             AppType::Claude => {
@@ -1415,6 +1489,13 @@ impl ProxyService {
                 self.write_codex_takeover_live_for_provider(&live_config, Some(&codex_provider))?;
                 log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
             }
+            AppType::Grok => {
+                self.read_grok_live()?;
+                let provider = self.require_current_provider_for_app(&AppType::Grok)?;
+                crate::grok_config::write_grok_takeover_live(&provider, &proxy_grok_base_url)
+                    .map_err(|e| format!("写入 Grok 接管配置失败: {e}"))?;
+                log::info!("Grok Live 配置已接管，代理地址: {proxy_grok_base_url}");
+            }
             AppType::Gemini => {
                 let mut live_config = self.read_gemini_live()?;
 
@@ -1440,6 +1521,7 @@ impl ProxyService {
     /// 接管指定应用的 Live 配置（尽力而为：配置不存在/读取失败则跳过）
     async fn takeover_live_config_best_effort(&self, app_type: &AppType) -> Result<(), String> {
         let (proxy_url, proxy_codex_base_url) = self.build_proxy_urls().await?;
+        let proxy_grok_base_url = format!("{}/grok/v1", proxy_url.trim_end_matches('/'));
 
         match app_type {
             AppType::Claude => {
@@ -1480,6 +1562,15 @@ impl ProxyService {
                     )?;
                 }
             }
+            AppType::Grok if self.read_grok_live().is_ok() => {
+                if let Ok(Some(provider)) = self.get_current_provider_for_app(&AppType::Grok) {
+                    let _ = crate::grok_config::write_grok_takeover_live(
+                        &provider,
+                        &proxy_grok_base_url,
+                    );
+                }
+            }
+            AppType::Grok => {}
             AppType::Gemini => {
                 if let Ok(mut live_config) = self.read_gemini_live() {
                     if let Some(env) = live_config.get_mut("env").and_then(|v| v.as_object_mut()) {
@@ -1519,6 +1610,14 @@ impl ProxyService {
                     log::info!("Codex Live 配置已恢复");
                 }
             }
+            AppType::Grok => {
+                if let Ok(Some(backup)) = self.db.get_live_backup("grok").await {
+                    let config: Value = serde_json::from_str(&backup.original_config)
+                        .map_err(|e| format!("解析 Grok 备份失败: {e}"))?;
+                    self.write_grok_live(&config)?;
+                    log::info!("Grok Live 配置已恢复");
+                }
+            }
             AppType::Gemini => {
                 if let Ok(Some(backup)) = self.db.get_live_backup("gemini").await {
                     let config: Value = serde_json::from_str(&backup.original_config)
@@ -1537,7 +1636,12 @@ impl ProxyService {
     async fn restore_live_configs(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 
-        for app_type in [AppType::Claude, AppType::Codex, AppType::Gemini] {
+        for app_type in [
+            AppType::Claude,
+            AppType::Codex,
+            AppType::Grok,
+            AppType::Gemini,
+        ] {
             if let Err(e) = self
                 .restore_live_config_for_app_with_fallback(&app_type)
                 .await
@@ -1625,6 +1729,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => self.write_claude_live(config),
             AppType::Codex => self.write_codex_live(config),
+            AppType::Grok => self.write_grok_live(config),
             AppType::Gemini => self.write_gemini_live(config),
             _ => Err("该应用不支持代理功能".to_string()),
         }
@@ -1638,6 +1743,10 @@ impl ProxyService {
             },
             AppType::Codex => match self.read_codex_live() {
                 Ok(config) => Self::is_codex_live_taken_over(&config),
+                Err(_) => false,
+            },
+            AppType::Grok => match self.read_grok_live() {
+                Ok(config) => Self::is_grok_live_taken_over(&config),
                 Err(_) => false,
             },
             AppType::Gemini => match self.read_gemini_live() {
@@ -1693,6 +1802,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => self.cleanup_claude_takeover_placeholders_in_live(),
             AppType::Codex => self.cleanup_codex_takeover_placeholders_in_live(),
+            AppType::Grok => self.cleanup_grok_takeover_placeholders_in_live(),
             AppType::Gemini => self.cleanup_gemini_takeover_placeholders_in_live(),
             _ => Ok(()),
         }
@@ -1776,6 +1886,16 @@ impl ProxyService {
                     });
                 Ok(Self::is_codex_live_taken_over(&config) && base_url_matches)
             }
+            AppType::Grok => {
+                let config = self.read_grok_live()?;
+                let proxy_grok_base_url = format!("{}/grok/v1", proxy_url.trim_end_matches('/'));
+                let base_url_matches = config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .and_then(crate::grok_config::active_base_url)
+                    .is_some_and(|url| Self::proxy_urls_match(&url, &proxy_grok_base_url));
+                Ok(Self::is_grok_live_taken_over(&config) && base_url_matches)
+            }
             AppType::Gemini => {
                 let config = self.read_gemini_live()?;
                 let base_url_matches = config
@@ -1846,6 +1966,18 @@ impl ProxyService {
         Ok(())
     }
 
+    fn cleanup_grok_takeover_placeholders_in_live(&self) -> Result<(), String> {
+        let config = self.read_grok_live()?;
+        let text = config
+            .get("config")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let cleaned = crate::grok_config::cleanup_takeover_config_text(text)
+            .map_err(|e| format!("清理 Grok 接管占位符失败: {e}"))?;
+        crate::grok_config::write_grok_config_text(&cleaned)
+            .map_err(|e| format!("写入 Grok 配置失败: {e}"))
+    }
+
     /// Remove local proxy base_url from TOML（委托给 codex_config 共享实现）
     fn remove_local_toml_base_url(toml_str: &str) -> String {
         crate::codex_config::remove_codex_toml_base_url_if(toml_str, Self::is_local_proxy_url)
@@ -1878,7 +2010,7 @@ impl ProxyService {
     /// 检查是否处于 Live 接管模式
     pub async fn is_takeover_active(&self) -> Result<bool, String> {
         let status = self.get_takeover_status().await?;
-        Ok(status.claude || status.codex || status.gemini)
+        Ok(status.claude || status.codex || status.grok || status.gemini)
     }
 
     /// 从异常退出中恢复（启动时调用）
@@ -1918,6 +2050,12 @@ impl ProxyService {
 
         if let Ok(config) = self.read_codex_live() {
             if Self::is_codex_live_taken_over(&config) {
+                return true;
+            }
+        }
+
+        if let Ok(config) = self.read_grok_live() {
+            if Self::is_grok_live_taken_over(&config) {
                 return true;
             }
         }
@@ -1978,6 +2116,13 @@ impl ProxyService {
                 .is_some_and(crate::codex_config::codex_config_has_official_proxy_route)
     }
 
+    fn is_grok_live_taken_over(config: &Value) -> bool {
+        config
+            .get("config")
+            .and_then(Value::as_str)
+            .is_some_and(crate::grok_config::config_text_has_proxy_placeholder)
+    }
+
     fn is_gemini_live_taken_over(config: &Value) -> bool {
         let env = match config.get("env").and_then(|v| v.as_object()) {
             Some(env) => env,
@@ -1996,6 +2141,7 @@ impl ProxyService {
         match app_type {
             AppType::Claude => Self::is_claude_live_taken_over(config),
             AppType::Codex => Self::is_codex_live_taken_over(config),
+            AppType::Grok => Self::is_grok_live_taken_over(config),
             AppType::Gemini => Self::is_gemini_live_taken_over(config),
             _ => false,
         }
@@ -2067,11 +2213,47 @@ impl ProxyService {
             .map_err(|e| format!("注入统一会话路由失败: {e}"))?;
         }
 
+        if matches!(app_type_enum, AppType::Grok) {
+            let existing_text = self
+                .db
+                .get_live_backup("grok")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|backup| serde_json::from_str::<Value>(&backup.original_config).ok())
+                .and_then(|value| {
+                    value
+                        .get("config")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    self.read_grok_live().ok().and_then(|value| {
+                        value
+                            .get("config")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+                })
+                .unwrap_or_default();
+            let patched = crate::grok_config::patch_config_text_for_provider(
+                &existing_text,
+                provider,
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| format!("构建 Grok 备份失败: {e}"))?;
+            effective_settings = json!({ "config": patched });
+        }
+
         let backup_json = match app_type_enum {
             AppType::Claude => serde_json::to_string(&effective_settings)
                 .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?,
             AppType::Codex => serde_json::to_string(&effective_settings)
                 .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?,
+            AppType::Grok => serde_json::to_string(&effective_settings)
+                .map_err(|e| format!("序列化 Grok 配置失败: {e}"))?,
             AppType::Gemini => {
                 // Gemini takeover 仅修改 .env；settings.json（含 mcpServers）保持原样。
                 let env_backup = if let Some(env) = effective_settings.get("env") {
@@ -2161,6 +2343,11 @@ impl ProxyService {
             } else if live_taken_over && matches!(app_type_enum, AppType::Codex) {
                 self.sync_codex_live_from_provider_while_proxy_active(&provider)
                     .await?;
+            } else if live_taken_over && matches!(app_type_enum, AppType::Grok) {
+                let (proxy_url, _) = self.build_proxy_urls().await?;
+                let proxy_grok_base_url = format!("{}/grok/v1", proxy_url.trim_end_matches('/'));
+                crate::grok_config::write_grok_takeover_live(&provider, &proxy_grok_base_url)
+                    .map_err(|e| format!("更新 Grok 接管配置失败: {e}"))?;
             }
         }
 
@@ -2442,6 +2629,21 @@ impl ProxyService {
     fn read_codex_live(&self) -> Result<Value, String> {
         crate::codex_config::read_codex_live_settings()
             .map_err(|e| format!("读取 Codex Live 配置失败: {e}"))
+    }
+
+    fn read_grok_live(&self) -> Result<Value, String> {
+        crate::grok_config::read_grok_config_text()
+            .map(|config| json!({ "config": config }))
+            .map_err(|e| format!("读取 Grok Live 配置失败: {e}"))
+    }
+
+    fn write_grok_live(&self, config: &Value) -> Result<(), String> {
+        let text = config
+            .get("config")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Grok 配置缺少 config 字段".to_string())?;
+        crate::grok_config::write_grok_config_text(text)
+            .map_err(|e| format!("写入 Grok Live 配置失败: {e}"))
     }
 
     fn write_codex_live(&self, config: &Value) -> Result<(), String> {

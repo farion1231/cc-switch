@@ -25,6 +25,7 @@ import {
 */
 
 interface CodexAuthSectionProps {
+  appId?: "codex" | "grok";
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
@@ -36,6 +37,7 @@ interface CodexAuthSectionProps {
  * CodexAuthSection - Auth JSON editor section
  */
 export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
+  appId = "codex",
   value,
   onChange,
   onBlur,
@@ -73,13 +75,20 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
         htmlFor="codexAuth"
         className="block text-sm font-medium text-foreground"
       >
-        {t("codexConfig.authJson")}
+        {t(appId === "grok" ? "grokConfig.authJson" : "codexConfig.authJson", {
+          defaultValue:
+            appId === "grok" ? "Grok API Key (JSON) *" : "auth.json (JSON) *",
+        })}
       </label>
 
       <JsonEditor
         value={value}
         onChange={handleChange}
-        placeholder={t("codexConfig.authJsonPlaceholder")}
+        placeholder={t(
+          appId === "grok"
+            ? "grokConfig.authJsonPlaceholder"
+            : "codexConfig.authJsonPlaceholder",
+        )}
         darkMode={isDarkMode}
         rows={6}
         showValidation={true}
@@ -93,9 +102,17 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
       {!error && (
         <p className="text-xs text-muted-foreground">
           {t(
-            isProxyTakeover
-              ? "codexConfig.authJsonStorageHint"
-              : "codexConfig.authJsonHint",
+            appId === "grok"
+              ? "grokConfig.authJsonHint"
+              : isProxyTakeover
+                ? "codexConfig.authJsonStorageHint"
+                : "codexConfig.authJsonHint",
+            {
+              defaultValue:
+                appId === "grok"
+                  ? "供应商共享 API Key；每个 [model.*] 也可单独设置 api_key 或 env_key"
+                  : undefined,
+            },
           )}
         </p>
       )}
@@ -104,6 +121,11 @@ export const CodexAuthSection: React.FC<CodexAuthSectionProps> = ({
 };
 
 interface CodexConfigSectionProps {
+  appId?: "codex" | "grok";
+  showCodexFeatures?: boolean;
+  onEditGrokGlobalConfig?: () => void;
+  onAddGrokGlobalConfig?: () => void;
+  isAddingGrokGlobalConfig?: boolean;
   value: string;
   onChange: (value: string) => void;
   providerName?: string;
@@ -120,6 +142,11 @@ interface CodexConfigSectionProps {
  * CodexConfigSection - Config TOML editor section
  */
 export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
+  appId = "codex",
+  showCodexFeatures = true,
+  onEditGrokGlobalConfig,
+  onAddGrokGlobalConfig,
+  isAddingGrokGlobalConfig = false,
   value,
   onChange,
   providerName,
@@ -274,58 +301,92 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
           htmlFor="codexConfig"
           className="block text-sm font-medium text-foreground"
         >
-          {t("codexConfig.configToml")}
+          {t(
+            appId === "grok"
+              ? "grokConfig.profileToml"
+              : "codexConfig.configToml",
+            { defaultValue: "config.toml (TOML)" },
+          )}
         </label>
 
-        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={goalModeEnabled}
-              onChange={(e) => handleGoalModeToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.enableGoalMode")}
-          </label>
-
-          {showRemoteCompaction && (
-            <label
-              className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
-              title={t("codexConfig.remoteCompactionHint")}
-            >
+        {showCodexFeatures && (
+          <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
               <input
                 type="checkbox"
-                checked={remoteCompactionEnabled}
-                onChange={(e) => handleRemoteCompactionToggle(e.target.checked)}
+                checked={goalModeEnabled}
+                onChange={(e) => handleGoalModeToggle(e.target.checked)}
                 className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
               />
-              {t("codexConfig.enableRemoteCompaction")}
+              {t("codexConfig.enableGoalMode")}
             </label>
-          )}
 
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={useCommonConfig}
-              onChange={(e) => onCommonConfigToggle(e.target.checked)}
-              className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
-            />
-            {t("codexConfig.writeCommonConfig")}
-          </label>
+            {showRemoteCompaction && (
+              <label
+                className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+                title={t("codexConfig.remoteCompactionHint")}
+              >
+                <input
+                  type="checkbox"
+                  checked={remoteCompactionEnabled}
+                  onChange={(e) =>
+                    handleRemoteCompactionToggle(e.target.checked)
+                  }
+                  className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+                />
+                {t("codexConfig.enableRemoteCompaction")}
+              </label>
+            )}
+
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={useCommonConfig}
+                onChange={(e) => onCommonConfigToggle(e.target.checked)}
+                className="w-4 h-4 text-blue-500 bg-white dark:bg-gray-800 border-border-default rounded focus:ring-blue-500 dark:focus:ring-blue-400 focus:ring-2"
+              />
+              {t("codexConfig.writeCommonConfig")}
+            </label>
+          </div>
+        )}
+      </div>
+
+      {showCodexFeatures && (
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={onEditCommonConfig}
+            className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
+          >
+            {t("codexConfig.editCommonConfig")}
+          </button>
         </div>
-      </div>
+      )}
+      {appId === "grok" && onEditGrokGlobalConfig && (
+        <div className="flex items-center justify-end gap-3">
+          {onAddGrokGlobalConfig && (
+            <button
+              type="button"
+              onClick={onAddGrokGlobalConfig}
+              disabled={isAddingGrokGlobalConfig}
+              className="text-xs text-blue-500 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400"
+            >
+              {isAddingGrokGlobalConfig
+                ? t("common.saving")
+                : t("grokConfig.addToGlobalConfig")}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onEditGrokGlobalConfig}
+            className="text-xs text-blue-500 hover:underline dark:text-blue-400"
+          >
+            {t("grokConfig.editGlobalConfig")}
+          </button>
+        </div>
+      )}
 
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onEditCommonConfig}
-          className="text-xs text-blue-500 dark:text-blue-400 hover:underline"
-        >
-          {t("codexConfig.editCommonConfig")}
-        </button>
-      </div>
-
-      {commonConfigError && (
+      {showCodexFeatures && commonConfigError && (
         <p className="text-xs text-red-500 dark:text-red-400 text-right">
           {commonConfigError}
         </p>
@@ -376,9 +437,17 @@ export const CodexConfigSection: React.FC<CodexConfigSectionProps> = ({
       {!configError && (
         <p className="text-xs text-muted-foreground">
           {t(
-            isProxyTakeover
-              ? "codexConfig.configTomlStorageHint"
-              : "codexConfig.configTomlHint",
+            appId === "grok"
+              ? "grokConfig.profileTomlHint"
+              : isProxyTakeover
+                ? "codexConfig.configTomlStorageHint"
+                : "codexConfig.configTomlHint",
+            {
+              defaultValue:
+                appId === "grok"
+                  ? "管理 endpoints、models、subagents 和 model.*；切换时保留其它 Grok 全局配置"
+                  : undefined,
+            },
           )}
         </p>
       )}
