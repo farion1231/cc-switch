@@ -1514,7 +1514,11 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     websiteUrl: "https://byesu.com",
     apiKeyUrl: "https://byesu.com/console/token",
     auth: generateThirdPartyAuth(""),
-    config: generateThirdPartyConfig("byesu", "https://byesu.com/v1", "gpt-5.5"),
+    config: generateThirdPartyConfig(
+      "byesu",
+      "https://byesu.com/v1",
+      "gpt-5.5",
+    ),
     category: "aggregator",
   },
 ];
