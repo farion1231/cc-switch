@@ -2258,6 +2258,38 @@ fn table_matches_codex_unified_official_provider(table: &toml_edit::Table) -> bo
         && table.get("wire_api").and_then(|item| item.as_str()) == Some("responses")
 }
 
+/// Keep the shared `custom` provider resolvable while OAuth is active without
+/// making it the provider for newly-created official sessions. Older sessions
+/// can record `model_provider = "custom"` in their latest session metadata, and
+/// Codex validates that provider against the current config before resuming.
+fn ensure_codex_official_history_provider(config_text: &str) -> Result<String, AppError> {
+    let mut doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    let custom_provider = doc
+        .get("model_providers")
+        .and_then(|item| item.as_table())
+        .and_then(|providers| providers.get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID));
+    if custom_provider.is_some() {
+        return Ok(config_text.to_string());
+    }
+
+    if doc.get("model_providers").is_none() {
+        let mut parent = toml_edit::Table::new();
+        parent.set_implicit(true);
+        doc["model_providers"] = toml_edit::Item::Table(parent);
+    }
+    if let Some(providers) = doc["model_providers"].as_table_mut() {
+        providers.insert(
+            CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
+            toml_edit::Item::Table(codex_unified_official_provider_table()),
+        );
+    }
+
+    Ok(doc.to_string())
+}
+
 pub(crate) fn config_uses_codex_unified_official_provider(config_text: &str) -> bool {
     let Ok(doc) = config_text.parse::<DocumentMut>() else {
         return false;
@@ -2286,12 +2318,13 @@ pub(crate) fn config_uses_codex_unified_official_provider(config_text: &str) -> 
 ///   会激活这张我们不认识的表（可能带第三方 base_url/token，会把 ChatGPT
 ///   OAuth 流量路由到错误后端），宁可让开关对该配置不生效。
 pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
-    let mut doc = config_text
+    let prepared_config = ensure_codex_official_history_provider(config_text)?;
+    let mut doc = prepared_config
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
     if doc.get("model_provider").is_some() {
-        return Ok(config_text.to_string());
+        return Ok(prepared_config);
     }
 
     let existing_custom_conflicts = doc
@@ -2325,23 +2358,18 @@ pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, 
     Ok(doc.to_string())
 }
 
-/// `inject_codex_unified_session_bucket` 的反向操作：从配置文本里剥掉注入的
-/// 统一会话路由，保证切换回填不会把它带进数据库的存储配置（关闭开关后
-/// 切换即可完全还原）。仅当形态与注入产物完全一致时才剥离；第三方模板和
-/// 用户自定义的 `custom` 条目（带 base_url 等差异字段）原样保留。
+/// Remove the live-only official `custom` route, whether active or dormant,
+/// before provider backfill stores the config in the database. Only the exact
+/// CC Switch-owned table shape is removed; third-party templates and user-defined
+/// `custom` entries with a different shape remain untouched.
 pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
-    if !config_text.contains("model_provider") {
+    if !config_text.contains("model_providers") {
         return Ok(config_text.to_string());
     }
     let mut doc = config_text
         .parse::<DocumentMut>()
         .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
 
-    if doc.get("model_provider").and_then(|item| item.as_str())
-        != Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
-    {
-        return Ok(config_text.to_string());
-    }
     let matches_injected = doc
         .get("model_providers")
         .and_then(|item| item.as_table())
@@ -2352,7 +2380,11 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
         return Ok(config_text.to_string());
     }
 
-    doc.as_table_mut().remove("model_provider");
+    if doc.get("model_provider").and_then(|item| item.as_str())
+        == Some(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+    {
+        doc.as_table_mut().remove("model_provider");
+    }
     let providers_empty = doc["model_providers"]
         .as_table_mut()
         .map(|providers| {
@@ -2366,8 +2398,10 @@ pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, A
     Ok(doc.to_string())
 }
 
-/// 统一会话开关开启时，把官方供应商 `{ auth, config }` 设置对象中的
-/// config 文本注入共享 custom 路由；开关关闭或非官方供应商时不做改动。
+/// Prepare an official provider `{ auth, config }` for a live write or takeover
+/// backup. The dormant custom definition is always present so historical API
+/// sessions remain resumable; the unified-session setting only controls whether
+/// new official sessions actively use that shared provider id.
 ///
 /// 普通 live 写入（`write_codex_live_for_provider`）与代理接管备份
 /// （`update_live_backup_from_provider`）两条落盘路径共用：接管期间
@@ -2376,7 +2410,7 @@ pub fn apply_codex_unified_session_bucket_to_settings(
     category: Option<&str>,
     settings: &mut Value,
 ) -> Result<(), AppError> {
-    if category != Some("official") || !crate::settings::unify_codex_session_history() {
+    if category != Some("official") {
         return Ok(());
     }
     let config_text = settings
@@ -2384,10 +2418,14 @@ pub fn apply_codex_unified_session_bucket_to_settings(
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_string();
-    let injected = inject_codex_unified_session_bucket(&config_text)?;
-    if injected != config_text {
+    let prepared = if crate::settings::unify_codex_session_history() {
+        inject_codex_unified_session_bucket(&config_text)?
+    } else {
+        ensure_codex_official_history_provider(&config_text)?
+    };
+    if prepared != config_text {
         if let Some(obj) = settings.as_object_mut() {
-            obj.insert("config".to_string(), Value::String(injected));
+            obj.insert("config".to_string(), Value::String(prepared));
         }
     }
     Ok(())
@@ -2459,21 +2497,23 @@ pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(),
 /// providers only touch `config.toml` when the compatibility setting is enabled
 /// so the user's ChatGPT login cache survives provider switches.
 ///
-/// 统一会话开关开启时，官方配置在落盘前注入共享的 `custom` 路由
-/// （见 `inject_codex_unified_session_bucket`）。
+/// Official configs always carry a dormant `custom` definition for resuming API
+/// history. The unified-session setting additionally makes it the active route.
 pub fn write_codex_live_for_provider(
     category: Option<&str>,
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
-    let unified_official_config =
-        if category == Some("official") && crate::settings::unify_codex_session_history() {
-            Some(inject_codex_unified_session_bucket(
-                config_text.unwrap_or(""),
-            )?)
+    let unified_official_config = if category == Some("official") {
+        let official_config = config_text.unwrap_or("");
+        if crate::settings::unify_codex_session_history() {
+            Some(inject_codex_unified_session_bucket(official_config)?)
         } else {
-            None
-        };
+            Some(ensure_codex_official_history_provider(official_config)?)
+        }
+    } else {
+        None
+    };
     let config_text = unified_official_config.as_deref().or(config_text);
 
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
@@ -2723,16 +2763,51 @@ mod tests {
     }
 
     #[test]
+    fn official_config_keeps_dormant_custom_provider_for_history_resume() {
+        let original = "model = \"gpt-5.6-sol\"\nmodel_reasoning_effort = \"high\"\n";
+        let prepared =
+            ensure_codex_official_history_provider(original).expect("prepare official config");
+        let doc: toml::Table = toml::from_str(&prepared).expect("parse prepared config");
+
+        assert!(
+            doc.get("model_provider").is_none(),
+            "new OAuth sessions must continue using Codex's built-in provider"
+        );
+        let custom = doc["model_providers"][CC_SWITCH_CODEX_MODEL_PROVIDER_ID]
+            .as_table()
+            .expect("dormant custom provider table");
+        assert_eq!(custom.get("name").and_then(|v| v.as_str()), Some("OpenAI"));
+        assert_eq!(
+            custom.get("requires_openai_auth").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let stripped = strip_codex_unified_session_bucket(&prepared).expect("strip live helper");
+        assert_eq!(stripped, original, "stored official template stays clean");
+    }
+
+    #[test]
     fn unified_session_bucket_preserves_other_keys_and_explicit_routing() {
         let with_catalog = "model_catalog_json = \"cc-switch-model-catalog.json\"\n";
         let injected = inject_codex_unified_session_bucket(with_catalog).expect("inject");
         assert!(injected.contains("model_catalog_json"));
         assert!(injected.contains("model_provider = \"custom\""));
 
-        // 用户显式指定过 model_provider 的官方配置不被覆盖
+        // 用户显式指定过 model_provider 的官方配置不被覆盖；只补充用于
+        // 恢复历史会话的 dormant custom 定义。
         let explicit = "model_provider = \"openai_https\"\n";
-        let unchanged = inject_codex_unified_session_bucket(explicit).expect("inject");
-        assert_eq!(unchanged, explicit);
+        let prepared = inject_codex_unified_session_bucket(explicit).expect("inject");
+        let doc: toml::Table = toml::from_str(&prepared).expect("parse explicit config");
+        assert_eq!(
+            doc.get("model_provider").and_then(|v| v.as_str()),
+            Some("openai_https")
+        );
+        assert!(
+            doc["model_providers"]
+                .get(CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+                .is_some(),
+            "history provider definition should still be available"
+        );
     }
 
     #[test]
