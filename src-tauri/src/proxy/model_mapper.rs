@@ -147,15 +147,12 @@ pub fn apply_model_mapping(
 /// Claude Code 通过 `[1M]` 后缀声明 100 万上下文能力；上游 API
 /// 通常不接受这个本地能力标记，转发前需要剥离。
 pub fn strip_one_m_suffix_for_upstream(model: &str) -> &str {
-    let trimmed = model.trim_end();
-    let marker = ONE_M_CONTEXT_MARKER.as_bytes();
-    let bytes = trimmed.as_bytes();
-    if bytes.len() >= marker.len()
-        && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
-    {
-        return trimmed[..trimmed.len() - marker.len()].trim_end();
+    let (slug, window) = crate::claude_desktop_config::parse_context_window_suffix(model);
+    if window.is_some() {
+        slug
+    } else {
+        model
     }
-    model
 }
 
 pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
@@ -424,5 +421,18 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+    #[test]
+    fn strips_200k_suffix_before_upstream() {
+        let body = json!({"model": "glm-5.2[200k]"});
+        let result = strip_one_m_suffix_for_upstream_from_body(body);
+        assert_eq!(result["model"], "glm-5.2");
+    }
+
+    #[test]
+    fn strips_500k_suffix_before_upstream() {
+        let body = json!({"model": "model[500k]"});
+        let result = strip_one_m_suffix_for_upstream_from_body(body);
+        assert_eq!(result["model"], "model");
     }
 }
