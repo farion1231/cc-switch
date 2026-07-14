@@ -494,11 +494,6 @@ impl Database {
                         Self::migrate_v13_to_v14(conn)?;
                         Self::set_user_version(conn, 14)?;
                     }
-                    14 => {
-                        log::info!("迁移数据库从 v14 到 v15（Skills 表添加 enabled_codefree 列）");
-                        Self::migrate_v14_to_v15(conn)?;
-                        Self::set_user_version(conn, 15)?;
-                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1341,6 +1336,52 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v12 -> v13：记录 input_tokens 是否包含缓存写入。
+    ///
+    /// 默认 0 表示旧版/未知语义；旧 Codex 行只包含 cache read，不包含
+    /// cache creation。新代理行会显式写入 1(total-inclusive) 或 2(fresh)。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        Ok(())
+    }
+
+    /// v13 -> v14 迁移：添加 CodeFree-O 支持
+    ///
+    /// 为 mcp_servers、skills 表添加 enabled_codefree 列。
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_codefree",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_codefree",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
+        log::info!("v13 -> v14 迁移完成：已添加 CodeFree-O 支持");
         Ok(())
     }
 

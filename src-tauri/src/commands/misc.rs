@@ -1449,12 +1449,6 @@ fn opencode_extra_search_paths(
 }
 
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
-    let alt_names: Vec<&str> = if tool == "codefree" {
-        vec!["codefree-o"]
-    } else {
-        vec![]
-    };
-
     #[cfg(target_os = "windows")]
     {
         let extensionless = dir.join(tool);
@@ -1462,29 +1456,15 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
             dir.join(format!("{tool}.cmd")),
             dir.join(format!("{tool}.exe")),
         ];
-        for alt in &alt_names {
-            candidates.push(dir.join(format!("{alt}.cmd")));
-            candidates.push(dir.join(format!("{alt}.exe")));
-        }
         if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
             candidates.push(extensionless);
-        }
-        for alt in &alt_names {
-            let alt_extensionless = dir.join(alt);
-            if windows_runnable_sibling_for_extensionless_tool(&alt_extensionless).is_none() {
-                candidates.push(alt_extensionless);
-            }
         }
         candidates
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let mut candidates = vec![dir.join(tool)];
-        for alt in &alt_names {
-            candidates.push(dir.join(alt));
-        }
-        candidates
+        vec![dir.join(tool)]
     }
 }
 

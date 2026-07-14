@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{path_basename, truncate_summary};
+use super::utils::path_basename;
 
 const PROVIDER_ID: &str = "codefree";
 
