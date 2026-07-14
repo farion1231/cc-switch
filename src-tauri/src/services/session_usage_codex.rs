@@ -54,7 +54,8 @@ impl DeltaTokens {
 
 /// 单文件解析时的运行状态
 struct FileParseState {
-    thread_id: Option<String>,
+    root_thread_id: Option<String>,
+    active_thread_id: Option<String>,
     current_model: String,
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
@@ -97,8 +98,26 @@ fn parse_codex_session_identity(payload: &serde_json::Value) -> Option<CodexSess
     })
 }
 
+fn codex_thread_id_from_filename(file_path: &Path) -> Option<&str> {
+    let stem = file_path.file_stem()?.to_str()?;
+    let candidate = stem.get(stem.len().checked_sub(36)?..)?;
+    let bytes = candidate.as_bytes();
+    let is_uuid = bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        });
+
+    is_uuid.then_some(candidate)
+}
+
 fn read_codex_session_identity(file_path: &Path) -> Option<CodexSessionIdentity> {
     let file = fs::File::open(file_path).ok()?;
+    let filename_thread_id = codex_thread_id_from_filename(file_path);
+    let mut first_identity = None;
 
     for line in BufReader::new(file).lines() {
         let Ok(line) = line else {
@@ -114,11 +133,16 @@ fn read_codex_session_identity(file_path: &Path) -> Option<CodexSessionIdentity>
             continue;
         }
         if let Some(identity) = value.get("payload").and_then(parse_codex_session_identity) {
-            return Some(identity);
+            if filename_thread_id == Some(identity.thread_id.as_str()) {
+                return Some(identity);
+            }
+            if first_identity.is_none() {
+                first_identity = Some(identity);
+            }
         }
     }
 
-    None
+    first_identity
 }
 
 /// fork/子代理日志会先重放父线程历史，再以接管事件开始当前线程。
@@ -163,9 +187,15 @@ fn codex_history_replay_boundary(
 }
 
 fn is_history_snapshot_event(state: &FileParseState, line_offset: i64) -> bool {
-    state
+    let before_replay_boundary = state
         .history_replay_boundary
-        .is_some_and(|boundary| line_offset < boundary)
+        .is_some_and(|boundary| line_offset < boundary);
+    let belongs_to_ancestor_segment = matches!(
+        (&state.root_thread_id, &state.active_thread_id),
+        (Some(root), Some(active)) if root != active
+    );
+
+    before_replay_boundary || belongs_to_ancestor_segment
 }
 
 fn get_codex_sync_state(db: &Database, file_path: &Path) -> Result<(i64, i64), AppError> {
@@ -407,8 +437,10 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     let reader = BufReader::new(file);
     let history_replay_boundary = codex_history_replay_boundary(file_path, identity.as_ref());
 
+    let root_thread_id = identity.map(|identity| identity.thread_id);
     let mut state = FileParseState {
-        thread_id: identity.map(|identity| identity.thread_id),
+        active_thread_id: root_thread_id.clone(),
+        root_thread_id,
         current_model: "unknown".to_string(),
         prev_total: None,
         event_index: 0,
@@ -454,11 +486,14 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         };
 
         match event_type {
-            "session_meta" if state.thread_id.is_none() => {
-                state.thread_id = value
-                    .get("payload")
-                    .and_then(parse_codex_session_identity)
-                    .map(|identity| identity.thread_id);
+            "session_meta" => {
+                if let Some(identity) = value.get("payload").and_then(parse_codex_session_identity)
+                {
+                    if state.root_thread_id.is_none() {
+                        state.root_thread_id = Some(identity.thread_id.clone());
+                    }
+                    state.active_thread_id = Some(identity.thread_id);
+                }
             }
             "turn_context" => {
                 if let Some(payload) = value.get("payload") {
@@ -553,7 +588,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                 }
 
                 // 生成唯一 request_id
-                let thread_id = state.thread_id.as_deref().unwrap_or("unknown");
+                let thread_id = state.root_thread_id.as_deref().unwrap_or("unknown");
                 let request_id = format!(
                     "{CODEX_THREAD_REQUEST_ID_PREFIX}:{thread_id}:{}",
                     state.event_index
@@ -570,7 +605,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     &request_id,
                     &delta,
                     &state.current_model,
-                    state.thread_id.as_deref(),
+                    state.root_thread_id.as_deref(),
                     timestamp.as_deref(),
                 ) {
                     Ok(true) => imported += 1,
@@ -740,6 +775,14 @@ mod tests {
                 }
             }
         })
+    }
+
+    fn fork_session_meta(thread_id: &str, forked_from_id: Option<&str>) -> serde_json::Value {
+        let mut value = session_meta(thread_id, thread_id);
+        if let Some(parent_id) = forked_from_id {
+            value["payload"]["forked_from_id"] = serde_json::json!(parent_id);
+        }
+        value
     }
 
     fn turn_context() -> serde_json::Value {
@@ -916,6 +959,276 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(usage, (100, 50, 30));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fork_without_boundary_skips_parent_history_and_imports_child_delta(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("fork.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                fork_session_meta("child", Some("parent")),
+                fork_session_meta("parent", None),
+                turn_context(),
+                token_count(1_000, 400, 50),
+                token_count(1_500, 800, 80),
+                fork_session_meta("child", Some("parent")),
+                token_count(1_500, 800, 80),
+                token_count(1_900, 1_000, 90),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 2));
+
+        let conn = lock_conn!(db.conn);
+        let rows = conn
+            .prepare(
+                "SELECT request_id, session_id, input_tokens, cache_read_tokens, output_tokens
+                 FROM proxy_request_logs ORDER BY request_id",
+            )?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![(
+                "codex_session:thread-v1:child:3".to_string(),
+                "child".to_string(),
+                400,
+                200,
+                10,
+            )]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fork_prefers_filename_thread_when_opening_metadata_is_invalid() -> Result<(), AppError>
+    {
+        const CHILD: &str = "019f0000-0000-7000-8000-000000000001";
+        const PARENT: &str = "019f0000-0000-7000-8000-000000000002";
+
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp
+            .path()
+            .join(format!("rollout-2026-07-14T03-00-00-{CHILD}.jsonl"));
+        write_jsonl(
+            &child,
+            &[
+                serde_json::json!({
+                    "timestamp": "2026-07-10T03:00:00Z",
+                    "type": "session_meta",
+                    "payload": { "forked_from_id": PARENT }
+                }),
+                fork_session_meta(PARENT, None),
+                turn_context(),
+                token_count(1_000, 400, 50),
+                fork_session_meta(CHILD, Some(PARENT)),
+                token_count(1_000, 400, 50),
+                token_count(1_300, 600, 70),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 1));
+
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, i64, i64, i64) = conn.query_row(
+            "SELECT request_id, session_id, input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            row,
+            (
+                format!("codex_session:thread-v1:{CHILD}:2"),
+                CHILD.to_string(),
+                300,
+                200,
+                20,
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_incremental_fork_reparse_preserves_baseline_and_event_index() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("incremental-child.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                fork_session_meta("child", Some("parent")),
+                fork_session_meta("parent", None),
+                turn_context(),
+                token_count(1_000, 400, 50),
+                fork_session_meta("child", Some("parent")),
+                token_count(1_000, 400, 50),
+                token_count(1_300, 600, 70),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 1));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let mut values = vec![
+            fork_session_meta("child", Some("parent")),
+            fork_session_meta("parent", None),
+            turn_context(),
+            token_count(1_000, 400, 50),
+            fork_session_meta("child", Some("parent")),
+            token_count(1_000, 400, 50),
+            token_count(1_300, 600, 70),
+        ];
+        values.push(token_count(1_500, 700, 80));
+        write_jsonl(&child, &values);
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 0));
+
+        let conn = lock_conn!(db.conn);
+        let rows = conn
+            .prepare(
+                "SELECT request_id, input_tokens, cache_read_tokens, output_tokens
+                 FROM proxy_request_logs ORDER BY request_id",
+            )?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("codex_session:thread-v1:child:2".to_string(), 300, 200, 20,),
+                ("codex_session:thread-v1:child:3".to_string(), 200, 100, 10,),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_fork_without_boundary_skips_all_ancestor_segments() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("nested-fork.jsonl");
+        write_jsonl(
+            &root,
+            &[
+                fork_session_meta("grandchild", Some("child")),
+                fork_session_meta("child", Some("parent")),
+                fork_session_meta("parent", None),
+                turn_context(),
+                token_count(1_000, 500, 50),
+                fork_session_meta("child", Some("parent")),
+                token_count(1_300, 700, 70),
+                fork_session_meta("grandchild", Some("child")),
+                token_count(1_300, 700, 70),
+                token_count(1_500, 800, 95),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &root)?, (1, 2));
+
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, i64, i64, i64) = conn.query_row(
+            "SELECT request_id, session_id, input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            row,
+            (
+                "codex_session:thread-v1:grandchild:3".to_string(),
+                "grandchild".to_string(),
+                200,
+                100,
+                25,
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_standalone_session_keeps_existing_usage_behavior() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let session = temp.path().join("standalone.jsonl");
+        write_jsonl(
+            &session,
+            &[
+                session_meta("standalone", "standalone"),
+                turn_context(),
+                token_count(100, 50, 10),
+                token_count(180, 90, 25),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &session)?, (2, 0));
+        let conn = lock_conn!(db.conn);
+        let rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs
+             WHERE session_id = 'standalone' AND data_source = 'codex_session'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rows, 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_without_metadata_keeps_unknown_identity_fallback() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let session = temp.path().join("missing-meta.jsonl");
+        write_jsonl(&session, &[turn_context(), token_count(100, 50, 10)]);
+
+        assert_eq!(sync_single_codex_file(&db, &session)?, (1, 0));
+        let conn = lock_conn!(db.conn);
+        let row: (String, Option<String>) = conn.query_row(
+            "SELECT request_id, session_id FROM proxy_request_logs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(row, ("codex_session:thread-v1:unknown:1".to_string(), None));
 
         Ok(())
     }
