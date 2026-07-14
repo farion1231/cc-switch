@@ -200,6 +200,76 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         yield Ok(Bytes::from(sse_data));
                                     }
                                     current_non_tool_block_type = None;
+
+                                    // Late-start flush：某些上游发送了 tool_calls（含
+                                    // name/arguments）但缺少 id，且没给出有效 finish_reason。
+                                    // 正常路径（finish_reason 非空）会在关闭 tool block 前
+                                    // 补发 content_block_start；[DONE] 兜底也需要同样的逻辑，
+                                    // 否则 message_delta(tool_use) 后面没有 tool_use content
+                                    // block，客户端无法执行工具。
+                                    {
+                                        let mut late_tool_starts: Vec<(u32, String, String, String)> =
+                                            Vec::new();
+                                        for (tool_idx, state) in tool_blocks_by_index.iter_mut() {
+                                            if state.started {
+                                                continue;
+                                            }
+                                            let has_payload = !state.pending_args.is_empty()
+                                                || !state.id.is_empty()
+                                                || !state.name.is_empty();
+                                            if !has_payload {
+                                                continue;
+                                            }
+                                            let fallback_id = if state.id.is_empty() {
+                                                format!("tool_call_{tool_idx}")
+                                            } else {
+                                                state.id.clone()
+                                            };
+                                            let fallback_name = if state.name.is_empty() {
+                                                "unknown_tool".to_string()
+                                            } else {
+                                                state.name.clone()
+                                            };
+                                            state.started = true;
+                                            let pending = std::mem::take(&mut state.pending_args);
+                                            late_tool_starts.push((
+                                                state.anthropic_index,
+                                                fallback_id,
+                                                fallback_name,
+                                                pending,
+                                            ));
+                                        }
+                                        late_tool_starts.sort_unstable_by_key(|(index, _, _, _)| *index);
+                                        for (index, id, name, pending) in late_tool_starts {
+                                            let event = json!({
+                                                "type": "content_block_start",
+                                                "index": index,
+                                                "content_block": {
+                                                    "type": "tool_use",
+                                                    "id": id,
+                                                    "name": name
+                                                }
+                                            });
+                                            let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse_data));
+                                            open_tool_block_indices.insert(index);
+                                            if !pending.is_empty() {
+                                                let delta_event = json!({
+                                                    "type": "content_block_delta",
+                                                    "index": index,
+                                                    "delta": {
+                                                        "type": "input_json_delta",
+                                                        "partial_json": pending
+                                                    }
+                                                });
+                                                let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                    serde_json::to_string(&delta_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(delta_sse));
+                                            }
+                                        }
+                                    }
+
                                     if !open_tool_block_indices.is_empty() {
                                         let mut tool_indices: Vec<u32> =
                                             open_tool_block_indices.iter().copied().collect();
@@ -967,6 +1037,83 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("tool_use"),
             "synthesized stop_reason should be tool_use when tool blocks are present"
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    // 上游发送了 tool call（有 name/arguments 但无 id），且从未给出
+    // 有效 finish_reason。[DONE] 兜底需补发 late-tool-start（合成 id），
+    // 再关闭 block，确保客户端能拿到完整的 tool_use content block。
+    #[tokio::test]
+    async fn test_streaming_late_tool_start_flush_on_done_without_finish_reason() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_lt\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        // 必须有一个 tool_use content_block_start（含合成 id）
+        let tool_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("tool_use")
+            })
+            .collect();
+        assert_eq!(
+            tool_starts.len(),
+            1,
+            "expected exactly one tool_use content_block_start"
+        );
+        assert_eq!(
+            tool_starts[0]
+                .pointer("/content_block/name")
+                .and_then(|v| v.as_str()),
+            Some("read_file")
+        );
+        // id 应已被合成（tool_call_0）因为上游没给 id
+        let tool_id = tool_starts[0]
+            .pointer("/content_block/id")
+            .and_then(|v| v.as_str())
+            .expect("tool block should have an id");
+        assert!(
+            !tool_id.is_empty(),
+            "synthesized tool call id should be non-empty"
+        );
+
+        // 参数应通过 input_json_delta 发出
+        let arg_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str())
+                        == Some("input_json_delta")
+            })
+            .collect();
+        assert!(
+            !arg_deltas.is_empty(),
+            "tool arguments should be emitted via input_json_delta"
+        );
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("tool_use")
         );
 
         assert!(events
