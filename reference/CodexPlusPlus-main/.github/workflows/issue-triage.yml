@@ -1,0 +1,46 @@
+name: Issue triage
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove automatic issue labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue = context.payload.issue;
+            const automaticLabels = new Set([
+              "needs triage",
+              "type: bug",
+              "type: feature",
+              "type: config",
+              "type: question",
+              "area: provider-config",
+              "area: protocol",
+              "area: context-tools",
+              "area: model-catalog",
+              "area: ui",
+              "area: build"
+            ]);
+
+            const labelsToRemove = issue.labels
+              .map((label) => typeof label === "string" ? label : label.name)
+              .filter((name) => automaticLabels.has(name));
+
+            for (const name of labelsToRemove) {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: issue.number,
+                name
+              });
+            }

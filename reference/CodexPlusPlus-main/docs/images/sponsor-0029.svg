@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="128" viewBox="0 0 320 128" role="img" aria-label="0029 Cloud Bridge">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#082f49"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="128" rx="22" fill="url(#bg)"/>
+  <path d="M44 75h52a20 20 0 0 0 1-40 28 28 0 0 0-52 9 16 16 0 0 0-1 31z" fill="#38bdf8"/>
+  <path d="M72 57h82" stroke="#e0f2fe" stroke-width="7" stroke-linecap="round"/>
+  <path d="M134 43l20 14-20 14" fill="none" stroke="#e0f2fe" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="174" y="58" fill="#f8fafc" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">0029</text>
+  <text x="175" y="88" fill="#bae6fd" font-family="Segoe UI, Arial, sans-serif" font-size="15">Cloud Bridge API</text>
+</svg>

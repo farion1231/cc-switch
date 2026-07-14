@@ -1,0 +1,2509 @@
+/**
+ * OpenClaw provider presets configuration
+ * OpenClaw uses models.providers structure with custom provider configs
+ */
+import type {
+  ProviderCategory,
+  OpenClawProviderConfig,
+  OpenClawDefaultModel,
+} from "../types";
+import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
+
+/** Suggested default model configuration for a preset */
+export interface OpenClawSuggestedDefaults {
+  /** Default model config to apply (agents.defaults.model) */
+  model?: OpenClawDefaultModel;
+  /** Model catalog entries to add (agents.defaults.models) */
+  modelCatalog?: Record<string, { alias?: string }>;
+}
+
+export interface OpenClawProviderPreset {
+  name: string;
+  nameKey?: string; // i18n key for localized display name
+  websiteUrl: string;
+  apiKeyUrl?: string;
+  /** OpenClaw settings_config structure */
+  settingsConfig: OpenClawProviderConfig;
+  isOfficial?: boolean;
+  isPartner?: boolean;
+  primePartner?: boolean; // 置顶合作伙伴（顶级）：徽章显示为心形
+  partnerPromotionKey?: string;
+  category?: ProviderCategory;
+  /** Template variable definitions */
+  templateValues?: Record<string, TemplateValueConfig>;
+  /** Visual theme config */
+  theme?: PresetTheme;
+  /** Icon name */
+  icon?: string;
+  /** Icon color */
+  iconColor?: string;
+  /** Mark as custom template (for UI distinction) */
+  isCustomTemplate?: boolean;
+  /** Suggested default model configuration */
+  suggestedDefaults?: OpenClawSuggestedDefaults;
+}
+
+function rebaseOpenClawModelRef(modelRef: string, providerKey: string): string {
+  const slashIndex = modelRef.indexOf("/");
+  return slashIndex === -1
+    ? `${providerKey}/${modelRef}`
+    : `${providerKey}${modelRef.slice(slashIndex)}`;
+}
+
+/**
+ * OpenClaw default model refs are stored as "<provider-key>/<model-id>".
+ * Presets carry stable built-in keys for display/tests, but the real key is
+ * chosen in the add-provider form, so rewrite refs right before submission.
+ */
+export function rebaseOpenClawSuggestedDefaults(
+  defaults: OpenClawSuggestedDefaults,
+  providerKey: string,
+): OpenClawSuggestedDefaults {
+  const key = providerKey.trim();
+  if (!key) return defaults;
+
+  return {
+    model: defaults.model
+      ? {
+          ...defaults.model,
+          primary: rebaseOpenClawModelRef(defaults.model.primary, key),
+          fallbacks: defaults.model.fallbacks?.map((modelRef) =>
+            rebaseOpenClawModelRef(modelRef, key),
+          ),
+        }
+      : undefined,
+    modelCatalog: defaults.modelCatalog
+      ? Object.fromEntries(
+          Object.entries(defaults.modelCatalog).map(([modelRef, entry]) => [
+            rebaseOpenClawModelRef(modelRef, key),
+            entry,
+          ]),
+        )
+      : undefined,
+  };
+}
+
+/**
+ * OpenClaw API protocol options
+ * @see https://github.com/openclaw/openclaw/blob/main/docs/gateway/configuration.md
+ */
+export const openclawApiProtocols = [
+  { value: "openai-completions", label: "OpenAI Completions" },
+  { value: "openai-responses", label: "OpenAI Responses" },
+  { value: "anthropic-messages", label: "Anthropic Messages" },
+  { value: "google-generative-ai", label: "Google Generative AI" },
+  { value: "bedrock-converse-stream", label: "AWS Bedrock" },
+] as const;
+
+/**
+ * OpenClaw provider presets list
+ */
+export const openclawProviderPresets: OpenClawProviderPreset[] = [
+  {
+    name: "Shengsuanyun",
+    nameKey: "providerForm.presets.shengsuanyun",
+    websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    apiKeyUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
+    settingsConfig: {
+      baseUrl: "https://router.shengsuanyun.com/api",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-4.8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "shengsuanyun",
+    icon: "shengsuanyun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "shengsuanyun/anthropic/claude-opus-4.8",
+        fallbacks: ["shengsuanyun/anthropic/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "shengsuanyun/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "shengsuanyun/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "火山Agentplan",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "volcengine_agentplan",
+    icon: "huoshan",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "ark_agentplan/ark-code-latest" },
+      modelCatalog: {
+        "ark_agentplan/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "BytePlus",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ark-code-latest",
+          name: "Ark Code Latest",
+          contextWindow: 256000,
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "byteplus",
+    icon: "byteplus",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "byteplus/ark-code-latest" },
+      modelCatalog: {
+        "byteplus/ark-code-latest": { alias: "Ark Code" },
+      },
+    },
+  },
+  {
+    name: "DouBaoSeed",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    apiKeyUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "doubao-seed-2-1-pro-260628",
+          name: "DouBao Seed 2.1 Pro",
+          contextWindow: 262144,
+          cost: { input: 0.84, output: 4.2 },
+        },
+      ],
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "doubaoseed",
+    icon: "doubao",
+    iconColor: "#3370FF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "doubaoseed/doubao-seed-2-1-pro-260628" },
+      modelCatalog: {
+        "doubaoseed/doubao-seed-2-1-pro-260628": { alias: "DouBao" },
+      },
+    },
+  },
+  {
+    name: "CCSub",
+    websiteUrl: "https://www.ccsub.net",
+    apiKeyUrl: "https://www.ccsub.net/register?ref=Y6Z8DXEA",
+    settingsConfig: {
+      baseUrl: "https://www.ccsub.net/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+          cost: { input: 5, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "ccsub",
+    icon: "ccsub",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "ccsub/gpt-5.5",
+      },
+      modelCatalog: {
+        "ccsub/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "SubRouter",
+    websiteUrl: "https://subrouter.ai",
+    apiKeyUrl: "https://subrouter.ai/register?aff=l3ri",
+    settingsConfig: {
+      baseUrl: "https://subrouter.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "subrouter",
+    icon: "subrouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "subrouter/gpt-5.5",
+      },
+      modelCatalog: {
+        "subrouter/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "Qiniu",
+    nameKey: "providerForm.presets.qiniu",
+    websiteUrl: "https://s.qiniu.com/nMvAvy",
+    apiKeyUrl: "https://s.qiniu.com/nMvAvy",
+    settingsConfig: {
+      baseUrl: "https://api.qnaigc.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "qiniu",
+    icon: "qiniu",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "qiniu/gpt-5.5",
+      },
+      modelCatalog: {
+        "qiniu/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "FennoAI",
+    websiteUrl: "https://api.fenno.ai",
+    apiKeyUrl:
+      "https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL",
+    settingsConfig: {
+      baseUrl: "https://api.fenno.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fenno",
+    icon: "fenno",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "fenno/gpt-5.5",
+      },
+      modelCatalog: {
+        "fenno/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "ZetaAPI",
+    websiteUrl: "https://zetaapi.ai",
+    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    settingsConfig: {
+      baseUrl: "https://api.zetaapi.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "zetaapi",
+    icon: "zetaapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "zetaapi/gpt-5.5",
+      },
+      modelCatalog: {
+        "zetaapi/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "TeamoRouter",
+    websiteUrl: "https://teamorouter.com",
+    apiKeyUrl:
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+    settingsConfig: {
+      baseUrl: "https://api.teamorouter.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "teamorouter",
+    icon: "teamorouter",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "teamorouter/gpt-5.5",
+      },
+      modelCatalog: {
+        "teamorouter/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "Amux",
+    websiteUrl: "https://amux.ai",
+    apiKeyUrl: "https://amux.ai",
+    settingsConfig: {
+      baseUrl: "https://api.amux.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "amux",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "amux/gpt-5.5",
+      },
+      modelCatalog: {
+        "amux/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
+    settingsConfig: {
+      baseUrl: "https://code0.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "code0/gpt-5.5",
+      },
+      modelCatalog: {
+        "code0/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekocode.ai",
+    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    settingsConfig: {
+      baseUrl: "https://nekocode.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "nekocode",
+    icon: "nekocode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "nekocode/gpt-5.5",
+      },
+      modelCatalog: {
+        "nekocode/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
+    name: "Unity2.ai",
+    websiteUrl: "https://unity2.ai",
+    apiKeyUrl: "https://unity2.ai/register?source=ccs",
+    settingsConfig: {
+      baseUrl: "https://api.unity2.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+          cost: { input: 5, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "unity2",
+    icon: "unity2",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "unity2/gpt-5.5",
+      },
+      modelCatalog: {
+        "unity2/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  // ========== Chinese Officials ==========
+  {
+    name: "DeepSeek",
+    websiteUrl: "https://platform.deepseek.com",
+    apiKeyUrl: "https://platform.deepseek.com/api_keys",
+    settingsConfig: {
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "deepseek-v4-pro",
+          name: "DeepSeek V4 Pro",
+          contextWindow: 1000000,
+          cost: { input: 1.68, output: 3.36 },
+        },
+        {
+          id: "deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          contextWindow: 1000000,
+          cost: { input: 0.14, output: 0.28 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "deepseek",
+    iconColor: "#1E88E5",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "deepseek/deepseek-v4-flash",
+        fallbacks: ["deepseek/deepseek-v4-pro"],
+      },
+      modelCatalog: {
+        "deepseek/deepseek-v4-flash": { alias: "Flash" },
+        "deepseek/deepseek-v4-pro": { alias: "Pro" },
+      },
+    },
+  },
+  {
+    name: "Zhipu GLM",
+    websiteUrl: "https://open.bigmodel.cn",
+    apiKeyUrl: "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+    settingsConfig: {
+      baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          contextWindow: 128000,
+          cost: { input: 0.001, output: 0.001 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "zhipu",
+    iconColor: "#0F62FE",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://open.bigmodel.cn/api/coding/paas/v4",
+        defaultValue: "https://open.bigmodel.cn/api/coding/paas/v4",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "zhipu/glm-5.1" },
+      modelCatalog: { "zhipu/glm-5.1": { alias: "GLM" } },
+    },
+  },
+  {
+    name: "Zhipu GLM en",
+    websiteUrl: "https://z.ai",
+    apiKeyUrl: "https://z.ai/subscribe?ic=8JVLJQFSKB",
+    settingsConfig: {
+      baseUrl: "https://api.z.ai/api/coding/paas/v4",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5.1",
+          name: "GLM-5.1",
+          contextWindow: 128000,
+          cost: { input: 0.001, output: 0.001 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "zhipu",
+    iconColor: "#0F62FE",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.z.ai/api/coding/paas/v4",
+        defaultValue: "https://api.z.ai/api/coding/paas/v4",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "zhipu-en/glm-5.1" },
+      modelCatalog: { "zhipu-en/glm-5.1": { alias: "GLM" } },
+    },
+  },
+  {
+    name: "Qwen Coder",
+    websiteUrl: "https://bailian.console.aliyun.com",
+    apiKeyUrl: "https://bailian.console.aliyun.com/#/api-key",
+    settingsConfig: {
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "qwen3.5-plus",
+          name: "Qwen3.5 Plus",
+          contextWindow: 32000,
+          cost: { input: 0.002, output: 0.006 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "qwen",
+    iconColor: "#FF6A00",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        defaultValue: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "qwen/qwen3.5-plus" },
+      modelCatalog: { "qwen/qwen3.5-plus": { alias: "Qwen" } },
+    },
+  },
+  {
+    name: "Kimi",
+    primePartner: true,
+    websiteUrl: "https://platform.kimi.com?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "kimi-k2.7-code",
+          name: "Kimi K2.7 Code",
+          contextWindow: 262144,
+          cost: { input: 0.002, output: 0.006 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.moonshot.cn/v1",
+        defaultValue: "https://api.moonshot.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "kimi/kimi-k2.7-code" },
+      modelCatalog: { "kimi/kimi-k2.7-code": { alias: "Kimi" } },
+    },
+  },
+  {
+    name: "Kimi For Coding",
+    primePartner: true,
+    websiteUrl: "https://www.kimi.com/code/?aff=cc-switch",
+    apiKeyUrl: "https://platform.kimi.com/console/api-keys?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.kimi.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "kimi-for-coding",
+          name: "Kimi For Coding",
+          contextWindow: 131072,
+          cost: { input: 0.002, output: 0.006 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "kimi",
+    iconColor: "#6366F1",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.kimi.com/v1",
+        defaultValue: "https://api.kimi.com/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "kimi-coding/kimi-for-coding" },
+      modelCatalog: { "kimi-coding/kimi-for-coding": { alias: "Kimi" } },
+    },
+  },
+  {
+    name: "StepFun",
+    websiteUrl: "https://platform.stepfun.com/step-plan",
+    apiKeyUrl: "https://platform.stepfun.com/interface-key",
+    settingsConfig: {
+      baseUrl: "https://api.stepfun.com/step_plan/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "step-3.5-flash-2603",
+          name: "Step 3.5 Flash 2603",
+          contextWindow: 262144,
+        },
+        {
+          id: "step-3.5-flash",
+          name: "Step 3.5 Flash",
+          contextWindow: 262144,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#16D6D2",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.stepfun.com/step_plan/v1",
+        defaultValue: "https://api.stepfun.com/step_plan/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "stepfun/step-3.5-flash-2603" },
+      modelCatalog: {
+        "stepfun/step-3.5-flash-2603": { alias: "StepFun" },
+        "stepfun/step-3.5-flash": { alias: "StepFun Flash" },
+      },
+    },
+  },
+  {
+    name: "StepFun en",
+    websiteUrl: "https://platform.stepfun.ai/step-plan",
+    apiKeyUrl: "https://platform.stepfun.ai/interface-key",
+    settingsConfig: {
+      baseUrl: "https://api.stepfun.ai/step_plan/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "step-3.5-flash-2603",
+          name: "Step 3.5 Flash 2603",
+          contextWindow: 262144,
+        },
+        {
+          id: "step-3.5-flash",
+          name: "Step 3.5 Flash",
+          contextWindow: 262144,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "stepfun",
+    iconColor: "#16D6D2",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.stepfun.ai/step_plan/v1",
+        defaultValue: "https://api.stepfun.ai/step_plan/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "step-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "stepfun-en/step-3.5-flash-2603" },
+      modelCatalog: {
+        "stepfun-en/step-3.5-flash-2603": { alias: "StepFun" },
+        "stepfun-en/step-3.5-flash": { alias: "StepFun Flash" },
+      },
+    },
+  },
+  {
+    name: "MiniMax",
+    websiteUrl: "https://platform.minimaxi.com",
+    apiKeyUrl: "https://platform.minimaxi.com/subscribe/coding-plan",
+    settingsConfig: {
+      baseUrl: "https://api.minimaxi.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M2.7",
+          name: "MiniMax M2.7",
+          contextWindow: 200000,
+          cost: { input: 0.001, output: 0.004 },
+        },
+      ],
+    },
+    category: "cn_official",
+    partnerPromotionKey: "minimax_cn",
+    theme: {
+      backgroundColor: "#f64551",
+      textColor: "#FFFFFF",
+    },
+    icon: "minimax",
+    iconColor: "#FF6B6B",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "minimax/MiniMax-M2.7" },
+      modelCatalog: { "minimax/MiniMax-M2.7": { alias: "MiniMax" } },
+    },
+  },
+  {
+    name: "MiniMax en",
+    websiteUrl: "https://platform.minimax.io",
+    apiKeyUrl: "https://platform.minimax.io/subscribe/coding-plan",
+    settingsConfig: {
+      baseUrl: "https://api.minimax.io/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMax-M2.7",
+          name: "MiniMax M2.7",
+          contextWindow: 200000,
+          cost: { input: 0.001, output: 0.004 },
+        },
+      ],
+    },
+    category: "cn_official",
+    partnerPromotionKey: "minimax_en",
+    theme: {
+      backgroundColor: "#f64551",
+      textColor: "#FFFFFF",
+    },
+    icon: "minimax",
+    iconColor: "#FF6B6B",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "minimax-en/MiniMax-M2.7" },
+      modelCatalog: { "minimax-en/MiniMax-M2.7": { alias: "MiniMax" } },
+    },
+  },
+  {
+    name: "KAT-Coder",
+    websiteUrl: "https://console.streamlake.ai",
+    apiKeyUrl: "https://console.streamlake.ai/console/api-key",
+    settingsConfig: {
+      baseUrl:
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "KAT-Coder-Pro",
+          name: "KAT-Coder Pro",
+          contextWindow: 128000,
+          cost: { input: 0.002, output: 0.006 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "catcoder",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder:
+          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+        defaultValue:
+          "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/${ENDPOINT_ID}/openai",
+        editorValue: "",
+      },
+      ENDPOINT_ID: {
+        label: "Endpoint ID",
+        placeholder: "",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "katcoder/KAT-Coder-Pro" },
+      modelCatalog: { "katcoder/KAT-Coder-Pro": { alias: "KAT-Coder" } },
+    },
+  },
+  {
+    name: "Longcat",
+    websiteUrl: "https://longcat.chat/platform",
+    apiKeyUrl: "https://longcat.chat/platform/api_keys",
+    settingsConfig: {
+      baseUrl: "https://api.longcat.chat/openai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      authHeader: true,
+      models: [
+        {
+          id: "LongCat-2.0",
+          name: "LongCat 2.0",
+          reasoning: false,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          compat: { maxTokensField: "max_tokens" },
+          cost: { input: 0.001, output: 0.004 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "longcat",
+    iconColor: "#29E154",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api.longcat.chat/openai/v1",
+        defaultValue: "https://api.longcat.chat/openai/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "longcat/LongCat-2.0" },
+      modelCatalog: { "longcat/LongCat-2.0": { alias: "LongCat" } },
+    },
+  },
+  {
+    name: "BaiLing",
+    websiteUrl: "https://alipaytbox.yuque.com/sxs0ba/ling/get_started",
+    settingsConfig: {
+      baseUrl: "https://api.tbox.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "Ling-2.5-1T",
+          name: "Ling 2.5 1T",
+          contextWindow: 128000,
+          cost: { input: 0.001, output: 0.004 },
+        },
+      ],
+    },
+    category: "cn_official",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "bailing/Ling-2.5-1T" },
+      modelCatalog: { "bailing/Ling-2.5-1T": { alias: "BaiLing" } },
+    },
+  },
+  {
+    name: "Xiaomi MiMo",
+    websiteUrl: "https://platform.xiaomimimo.com",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
+    settingsConfig: {
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+          cost: { input: 1, output: 3, cacheRead: 0.2, cacheWrite: 0 },
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "xiaomimimo/mimo-v2.5-pro" },
+      modelCatalog: { "xiaomimimo/mimo-v2.5-pro": { alias: "MiMo" } },
+    },
+  },
+  {
+    name: "Xiaomi MiMo Token Plan (China)",
+    websiteUrl: "https://platform.xiaomimimo.com/#/token-plan",
+    apiKeyUrl: "https://platform.xiaomimimo.com/#/console/plan-manage",
+    settingsConfig: {
+      baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "mimo-v2.5-pro",
+          name: "MiMo V2.5 Pro",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+        {
+          id: "mimo-v2.5",
+          name: "MiMo V2.5",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 1048576,
+          maxTokens: 131072,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "xiaomimimo",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "Token Plan API Key",
+        placeholder: "tp-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "xiaomi-mimo-token-plan/mimo-v2.5-pro" },
+      modelCatalog: {
+        "xiaomi-mimo-token-plan/mimo-v2.5-pro": {
+          alias: "MiMo Token Plan (China)",
+        },
+        "xiaomi-mimo-token-plan/mimo-v2.5": {
+          alias: "MiMo Token Plan (China) Multimodal",
+        },
+      },
+    },
+  },
+
+  // ========== Aggregators ==========
+  {
+    name: "AiHubMix",
+    websiteUrl: "https://aihubmix.com",
+    apiKeyUrl: "https://aihubmix.com",
+    settingsConfig: {
+      baseUrl: "https://aihubmix.com",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "aihubmix",
+    iconColor: "#006FFB",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "aihubmix/claude-opus-4-8",
+        fallbacks: ["aihubmix/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "aihubmix/claude-opus-4-8": { alias: "Opus" },
+        "aihubmix/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "CherryIN",
+    websiteUrl: "https://open.cherryin.ai",
+    apiKeyUrl: "https://open.cherryin.ai/console/token",
+    settingsConfig: {
+      baseUrl: "https://open.cherryin.net",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "anthropic/claude-opus-4.8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "cherryin",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "cherryin/anthropic/claude-opus-4.8",
+        fallbacks: ["cherryin/anthropic/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "cherryin/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "cherryin/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "DMXAPI",
+    websiteUrl: "https://www.dmxapi.cn",
+    apiKeyUrl: "https://www.dmxapi.cn",
+    settingsConfig: {
+      baseUrl: "https://www.dmxapi.cn",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "dmxapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "dmxapi/claude-opus-4-8",
+        fallbacks: ["dmxapi/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "dmxapi/claude-opus-4-8": { alias: "Opus" },
+        "dmxapi/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "ClaudeCN",
+    websiteUrl: "https://claudecn.top",
+    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://claudecn.top",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "claudecn",
+    icon: "claudecn",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "claudecn/claude-sonnet-5",
+      },
+      modelCatalog: {
+        "claudecn/claude-opus-4-8": { alias: "Opus" },
+        "claudecn/claude-sonnet-5": { alias: "Sonnet" },
+        "claudecn/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
+  {
+    name: "RunAPI",
+    websiteUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co",
+    settingsConfig: {
+      baseUrl: "https://runapi.co",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "runapi",
+    icon: "runapi",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "runapi/claude-sonnet-5",
+      },
+      modelCatalog: {
+        "runapi/claude-opus-4-8": { alias: "Opus" },
+        "runapi/claude-sonnet-5": { alias: "Sonnet" },
+        "runapi/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
+  {
+    name: "OpenRouter",
+    websiteUrl: "https://openrouter.ai",
+    apiKeyUrl: "https://openrouter.ai/keys",
+    settingsConfig: {
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "anthropic/claude-opus-4.8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "openrouter",
+    iconColor: "#6566F1",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-or-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "openrouter/anthropic/claude-opus-4.8",
+        fallbacks: ["openrouter/anthropic/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "openrouter/anthropic/claude-opus-4.8": { alias: "Opus" },
+        "openrouter/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "TheRouter",
+    websiteUrl: "https://therouter.ai",
+    apiKeyUrl: "https://dashboard.therouter.ai",
+    settingsConfig: {
+      baseUrl: "https://api.therouter.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "anthropic/claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        },
+        {
+          id: "openai/gpt-5.3-codex",
+          name: "GPT-5.3 Codex",
+          contextWindow: 400000,
+          cost: { input: 5, output: 40, cacheRead: 0.5 },
+        },
+        {
+          id: "openai/gpt-5.2",
+          name: "GPT-5.2",
+          contextWindow: 400000,
+          cost: { input: 1.75, output: 14, cacheRead: 0.175 },
+        },
+        {
+          id: "google/gemini-3.5-flash",
+          name: "Gemini 3.5 Flash",
+          contextWindow: 1000000,
+          cost: { input: 1.5, output: 9, cacheRead: 0.15 },
+        },
+        {
+          id: "qwen/qwen3-coder-480b",
+          name: "Qwen3 Coder 480B",
+          contextWindow: 262144,
+          cost: { input: 0.6, output: 2.35 },
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "therouter/anthropic/claude-sonnet-5",
+        fallbacks: [
+          "therouter/openai/gpt-5.2",
+          "therouter/google/gemini-3.5-flash",
+        ],
+      },
+      modelCatalog: {
+        "therouter/anthropic/claude-sonnet-5": { alias: "Sonnet" },
+        "therouter/openai/gpt-5.2": { alias: "GPT-5.2" },
+        "therouter/google/gemini-3.5-flash": { alias: "Gemini Flash" },
+        "therouter/openai/gpt-5.3-codex": { alias: "Codex" },
+        "therouter/qwen/qwen3-coder-480b": { alias: "Qwen Coder" },
+      },
+    },
+  },
+  {
+    name: "ModelScope",
+    websiteUrl: "https://modelscope.cn",
+    apiKeyUrl: "https://modelscope.cn/my/myaccesstoken",
+    settingsConfig: {
+      baseUrl: "https://api-inference.modelscope.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "ZhipuAI/GLM-5.1",
+          name: "GLM-5.1",
+          contextWindow: 128000,
+          cost: { input: 0.001, output: 0.001 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "modelscope",
+    iconColor: "#624AFF",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api-inference.modelscope.cn/v1",
+        defaultValue: "https://api-inference.modelscope.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "modelscope/ZhipuAI/GLM-5.1" },
+      modelCatalog: { "modelscope/ZhipuAI/GLM-5.1": { alias: "GLM" } },
+    },
+  },
+  {
+    name: "SiliconFlow",
+    websiteUrl: "https://siliconflow.cn",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      baseUrl: "https://api.siliconflow.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "Pro/MiniMaxAI/MiniMax-M2.7",
+          name: "MiniMax M2.7",
+          contextWindow: 200000,
+          cost: { input: 0.001, output: 0.004 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#6E29F6",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7" },
+      modelCatalog: {
+        "siliconflow/Pro/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+      },
+    },
+  },
+  {
+    name: "SiliconFlow en",
+    websiteUrl: "https://siliconflow.com",
+    apiKeyUrl: "https://cloud.siliconflow.cn/i/YflgU2Ve",
+    settingsConfig: {
+      baseUrl: "https://api.siliconflow.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "MiniMaxAI/MiniMax-M2.7",
+          name: "MiniMax M2.7",
+          contextWindow: 200000,
+          cost: { input: 0.001, output: 0.004 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "siliconflow",
+    icon: "siliconflow",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "siliconflow-en/MiniMaxAI/MiniMax-M2.7" },
+      modelCatalog: {
+        "siliconflow-en/MiniMaxAI/MiniMax-M2.7": { alias: "MiniMax" },
+      },
+    },
+  },
+  {
+    name: "Novita AI",
+    websiteUrl: "https://novita.ai",
+    apiKeyUrl: "https://novita.ai",
+    settingsConfig: {
+      baseUrl: "https://api.novita.ai/openai",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/glm-5.1",
+          name: "GLM-5.1",
+          contextWindow: 202800,
+          cost: { input: 1, output: 3.2, cacheRead: 0.2 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "novita",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "novita/zai-org/glm-5.1" },
+      modelCatalog: {
+        "novita/zai-org/glm-5.1": { alias: "GLM-5.1" },
+      },
+    },
+  },
+  {
+    name: "Nvidia",
+    websiteUrl: "https://build.nvidia.com",
+    apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
+    settingsConfig: {
+      baseUrl: "https://integrate.api.nvidia.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "moonshotai/kimi-k2.5",
+          name: "Kimi K2.5",
+          contextWindow: 131072,
+          cost: { input: 0.002, output: 0.006 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "nvidia",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "nvapi-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "nvidia/moonshotai/kimi-k2.5" },
+      modelCatalog: { "nvidia/moonshotai/kimi-k2.5": { alias: "Kimi" } },
+    },
+  },
+  {
+    name: "PIPELLM",
+    websiteUrl: "https://code.pipellm.ai",
+    apiKeyUrl: "https://code.pipellm.ai/login?ref=uvw650za",
+    settingsConfig: {
+      baseUrl: "https://cc-api.pipellm.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "claude-opus-4-8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "claude-sonnet-5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+        {
+          id: "claude-haiku-4-5-20251001",
+          name: "claude-haiku-4-5-20251001",
+          contextWindow: 200000,
+          cost: { input: 0.8, output: 4 },
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "pipellm",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "pipe-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "pipellm/claude-opus-4-8",
+        fallbacks: ["pipellm/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "pipellm/claude-opus-4-8": { alias: "Opus" },
+        "pipellm/claude-sonnet-5": { alias: "Sonnet" },
+        "pipellm/claude-haiku-4-5-20251001": { alias: "Haiku" },
+      },
+    },
+  },
+
+  // ========== Third Party Partners ==========
+  {
+    name: "PackyCode",
+    websiteUrl: "https://www.packyapi.com",
+    apiKeyUrl: "https://www.packyapi.com/register?aff=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://www.packyapi.com",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "packycode",
+    icon: "packycode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "packycode/claude-opus-4-8",
+        fallbacks: ["packycode/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "packycode/claude-opus-4-8": { alias: "Opus" },
+        "packycode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "APIKEY.FUN",
+    websiteUrl: "https://apikey.fun",
+    apiKeyUrl: "https://apikey.fun/register?aff=CCSwitch",
+    settingsConfig: {
+      baseUrl: "https://api.apikey.fun",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+        },
+        {
+          id: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "apikeyfun",
+    icon: "apikeyfun",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "apikeyfun/claude-opus-4-8",
+        fallbacks: ["apikeyfun/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "apikeyfun/claude-opus-4-8": { alias: "Opus" },
+        "apikeyfun/claude-sonnet-5": { alias: "Sonnet" },
+        "apikeyfun/claude-haiku-4-5": { alias: "Haiku" },
+      },
+    },
+  },
+  {
+    name: "APINebula",
+    websiteUrl: "https://apinebula.com",
+    apiKeyUrl: "https://apinebula.com/02rw5X",
+    settingsConfig: {
+      baseUrl: "https://apinebula.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "apinebula",
+    icon: "apinebula",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "apinebula/gpt-5.5",
+      },
+    },
+  },
+  {
+    name: "AtlasCloud",
+    websiteUrl: "https://www.atlascloud.ai/console/coding-plan",
+    apiKeyUrl: "https://www.atlascloud.ai/console/coding-plan",
+    settingsConfig: {
+      baseUrl: "https://api.atlascloud.ai/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "zai-org/glm-5.1",
+          name: "GLM 5.1",
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "atlascloud",
+    icon: "atlascloud",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "atlascloud/zai-org/glm-5.1",
+      },
+    },
+  },
+  {
+    name: "SudoCode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
+    settingsConfig: {
+      baseUrl: "https://api.sudocode.chat/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sudocode/gpt-5.6-sol",
+      },
+    },
+  },
+  {
+    name: "Cubence",
+    websiteUrl: "https://cubence.com",
+    apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
+    settingsConfig: {
+      baseUrl: "https://api.cubence.com",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "cubence",
+    icon: "cubence",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "cubence/claude-opus-4-8",
+        fallbacks: ["cubence/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "cubence/claude-opus-4-8": { alias: "Opus" },
+        "cubence/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "AIGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    settingsConfig: {
+      baseUrl: "https://api.aigocode.com",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aigocode",
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "aigocode/claude-opus-4-8",
+        fallbacks: ["aigocode/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "aigocode/claude-opus-4-8": { alias: "Opus" },
+        "aigocode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "RightCode",
+    websiteUrl: "https://www.right.codes",
+    apiKeyUrl: "https://www.right.codes/register?aff=CCSWITCH",
+    settingsConfig: {
+      baseUrl: "https://www.right.codes/claude",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "rightcode",
+    icon: "rc",
+    iconColor: "#E96B2C",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "rightcode/claude-opus-4-8",
+        fallbacks: ["rightcode/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "rightcode/claude-opus-4-8": { alias: "Opus" },
+        "rightcode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "AICodeMirror",
+    websiteUrl: "https://www.aicodemirror.com",
+    apiKeyUrl: "https://www.aicodemirror.com/register?invitecode=9915W3",
+    settingsConfig: {
+      baseUrl: "https://api.aicodemirror.com/api/claudecode",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "aicodemirror",
+    icon: "aicodemirror",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "aicodemirror/claude-opus-4-8",
+        fallbacks: ["aicodemirror/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "aicodemirror/claude-opus-4-8": { alias: "Opus" },
+        "aicodemirror/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "CrazyRouter",
+    websiteUrl: "https://www.crazyrouter.com",
+    apiKeyUrl: "https://www.crazyrouter.com/register?aff=OZcm&ref=cc-switch",
+    settingsConfig: {
+      baseUrl: "https://cn.crazyrouter.com/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "crazyrouter",
+    icon: "crazyrouter",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "crazyrouter/claude-opus-4-8",
+        fallbacks: ["crazyrouter/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "crazyrouter/claude-opus-4-8": { alias: "Opus" },
+        "crazyrouter/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "SSSAiCode",
+    websiteUrl: "https://sssaicodeapi.com",
+    apiKeyUrl: "https://sssaicodeapi.com/register?ref=DCP0SM",
+    settingsConfig: {
+      baseUrl: "https://node-hk.sssaicodeapi.com/api",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+        {
+          id: "claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sssaicode",
+    icon: "sssaicode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sssaicode/claude-opus-4-8",
+        fallbacks: ["sssaicode/claude-sonnet-5"],
+      },
+      modelCatalog: {
+        "sssaicode/claude-opus-4-8": { alias: "Opus" },
+        "sssaicode/claude-sonnet-5": { alias: "Sonnet" },
+      },
+    },
+  },
+  {
+    name: "Compshare",
+    nameKey: "providerForm.presets.ucloud",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      baseUrl: "https://api.modelverse.cn/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key
+    icon: "ucloud",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "compshare/claude-opus-4-8",
+      },
+      modelCatalog: {
+        "compshare/claude-opus-4-8": { alias: "Opus" },
+      },
+    },
+  },
+  {
+    name: "Compshare Coding Plan",
+    nameKey: "providerForm.presets.ucloudCoding",
+    websiteUrl: "https://www.compshare.cn",
+    apiKeyUrl:
+      "https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch",
+    settingsConfig: {
+      baseUrl: "https://cp.compshare.cn/v1",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "ucloud", // 促销信息 i18n key（复用）
+    icon: "ucloud",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "compshare-coding/claude-opus-4-8",
+      },
+      modelCatalog: {
+        "compshare-coding/claude-opus-4-8": { alias: "Opus" },
+      },
+    },
+  },
+  {
+    name: "Micu",
+    websiteUrl: "https://www.micuapi.ai",
+    apiKeyUrl: "https://www.micuapi.ai/register?aff=aOYQ",
+    settingsConfig: {
+      baseUrl: "https://www.micuapi.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "micu",
+    icon: "micu",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "micu/claude-opus-4-8",
+      },
+      modelCatalog: {
+        "micu/claude-opus-4-8": { alias: "Opus" },
+      },
+    },
+  },
+  {
+    name: "ETok.ai",
+    websiteUrl: "https://etok.ai",
+    apiKeyUrl: "https://etok.ai",
+    settingsConfig: {
+      baseUrl: "https://api.etok.ai",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: [
+        {
+          id: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "etok",
+    icon: "etok",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "etok/claude-opus-4-8",
+      },
+      modelCatalog: {
+        "etok/claude-opus-4-8": { alias: "Opus" },
+      },
+    },
+  },
+  {
+    name: "E-FlowCode",
+    websiteUrl: "https://e-flowcode.cc",
+    apiKeyUrl: "https://e-flowcode.cc",
+    settingsConfig: {
+      api: "openai-responses",
+      apiKey: "",
+      baseUrl: "https://e-flowcode.cc/v1",
+      headers: {
+        "User-Agent":
+          "codex_cli_rs/0.77.0 (Windows 10.0.26100; x86_64) WindowsTerminal",
+      },
+      models: [
+        {
+          contextWindow: 200000,
+          cost: {
+            cacheRead: 0,
+            cacheWrite: 0,
+            input: 0,
+            output: 0,
+          },
+          id: "gpt-5.3-codex",
+          maxTokens: 32000,
+          name: "gpt-5.3-codex",
+        },
+        {
+          id: "gpt-5.5",
+          name: "gpt-5.5",
+        },
+        {
+          id: "gpt-5.2-codex",
+          name: "gpt-5.2-codex",
+        },
+        {
+          id: "gpt-5.2",
+          name: "gpt-5.2",
+        },
+      ],
+    },
+    category: "third_party",
+    icon: "eflowcode",
+    iconColor: "#000000",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "sk-...",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "eflowcode/gpt-5.3-codex",
+        fallbacks: ["eflowcode/gpt-5.5", "eflowcode/gpt-5.2-codex"],
+      },
+      modelCatalog: {
+        "eflowcode/gpt-5.3-codex": { alias: "gpt-5.3-codex" },
+        "eflowcode/gpt-5.5": { alias: "gpt-5.5" },
+        "eflowcode/gpt-5.2-codex": { alias: "gpt-5.2-codex" },
+        "eflowcode/gpt-5.2": { alias: "gpt-5.2" },
+      },
+    },
+  },
+  // ========== Cloud Providers ==========
+  {
+    name: "AWS Bedrock",
+    websiteUrl: "https://aws.amazon.com/bedrock/",
+    settingsConfig: {
+      // 请将 us-west-2 替换为你的 AWS Region
+      baseUrl: "https://bedrock-runtime.us-west-2.amazonaws.com",
+      apiKey: "",
+      api: "bedrock-converse-stream",
+      models: [
+        {
+          id: "anthropic.claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          contextWindow: 1000000,
+          cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+        },
+        {
+          id: "anthropic.claude-sonnet-5",
+          name: "Claude Sonnet 5",
+          contextWindow: 1000000,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        },
+        {
+          id: "anthropic.claude-haiku-4-5-20251022-v1:0",
+          name: "Claude Haiku 4.5",
+          contextWindow: 200000,
+          cost: { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+        },
+      ],
+    },
+    category: "cloud_provider",
+    icon: "aws",
+    iconColor: "#FF9900",
+  },
+];

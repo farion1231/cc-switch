@@ -1,0 +1,27 @@
+{
+  "base_url": "https://ilinkai.weixin.qq.com",
+  "token": "",
+  "account_id": "",
+  "allow_all": false,
+  "allow_user_ids": [],
+  "require_prefix": true,
+  "prefix": "/codex",
+  "allow_id_command_for_unauthorized": true,
+  "poll_timeout_seconds": 35,
+  "max_reply_chars": 1800,
+  "enable_typing": true,
+  "state_dir": "",
+  "codex": {
+    "backend": "app-server",
+    "command": "codex",
+    "app_server_command": "",
+    "workspace": ".",
+    "model": "",
+    "profile": "",
+    "sandbox": "read-only",
+    "approval_policy": "never",
+    "timeout_seconds": 300,
+    "extra_args": [],
+    "prompt_prefix": "回复使用中文，格式适合微信阅读。"
+  }
+}

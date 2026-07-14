@@ -1,0 +1,38 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Explicitly declare text files you want to always be normalized and converted
+# to native line endings on checkout.
+*.rs text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+
+# TypeScript/JavaScript files
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+
+# HTML/CSS files
+*.html text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+
+# Shell scripts
+*.sh text eol=lf
+
+# Denote all files that are truly binary and should not be modified.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.exe binary
+*.dll binary

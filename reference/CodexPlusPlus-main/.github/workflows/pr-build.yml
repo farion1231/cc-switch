@@ -1,0 +1,153 @@
+name: PR build artifacts
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-artifacts:
+    name: Windows artifacts
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Install frontend dependencies
+        working-directory: apps/codex-plus-manager
+        run: npm install --package-lock=false
+
+      - name: TypeScript check
+        working-directory: apps/codex-plus-manager
+        run: npm run check
+
+      - name: Build frontend
+        working-directory: apps/codex-plus-manager
+        run: npm run vite:build
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - name: Stage Windows app files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/windows/app | Out-Null
+          Copy-Item target/release/codex-plus-plus.exe dist/windows/app/
+          Copy-Item target/release/codex-plus-plus-manager.exe dist/windows/app/
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v", "V")
+          $version = $version -replace '[\\/]', '-'
+          if (-not $version -or $version -eq "main") {
+            $version = "0.0.0-${{ github.run_number }}"
+          }
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $makensis = "makensis"
+          }
+          Push-Location scripts/installer/windows
+          & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" CodexPlusPlus.nsi
+          Pop-Location
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-plus-plus-windows-binaries
+          path: dist/windows/app/*
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-plus-plus-windows-installer
+          path: dist/windows/*.exe
+          if-no-files-found: error
+
+  macos-dmg:
+    name: macOS DMG (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - arch: arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        working-directory: apps/codex-plus-manager
+        run: npm install --package-lock=false
+
+      - name: Build frontend
+        working-directory: apps/codex-plus-manager
+        run: npm run vite:build
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build macOS DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION#V}"
+          VERSION="${VERSION//\//-}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+            VERSION="0.0.0-${GITHUB_RUN_NUMBER}"
+          fi
+          BINARY_DIR="$PWD/target/${{ matrix.target }}/release" bash scripts/installer/macos/package-dmg.sh "$VERSION" "${{ matrix.arch }}"
+
+      - name: Verify macOS bundle structure
+        run: |
+          set -euo pipefail
+          test -L "dist/macos/stage/Applications"
+          test "$(readlink "dist/macos/stage/Applications")" = "/Applications"
+          for app in "dist/macos/stage/Codex++.app" "dist/macos/stage/Codex++ 管理工具.app"; do
+            test -f "$app/Contents/Info.plist"
+            test -f "$app/Contents/PkgInfo"
+            test -x "$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+            plutil -lint "$app/Contents/Info.plist" >/dev/null
+            codesign -dv "$app" >/dev/null 2>&1
+            echo "verified: $app"
+          done
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-plus-plus-macos-${{ matrix.arch }}-dmg
+          path: dist/macos/*.dmg
+          if-no-files-found: error

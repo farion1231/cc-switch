@@ -1,0 +1,83 @@
+name: Bug 报告
+description: 程序崩溃、报错、配置写入异常、功能行为不符合预期。
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请尽量填写可复现的信息。涉及 API Key、Token、账号、Base URL 时请先脱敏。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - 启动 / 重启 Codex++
+        - 供应商切换 / 配置写入
+        - 协议转换 / 代理
+        - MCP / skills / plugins
+        - 模型列表 / model_catalog_json
+        - 界面 / 交互
+        - 构建 / 安装
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: 当前行为
+      description: 实际发生了什么？如果有报错，请贴完整错误文本。
+      placeholder: 点击重启 Codex++ 后没有启动，latest-status.json 显示...
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: 预期行为
+      placeholder: 应该同步当前供应商配置并启动 Codex。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开...
+        2. 选择...
+        3. 点击...
+        4. 看到...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 配置片段
+      description: 请删除或替换 API Key、Token、账号等敏感信息。
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Codex++ 版本
+      placeholder: 例如 1.1.8
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - 其他
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经脱敏了 API Key、Token、账号等敏感信息。
+          required: true
+        - label: 我已经确认这是当前最新版仍然存在的问题。
+          required: false
+

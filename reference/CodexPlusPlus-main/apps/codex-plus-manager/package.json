@@ -1,0 +1,41 @@
+{
+  "name": "codex-plus-manager",
+  "version": "1.2.35",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "cargo build -p codex-plus-launcher --release && tauri build",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "vite:dev": "vite --host 127.0.0.1 --port 1420",
+    "vite:build": "vite build"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@radix-ui/react-slot": "^1.1.2",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.5.5",
+    "typescript": "^5.8.0",
+    "vite": "^6.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0"
+  }
+}

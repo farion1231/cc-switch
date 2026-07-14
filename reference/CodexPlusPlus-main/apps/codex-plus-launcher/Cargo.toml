@@ -1,0 +1,22 @@
+[package]
+name = "codex-plus-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "codex-plus-plus"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait = "0.1"
+codex-plus-core = { path = "../../crates/codex-plus-core" }
+codex-plus-data = { path = "../../crates/codex-plus-data" }
+directories.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[build-dependencies]
+winresource.workspace = true

@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题 / 讨论
+    url: https://github.com/BigPizzaV3/CodexPlusPlus/discussions
+    about: 不确定是不是 Bug 时，优先在这里讨论。
+

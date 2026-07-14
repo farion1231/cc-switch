@@ -1,0 +1,47 @@
+[package]
+name = "codex-plus-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aes-gcm.workspace = true
+anyhow.workspace = true
+async-trait = "0.1"
+base64.workspace = true
+directories.workspace = true
+futures-util = "0.3"
+fs2.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tokio-tungstenite.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Storage_EnhancedStorage",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true

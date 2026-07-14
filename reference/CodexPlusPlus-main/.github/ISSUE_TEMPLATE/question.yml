@@ -1,0 +1,31 @@
+name: 使用问题
+description: 使用方式、配置含义、是否支持某个场景等问题。
+title: "[Question]: "
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 你的问题
+      placeholder: 这个选项会写入哪个文件？
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关范围
+      options:
+        - 供应商管理
+        - 协议转换
+        - MCP / skills / plugins
+        - 模型列表
+        - 启动 / 会话修复
+        - 界面 / 交互
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 你已经尝试过什么
+      placeholder: 我已经试过...
+

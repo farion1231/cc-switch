@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="128" viewBox="0 0 320 128" role="img" aria-label="RawChat">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#7c2d12"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="128" rx="22" fill="url(#bg)"/>
+  <path d="M40 38h70a18 18 0 0 1 18 18v18a18 18 0 0 1-18 18H70l-24 18v-18h-6a18 18 0 0 1-18-18V56a18 18 0 0 1 18-18z" fill="#fb923c"/>
+  <circle cx="58" cy="65" r="5" fill="#fff7ed"/>
+  <circle cx="76" cy="65" r="5" fill="#fff7ed"/>
+  <circle cx="94" cy="65" r="5" fill="#fff7ed"/>
+  <text x="148" y="58" fill="#f8fafc" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">RawChat</text>
+  <text x="149" y="88" fill="#fed7aa" font-family="Segoe UI, Arial, sans-serif" font-size="15">Codex Relay Station</text>
+</svg>

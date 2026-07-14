@@ -1,0 +1,196 @@
+name: Release assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Install frontend dependencies
+        working-directory: apps/codex-plus-manager
+        run: npm install --package-lock=false
+
+      - name: Build frontend
+        working-directory: apps/codex-plus-manager
+        run: npm run vite:build
+
+      - name: Build binaries
+        run: cargo build --release
+
+      - name: Stage Windows app files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/windows/app | Out-Null
+          Copy-Item target/release/codex-plus-plus.exe dist/windows/app/
+          Copy-Item target/release/codex-plus-plus-manager.exe dist/windows/app/
+
+      - name: Build Windows zip asset
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.release.tag_name }}".TrimStart("v", "V")
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          Compress-Archive -Path dist/windows/app/* -DestinationPath "dist/windows/CodexPlusPlus-$version-windows-x64.zip" -Force
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.release.tag_name }}".TrimStart("v", "V")
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            $makensis = "makensis"
+          }
+          Push-Location scripts/installer/windows
+          & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" CodexPlusPlus.nsi
+          Pop-Location
+
+      - name: Upload Windows installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            dist/windows/*.exe
+            dist/windows/*.zip
+
+  macos-dmg:
+    name: macOS DMG (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - arch: arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        working-directory: apps/codex-plus-manager
+        run: npm install --package-lock=false
+
+      - name: Build frontend
+        working-directory: apps/codex-plus-manager
+        run: npm run vite:build
+
+      - name: Build binaries
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build macOS DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION#V}"
+          BINARY_DIR="$PWD/target/${{ matrix.target }}/release" bash scripts/installer/macos/package-dmg.sh "$VERSION" "${{ matrix.arch }}"
+
+      - name: Build macOS zip asset
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION#V}"
+          mkdir -p dist/macos/app-${{ matrix.arch }}
+          cp "target/${{ matrix.target }}/release/codex-plus-plus" "dist/macos/app-${{ matrix.arch }}/"
+          cp "target/${{ matrix.target }}/release/codex-plus-plus-manager" "dist/macos/app-${{ matrix.arch }}/"
+          (cd dist/macos && zip -r "CodexPlusPlus-${VERSION}-macos-${{ matrix.arch }}.zip" "app-${{ matrix.arch }}")
+
+      - name: Verify macOS bundle structure
+        run: |
+          set -euo pipefail
+          test -L "dist/macos/stage/Applications"
+          test "$(readlink "dist/macos/stage/Applications")" = "/Applications"
+          for app in "dist/macos/stage/Codex++.app" "dist/macos/stage/Codex++ 管理工具.app"; do
+            test -f "$app/Contents/Info.plist"
+            test -f "$app/Contents/PkgInfo"
+            test -x "$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+            plutil -lint "$app/Contents/Info.plist" >/dev/null
+            codesign -dv "$app" >/dev/null 2>&1
+            echo "verified: $app"
+          done
+
+      - name: Upload macOS DMG
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            dist/macos/*.dmg
+            dist/macos/*.zip
+
+  latest-json:
+    name: Upload static latest.json
+    runs-on: ubuntu-latest
+    needs:
+      - windows-installer
+      - macos-dmg
+    steps:
+      - name: Generate latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$REPO" --json assets,body,tagName,url > release.json
+          node <<'NODE'
+          const fs = require("fs");
+          const release = JSON.parse(fs.readFileSync("release.json", "utf8"));
+          const repo = process.env.REPO;
+          const tag = release.tagName || process.env.TAG;
+          const version = tag.replace(/^v/i, "");
+          const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
+          const assets = (release.assets || [])
+            .map((asset) => asset.name)
+            .filter((name) => name !== "latest.json")
+            .map((name) => ({ name, url: `${baseUrl}/${encodeURIComponent(name)}` }));
+          const payload = {
+            version: `v${version}`,
+            url: release.url || `https://github.com/${repo}/releases/tag/${tag}`,
+            body: release.body || "",
+            assets
+          };
+          fs.writeFileSync("latest.json", `${JSON.stringify(payload, null, 2)}\n`);
+          NODE
+          cat latest.json
+
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: gh release upload "$TAG" latest.json --clobber --repo "$REPO"

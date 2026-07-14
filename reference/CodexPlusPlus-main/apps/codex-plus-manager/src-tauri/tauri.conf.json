@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Codex++ Manager",
+  "version": "1.2.35",
+  "identifier": "com.bigpizzav3.codexplusplus.manager",
+  "build": {
+    "beforeDevCommand": "npm run vite:dev",
+    "beforeBuildCommand": "npm run vite:build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "create": false,
+        "label": "main",
+        "title": "Codex++ 管理工具",
+        "width": 1180,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 720
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}

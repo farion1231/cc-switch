@@ -1,0 +1,27 @@
+__pycache__/
+.venv/
+venv/
+.worktrees/
+*.egg-info/
+build/
+dist/
+target/
+node_modules/
+apps/codex-plus-manager/src-tauri/gen/
+
+.codex_asar_extract/
+.codex_asar_extract_latest/
+.superpowers/
+.claude/
+docs/superpowers/
+
+*.log
+.DS_Store
+Thumbs.db
+.env
+tools/codex-wechat/config.local.json
+
+# pnpm artifacts (project uses npm)
+pnpm-lock.yaml
+pnpm-workspace.yaml
+

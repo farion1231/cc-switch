@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="128" viewBox="0 0 320 128" role="img" aria-label="JOJO Code">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#14532d"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="128" rx="22" fill="url(#bg)"/>
+  <circle cx="58" cy="64" r="30" fill="#22c55e"/>
+  <path d="M45 64l10 10 22-26" fill="none" stroke="#f8fafc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="104" y="58" fill="#f8fafc" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700">JOJO Code</text>
+  <text x="105" y="88" fill="#bbf7d0" font-family="Segoe UI, Arial, sans-serif" font-size="15">Official Codex++ Relay</text>
+</svg>

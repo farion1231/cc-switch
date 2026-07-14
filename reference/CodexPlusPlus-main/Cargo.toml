@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/codex-plus-core",
+  "crates/codex-plus-data",
+  "apps/codex-plus-launcher",
+  "apps/codex-plus-manager/src-tauri",
+]
+
+[workspace.package]
+version = "1.2.35"
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/BigPizzaV3/CodexPlusPlus"
+
+[workspace.dependencies]
+aes-gcm = "0.10"
+anyhow = "1"
+base64 = "0.22"
+directories = "6"
+fs2 = "0.4"
+futures-util = "0.3"
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls", "system-proxy"], default-features = false }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread", "time"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+toml = "0.8"
+toml_edit = "0.22"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+winresource = "0.1"
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -1,0 +1,584 @@
+<div align="center">
+
+# CC Switch
+
+### Claude Code、Claude Desktop、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes Agent のオールインワン管理ツール
+
+[![Version](https://img.shields.io/github/v/release/farion1231/cc-switch?color=blue&label=version)](https://github.com/farion1231/cc-switch/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/farion1231/cc-switch/releases)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-orange.svg)](https://tauri.app/)
+[![Downloads](https://img.shields.io/github/downloads/farion1231/cc-switch/total)](https://github.com/farion1231/cc-switch/releases/latest)
+
+<a href="https://trendshift.io/repositories/15372" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15372" alt="farion1231%2Fcc-switch | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://www.star-history.com/#farion1231/cc-switch&Date"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/badge?repo=farion1231/cc-switch&theme=dark" /><img alt="Star History Rank" src="https://api.star-history.com/badge?repo=farion1231/cc-switch" width="196" height="55" /></picture></a>
+
+### 🌐 唯一の公式サイト：**[ccswitch.io](https://ccswitch.io)**
+
+[English](README.md) | [中文](README_ZH.md) | 日本語 | [Deutsch](README_DE.md) | [Changelog](CHANGELOG.md)
+
+</div>
+
+## ❤️スポンサー
+
+> [ここに掲載しませんか？](mailto:farion1231@gmail.com)
+
+<details open>
+<summary>クリックで折りたたむ</summary>
+
+[![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?aff=cc-switch)
+
+Kimi K2.7 Code は Moonshot AI が開発した、コーディングに特化したオープンソースのエージェントモデルです。コーディング能力とエージェント性能が全面的に強化され、実世界の長程コーディングタスクで大幅な向上を実現し、複雑なソフトウェアエンジニアリングのワークフロー全体でエンドツーエンドのタスク成功率を高めます。さらに K2.7 Code は推論効率を改善し、K2.6 と比べて推論トークンの消費を約 30% 削減します。**[ここをクリックして Kimi を体験する](https://platform.kimi.ai?aff=cc-switch)**
+
+コーディング作業がメインですか？コーディングのために作られたサブスクリプション、**[Kimi For Coding プラン](https://www.kimi.com/code/?aff=cc-switch)** をぜひお試しください！
+
+---
+
+<table>
+<tr>
+<td width="180"><a href="https://www.packyapi.com/register?aff=cc-switch"><img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150"></a></td>
+<td>PackyCode のご支援に感謝します！PackyCode は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームです。本ソフト利用者向けに特別割引があります：<a href="https://www.packyapi.com/register?aff=cc-switch">このリンク</a>で登録し、チャージ時に「cc-switch」クーポンを入力すると 10% オフになります。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://aigocode.com/invite/CC-SWITCH"><img src="assets/partners/logos/aigocode.png" alt="AIGoCode" width="150"></a></td>
+<td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode は、Claude Code・Codex・最新の Gemini モデルを統合したオールインワンのAIコーディングプラットフォームで、安定性・高速性・コストパフォーマンスに優れた開発サービスを提供します。柔軟なサブスクリプションプランを備え、レスポンスも非常に高速です。さらに、CC Switch ユーザー向けの特典として、<a href="https://aigocode.com/invite/CC-SWITCH">このリンク</a>から登録すると、初回チャージ時に10％分のボーナスクレジットが付与されます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.aicodemirror.com/register?invitecode=9915W3"><img src="assets/partners/logos/aicodemirror.jpg" alt="AICodeMirror" width="150"></a></td>
+<td>AICodeMirror のご支援に感謝します！AICodeMirror は Claude Code / Codex / Gemini CLI の公式高安定リレーサービスを提供しており、エンタープライズ級の同時接続、迅速な請求書発行、24時間年中無休の専用テクニカルサポートを備えています。
+Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% / 2% / 9%、チャージ時にはさらに割引！AICodeMirror は CC Switch ユーザー向けに特別特典を用意：<a href="https://www.aicodemirror.com/register?invitecode=9915W3">このリンク</a>から登録すると初回チャージ 20% オフ、法人のお客様は最大 25% オフ！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
+<td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/"><img src="assets/partners/logos/pateway.png" alt="PatewayAI" width="150"></a></td>
+<td>PatewayAI のご支援に感謝します！PatewayAI はヘビーな AI 開発者向けに、公式直結の高品質モデル API 中継サービスを専門に提供するプロバイダーです。Claude シリーズ全モデルおよび Codex シリーズに対応し、100% 公式ソースから直接提供。混ぜ物・水増しは一切なく、検証も歓迎します。課金は透明で、トークン単位の請求書を 1 件ずつ照合可能です。
+エンタープライズ級の高同時接続にも対応し、法人のお客様には専用の管理プラットフォームを提供。正式契約および請求書発行に対応しており、詳細は公式サイトの連絡先よりお問い合わせください。
+現在、<a href="https://pateway.ai/?ch=etzpm8&aff=WB6M6F67#/">このリンク</a>からご登録いただくと $3 のトライアルクレジットを進呈。チャージは最安で元価格の 60%、友達紹介は双方にボーナスが付与され、紹介報酬は最大 $150！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory"><img src="assets/partners/logos/TeamoRouter-banner.png" alt="TeamoRouter" width="150"></a></td>
+<td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
+一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
+TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"><img src="assets/partners/logos/byteplus.png" alt="BytePlus" width="150"></a></td>
+<td>Dola seed のご支援に感謝します！Dola Seed 2.0 は ByteDance がグローバル市場向けに独自開発したフルモーダル汎用大規模モデルです。統一されたマルチモーダルアーキテクチャを基盤に、テキスト・画像・音声・動画の統合的な理解と生成をサポートします。エージェント連携をネイティブに実現し、強力な推論、長時間タスクの実行、ツール統合、コーディング能力を備えています。スマートコックピット、パーソナルアシスタント、教育、カスタマーサポート、マーケティング、リテールなど幅広いシナリオに適用可能で、マルチモーダル認識、エンドツーエンドの複雑なタスク遂行、安定したインタラクション、データセキュリティに優れ、ModelArk プラットフォームを通じて手軽に利用・デプロイできます。<a href="https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch">このリンク</a>からご登録いただくと、モデルごとに 500,000 トークンの無料推論クォータを進呈します。<a href="https://www.volcengine.com/activity/ai618?utm_campaign=hw&utm_content=hw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch"> >>中国大陆地区的开发者请点击这里</a></td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://cloud.siliconflow.cn/i/YflgU2Ve"><img src="assets/partners/logos/silicon_en.jpg" alt="SiliconFlow" width="150"></a></td>
+<td>SiliconFlow のご支援に感謝します！SiliconFlow は高性能 AI インフラストラクチャおよびモデル API プラットフォームで、言語・音声・画像・動画モデルへの高速かつ信頼性の高いアクセスをワンストップで提供します。従量課金制、豊富なマルチモーダルモデル対応、高速推論、エンタープライズグレードの安定性を備え、開発者やチームがより効率的に AI アプリケーションを構築・拡張できるようサポートします。<a href="https://cloud.siliconflow.cn/i/YflgU2Ve">このリンク</a>から登録し、本人確認を完了すると、プラットフォーム内の全モデルで利用可能な ¥16 のボーナスクレジットが付与されます。SiliconFlow は OpenClaw にも対応しており、SiliconFlow の API キーを接続することで主要な AI モデルを無料で呼び出すことができます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://cubence.com/signup?code=CCSWITCH&source=ccs"><img src="assets/partners/logos/cubence.png" alt="Cubence" width="150"></a></td>
+<td>Cubence のご支援に感謝します！Cubence は Claude Code、Codex、Gemini などのリレーサービスを提供する信頼性の高い API 中継プラットフォームで、従量課金や月額プランなど柔軟な料金体系を提供しています。CC Switch ユーザー向けの特別割引：<a href="https://cubence.com/signup?code=CCSWITCH&source=ccs">このリンク</a>で登録し、チャージ時に「CCSWITCH」クーポンを入力すると、毎回 10% オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.dmxapi.cn/register?aff=bUHu"><img src="assets/partners/logos/dmx-en.jpg" alt="DMXAPI" width="150"></a></td>
+<td>DMXAPI のご支援に感謝します！DMXAPI は 200 社以上の企業ユーザーにグローバル大規模モデル API サービスを提供しています。1 つの API キーで全世界のモデルにアクセス可能。即時請求書発行、同時接続数無制限、最低 $0.15 から、24 時間年中無休のテクニカルサポート。GPT/Claude/Gemini が全て 32% オフ、国内モデルは 20〜50% オフ、Claude Code 専用モデルは 66% オフ実施中！<a href="https://www.dmxapi.cn/register?aff=bUHu">登録はこちら</a></td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch"><img src="assets/partners/logos/ucloud.png" alt="Compshare" width="150"></a></td>
+<td>Compshare のご支援に感謝します！Compshare は UCloud 傘下の AI クラウドプラットフォームで、国内外の安定した包括的なモデル API を 1 つのキーだけで利用可能。月額・都度課金のコストパフォーマンスに優れた国内モデル Coding Plan パッケージを提供し、公式リレーによる安定した海外モデルも利用できます。Claude Code、Codex および API アクセスに対応。エンタープライズ級の高同時接続、24 時間年中無休のテクニカルサポート、セルフサービス請求書発行に対応。<a href="https://www.compshare.cn/coding-plan?ytag=GPU_YY_YX_git_cc-switch">こちらのリンク</a>から登録すると、無料で 5 元分のプラットフォーム体験クレジットがもらえます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch"><img src="assets/partners/logos/crazyrouter.png" alt="Crazyrouter" width="150"></a></td>
+<td>Crazyrouter のご支援に感謝します！Crazyrouter は高性能 AI API アグリゲーションプラットフォームです。1 つの API キーで Claude Code、Codex、Gemini CLI など 300 以上のモデルにアクセス可能。全モデルが公式価格の 55% で利用でき、自動フェイルオーバー、スマートルーティング、無制限同時接続に対応。CC Switch ユーザー向けの限定特典：<a href="https://crazyrouter.com/register?aff=OZcm&ref=cc-switch">こちらのリンク</a>から登録後、カスタマーサポートまでご連絡いただくと <strong>$2 の無料クレジット</strong> を受け取れます。さらに初回チャージ時にプロモコード `CCSWITCH` を入力すると <strong>30% のボーナスクレジット</strong> が追加されます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.right.codes/register?aff=CCSWITCH"><img src="assets/partners/logos/rightcode.jpg" alt="RightCode" width="150"></a></td>
+<td>本プロジェクトへのご支援として、Right Code にご協賛いただき誠にありがとうございます。Right Code は、Claude Code、Codex、Gemini などのモデル向け中継サービスを安定して提供しており、従量課金と月額プランの 2 つの料金体系から選択できます。チャージ後に請求書の発行が可能で、法人・チームのお客様には専任担当による個別対応も行っています。さらに、CC Switch ユーザー向けの特別優待として、<a href="https://www.right.codes/register?aff=CCSWITCH">こちらのリンク</a>から登録すると、チャージのたびに実際の支払額の 5% 相当の従量課金クレジットが付与されます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.sssaicode.com/register?ref=DCP0SM"><img src="assets/partners/logos/sssaicode.png" alt="SSSAiCode" width="150"></a></td>
+<td>SSSAiCode のご支援に感謝します！SSSAiCode は安定性と信頼性に優れた API 中継サービスで、安定的で信頼性が高く、手頃な価格の Claude・Codex モデルサービスを提供しています。当日の迅速な請求書発行をサポート。CC Switch ユーザー向けの特別特典：<a href="https://www.sssaicode.com/register?ref=DCP0SM">こちらのリンク</a>から登録すると、毎回のチャージで $10 の追加ボーナスを受けられます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.micuapi.ai/register?aff=aOYQ"><img src="assets/partners/logos/mikubanner.svg" alt="Micu" width="150"></a></td>
+<td>Micu API のご支援に感謝します！Micu API は、最高のコストパフォーマンスと高い安定性を追求するグローバル大規模言語モデル中継サービスプロバイダーです。法人企業がバックアップしており、サービス停止のリスクを排除、迅速な正規請求書発行に対応！「試行コストゼロ」をモットーに、最低 1 元からチャージ可能で手数料無料、いつでも返金可能！CC Switch ユーザー向けの限定特典：<a href="https://www.micuapi.ai/register?aff=aOYQ">こちらのリンク</a>から登録し、チャージ時にプロモコード「ccswitch」を入力すると <strong>10% 割引</strong> が適用されます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://etok.ai"><img src="assets/partners/logos/etok.png" alt="ETok" width="150"></a></td>
+<td>ETok.ai のご支援に感謝します！ETok.ai はワンストップ AI プログラミングツールサービスプラットフォームの構築に取り組んでいます。Claude Code のプロフェッショナルプランと技術コミュニティサービスを提供し、Google Gemini や OpenAI Codex にも対応しています。丁寧に設計されたプランと専門的な技術コミュニティを通じて、開発者に安定したサービス保証と継続的な技術サポートを提供し、AI アシストプログラミングを真の生産性ツールにします。<a href="https://etok.ai">こちら</a>から登録してください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://console.claudeapi.com/register?aff=pCLD"><img src="assets/partners/logos/claudeapi.png" alt="ClaudeAPI" width="150"></a></td>
+<td>本プロジェクトは <a href="https://console.claudeapi.com/register?aff=pCLD">Claude API</a> がスポンサーです。Claude API 直結 — わずか 3 分で Claude Code や Agent アプリに接続可能。新規ユーザーにはテストクレジットを提供しています。Anthropic 公式キーおよび AWS Bedrock 公式チャネルに基づいており、リバースエンジニアリングや性能劣化はありません。Opus / Sonnet / Haiku の全モデルラインナップをサポートし、Tool Use や 1M コンテキストなどの公式機能をすべて保持しています。Claude Code ヘビーユーザー、Agent エンジニア、企業技術チームに最適です。請求書発行およびチーム対応が可能です。<a href="https://console.claudeapi.com/register?aff=pCLD">こちら</a>から登録してください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> に感謝します！code0.ai は開発者向けの AI コーディングサービスプラットフォームで、Claude Code、Codex、Gemini などの主要な AI コーディング機能に対応しています。個人開発者やチームが、コーディング、デバッグ、リファクタリング、自動化ワークフローで AI Agent をより安定かつ効率的に活用できるよう支援します。ccswitch ユーザーは <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai 公式サイト</a> からカスタマーサポートに連絡することで、テストクレジットを受け取り、信頼性の高い AI コーディングサービスを体験できます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
+<td>本プロジェクトのスポンサーである ClaudeCN に感謝いたします！ClaudeCN は、実体のある企業によって運営されるエンタープライズ向け AI ゲートウェイプラットフォームです。Claude、GPT、DeepSeek など主要モデルへの高可用な商用 API アクセスを提供し、企業の調達プロセスにも対応 — 法人振込や正式契約に対応し、コンプライアンス面でも安心してご利用いただけます。<a href="https://claudecn.top">こちら</a>からご登録ください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://runapi.co"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
+<td>本プロジェクトのスポンサーである RunAPI に感謝いたします！RunAPI は高効率で安定した AI モデル API ゲートウェイです。一つの API Key で、OpenAI、Claude、Gemini、DeepSeek、Grok など 150 種類以上の主要モデルにアクセス可能。料金は公式価格の最大 10%、安定性にも優れ、Claude Code や OpenClaw などのツールとシームレスに連携できます。CC Switch ユーザー限定特典：ご登録後にカスタマーサポートへご連絡いただくと、14 元の無料クレジットを進呈いたします。<a href="https://runapi.co">こちら</a>からご登録ください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://apikey.fun/register?aff=CCSwitch"><img src="assets/partners/logos/apikey_banner.png" alt="APIKEY.FUN" width="150"></a></td>
+<td>APIKEY.FUN のご支援に感謝します！APIKEY.FUN は、企業および個人開発者向けに安定・高効率・低コストな AI モデル API 接続サービスを提供する、プロフェッショナルなエンタープライズ級 AI リレープラットフォームです。Claude、OpenAI、Gemini などの主要人気モデルに対応し、料金は公式価格の 7% から利用できます。本プロジェクトの<a href="https://apikey.fun/register?aff=CCSwitch">専用リンク</a>から登録すると、最大で<strong>チャージ永久 5% オフ</strong>の特別優待も受けられます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://apinebula.com/02rw5X"><img src="assets/partners/logos/apinebula_banner.png" alt="APINebula" width="150"></a></td>
+<td>本プロジェクトは「APINEBULA」のスポンサーシップにより運営されています！APINEBULA は、「銀河録像局」傘下のエンタープライズ向け AI 統合プラットフォームです。大手の豊富なリソースを背景に、開発者、チーム、そして企業ユーザーの皆様へ、安定性とコストパフォーマンスに優れた大規模言語モデル（LLM）の API 連携サービスを提供しています。Claude、GPT、Gemini をはじめとする世界中の主要なフルスペック（満血）モデルを 1 つの API に集約。世界トップクラスの AI モデルを、<strong>最大 90% OFF（元の価格の 1 割〜）</strong>という圧倒的な低価格でご利用いただけます。また、企業向けの高度な並行処理（高コンカレンシー）、正式な契約締結、法人口座振り込み、請求書・領収書発行など、ビジネス利用に必要なサポートも万全です。AI プログラミング、AI エージェント開発、業務システムへの統合など、様々なシーンに最適です。<a href="https://apinebula.com/02rw5X">こちらのリンク</a>から登録し、チャージ時にプロモコード <strong>「ccswitch」を入力すると、さらに 10% OFF</strong> の割引特典が適用されます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch"><img src="assets/partners/logos/atlascloud_banner.png" alt="Atlas Cloud" width="150"></a></td>
+<td>Atlas Cloud は、1 つの API で動画・画像生成や LLM（大規模言語モデル）を利用できる全モーダル対応の AI 推論プラットフォームです。複数のベンダーを個別に管理する手間を省き、一度の接続で 300 以上の厳選されたマルチモーダルモデルにアクセスできます。より低コストで API を利用できる、開発者向けの新しい<a href="https://www.atlascloud.ai/coding-plan?utm_source=github&utm_campaign=cc-switch">「コーディングプラン」</a>プロモーションをぜひチェックしてください！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.ccsub.net/register?ref=Y6Z8DXEA"><img src="assets/partners/logos/ccsub.svg" alt="CCSub" width="150"></a></td>
+<td>CCSub のご支援に感謝します！CCSub は安定した低価格の AI API リレープラットフォームで、Claude Code 公式サブスクリプションの強力な代替です。1 つの API キーで Claude Opus 4.8、Sonnet 4.6、Haiku 4.5、GPT-5、Gemini、DeepSeek の全モデルを公式直接利用の約 1/3 のコストでご利用いただけます。VPN 不要で世界中から直接接続可能。Claude Code、Codex、Cursor、Cline、Continue、Windsurf など主要な AI コーディングツールすべてに対応しています。<a href="https://www.ccsub.net/register?ref=Y6Z8DXEA">こちらのリンク</a>から登録すると $5 の無料クレジットがもらえます。</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
+<td>Unity2.ai のご支援に感謝します！Unity2.ai は個人開発者・チーム・企業向けの高性能 AI モデル API リレープラットフォームです。中国の大手企業に長年利用されており、1 日 300 億トークン以上を処理し、5000 RPM クラスの高並列に対応しています。残高課金、初回チャージボーナス、組み合わせサブスクリプション、企業向け請求書発行、専任サポートを提供。<a href="https://unity2.ai/register?source=ccs">こちらのリンク</a>から登録すると $2 のクレジット、公式グループへの参加でさらに $10、最大 $12 の無料クレジットがもらえます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
+<td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 9.9 元（150 ドル相当）のお得な Coding Plan を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://zetaapi.ai/go/ccs"><img src="assets/partners/logos/zetaapi-banner.png" alt="ZetaAPI" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている ZetaAPI に感謝します！ZetaAPI は、モデル品質の忠実性、水増しなし、性能劣化なし、公式価格の 35% から利用できる低価格を主な特徴としています。プラットフォームはトラフィックの混在、低品質モデルへの密かな切り替え、虚偽のモデルルーティングを行わず、Claude Code、Codex、Gemini、ChatGPT などの主要 AI モデルに対応しており、モデル品質を維持しながら API 利用コストを大幅に削減できます。同時に、ZetaAPI はエンタープライズ級の SLA 安定性保証、標準 API 互換、1つの Key による複数モデル接続、迅速な導入、従量課金などの機能を提供し、AI プロダクト、コード生成、企業内ツール、カスタマーサポート、コンテンツ生成、自動化ワークフローなどの用途に適しています。万が一、モデル品質が表記内容と一致しないことが確認された場合、ZetaAPI は 10 倍補償保証を提供し、ユーザーがより安定して、透明性高く、安心して利用できる環境を実現します。<a href="https://zetaapi.ai/go/ccs">こちらのリンク</a>から登録し、初回チャージ時にプロモコード CC-SWITCH を使用すると、CC Switch ユーザー限定の初回チャージ 10% オフ特典をご利用いただけます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
+<td>本プロジェクトをご支援いただいている <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> に感謝します！NekoCode は、Claude や Codex などの AI モデルに対応した、安定性・効率性・信頼性に優れた API 中継サービスを提供しています。料金体系は明瞭で、柔軟な従量課金にも対応しています。CC Switch ユーザー限定の 10%オフ特典：<a href="https://nekocode.ai?aff=CCSWITCH">こちらのリンク</a> から登録し、チャージ時にクーポンコード <code>cc-switch</code> を入力すると、チャージが 10%オフになります！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.newapi.ai/"><img src="assets/partners/logos/newapi-banner.png" alt="new-api" width="150"></a></td>
+<td>オープンソースの AI インフラプロジェクト <a href="https://www.newapi.ai/">new-api</a> による本プロジェクトへの多大なご支援に感謝します！new-api は QuantumNous（锟腾科技）が開発したオープンソースの AI インフラプロジェクトであり、活発さと利用規模の面でリードする LLM 統合アクセス・配信プロジェクトの一つで、開発者・チーム・企業がより低コストで管理・拡張可能な AI サービスプラットフォームを構築できるよう支援することに注力しています。同じくオープンソースエコシステムに根ざすプロジェクトとして、new-api はスポンサーシップを通じて、より多くの優れたオープンソースプロジェクトの継続的な発展を支援したいと考えています。🌟 new-api への Star で応援をお願いします：<a href="https://github.com/QuantumNous/new-api">https://github.com/QuantumNous/new-api</a>。公式サイト：<a href="https://www.newapi.ai/">https://www.newapi.ai/</a>。</td>
+</tr>
+
+</table>
+
+</details>
+
+## CC Switch を選ぶ理由
+
+最新の AI コーディングは Claude Code、Claude Desktop、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes などのツールに依存していますが、各ツールの設定形式はバラバラです。API プロバイダを切り替えるたびに JSON、TOML、`.env` ファイルを手動で編集する必要があり、複数ツール間で MCP や Skills を統一的に管理する手段もありません。
+
+**CC Switch** は、対応する AI ツールを 1 つのデスクトップアプリで一元管理できます。設定ファイルを手作業で編集する代わりに、ワンクリックでプロバイダをインポートし、瞬時に切り替えられるビジュアルインターフェースを提供します。50 以上の組み込みプリセット、統一 MCP・Skills 管理、システムトレイからの即時切り替え機能を搭載。すべてはアトミック書き込みによる信頼性の高い SQLite データベースに支えられており、設定の破損を防ぎます。
+
+- **1 つのアプリで 7 つのツール** -- Claude Code、Claude Desktop、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes を単一インターフェースで管理
+- **手動編集は不要** -- AWS Bedrock、NVIDIA NIM、コミュニティリレーなど 50 以上のプロバイダプリセットを内蔵。選んで切り替えるだけ
+- **統一 MCP・Skills 管理** -- 1 つのパネルで Claude、Codex、Gemini、OpenCode、Hermes の MCP サーバーと Skills を双方向同期で管理
+- **システムトレイでクイック切り替え** -- トレイメニューから即座にプロバイダを切り替え。アプリを開く必要なし
+- **クラウド同期** -- Dropbox、OneDrive、iCloud、または WebDAV サーバー経由でデバイス間のプロバイダデータを同期
+- **クロスプラットフォーム** -- Tauri 2 で構築された Windows、macOS、Linux 対応のネイティブデスクトップアプリ
+- **便利ツール内蔵** -- 初回起動時のログイン確認、署名バイパス、プラグイン拡張の同期など、さまざまなユーティリティを搭載
+
+## スクリーンショット
+
+|                  メイン画面                   |                  プロバイダ追加                  |
+| :-------------------------------------------: | :----------------------------------------------: |
+| ![メイン画面](assets/screenshots/main-ja.png) | ![プロバイダ追加](assets/screenshots/add-ja.png) |
+
+## 特長
+
+[完全な更新履歴](CHANGELOG.md) | [リリースノート](docs/release-notes/v3.16.1-ja.md)
+
+### プロバイダ管理
+
+- **7 つの対応ツール、50 以上のプリセット** -- Claude Code、Claude Desktop、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes。キーをコピーしてワンクリックでインポート
+- **ユニバーサルプロバイダ** -- 1 つの設定を Claude Code、Codex、Gemini CLI に同期
+- ワンクリック切り替え、システムトレイクイックアクセス、ドラッグ＆ドロップ並び替え、インポート/エクスポート
+
+### プロキシ & フェイルオーバー
+
+- **ローカルプロキシのホットスイッチ** -- フォーマット変換、自動フェイルオーバー、サーキットブレーカー、プロバイダヘルスモニタリング、リクエストレクティファイア
+- **アプリレベルのテイクオーバー** -- Claude、Codex、Gemini を個別にプロキシ経由でルーティング、プロバイダ単位で設定可能
+
+### MCP、Prompts & Skills
+
+- **統一 MCP パネル** -- Claude、Codex、Gemini、OpenCode、Hermes の MCP サーバーを管理、双方向同期、Deep Link インポート対応
+- **Prompts** -- Markdown エディタ、クロスアプリ同期（CLAUDE.md / AGENTS.md / GEMINI.md）、バックフィル保護
+- **Skills** -- GitHub リポジトリまたは ZIP ファイルからワンクリックインストール、カスタムリポジトリ管理、シンボリックリンクとファイルコピーに対応
+
+### 使用量 & コストトラッキング
+
+- **使用量ダッシュボード** -- プロバイダ横断で支出・リクエスト数・トークン使用量を追跡、トレンドチャート、詳細リクエストログ、カスタムモデル価格設定
+
+### Session Manager & ワークスペース
+
+- 対応するセッションソースの会話履歴を閲覧・検索・復元
+- **ワークスペースエディタ**（OpenClaw）-- エージェントファイル（AGENTS.md、SOUL.md など）を Markdown プレビュー付きで編集
+
+### システム & プラットフォーム
+
+- **クラウド同期** -- カスタム設定ディレクトリ（Dropbox、OneDrive、iCloud、NAS）および WebDAV サーバー同期
+- **Deep Link** (`ccswitch://`) -- URL 経由でプロバイダ、MCP サーバー、Prompts、Skills をワンクリックインポート
+- ダーク / ライト / システムテーマ、自動起動、自動アップデーター、アトミック書き込み、自動バックアップ、多言語対応（簡体中文/繁體中文/英/日）
+
+## よくある質問
+
+<details>
+<summary><strong>CC Switch はどの AI ツールに対応していますか？</strong></summary>
+
+CC Switch は **Claude Code**、**Claude Desktop**、**Codex**、**Gemini CLI**、**OpenCode**、**OpenClaw**、**Hermes** の 7 つのツールに対応しています。各ツールに専用のプロバイダプリセットと設定管理が用意されています。
+
+</details>
+
+<details>
+<summary><strong>プロバイダを切り替えた後、ターミナルの再起動は必要ですか？</strong></summary>
+
+ほとんどのツールでは、はい。変更を反映するにはターミナルまたは CLI ツールを再起動してください。ただし **Claude Code** は例外で、現在プロバイダデータのホットスイッチに対応しており、再起動は不要です。
+
+</details>
+
+<details>
+<summary><strong>プロバイダを切り替えた後、プラグイン設定が消えてしまいました。どうすればよいですか？</strong></summary>
+
+CC Switch には「共有設定スニペット」機能があり、APIキーやエンドポイント以外の共通データをプロバイダ間で引き継ぐことができます。「プロバイダ編集」→「共有設定パネル」→「現在のプロバイダから抽出」をクリックして、すべての共通データを保存してください。新しいプロバイダを作成する際に「共有設定を適用」にチェック（デフォルトで有効）を入れれば、プラグインなどのデータが新しいプロバイダ設定に含まれます。すべての設定項目は、アプリ初回起動時にインポートされたデフォルトプロバイダに保存されており、失われることはありません。
+
+</details>
+
+<details>
+<summary><strong>macOS のインストールについて</strong></summary>
+
+CC Switch の macOS 版は Apple によるコード署名と公証が完了しています。直接ダウンロードしてインストールできます — 追加の手順は不要です。`.dmg` インストーラの使用を推奨します。
+
+</details>
+
+<details>
+<summary><strong>現在アクティブなプロバイダを削除できないのはなぜですか？</strong></summary>
+
+CC Switch は「最小限の介入」という設計原則に従っています。アプリをアンインストールしても、CLI ツールは正常に動作し続けます。すべての設定を削除すると対応する CLI ツールが使用できなくなるため、システムは常にアクティブな設定を 1 つ保持します。特定の CLI ツールをあまり使用しない場合は、設定で非表示にできます。公式ログインに戻す方法は、次の質問をご覧ください。
+
+</details>
+
+<details>
+<summary><strong>公式ログインに戻すにはどうすればよいですか？</strong></summary>
+
+プリセットリストから公式プロバイダを追加してください。切り替え後、ログアウト／ログインのフローを実行すれば、以降は公式プロバイダとサードパーティプロバイダを自由に切り替えられます。Codex では異なる公式プロバイダ間の切り替えに対応しており、複数の Plus アカウントや Team アカウントの切り替えに便利です。
+
+</details>
+
+<details>
+<summary><strong>データはどこに保存されますか？</strong></summary>
+
+- **データベース**: `~/.cc-switch/cc-switch.db`（SQLite -- プロバイダ、MCP、Prompts、Skills）
+- **ローカル設定**: `~/.cc-switch/settings.json`（デバイスレベルの UI 設定）
+- **バックアップ**: `~/.cc-switch/backups/`（自動ローテーション、最新 10 件を保持）
+- **Skills**: `~/.cc-switch/skills/`（デフォルトでシンボリックリンクにより対応アプリに接続）
+- **Skill バックアップ**: `~/.cc-switch/skill-backups/`（アンインストール前に自動作成、最新 20 件を保持）
+
+</details>
+
+<details>
+<summary><strong>Linux（Wayland + NVIDIA）：Web コンテンツがクリックできない・リサイズで黒画面になる</strong></summary>
+
+AppImage は過去のネイティブ Wayland クラッシュを避けるため `GDK_BACKEND=x11`（XWayland）を強制します。新しい Wayland + NVIDIA 環境ではこれが原因で Web コンテンツ領域がクリックできなくなり（タイトルバーのボタンは動作します）、リサイズ時に黒画面になることがあります。内蔵のエスケープハッチでネイティブ Wayland に戻せます：
+
+```bash
+CC_SWITCH_GDK_BACKEND=wayland ./CC-Switch-*.AppImage
+```
+
+デスクトップアイコンから起動する場合は、`.desktop` の `Exec=` 行に追記するか（例：`env CC_SWITCH_GDK_BACKEND=wayland /path/to/AppImage`）、セッション環境で設定してください。この変数は汎用です：タイル型 Wayland コンポジタ（sway/Hyprland）でクリックが効かない場合は、逆に `CC_SWITCH_GDK_BACKEND=x11` を試してください。未設定の場合は既定の動作のままです。
+
+</details>
+
+## ドキュメント
+
+各機能の詳しい使い方については、**[ユーザーマニュアル](docs/user-manual/ja/README.md)** をご覧ください。プロバイダ管理、MCP/Prompts/Skills、プロキシとフェイルオーバーなど、すべての機能を網羅しています。
+
+## クイックスタート
+
+### 基本的な使い方
+
+1. **プロバイダ追加**: 「Add Provider」をクリック → プリセットを選ぶかカスタム設定を作成
+2. **プロバイダ切り替え**:
+   - メイン UI: プロバイダを選択 → 「Enable」をクリック
+   - システムトレイ: プロバイダ名をクリック（即時反映）
+3. **反映**: ターミナルまたは対応する CLI ツールを再起動して適用（Claude Code は再起動不要）
+4. **公式設定に戻す**: 「Official Login」プリセットを追加し、CLI ツールを再起動してログイン/OAuth フローを実行
+
+### MCP、Prompts、Skills & Sessions
+
+- **MCP**: 「MCP」ボタンをクリック → テンプレートまたはカスタム設定でサーバーを追加 → アプリごとの同期をトグルで切り替え
+- **Prompts**: 「Prompts」をクリック → Markdown エディタでプリセットを作成 → 有効化してライブファイルに同期
+- **Skills**: 「Skills」をクリック → GitHub リポジトリを閲覧 → 対応アプリへワンクリックでインストール
+- **Sessions**: 「Sessions」をクリック → 対応するセッションソースの会話履歴を閲覧・検索・復元
+
+> **補足**: 初回起動時に、既存の CLI ツール設定を手動でインポートしてデフォルトプロバイダとして使用できます。
+
+## ダウンロード & インストール
+
+### システム要件
+
+- **Windows**: Windows 10 以上
+- **macOS**: macOS 12 (Monterey) 以上
+- **Linux**: Ubuntu 22.04+ / Debian 11+ / Fedora 34+ など主要ディストリビューション
+
+### Windows ユーザー
+
+[Releases](../../releases) ページから最新版の `CC-Switch-v{version}-Windows.msi` インストーラー、またはポータブル版 `CC-Switch-v{version}-Windows-Portable.zip` をダウンロード。
+
+### macOS ユーザー
+
+**方法 1: Homebrew でインストール（推奨）**
+
+```bash
+brew install --cask cc-switch
+```
+
+アップデート:
+
+```bash
+brew upgrade --cask cc-switch
+```
+
+**方法 2: 手動ダウンロード**
+
+[Releases](../../releases) から `CC-Switch-v{version}-macOS.zip` をダウンロードして展開。
+
+> **注意**: 開発者アカウント未登録のため、初回起動時に「開発元を確認できません」と表示される場合があります。一度閉じてから「システム設定」→「プライバシーとセキュリティ」→「このまま開く」をクリックしてください。以降は通常通り起動できます。
+
+### Arch Linux ユーザー
+
+**paru でインストール（推奨）**
+
+```bash
+paru -S cc-switch-bin
+```
+
+### Linux ユーザー
+
+[Releases](../../releases) から最新版の Linux ビルドをダウンロード：
+
+- `CC-Switch-v{version}-Linux.deb`（Debian/Ubuntu）
+- `CC-Switch-v{version}-Linux.rpm`（Fedora/RHEL/openSUSE）
+- `CC-Switch-v{version}-Linux.AppImage`（汎用）
+
+> **Flatpak**：公式リリースには含まれていません。`.deb` から自分でビルドできます — 手順は [`flatpak/README.md`](flatpak/README.md) を参照してください。
+
+<details>
+<summary><strong>アーキテクチャ概要</strong></summary>
+
+### 設計原則
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Frontend (React + TS)                    │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
+│  │ Components  │  │    Hooks     │  │  TanStack Query  │    │
+│  │   (UI)      │──│ (Bus. Logic) │──│   (Cache/Sync)   │    │
+│  └─────────────┘  └──────────────┘  └──────────────────┘    │
+└────────────────────────┬────────────────────────────────────┘
+                         │ Tauri IPC
+┌────────────────────────▼────────────────────────────────────┐
+│                  Backend (Tauri + Rust)                     │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐    │
+│  │  Commands   │  │   Services   │  │  Models/Config   │    │
+│  │ (API Layer) │──│ (Bus. Layer) │──│     (Data)       │    │
+│  └─────────────┘  └──────────────┘  └──────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**コア設計パターン**
+
+- **SSOT** (Single Source of Truth): すべてのデータを `~/.cc-switch/cc-switch.db`（SQLite）に集約
+- **二層ストレージ**: 同期データは SQLite、デバイスデータは JSON
+- **双方向同期**: 切り替え時はライブファイルへ書き込み、編集時はアクティブプロバイダから逆同期
+- **アトミック書き込み**: 一時ファイル + rename パターンで設定破損を防止
+- **並行安全**: Mutex で保護された DB 接続でレースコンディションを防止
+- **レイヤードアーキテクチャ**: Commands → Services → DAO → Database を明確に分離
+
+**主要コンポーネント**
+
+- **ProviderService**: プロバイダの CRUD、切り替え、バックフィル、ソート
+- **McpService**: MCP サーバー管理、インポート/エクスポート、ライブファイル同期
+- **ProxyService**: ローカル Proxy モードのホットスイッチとフォーマット変換
+- **SessionManager**: 対応する全アプリの会話履歴閲覧
+- **ConfigService**: 設定のインポート/エクスポート、バックアップローテーション
+- **SpeedtestService**: API エンドポイントの遅延計測
+
+</details>
+
+<details>
+<summary><strong>開発ガイド</strong></summary>
+
+### 開発環境
+
+- Node.js 18+
+- pnpm 8+
+- Rust 1.85+
+- Tauri CLI 2.8+
+
+### 開発コマンド
+
+```bash
+# 依存関係をインストール
+pnpm install
+
+# ホットリロード付き開発モード
+pnpm dev
+
+# 型チェック
+pnpm typecheck
+
+# コード整形
+pnpm format
+
+# フォーマット検証
+pnpm format:check
+
+# フロントエンド単体テスト
+pnpm test:unit
+
+# ウォッチモード（開発に推奨）
+pnpm test:unit:watch
+
+# アプリをビルド
+pnpm build
+
+# デバッグビルド
+pnpm tauri build --debug
+```
+
+### Rust バックエンド開発
+
+```bash
+cd src-tauri
+
+# Rust コード整形
+cargo fmt
+
+# clippy チェック
+cargo clippy
+
+# バックエンドテスト
+cargo test
+
+# 特定テストのみ実行
+cargo test test_name
+
+# test-hooks フィーチャー付きでテスト
+cargo test --features test-hooks
+```
+
+### テストガイド
+
+**フロントエンドテスト**:
+
+- テストフレームワークに **vitest** を使用
+- **MSW (Mock Service Worker)** で Tauri API 呼び出しをモック
+- コンポーネントテストに **@testing-library/react** を採用
+
+**テスト実行**:
+
+```bash
+# 全テストを実行
+pnpm test:unit
+
+# ウォッチモード（自動再実行）
+pnpm test:unit:watch
+
+# カバレッジレポート付き
+pnpm test:unit --coverage
+```
+
+### 技術スタック
+
+**フロントエンド**: React 18 · TypeScript · Vite · TailwindCSS 3.4 · TanStack Query v5 · react-i18next · react-hook-form · zod · shadcn/ui · @dnd-kit
+
+**バックエンド**: Tauri 2.8 · Rust · serde · tokio · thiserror · tauri-plugin-updater/process/dialog/store/log
+
+**テスト**: vitest · MSW · @testing-library/react
+
+</details>
+
+<details>
+<summary><strong>プロジェクト構成</strong></summary>
+
+```
+├── src/                        # フロントエンド (React + TypeScript)
+│   ├── components/
+│   │   ├── providers/          # プロバイダ管理
+│   │   ├── mcp/                # MCP パネル
+│   │   ├── prompts/            # Prompts 管理
+│   │   ├── skills/             # Skills 管理
+│   │   ├── sessions/           # Session Manager
+│   │   ├── proxy/              # Proxy モードパネル
+│   │   ├── openclaw/           # OpenClaw 設定パネル
+│   │   ├── settings/           # 設定 (Terminal/Backup/About)
+│   │   ├── deeplink/           # Deep Link インポート
+│   │   ├── env/                # 環境変数管理
+│   │   ├── universal/          # クロスアプリ設定
+│   │   ├── usage/              # 使用量統計
+│   │   └── ui/                 # shadcn/ui コンポーネントライブラリ
+│   ├── hooks/                  # カスタムフック（ビジネスロジック）
+│   ├── lib/
+│   │   ├── api/                # Tauri API ラッパー（型安全）
+│   │   └── query/              # TanStack Query 設定
+│   ├── locales/                # 翻訳 (zh/zh-TW/en/ja)
+│   ├── config/                 # プリセット (providers/mcp)
+│   └── types/                  # TypeScript 型定義
+├── src-tauri/                  # バックエンド (Rust)
+│   └── src/
+│       ├── commands/           # Tauri コマンド層（ドメイン別）
+│       ├── services/           # ビジネスロジック層
+│       ├── database/           # SQLite DAO 層
+│       ├── proxy/              # Proxy モジュール
+│       ├── session_manager/    # セッション管理
+│       ├── deeplink/           # Deep Link 処理
+│       └── mcp/                # MCP 同期モジュール
+├── tests/                      # フロントエンドテスト
+└── assets/                     # スクリーンショット & パートナーリソース
+```
+
+</details>
+
+## 貢献
+
+Issue や提案を歓迎します！
+
+PR を送る前に以下をご確認ください：
+
+- 型チェック: `pnpm typecheck`
+- フォーマットチェック: `pnpm format:check`
+- 単体テスト: `pnpm test:unit`
+
+新機能の場合は、PR を送る前に Issue でディスカッションしてください。プロジェクトに合わない機能の PR はクローズされる場合があります。
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=farion1231/cc-switch&type=Date)](https://www.star-history.com/#farion1231/cc-switch&Date)
+
+## ライセンス
+
+MIT © Jason Young

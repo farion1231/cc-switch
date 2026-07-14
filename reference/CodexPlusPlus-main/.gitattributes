@@ -1,0 +1,8 @@
+# Windows shell scripts require CRLF for cmd.exe label parsing
+# (LF-only .bat files break `goto label` at runtime).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.sh text eol=lf
+.github/workflows/*.yml text eol=lf

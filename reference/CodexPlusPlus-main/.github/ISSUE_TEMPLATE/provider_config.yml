@@ -1,0 +1,62 @@
+name: 供应商 / 配置问题
+description: 供应商、Base URL、API Key、协议、config.toml、auth.json 相关问题。
+title: "[Config]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这个模板用于定位供应商切换、纯 API、混入 API Key、协议转换、config.toml / auth.json 写入问题。请务必脱敏。
+  - type: dropdown
+    id: relay_mode
+    attributes:
+      label: 接入模式
+      options:
+        - 纯 API
+        - 官方登录
+        - 官方登录 + 混入 API Key
+        - 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: 上游协议
+      options:
+        - Responses API
+        - Chat Completions
+        - 不确定
+    validations:
+      required: true
+  - type: input
+    id: base_url
+    attributes:
+      label: Base URL
+      description: 可以只写域名，敏感路径请脱敏。
+      placeholder: https://example.com/v1
+  - type: textarea
+    id: config
+    attributes:
+      label: 相关 config.toml / auth.json 片段
+      description: 请删除 API Key、Token、账号等敏感信息。
+      render: toml
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 问题描述
+      placeholder: 切换供应商后 model_provider 被改成...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 状态文件
+      description: 可以贴 latest-status.json 或错误提示。
+      render: json
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经脱敏了 API Key、Token、账号等敏感信息。
+          required: true
+

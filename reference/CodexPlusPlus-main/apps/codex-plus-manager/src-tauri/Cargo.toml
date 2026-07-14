@@ -1,0 +1,32 @@
+[package]
+name = "codex-plus-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "codex_plus_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "codex-plus-plus-manager"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait = "0.1"
+codex-plus-core = { path = "../../../crates/codex-plus-core" }
+codex-plus-data = { path = "../../../crates/codex-plus-data" }
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["custom-protocol", "tray-icon"] }
+tauri-plugin-dialog = "2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true

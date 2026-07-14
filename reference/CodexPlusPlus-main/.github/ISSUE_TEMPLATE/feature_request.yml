@@ -1,0 +1,46 @@
+name: 功能请求
+description: 新功能、交互优化、自动化能力、配置能力增强。
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的使用场景或痛点
+      placeholder: 我经常需要在多个供应商之间切换，但...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望增加什么
+      placeholder: 希望增加一个...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 功能范围
+      options:
+        - 供应商管理
+        - 协议转换
+        - MCP / skills / plugins
+        - 模型列表
+        - 启动 / 会话修复
+        - 界面 / 交互
+        - 构建 / 发布
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你目前的替代做法
+      placeholder: 现在只能手动改 config.toml...
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我确认这不是已有功能可以完成的操作。
+          required: false
+
