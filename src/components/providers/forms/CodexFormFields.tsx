@@ -1020,16 +1020,12 @@ export function CodexFormFields({
                           )}
                         </div>
                         <Input
-                          type="number"
-                          min={1}
-                          inputMode="numeric"
+                          inputMode="text"
+                          className="w-[100px] text-center font-mono text-sm"
                           value={row.contextWindow ?? ""}
                           onChange={(event) =>
                             handleUpdateCatalogRow(index, {
-                              contextWindow: event.target.value.replace(
-                                /[^\d]/g,
-                                "",
-                              ),
+                              contextWindow: event.target.value,
                             })
                           }
                           placeholder={t(
