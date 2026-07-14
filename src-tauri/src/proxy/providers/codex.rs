@@ -696,6 +696,16 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        // GitHub Copilot: token 由 CopilotAuthManager 在转发时动态注入，
+        // 这里返回占位符 + GitHubCopilot 策略（forwarder 的 token 替换由该策略驱动，
+        // 与 adapter 无关）。对照 claude.rs 的同名分支。
+        if provider.is_github_copilot() {
+            return Some(AuthInfo::new(
+                "copilot_placeholder".to_string(),
+                AuthStrategy::GitHubCopilot,
+            ));
+        }
+
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
         //   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer (default, AuthStrategy::Bearer)
@@ -766,6 +776,62 @@ impl ProviderAdapter for CodexAdapter {
                 http::HeaderName::from_static("x-api-key"),
                 auth_header_value(&auth.api_key)?,
             )]);
+        }
+        // GitHub Copilot: 注入 VS Code 指纹头（对照 claude.rs GitHubCopilot 分支）。
+        // 真实 token 由 forwarder 替换占位符后回填 authorization。
+        if auth.strategy == AuthStrategy::GitHubCopilot {
+            use super::copilot_auth;
+            let request_id = uuid::Uuid::new_v4().to_string();
+            return Ok(vec![
+                (
+                    http::HeaderName::from_static("authorization"),
+                    auth_header_value(&bearer)?,
+                ),
+                (
+                    http::HeaderName::from_static("editor-version"),
+                    http::HeaderValue::from_static(copilot_auth::COPILOT_EDITOR_VERSION),
+                ),
+                (
+                    http::HeaderName::from_static("editor-plugin-version"),
+                    http::HeaderValue::from_static(copilot_auth::COPILOT_PLUGIN_VERSION),
+                ),
+                (
+                    http::HeaderName::from_static("copilot-integration-id"),
+                    http::HeaderValue::from_static(copilot_auth::COPILOT_INTEGRATION_ID),
+                ),
+                (
+                    http::HeaderName::from_static("user-agent"),
+                    http::HeaderValue::from_static(copilot_auth::COPILOT_USER_AGENT),
+                ),
+                (
+                    http::HeaderName::from_static("x-github-api-version"),
+                    http::HeaderValue::from_static(copilot_auth::COPILOT_API_VERSION),
+                ),
+                (
+                    http::HeaderName::from_static("openai-intent"),
+                    http::HeaderValue::from_static("conversation-agent"),
+                ),
+                (
+                    http::HeaderName::from_static("x-initiator"),
+                    http::HeaderValue::from_static("user"),
+                ),
+                (
+                    http::HeaderName::from_static("x-interaction-type"),
+                    http::HeaderValue::from_static("conversation-agent"),
+                ),
+                (
+                    http::HeaderName::from_static("x-vscode-user-agent-library-version"),
+                    http::HeaderValue::from_static("electron-fetch"),
+                ),
+                (
+                    http::HeaderName::from_static("x-request-id"),
+                    auth_header_value(&request_id)?,
+                ),
+                (
+                    http::HeaderName::from_static("x-agent-task-id"),
+                    auth_header_value(&request_id)?,
+                ),
+            ]);
         }
         Ok(vec![(
             http::HeaderName::from_static("authorization"),

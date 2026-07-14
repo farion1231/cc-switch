@@ -1168,7 +1168,12 @@ impl RequestForwarder {
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
-        if is_copilot {
+        // Copilot 的模型归一化 + 优化器是为 Anthropic messages 格式（claude-* 名、
+        // tool_result/thinking block）设计的。Codex 走 Responses 格式（input 数组、gpt 模型），
+        // 首版仅支持 gpt 系列，跳过这些 Claude 专用改写，只保留 token 注入 / 指纹头 /
+        // 动态 endpoint（下方由 is_copilot 驱动，与此无关）。
+        let is_copilot_claude_body = is_copilot && !matches!(app_type, AppType::Codex);
+        if is_copilot_claude_body {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
@@ -1189,7 +1194,9 @@ impl RequestForwarder {
         //   1. 先在原始 body 上分类（保留 tool_result 语义，避免误判为 user）
         //   2. 再清洗孤立 tool_result（防止上游 API 报错）
         //   3. 再合并 tool_result + text（减少 premium 计费）
-        let copilot_optimization = if is_copilot && self.copilot_optimizer_config.enabled {
+        let copilot_optimization = if is_copilot_claude_body
+            && self.copilot_optimizer_config.enabled
+        {
             // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
             //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
             let has_anthropic_beta = headers.contains_key("anthropic-beta");

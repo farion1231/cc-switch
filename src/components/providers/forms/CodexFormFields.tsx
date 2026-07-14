@@ -27,6 +27,11 @@ import {
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import { CopilotAuthSection } from "./CopilotAuthSection";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+} from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -107,6 +112,12 @@ interface CodexFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  // GitHub Copilot OAuth（托管账号）
+  isCopilotPreset?: boolean;
+  usesOAuth?: boolean;
+  selectedGitHubAccountId?: string | null;
+  onGitHubAccountSelect?: (accountId: string | null) => void;
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
@@ -196,6 +207,10 @@ export function CodexFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  isCopilotPreset,
+  usesOAuth,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -304,6 +319,40 @@ export function CodexFormFields({
   );
 
   const handleFetchModels = useCallback(() => {
+    // GitHub Copilot（托管账号）：用登录账号取模型，无需 API Key。
+    // 首版仅支持 gpt 系列，过滤 vendor 为 openai 的模型。
+    if (isCopilotPreset) {
+      const seq = ++fetchModelsSeqRef.current;
+      setIsFetchingModels(true);
+      const fetchModels = selectedGitHubAccountId
+        ? copilotGetModelsForAccount(selectedGitHubAccountId)
+        : copilotGetModels();
+      fetchModels
+        .then((models) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          const mapped: FetchedModel[] = models
+            .filter((m) => m.vendor?.toLowerCase() === "openai")
+            .map((m) => ({ id: m.id, ownedBy: m.vendor ?? null }));
+          setFetchedModels(mapped);
+          if (mapped.length === 0) {
+            toast.info(t("providerForm.fetchModelsEmpty"));
+          } else {
+            toast.success(
+              t("providerForm.fetchModelsSuccess", { count: mapped.length }),
+            );
+          }
+        })
+        .catch((err) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          console.warn("[Copilot] Failed to fetch models:", err);
+          showFetchModelsError(err, t);
+        })
+        .finally(() => {
+          if (seq === fetchModelsSeqRef.current) setIsFetchingModels(false);
+        });
+      return;
+    }
+
     if (!codexBaseUrl || !codexApiKey) {
       showFetchModelsError(null, t, {
         hasApiKey: !!codexApiKey,
@@ -337,7 +386,15 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
+  }, [
+    codexBaseUrl,
+    codexApiKey,
+    isFullUrl,
+    customUserAgent,
+    t,
+    isCopilotPreset,
+    selectedGitHubAccountId,
+  ]);
 
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;
@@ -430,27 +487,36 @@ export function CodexFormFields({
 
   return (
     <>
-      {/* Codex API Key 输入框 */}
-      <ApiKeySection
-        id="codexApiKey"
-        label="API Key"
-        value={codexApiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-        placeholder={{
-          official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
-          }),
-          thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
-          }),
-        }}
-      />
+      {/* GitHub Copilot OAuth 认证（托管账号，token 由后端动态注入） */}
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+        />
+      )}
 
+      {/* Codex API Key 输入框（非 OAuth 预设时显示） */}
+      {!usesOAuth && (
+        <ApiKeySection
+          id="codexApiKey"
+          label="API Key"
+          value={codexApiKey}
+          onChange={onApiKeyChange}
+          category={category}
+          shouldShowLink={shouldShowApiKeyLink}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
+          placeholder={{
+            official: t("providerForm.codexOfficialNoApiKey", {
+              defaultValue: "官方供应商无需 API Key",
+            }),
+            thirdParty: t("providerForm.codexApiKeyAutoFill", {
+              defaultValue: "输入 API Key，将自动填充到配置",
+            }),
+          }}
+        />
+      )}
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (
         <EndpointField
