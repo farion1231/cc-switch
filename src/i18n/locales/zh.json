@@ -1131,6 +1131,8 @@
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "默认兜底模型",
     "fallbackModelHint": "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
+    "classifierModelLabel": "分类器专用模型",
+    "classifierModelHint": "可选。Auto Mode 分类器请求将被路由到此模型（基于 max_tokens ≤ 256 判定）。留空则不启用分类器劫持。",
     "quickSetModels": "一键设置",
     "quickSetSuccess": "已将模型名称应用到所有角色",
     "advancedOptionsToggle": "高级选项",

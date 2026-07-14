@@ -48,9 +48,7 @@ impl ModelMapping {
                 .filter(|s| !s.is_empty())
                 .map(String::from),
             classifier_model: env
-                .and_then(|e| e.get("ANTHROPIC_CLASSIFIER_MODEL"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
+                .and_then(get_classifier_model_from_env)
                 .map(String::from),
         }
     }
@@ -164,6 +162,13 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
+/// Extract ANTHROPIC_CLASSIFIER_MODEL from an env JSON object.
+fn get_classifier_model_from_env(env: &Value) -> Option<&str> {
+    env.get("ANTHROPIC_CLASSIFIER_MODEL")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+}
+
 /// Determine whether an Anthropic Messages request is a classifier request.
 ///
 /// Classifier requests are identified by max_tokens ≤ 256.
@@ -222,9 +227,7 @@ pub fn apply_classifier_override_from_provider(body: &mut Value, provider: &Prov
     let classifier_model = provider
         .settings_config
         .get("env")
-        .and_then(|e| e.get("ANTHROPIC_CLASSIFIER_MODEL"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty());
+        .and_then(get_classifier_model_from_env);
     apply_classifier_override(body, classifier_model);
 }
 

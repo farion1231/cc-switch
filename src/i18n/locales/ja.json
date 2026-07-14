@@ -1131,6 +1131,8 @@
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "既定フォールバックモデル",
     "fallbackModelHint": "Sonnet・Opus・Fable・Haiku のいずれにも明確に対応しないリクエストのフォールバックです。サードパーティ/中継エンドポイントでは設定を推奨します。設定しないと、これらのリクエスト（Haiku のバックグラウンドサブタスクを含む）が元の Claude モデル名のまま上流へ転送され、上流に該当モデルが無い場合は失敗することがあります。公式エンドポイントでは空欄で構いません。",
+    "classifierModelLabel": "分類器専用モデル",
+    "classifierModelHint": "オプション。Auto Mode分類器リクエストはこのモデルにルーティングされます（max_tokens ≤ 256で判定）。空白の場合は分類器ハイジャックを無効にします。",
     "quickSetModels": "一括設定",
     "quickSetSuccess": "モデル名をすべての役割に適用しました",
     "advancedOptionsToggle": "高級オプション",
