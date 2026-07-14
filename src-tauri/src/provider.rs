@@ -163,17 +163,30 @@ impl Provider {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
             .and_then(Value::as_str)
-            .or_else(|| self.settings_config.get("base_url").and_then(Value::as_str))
-            .or_else(|| self.settings_config.get("baseURL").and_then(Value::as_str))
+            .filter(|base_url| !base_url.trim().is_empty())
+            .or_else(|| {
+                self.settings_config
+                    .get("base_url")
+                    .and_then(Value::as_str)
+                    .filter(|base_url| !base_url.trim().is_empty())
+            })
+            .or_else(|| {
+                self.settings_config
+                    .get("baseURL")
+                    .and_then(Value::as_str)
+                    .filter(|base_url| !base_url.trim().is_empty())
+            })
             .or_else(|| {
                 self.settings_config
                     .get("apiEndpoint")
                     .and_then(Value::as_str)
+                    .filter(|base_url| !base_url.trim().is_empty())
             })
             .or_else(|| {
                 self.settings_config
                     .pointer("/apiEndpoint/url")
                     .and_then(Value::as_str)
+                    .filter(|base_url| !base_url.trim().is_empty())
             })
     }
 
@@ -1501,6 +1514,36 @@ mod tests {
         );
 
         assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Claude));
+    }
+
+    #[test]
+    fn claude_blank_env_base_url_uses_real_fallback() {
+        let custom_fallback = Provider::with_id(
+            "blank-env-custom-claude".to_string(),
+            "Blank env custom Claude".to_string(),
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "" },
+                "baseURL": "https://openrouter.ai/api/v1"
+            }),
+            None,
+        );
+        assert!(
+            !custom_fallback.is_official_equivalent_for_app(&crate::app_config::AppType::Claude)
+        );
+
+        let codex_fallback = Provider::with_id(
+            "blank-env-codex-claude".to_string(),
+            "Blank env Codex Claude".to_string(),
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "   " },
+                "apiEndpoint": {
+                    "url": "https://chatgpt.com/backend-api/codex"
+                }
+            }),
+            None,
+        );
+        assert!(codex_fallback.is_codex_oauth());
+        assert!(codex_fallback.uses_managed_account_auth());
     }
 
     #[test]
