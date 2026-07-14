@@ -43,6 +43,14 @@ use live::{
 };
 use usage::validate_usage_script;
 
+/// The built-in Codex official provider is safe to select during takeover:
+/// Codex keeps ownership of its ChatGPT login and the proxy only forwards the
+/// authenticated request. Other official providers retain the existing block.
+pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(app_type, AppType::Codex)
+        && crate::proxy::providers::is_codex_official_provider(provider)
+}
+
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
 /// 当前供应商非官方（或不存在）时为 no-op：注入只作用于官方配置，
@@ -714,6 +722,8 @@ mod tests {
                 "ANTHROPIC_BASE_URL": "https://example.com",
                 "ANTHROPIC_MODEL": "claude-x",
                 "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
                 // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
                 "ENABLE_TOOL_SEARCH": "true",
                 "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
@@ -758,6 +768,12 @@ mod tests {
         assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
         assert!(env
             .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
+            .is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))
             .is_none());
 
         // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
@@ -1090,6 +1106,135 @@ command = "legacy-cmd"
                 .is_none(),
             "model override should be removed in takeover live config"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_current_codex_provider_refreshes_and_clears_catalog_during_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut original = Provider::with_id(
+            "p1".into(),
+            "Codex A".into(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "token-a" },
+                "config": r#"model_provider = "custom"
+model = "old-model"
+
+[model_providers.custom]
+name = "Codex A"
+base_url = "https://api.a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#,
+                "modelCatalog": {
+                    "models": [{ "model": "old-model" }]
+                }
+            }),
+            None,
+        );
+        original.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+        db.save_provider("codex", &original).expect("save provider");
+        db.set_current_provider("codex", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("codex")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("enable Codex proxy config");
+        }
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&original.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+        state
+            .proxy_service
+            .sync_codex_live_from_provider_while_proxy_active(&original)
+            .await
+            .expect("seed taken-over Codex live config");
+        assert!(
+            state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "seeded Codex live config should be recognized as takeover-owned"
+        );
+
+        let mut updated = original.clone();
+        updated.settings_config["config"] = json!(
+            r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Codex A"
+base_url = "https://api.updated.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        );
+        updated.settings_config["modelCatalog"] = json!({
+            "models": [{ "model": "gpt-5.4", "displayName": "GPT 5.4" }]
+        });
+
+        ProviderService::update(&state, AppType::Codex, None, updated.clone())
+            .expect("update current Codex provider mapping");
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let catalog: Value = read_json_file(&catalog_path).expect("read generated catalog");
+        assert_eq!(catalog["models"][0]["slug"], "gpt-5.4");
+        assert_eq!(
+            catalog["models"][0]["input_modalities"],
+            json!(["text", "image"]),
+            "unknown/GPT models must fail open to image input"
+        );
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read Codex config.toml");
+        assert!(live_config.contains("model_catalog_json"));
+
+        updated.settings_config["modelCatalog"] = json!({ "models": [] });
+        ProviderService::update(&state, AppType::Codex, None, updated)
+            .expect("remove current Codex provider mapping");
+
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read Codex config.toml after mapping removal");
+        assert!(
+            !live_config.contains("model_catalog_json"),
+            "removing mappings during takeover must clear the stale catalog pointer"
+        );
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[cfg(any(target_os = "macos", windows))]
@@ -2175,15 +2320,28 @@ impl ProviderService {
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
                 }
 
-                if matches!(app_type, AppType::Claude)
-                    && futures::executor::block_on(state.proxy_service.is_running())
-                {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .sync_claude_live_from_provider_while_proxy_active(&provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                if futures::executor::block_on(state.proxy_service.is_running()) {
+                    if matches!(app_type, AppType::Claude) {
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_claude_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| {
+                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
+                        })?;
+                    } else if live_taken_over && matches!(app_type, AppType::Codex) {
+                        // Codex model mappings are projected into a generated
+                        // model_catalog_json file. Refresh takeover-owned Live
+                        // immediately so adding/removing mappings cannot leave
+                        // the previous catalog pointer and capabilities active.
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_codex_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
+                    }
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
@@ -2394,7 +2552,10 @@ impl ProviderService {
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
-        if should_hot_switch && _provider.category.as_deref() == Some("official") {
+        if should_hot_switch
+            && _provider.category.as_deref() == Some("official")
+            && !official_provider_supports_proxy_takeover(&app_type, _provider)
+        {
             return Err(AppError::localized(
                 "switch.official_blocked_by_proxy",
                 "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
@@ -2924,6 +3085,11 @@ impl ProviderService {
             "ANTHROPIC_DEFAULT_FABLE_MODEL",
             "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
             "CLAUDE_CODE_SUBAGENT_MODEL",
+            // Context limits follow the actual upstream model. Sharing these
+            // across providers can cap GPT/Kimi to the wrong window and make
+            // Claude Code compact too early or miss the upstream limit.
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
             "ANTHROPIC_BASE_URL",
         ];
 

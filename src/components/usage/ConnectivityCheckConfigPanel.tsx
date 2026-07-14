@@ -10,9 +10,9 @@ import {
   getStreamCheckConfig,
   saveStreamCheckConfig,
   type StreamCheckConfig,
-} from "@/lib/api/model-test";
+} from "@/lib/api/connectivity-check";
 
-export function ModelTestConfigPanel() {
+export function ConnectivityCheckConfigPanel() {
   const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
