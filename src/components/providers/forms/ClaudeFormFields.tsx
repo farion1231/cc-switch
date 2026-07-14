@@ -126,6 +126,7 @@ interface ClaudeFormFieldsProps {
   defaultOpusModelName: string;
   defaultFableModel: string;
   defaultFableModelName: string;
+  subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
   // Speed Test Endpoints
@@ -196,6 +197,7 @@ export function ClaudeFormFields({
   defaultOpusModelName,
   defaultFableModel,
   defaultFableModelName,
+  subagentModel,
   onModelChange,
   speedTestEndpoints,
   apiFormat,
@@ -221,6 +223,7 @@ export function ClaudeFormFields({
     defaultSonnetModel ||
     defaultOpusModel ||
     defaultFableModel ||
+    subagentModel ||
     apiFormat !== "anthropic" ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
@@ -244,6 +247,7 @@ export function ClaudeFormFields({
   const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
+  const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -513,12 +517,12 @@ export function ClaudeFormFields({
   };
 
   type ModelRoleRow = {
-    role: "sonnet" | "opus" | "fable" | "haiku";
+    role: "sonnet" | "opus" | "fable" | "haiku" | "subagent";
     label: string;
     model: string;
-    displayName: string;
+    displayName?: string;
     modelField: ClaudeModelEnvField;
-    displayNameField: ClaudeModelEnvField;
+    displayNameField?: ClaudeModelEnvField;
     inputId: string;
     supportsOneM: boolean;
   };
@@ -564,6 +568,16 @@ export function ClaudeFormFields({
       inputId: "claudeDefaultHaikuModel",
       supportsOneM: false,
     },
+    {
+      role: "subagent",
+      label: t("providerForm.modelRoleSubagent", {
+        defaultValue: "Subagent",
+      }),
+      model: subagentModel,
+      modelField: "CLAUDE_CODE_SUBAGENT_MODEL",
+      inputId: "claudeCodeSubagentModel",
+      supportsOneM: true,
+    },
   ];
 
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
@@ -572,10 +586,10 @@ export function ClaudeFormFields({
       ? value
       : stripClaudeOneMMarker(value);
     const nextModelBase = stripClaudeOneMMarker(normalizedValue).trim();
-    const displayName = row.displayName.trim();
+    const displayName = row.displayName?.trim() ?? "";
     const shouldSyncDisplayName = !displayName || displayName === oldModelBase;
     onModelChange(row.modelField, normalizedValue);
-    if (shouldSyncDisplayName) {
+    if (row.displayNameField && shouldSyncDisplayName) {
       onModelChange(row.displayNameField, nextModelBase);
     }
   };
@@ -815,17 +829,20 @@ export function ClaudeFormFields({
                         defaultSonnetModel ||
                         defaultOpusModel ||
                         defaultFableModel ||
-                        defaultHaikuModel;
+                        defaultHaikuModel ||
+                        subagentModel;
                       if (value) {
                         for (const row of modelRoleRows) {
                           const roleValue = row.supportsOneM
                             ? value
                             : stripClaudeOneMMarker(value);
                           onModelChange(row.modelField, roleValue);
-                          onModelChange(
-                            row.displayNameField,
-                            stripClaudeOneMMarker(roleValue),
-                          );
+                          if (row.displayNameField) {
+                            onModelChange(
+                              row.displayNameField,
+                              stripClaudeOneMMarker(roleValue),
+                            );
+                          }
                         }
                         toast.success(
                           t("providerForm.quickSetSuccess", {
@@ -839,7 +856,8 @@ export function ClaudeFormFields({
                       !defaultHaikuModel &&
                       !defaultSonnetModel &&
                       !defaultOpusModel &&
-                      !defaultFableModel
+                      !defaultFableModel &&
+                      !subagentModel
                     }
                     className="h-7 gap-1"
                   >
@@ -907,19 +925,30 @@ export function ClaudeFormFields({
                     <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
                       {row.label}
                     </div>
-                    <Input
-                      value={row.displayName}
-                      onChange={(event) =>
-                        onModelChange(row.displayNameField, event.target.value)
-                      }
-                      placeholder={
-                        modelBase ||
-                        t("providerForm.modelDisplayNamePlaceholder", {
-                          defaultValue: "例如 DeepSeek V4 Pro",
-                        })
-                      }
-                      autoComplete="off"
-                    />
+                    {row.displayNameField ? (
+                      <Input
+                        value={row.displayName ?? ""}
+                        onChange={(event) =>
+                          onModelChange(
+                            row.displayNameField!,
+                            event.target.value,
+                          )
+                        }
+                        placeholder={
+                          modelBase ||
+                          t("providerForm.modelDisplayNamePlaceholder", {
+                            defaultValue: "例如 DeepSeek V4 Pro",
+                          })
+                        }
+                        autoComplete="off"
+                      />
+                    ) : (
+                      <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                        {t("providerForm.modelNoDisplayName", {
+                          defaultValue: "不显示在 /model 菜单",
+                        })}
+                      </div>
+                    )}
                     {renderModelInput(
                       row.inputId,
                       modelBase,
@@ -957,12 +986,35 @@ export function ClaudeFormFields({
                   defaultValue: "默认兜底模型",
                 })}
               </FormLabel>
-              {renderModelInput(
-                "claudeModel",
-                claudeModel,
-                "ANTHROPIC_MODEL",
-                t("providerForm.modelPlaceholder", { defaultValue: "" }),
-              )}
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
+                {renderModelInput(
+                  "claudeModel",
+                  stripClaudeOneMMarker(claudeModel),
+                  "ANTHROPIC_MODEL",
+                  t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                  (value) =>
+                    onModelChange(
+                      "ANTHROPIC_MODEL",
+                      setClaudeOneMMarker(value, fallbackUsesOneM),
+                    ),
+                )}
+                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox
+                    checked={fallbackUsesOneM}
+                    onCheckedChange={(checked) => {
+                      const base = stripClaudeOneMMarker(claudeModel).trim();
+                      if (!base) return;
+                      onModelChange(
+                        "ANTHROPIC_MODEL",
+                        setClaudeOneMMarker(base, checked === true),
+                      );
+                    }}
+                  />
+                  {t("providerForm.modelOneMLabel", {
+                    defaultValue: "1M",
+                  })}
+                </label>
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.fallbackModelHint", {
                   defaultValue:

@@ -129,6 +129,14 @@ const expectedChatPresets = new Map<
 ]);
 
 describe("Codex Chat provider presets", () => {
+  it("enables session-based prompt cache routing for Kimi Coding", () => {
+    const preset = codexProviderPresets.find(
+      (item) => item.name === "Kimi For Coding",
+    );
+
+    expect(preset?.promptCacheRouting).toBe("enabled");
+  });
+
   it("marks migrated Chat Completions presets for local routing", () => {
     for (const [name, expected] of expectedChatPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);
@@ -163,7 +171,7 @@ describe("Codex Chat provider presets", () => {
         { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
       ],
       ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
-      ["Longcat", { contextWindows: { "LongCat-2.0-Preview": 1048576 } }],
+      ["Longcat", { contextWindows: { "LongCat-2.0": 1048576 } }],
       ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
       ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
       [

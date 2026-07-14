@@ -133,7 +133,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://code0.ai",
@@ -209,24 +209,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "apinebula",
     endpointCandidates: ["https://apinebula.com"],
     icon: "apinebula",
-  },
-  {
-    name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
-        GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.1-flash-lite",
-      },
-    },
-    baseURL: "https://sudocode.us",
-    model: "gemini-3.1-flash-lite",
-    description: "SudoCode",
-    category: "third_party",
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
-    icon: "sudocode",
   },
   {
     name: "Cubence",
