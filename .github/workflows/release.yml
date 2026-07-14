@@ -255,9 +255,12 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] || [ "${APPLE_SIGNING_IDENTITY}" = "-" ]; then
             export APPLE_SIGNING_IDENTITY="-"
-            echo "⚠️ APPLE_SIGNING_IDENTITY is empty, using Ad-Hoc signing ('-')"
+            unset APPLE_ID
+            unset APPLE_PASSWORD
+            unset APPLE_TEAM_ID
+            echo "⚠️ Using Ad-Hoc signing and unsetting notary env vars to skip notarization."
           fi
           set -euo pipefail
           max_attempts=3
