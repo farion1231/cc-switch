@@ -21,6 +21,7 @@ const INSTALLED_SKILL_CONTENTS_QUERY_KEY = [
   "skills",
   "installed-contents",
 ] as const;
+const INSTALLED_SKILL_CONTENTS_STALE_TIME_MS = 30 * 1000;
 
 /**
  * 查询所有已安装的 Skills
@@ -41,7 +42,8 @@ export function useInstalledSkillContents() {
   return useQuery({
     queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
     queryFn: () => skillsApi.getInstalledContents(),
-    staleTime: Infinity,
+    staleTime: INSTALLED_SKILL_CONTENTS_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
   });
 }
 
