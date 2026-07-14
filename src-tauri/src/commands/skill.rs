@@ -7,8 +7,8 @@
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillRepo,
-    SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillBackupEntry, SkillGroup,
+    SkillRepo, SkillService, SkillStorageLocation, SkillUninstallResult, SkillUpdateInfo,
     SkillsShSearchResult,
 };
 use crate::store::AppState;
@@ -95,6 +95,71 @@ pub fn toggle_skill_app(
     let app_type = parse_app_type(&app)?;
     SkillService::toggle_app(&app_state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+#[tauri::command]
+pub fn get_skill_groups(app_state: State<'_, AppState>) -> Result<Vec<SkillGroup>, String> {
+    SkillService::get_skill_groups(&app_state.db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_skill_group(
+    name: String,
+    skill_ids: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<SkillGroup, String> {
+    SkillService::create_manual_skill_group(&app_state.db, &name, skill_ids)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_skill_group(
+    group_id: String,
+    name: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::rename_manual_skill_group(&app_state.db, &group_id, &name)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn delete_skill_group(
+    group_id: String,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::delete_manual_skill_group(&app_state.db, &group_id).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn set_skill_group_members(
+    group_id: String,
+    skill_ids: Vec<String>,
+    app_state: State<'_, AppState>,
+) -> Result<bool, String> {
+    SkillService::set_manual_skill_group_members(&app_state.db, &group_id, skill_ids)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn batch_toggle_skill_group_app(
+    group_id: String,
+    app: String,
+    enabled: bool,
+    skill_ids: Option<Vec<String>>,
+    app_state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let app_type = parse_app_type(&app)?;
+    SkillService::batch_toggle_skill_group_app(
+        &app_state.db,
+        &group_id,
+        &app_type,
+        enabled,
+        skill_ids,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// 扫描未管理的 Skills

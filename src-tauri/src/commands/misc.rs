@@ -638,7 +638,7 @@ fn build_tool_action_line(
         // (npm/pnpm)或 .exe(volta),静态命令头部是 `npm`(也是 .cmd)、`py` 等——
         // 全部加 `call ` 前缀,风格统一且语义正确。含空格的头部已被 `win_quote_path_for_batch`
         // 加上双引号,call 对带引号的路径解析正常。
-        return Ok(format!("call {command}"));
+        Ok(format!("call {command}"))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1069,6 +1069,7 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn fallback_user_shell() -> &'static str {
     if cfg!(target_os = "macos") {
         "/bin/zsh"
@@ -1077,6 +1078,7 @@ fn fallback_user_shell() -> &'static str {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn valid_user_shell_path(shell: &str) -> bool {
     if shell.is_empty()
         || !shell.starts_with('/')
@@ -1100,11 +1102,13 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn is_executable_file(path: &std::path::Path) -> bool {
     path.is_file()
 }
 
 /// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn get_user_shell() -> String {
     std::env::var("SHELL")
         .ok()
@@ -1113,6 +1117,7 @@ fn get_user_shell() -> String {
 }
 
 /// 构建 exec 行：引号保护 shell 路径，交还用户 shell 让其按默认规则加载 rc 配置。
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
     let quoted_shell = shell_single_quote(shell);
 
@@ -1132,6 +1137,7 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 }
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
     let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
     let command = cwd
@@ -1152,6 +1158,7 @@ fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path
     )
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
@@ -1160,6 +1167,7 @@ fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
     if matches!(shell.rsplit('/').next().unwrap_or(shell), "zsh") {
         return String::new();
@@ -2731,7 +2739,7 @@ fn launch_terminal_with_env(
     #[cfg(target_os = "windows")]
     {
         launch_windows_terminal(&temp_dir, &config_file, cwd)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -3252,6 +3260,7 @@ del \"%~f0\" >nul 2>&1
     result
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

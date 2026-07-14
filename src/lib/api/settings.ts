@@ -89,6 +89,10 @@ export const settingsApi = {
     return await invoke("get_app_config_path");
   },
 
+  async getDefaultAppConfigDir(): Promise<string> {
+    return await invoke("get_default_app_config_dir");
+  },
+
   async openAppConfigFolder(): Promise<void> {
     await invoke("open_app_config_folder");
   },

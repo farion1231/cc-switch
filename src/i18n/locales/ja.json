@@ -2191,6 +2191,7 @@
     "addRepo": "スキルリポジトリを追加",
     "loading": "読み込み中...",
     "installed": "インストール済み",
+    "installedFiltered": "インストール済み {{count}} / {{total}}",
     "install": "インストール",
     "installing": "インストール中...",
     "uninstall": "アンインストール",
@@ -2288,6 +2289,10 @@
       "repo": "リポジトリで絞り込み",
       "allRepos": "すべてのリポジトリ"
     },
+    "appFilter": {
+      "noResults": "現在の絞り込みに一致するスキルはありません",
+      "noResultsDescription": "少なくとも1つのアプリ件数ボタンを選択するか、すべてのアプリを選択してインストール済みスキルをすべて表示してください。"
+    },
     "noResults": "一致するスキルが見つかりませんでした",
     "noInstalled": "インストールされたスキルがありません",
     "noInstalledDescription": "リポジトリからスキルを発見してインストールするか、既存のスキルをインポートしてください",
@@ -2337,6 +2342,49 @@
       "successSingle": "スキル {{name}} をインストールしました",
       "successMultiple": "{{count}} 件のスキルをインストールしました",
       "noSkillsFound": "ZIP ファイルにスキルが見つかりません（SKILL.md が必要です）"
+    },
+    "groups": {
+      "views": {
+        "all": "すべて",
+        "source": "ソース別",
+        "manual": "手動グループ"
+      },
+      "kinds": {
+        "source": "ソース",
+        "manual": "手動"
+      },
+      "auto": {
+        "local": "ローカル",
+        "ungrouped": "その他グループ"
+      },
+      "appStates": {
+        "enabled": "すべて有効",
+        "disabled": "すべて無効",
+        "mixed": "一部有効"
+      },
+      "toggleAppForGroup": "{{app}} は現在{{state}}です。クリックしてこのグループを切り替えます。",
+      "create": "新規グループ",
+      "createPrompt": "グループ名を入力",
+      "createSuccess": "グループ {{name}} を作成しました",
+      "rename": "名前を変更",
+      "renamePrompt": "新しいグループ名を入力",
+      "renameSuccess": "グループ {{name}} の名前を変更しました",
+      "delete": "グループを削除",
+      "deleteConfirm": "手動グループ \"{{name}}\" を削除しますか？含まれる Skill はアンインストールされません。",
+      "deleteSuccess": "グループ {{name}} を削除しました",
+      "members": "メンバー",
+      "membersSaved": "{{name}} のメンバーを保存しました",
+      "editMembersTitle": "グループメンバーを編集",
+      "editMembersDescription": "\"{{name}}\" に含める Skills を選択します。",
+      "searchMembers": "Skill を検索...",
+      "selectAll": "すべて選択",
+      "clearAll": "すべて解除",
+      "saveMembers": "メンバーを保存 ({{count}})",
+      "enableSuccess": "{{app}} で {{count}} 個の Skill を有効化しました",
+      "disableSuccess": "{{app}} で {{count}} 個の Skill を無効化しました",
+      "empty": "このグループに一致する Skill はありません",
+      "noResults": "グループがありません",
+      "noResultsDescription": "このグループ種別またはアプリ絞り込みに一致する Skill はありません。"
     }
   },
   "deeplink": {
