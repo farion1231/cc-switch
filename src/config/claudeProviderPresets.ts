@@ -52,10 +52,7 @@ export interface ProviderPreset {
   // - "openai_responses": OpenAI Responses API 格式，需要格式转换
   // - "gemini_native": Gemini Native generateContent API 格式，需要格式转换
   apiFormat?:
-    | "anthropic"
-    | "openai_chat"
-    | "openai_responses"
-    | "gemini_native";
+    "anthropic" | "openai_chat" | "openai_responses" | "gemini_native";
 
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
@@ -1385,8 +1382,7 @@ export const providerPresets: ProviderPreset[] = [
     nameKey: "providerForm.presets.huaweiMaas",
     websiteUrl:
       "https://www.huaweicloud.com/intl/en-us/product/modelarts/studio.html",
-    apiKeyUrl:
-      "https://console-intl.huaweicloud.com/modelarts/",
+    apiKeyUrl: "https://console-intl.huaweicloud.com/modelarts/",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
@@ -1398,7 +1394,7 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.2",
       },
     },
-    category: "cloud_provider",
+    category: "aggregator",
     apiFormat: "openai_chat",
     endpointCandidates: [
       "https://api-ap-southeast-1.modelarts-maas.com/openai/v1",
