@@ -136,6 +136,17 @@ jobs:
           # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
             echo "⚠️ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在，跳过签名配置，进行普通无签名构建。"
+            # 动态删除 tauri.conf.json 里的 plugins.updater 字段以避免 tauri-cli 强制校验签名私钥
+            node -e '
+              const fs = require("fs");
+              const path = "src-tauri/tauri.conf.json";
+              const config = JSON.parse(fs.readFileSync(path, "utf8"));
+              if (config.plugins && config.plugins.updater) {
+                delete config.plugins.updater;
+                fs.writeFileSync(path, JSON.stringify(config, null, 2), "utf8");
+                console.log("✅ 已成功从 tauri.conf.json 中移除 updater 配置，避免签名限制。");
+              }
+            '
             exit 0
           fi
           
