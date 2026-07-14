@@ -472,16 +472,16 @@ fn codex_catalog_model_entry(
     entry_obj.insert("upgrade".to_string(), Value::Null);
 
     // Image support is a model capability, not a tool-profile capability.
-    // Trust hidden preset metadata first, then the confirmed text-only registry;
-    // every unknown model fails open so GPT/relay aliases are never declared
-    // text-only merely because a template had a conservative default.
-    entry_obj.insert(
-        "input_modalities".to_string(),
-        json!(codex_catalog_input_modalities(
-            &spec.model,
-            spec.input_modalities.as_deref(),
-        )),
-    );
+    // Trust explicit image declarations first, then the confirmed text-only
+    // registry. Conservative text-only declarations for known GPT/Codex aliases
+    // are ignored so Codex does not disable image uploads for them.
+    let input_modalities =
+        codex_catalog_input_modalities(&spec.model, spec.input_modalities.as_deref());
+    let supports_image_input = input_modalities.iter().any(|item| item == "image");
+    entry_obj.insert("input_modalities".to_string(), json!(input_modalities));
+    if supports_image_input {
+        entry_obj.insert("supports_image_detail_original".to_string(), json!(true));
+    }
 
     if profile != CodexCatalogToolProfile::ProxyChat {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
@@ -2745,6 +2745,46 @@ base_url = "https://production.api/v1"
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
         );
+    }
+
+    #[test]
+    fn codex_gpt_aliases_keep_image_upload_when_metadata_is_text_only() {
+        // Regression guard for providers that store conservative text-only
+        // metadata for ChatGPT/Codex GPT aliases. If this leaks into Codex's
+        // generated model catalog, the desktop client disables image uploads.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-terra", "inputModalities": ["text"] },
+                    { "model": "gpt-5.6-sol", "inputModalities": ["text"] },
+                    { "model": "gpt-5.6-luna", "inputModalities": ["text"] },
+                    { "model": "gpt-5.5", "inputModalities": ["text"] }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should not error")
+        .expect("non-empty modelCatalog must yield a catalog");
+
+        let models = catalog["models"].as_array().expect("models array");
+        for entry in models {
+            let slug = entry.get("slug").and_then(|v| v.as_str()).unwrap();
+            assert_eq!(
+                entry.get("input_modalities"),
+                Some(&json!(["text", "image"])),
+                "{slug} must stay image-capable in Codex's catalog"
+            );
+            assert_eq!(
+                entry.get("supports_image_detail_original"),
+                Some(&json!(true)),
+                "{slug} must allow Codex to attach original-detail images"
+            );
+        }
     }
 
     #[test]
