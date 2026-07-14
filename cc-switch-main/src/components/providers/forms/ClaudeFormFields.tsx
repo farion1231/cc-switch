@@ -589,7 +589,6 @@ export function ClaudeFormFields({
     }
   };
 
-
   return (
     <>
       {/* GitHub Copilot OAuth 认证 */}
@@ -948,13 +947,23 @@ export function ClaudeFormFields({
                       <Input
                         inputMode="text"
                         className="w-[90px] text-center font-mono text-sm"
-                        value={suffixResult.window ? row.model.slice(row.model.lastIndexOf("[")) : ""}
+                        value={
+                          suffixResult.window
+                            ? row.model.slice(row.model.lastIndexOf("["))
+                            : ""
+                        }
                         onChange={(event) => {
-                          handleRoleModelChange(row, setModelSuffix(row.model, event.target.value));
+                          handleRoleModelChange(
+                            row,
+                            setModelSuffix(row.model, event.target.value),
+                          );
                         }}
-                        placeholder={t("providerForm.modelContextWindowPlaceholder", {
-                          defaultValue: "1M / 200K",
-                        })}
+                        placeholder={t(
+                          "providerForm.modelContextWindowPlaceholder",
+                          {
+                            defaultValue: "1M / 200K",
+                          },
+                        )}
                         aria-label={t("providerForm.modelContextWindowLabel", {
                           defaultValue: "Context Window",
                         })}
@@ -982,9 +991,16 @@ export function ClaudeFormFields({
                 <Input
                   inputMode="text"
                   className="w-[90px] text-center font-mono text-sm"
-                  value={parseModelSuffix(claudeModel).window ? claudeModel.slice(claudeModel.lastIndexOf("[")) : ""}
+                  value={
+                    parseModelSuffix(claudeModel).window
+                      ? claudeModel.slice(claudeModel.lastIndexOf("["))
+                      : ""
+                  }
                   onChange={(event) => {
-                    onModelChange("ANTHROPIC_MODEL", setModelSuffix(claudeModel, event.target.value));
+                    onModelChange(
+                      "ANTHROPIC_MODEL",
+                      setModelSuffix(claudeModel, event.target.value),
+                    );
                   }}
                   placeholder={t("providerForm.modelContextWindowPlaceholder", {
                     defaultValue: "1M / 200K",
