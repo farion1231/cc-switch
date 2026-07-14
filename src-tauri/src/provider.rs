@@ -187,8 +187,19 @@ impl Provider {
         self.settings_config
             .pointer("/env/GOOGLE_GEMINI_BASE_URL")
             .and_then(Value::as_str)
-            .or_else(|| self.settings_config.get("base_url").and_then(Value::as_str))
-            .or_else(|| self.settings_config.get("baseURL").and_then(Value::as_str))
+            .filter(|base_url| !base_url.trim().is_empty())
+            .or_else(|| {
+                self.settings_config
+                    .get("base_url")
+                    .and_then(Value::as_str)
+                    .filter(|base_url| !base_url.trim().is_empty())
+            })
+            .or_else(|| {
+                self.settings_config
+                    .get("baseURL")
+                    .and_then(Value::as_str)
+                    .filter(|base_url| !base_url.trim().is_empty())
+            })
     }
 
     pub fn codex_fast_mode_enabled(&self) -> bool {
@@ -1727,6 +1738,41 @@ model = "gpt-5.4""#
         );
 
         assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+    }
+
+    #[test]
+    fn gemini_blank_env_base_url_falls_back_to_top_level_aliases() {
+        for (id, settings_config) in [
+            (
+                "blank-env-base-url",
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "gemini-key",
+                        "GOOGLE_GEMINI_BASE_URL": ""
+                    },
+                    "base_url": "https://www.packyapi.com"
+                }),
+            ),
+            (
+                "blank-env-base-url-alias",
+                json!({
+                    "env": {
+                        "GEMINI_API_KEY": "gemini-key",
+                        "GOOGLE_GEMINI_BASE_URL": "   "
+                    },
+                    "baseURL": "https://www.packyapi.com"
+                }),
+            ),
+        ] {
+            let provider = Provider::with_id(
+                id.to_string(),
+                "Gemini fallback".to_string(),
+                settings_config,
+                None,
+            );
+
+            assert!(!provider.is_official_equivalent_for_app(&crate::app_config::AppType::Gemini));
+        }
     }
 
     #[test]
