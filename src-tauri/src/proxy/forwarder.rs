@@ -1194,20 +1194,19 @@ impl RequestForwarder {
         //   1. 先在原始 body 上分类（保留 tool_result 语义，避免误判为 user）
         //   2. 再清洗孤立 tool_result（防止上游 API 报错）
         //   3. 再合并 tool_result + text（减少 premium 计费）
-        let copilot_optimization = if is_copilot_claude_body
-            && self.copilot_optimizer_config.enabled
-        {
-            // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
-            //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
-            let has_anthropic_beta = headers.contains_key("anthropic-beta");
-            let classification = super::copilot_optimizer::classify_request(
-                &mapped_body,
-                has_anthropic_beta,
-                self.copilot_optimizer_config.compact_detection,
-                self.copilot_optimizer_config.subagent_detection,
-            );
+        let copilot_optimization =
+            if is_copilot_claude_body && self.copilot_optimizer_config.enabled {
+                // 1. 在原始 body 上分类 — 必须在清洗/合并之前执行
+                //    孤立 tool_result 仍保持 tool_result 类型，分类能正确识别为 agent
+                let has_anthropic_beta = headers.contains_key("anthropic-beta");
+                let classification = super::copilot_optimizer::classify_request(
+                    &mapped_body,
+                    has_anthropic_beta,
+                    self.copilot_optimizer_config.compact_detection,
+                    self.copilot_optimizer_config.subagent_detection,
+                );
 
-            log::debug!(
+                log::debug!(
                 "[Copilot] 优化器分类: initiator={}, is_warmup={}, is_compact={}, is_subagent={}",
                 classification.initiator,
                 classification.is_warmup,
@@ -1215,81 +1214,81 @@ impl RequestForwarder {
                 classification.is_subagent
             );
 
-            // 2. 孤立 tool_result 清理 — 分类完成后再清洗
-            //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
-            mapped_body = super::copilot_optimizer::sanitize_orphan_tool_results(mapped_body);
+                // 2. 孤立 tool_result 清理 — 分类完成后再清洗
+                //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
+                mapped_body = super::copilot_optimizer::sanitize_orphan_tool_results(mapped_body);
 
-            // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
-            if self.copilot_optimizer_config.tool_result_merging {
-                mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
-            }
+                // 3. Tool result 合并 — 将 [tool_result, text] 变为 [tool_result(含text)]
+                if self.copilot_optimizer_config.tool_result_merging {
+                    mapped_body = super::copilot_optimizer::merge_tool_results(mapped_body);
+                }
 
-            // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
-            //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
-            if self.copilot_optimizer_config.strip_thinking {
-                mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
-            }
+                // 3.5. 主动剥离 thinking block — Copilot 走 OpenAI 兼容端点不识别该块
+                //      避免上游拒绝后由 rectifier 反应式重试（首次请求已消耗 quota）
+                if self.copilot_optimizer_config.strip_thinking {
+                    mapped_body = super::copilot_optimizer::strip_thinking_blocks(mapped_body);
+                }
 
-            // 4. Warmup 小模型降级
-            if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
-                log::info!(
-                    "[Copilot] Warmup 请求降级到模型: {}",
-                    self.copilot_optimizer_config.warmup_model
-                );
-                mapped_body["model"] =
-                    serde_json::json!(&self.copilot_optimizer_config.warmup_model);
-            }
+                // 4. Warmup 小模型降级
+                if self.copilot_optimizer_config.warmup_downgrade && classification.is_warmup {
+                    log::info!(
+                        "[Copilot] Warmup 请求降级到模型: {}",
+                        self.copilot_optimizer_config.warmup_model
+                    );
+                    mapped_body["model"] =
+                        serde_json::json!(&self.copilot_optimizer_config.warmup_model);
+                }
 
-            // 预计算确定性 Request ID（在 body 被 move 之前）
-            // Session 提取优先级（与 session.rs extract_from_metadata 对齐）：
-            //   1. metadata.user_id 中的 _session_ 后缀
-            //   2. metadata.session_id（直接字段）
-            //   3. raw metadata.user_id（整串 fallback）
-            //   4. x-session-id header
-            let metadata = body.get("metadata");
-            let session_id = metadata
-                .and_then(|m| m.get("user_id"))
-                .and_then(|v| v.as_str())
-                .and_then(super::session::parse_session_from_user_id)
-                .or_else(|| {
-                    metadata
-                        .and_then(|m| m.get("session_id"))
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                })
-                .or_else(|| {
-                    metadata
-                        .and_then(|m| m.get("user_id"))
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                })
-                .or_else(|| {
-                    headers
-                        .get("x-session-id")
-                        .and_then(|v| v.to_str().ok())
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_default();
-            let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
-                Some(super::copilot_optimizer::deterministic_request_id(
-                    &mapped_body,
-                    &session_id,
-                ))
+                // 预计算确定性 Request ID（在 body 被 move 之前）
+                // Session 提取优先级（与 session.rs extract_from_metadata 对齐）：
+                //   1. metadata.user_id 中的 _session_ 后缀
+                //   2. metadata.session_id（直接字段）
+                //   3. raw metadata.user_id（整串 fallback）
+                //   4. x-session-id header
+                let metadata = body.get("metadata");
+                let session_id = metadata
+                    .and_then(|m| m.get("user_id"))
+                    .and_then(|v| v.as_str())
+                    .and_then(super::session::parse_session_from_user_id)
+                    .or_else(|| {
+                        metadata
+                            .and_then(|m| m.get("session_id"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                    })
+                    .or_else(|| {
+                        metadata
+                            .and_then(|m| m.get("user_id"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                    })
+                    .or_else(|| {
+                        headers
+                            .get("x-session-id")
+                            .and_then(|v| v.to_str().ok())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_default();
+                let det_request_id = if self.copilot_optimizer_config.deterministic_request_id {
+                    Some(super::copilot_optimizer::deterministic_request_id(
+                        &mapped_body,
+                        &session_id,
+                    ))
+                } else {
+                    None
+                };
+
+                // 从 session ID 派生稳定的 interaction ID（同一主对话共享）
+                let interaction_id =
+                    super::copilot_optimizer::deterministic_interaction_id(&session_id);
+
+                Some((classification, det_request_id, interaction_id))
             } else {
                 None
             };
-
-            // 从 session ID 派生稳定的 interaction ID（同一主对话共享）
-            let interaction_id =
-                super::copilot_optimizer::deterministic_interaction_id(&session_id);
-
-            Some((classification, det_request_id, interaction_id))
-        } else {
-            None
-        };
 
         // GitHub Copilot 动态 endpoint 路由
         // 从 CopilotAuthManager 获取缓存的 API endpoint（支持企业版等非默认 endpoint）
