@@ -43,7 +43,7 @@ export function useInstalledSkillContents() {
     queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
     queryFn: () => skillsApi.getInstalledContents(),
     staleTime: INSTALLED_SKILL_CONTENTS_STALE_TIME_MS,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: "always",
   });
 }
 

@@ -37,7 +37,7 @@ function createWrapper() {
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
 
-  return { queryClient, wrapper, invalidateSpy };
+  return { wrapper, invalidateSpy };
 }
 
 beforeEach(() => {
@@ -54,13 +54,13 @@ afterEach(() => {
 });
 
 describe("useInstalledSkillContents", () => {
-  it("refetches stale file contents when the window regains focus", async () => {
+  it("refetches fresh file contents when the window regains focus", async () => {
     apiMocks.getInstalledContents
-      .mockResolvedValueOnce({ skill: "old body" })
-      .mockResolvedValueOnce({ skill: "new body" });
+      .mockResolvedValue({ skill: "new body" })
+      .mockResolvedValueOnce({ skill: "old body" });
     focusManager.setFocused(false);
-    const { queryClient, wrapper } = createWrapper();
-    const { result } = renderHook(() => useInstalledSkillContents(), {
+    const { wrapper } = createWrapper();
+    const { result, unmount } = renderHook(() => useInstalledSkillContents(), {
       wrapper,
     });
 
@@ -68,14 +68,7 @@ describe("useInstalledSkillContents", () => {
       expect(result.current.data).toEqual({ skill: "old body" }),
     );
 
-    const query = queryClient.getQueryCache().find({
-      queryKey: ["skills", "installed-contents"],
-    });
     act(() => {
-      query?.setState({
-        ...query.state,
-        dataUpdatedAt: Date.now() - 31 * 1000,
-      });
       focusManager.setFocused(true);
     });
 
@@ -83,6 +76,7 @@ describe("useInstalledSkillContents", () => {
       expect(result.current.data).toEqual({ skill: "new body" }),
     );
     expect(apiMocks.getInstalledContents).toHaveBeenCalledTimes(2);
+    unmount();
   });
 });
 
