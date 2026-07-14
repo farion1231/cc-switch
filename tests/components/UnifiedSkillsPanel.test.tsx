@@ -209,6 +209,39 @@ describe("UnifiedSkillsPanel", () => {
     expect(screen.queryByText("Gamma Helper")).not.toBeInTheDocument();
   });
 
+  it("matches English names independently of the system locale", async () => {
+    installedSkillsMock = [
+      createInstalledSkill(
+        "installed-helper",
+        "Installed Helper",
+        "General utilities",
+      ),
+    ];
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    const originalToLocaleLowerCase = String.prototype.toLocaleLowerCase;
+    const localeLowerCaseSpy = vi
+      .spyOn(String.prototype, "toLocaleLowerCase")
+      .mockImplementation(function (this: string) {
+        return originalToLocaleLowerCase.call(this, "tr-TR");
+      });
+
+    try {
+      const user = userEvent.setup();
+      const search = screen.getByPlaceholderText(
+        "skills.installedSearchPlaceholder.all",
+      );
+      await user.type(search, "installed");
+
+      expect(screen.getByText("Installed Helper")).toBeInTheDocument();
+    } finally {
+      localeLowerCaseSpy.mockRestore();
+    }
+  });
+
   it("lets users limit installed skill search to name or content", async () => {
     installedSkillsMock = [
       createInstalledSkill("alpha", "Alpha Helper", "General utilities"),

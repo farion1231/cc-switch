@@ -61,7 +61,7 @@ function includesSearchQuery(
   value: string | undefined,
   normalizedQuery: string,
 ): boolean {
-  return value?.toLocaleLowerCase().includes(normalizedQuery) ?? false;
+  return value?.toLowerCase().includes(normalizedQuery) ?? false;
 }
 
 export interface UnifiedSkillsPanelHandle {
@@ -153,7 +153,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   }, [skills]);
 
   const trimmedSearchQuery = searchQuery.trim();
-  const normalizedSearchQuery = trimmedSearchQuery.toLocaleLowerCase();
+  const normalizedSearchQuery = trimmedSearchQuery.toLowerCase();
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
     if (!normalizedSearchQuery) return skills;
