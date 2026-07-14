@@ -45,6 +45,9 @@ pub struct StreamCheckConfig {
     pub max_retries: u32,
     /// 降级阈值（毫秒）：可达但 TTFB 超过该值判定为"较慢"
     pub degraded_threshold_ms: u64,
+    /// 是否启用大模型可用性真实调用检测
+    #[serde(default)]
+    pub enable_model_check: bool,
 }
 
 impl Default for StreamCheckConfig {
@@ -56,6 +59,7 @@ impl Default for StreamCheckConfig {
             timeout_secs: 8,
             max_retries: 1,
             degraded_threshold_ms: 6000,
+            enable_model_check: false,
         }
     }
 }
@@ -147,7 +151,12 @@ impl StreamCheckService {
         let timeout = std::time::Duration::from_secs(config.timeout_secs);
         let ua = Self::custom_user_agent(provider);
 
-        let result = Self::probe_reachability(&client, &base_url, timeout, ua).await;
+        let result = if config.enable_model_check {
+            Self::probe_model_availability(&client, app_type, provider, &base_url, timeout).await
+        } else {
+            Self::probe_reachability(&client, &base_url, timeout, ua).await
+        };
+
         let response_time = start.elapsed().as_millis() as u64;
         Ok(Self::build_result(
             result,
@@ -285,6 +294,232 @@ impl StreamCheckService {
             .meta
             .as_ref()
             .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+    }
+
+    /// 执行真实大模型可用性握手检测
+    async fn probe_model_availability(
+        client: &Client,
+        app_type: &AppType,
+        provider: &Provider,
+        base_url: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u16, AppError> {
+        // 1. 提取 API Key
+        let api_key = match app_type {
+            AppType::ClaudeDesktop | AppType::Claude => {
+                Self::extract_env_value(provider, &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"])
+            }
+            AppType::Gemini => {
+                Self::extract_env_value(provider, &["GEMINI_API_KEY", "GOOGLE_API_KEY"])
+            }
+            _ => {
+                Self::extract_env_value(provider, &["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENCODE_API_KEY", "API_KEY"])
+            }
+        };
+
+        let api_key = match api_key {
+            Some(k) => k,
+            None => return Err(AppError::Message("Missing API Key configuration".to_string())),
+        };
+
+        // 2. 提取 Model
+        let model = match app_type {
+            AppType::ClaudeDesktop | AppType::Claude => {
+                Self::extract_env_value(provider, &["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"])
+                    .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string())
+            }
+            AppType::Gemini => {
+                Self::extract_env_value(provider, &["GEMINI_MODEL"])
+                    .unwrap_or_else(|| "gemini-2.5-pro".to_string())
+            }
+            _ => {
+                Self::extract_env_value(provider, &["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"])
+                    .unwrap_or_else(|| "gpt-4o".to_string())
+            }
+        };
+
+        // 3. 根据接口格式进行探测
+        let is_openai_compat = base_url.contains("/v1") 
+            || base_url.contains("openai") 
+            || base_url.contains("deepseek") 
+            || base_url.contains("dashscope")
+            || base_url.contains("openrouter");
+
+        if *app_type == AppType::Gemini {
+            Self::probe_gemini_api(client, base_url, &api_key, &model, timeout).await
+        } else if *app_type == AppType::Claude && !is_openai_compat {
+            Self::probe_anthropic_api(client, base_url, &api_key, &model, timeout).await
+        } else {
+            Self::probe_openai_api(client, base_url, &api_key, &model, timeout).await
+        }
+    }
+
+    fn extract_env_value(provider: &Provider, keys: &[&str]) -> Option<String> {
+        let env = provider.settings_config.get("env")?.as_object()?;
+        for &k in keys {
+            if let Some(val) = env.get(k).and_then(|v| v.as_str()) {
+                let trimmed = val.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some(trimmed);
+                }
+            }
+        }
+        // 模糊搜索支持自定义或多态命名的环境变量
+        for (k, v) in env {
+            if let Some(val_str) = v.as_str() {
+                let trimmed = val_str.trim().to_string();
+                if !trimmed.is_empty() {
+                    for &target_key in keys {
+                        let target_clean = target_key.replace("_", "").to_lowercase();
+                        let current_clean = k.replace("_", "").to_lowercase();
+                        if current_clean.contains(&target_clean) {
+                            return Some(trimmed);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    async fn probe_openai_api(
+        client: &Client,
+        base_url: &str,
+        key: &str,
+        model: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u16, AppError> {
+        let mut url = base_url.trim().to_string();
+        if !url.ends_with("/chat/completions") {
+            url = format!("{}/chat/completions", url.trim_end_matches('/'));
+        }
+        
+        let payload = serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5
+        });
+
+        let resp = client.post(&url)
+            .timeout(timeout)
+            .header("Authorization", format!("Bearer {key}"))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| AppError::Message(format!("Connection failed: {e}")))?;
+
+        let status = resp.status().as_u16();
+        if status == 200 {
+            Ok(status)
+        } else {
+            let err_text = resp.text().await.unwrap_or_default();
+            let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
+                err_json.pointer("/error/message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(err_text)
+            } else {
+                err_text
+            };
+            let truncated_msg = if msg.len() > 150 { format!("{}...", &msg[..150]) } else { msg };
+            Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
+        }
+    }
+
+    async fn probe_anthropic_api(
+        client: &Client,
+        base_url: &str,
+        key: &str,
+        model: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u16, AppError> {
+        let mut url = base_url.trim().to_string();
+        if !url.ends_with("/v1/messages") {
+            url = format!("{}/v1/messages", url.trim_end_matches('/'));
+        }
+        
+        let payload = serde_json::json!({
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5
+        });
+
+        let resp = client.post(&url)
+            .timeout(timeout)
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| AppError::Message(format!("Connection failed: {e}")))?;
+
+        let status = resp.status().as_u16();
+        if status == 200 {
+            Ok(status)
+        } else {
+            let err_text = resp.text().await.unwrap_or_default();
+            let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
+                err_json.pointer("/error/message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(err_text)
+            } else {
+                err_text
+            };
+            let truncated_msg = if msg.len() > 150 { format!("{}...", &msg[..150]) } else { msg };
+            Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
+        }
+    }
+
+    async fn probe_gemini_api(
+        client: &Client,
+        base_url: &str,
+        key: &str,
+        model: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u16, AppError> {
+        if !base_url.contains("googleapis.com") && (base_url.contains("/v1") || !base_url.contains("/v1beta")) {
+            return Self::probe_openai_api(client, base_url, key, model, timeout).await;
+        }
+        
+        let separator = if base_url.contains('?') { "&" } else { "?" };
+        let url = format!(
+            "{}/v1beta/models/{}:generateContent{}key={}",
+            base_url.trim_end_matches('/'),
+            model,
+            separator,
+            key
+        );
+
+        let payload = serde_json::json!({
+            "contents": [{"parts": [{"text": "ping"}]}],
+            "generationConfig": {"maxOutputTokens": 5}
+        });
+
+        let resp = client.post(&url)
+            .timeout(timeout)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| AppError::Message(format!("Connection failed: {e}")))?;
+
+        let status = resp.status().as_u16();
+        if status == 200 {
+            Ok(status)
+        } else {
+            let err_text = resp.text().await.unwrap_or_default();
+            let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
+                err_json.pointer("/error/message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(err_text)
+            } else {
+                err_text
+            };
+            let truncated_msg = if msg.len() > 150 { format!("{}...", &msg[..150]) } else { msg };
+            Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
+        }
     }
 
     // ===== 各应用 base_url 提取（settings_config 结构互不相同）=====

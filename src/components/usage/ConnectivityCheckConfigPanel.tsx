@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +23,7 @@ export function ConnectivityCheckConfigPanel() {
     timeoutSecs: "8",
     maxRetries: "1",
     degradedThresholdMs: "6000",
+    enableModelCheck: false,
   });
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function ConnectivityCheckConfigPanel() {
         timeoutSecs: String(data.timeoutSecs),
         maxRetries: String(data.maxRetries),
         degradedThresholdMs: String(data.degradedThresholdMs),
+        enableModelCheck: !!data.enableModelCheck,
       });
     } catch (e) {
       setError(String(e));
@@ -57,6 +60,7 @@ export function ConnectivityCheckConfigPanel() {
         timeoutSecs: parseNum(config.timeoutSecs, 8),
         maxRetries: parseNum(config.maxRetries, 1),
         degradedThresholdMs: parseNum(config.degradedThresholdMs, 6000),
+        enableModelCheck: config.enableModelCheck,
       };
       await saveStreamCheckConfig(parsed);
       toast.success(t("streamCheck.configSaved"), {
@@ -89,12 +93,42 @@ export function ConnectivityCheckConfigPanel() {
       <Alert>
         <Info className="h-4 w-4" />
         <AlertDescription>
-          {t("streamCheck.connectivityNote", {
-            defaultValue:
-              "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
-          })}
+          {config.enableModelCheck ? (
+            t("streamCheck.modelCheckNote", {
+              defaultValue:
+                "真实可用性检测会向供应商发送极小的数据包，以验证 API 密钥与模型本身的有效性。这可能会消耗 1~2 个 Token 额度。",
+            })
+          ) : (
+            t("streamCheck.connectivityNote", {
+              defaultValue:
+                "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
+            })
+          )}
         </AlertDescription>
       </Alert>
+
+      {/* 模型真实可用性检测开关 */}
+      <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label htmlFor="enableModelCheck" className="text-base font-medium">
+              {t("streamCheck.enableModelCheck", { defaultValue: "启用大模型可用性真实调用检测" })}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {t("streamCheck.enableModelCheckHint", {
+                defaultValue: "开启后，系统在测速时会发起极轻量的 API 真实调用，自动验证 API 密钥与模型权限（仅推荐中转或自定义 API 开启）。",
+              })}
+            </p>
+          </div>
+          <Switch
+            id="enableModelCheck"
+            checked={config.enableModelCheck}
+            onCheckedChange={(checked) =>
+              setConfig({ ...config, enableModelCheck: checked })
+            }
+          />
+        </div>
+      </div>
 
       {/* 检查参数配置 */}
       <div className="space-y-4">

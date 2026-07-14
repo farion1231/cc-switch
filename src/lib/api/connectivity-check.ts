@@ -13,6 +13,8 @@ export interface StreamCheckConfig {
   maxRetries: number;
   /** 降级阈值（毫秒）：可达但 TTFB 超过该值判定为"较慢" */
   degradedThresholdMs: number;
+  /** 是否启用大模型可用性真实调用检测 */
+  enableModelCheck?: boolean;
 }
 
 export interface StreamCheckResult {

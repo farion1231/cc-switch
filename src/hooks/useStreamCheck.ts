@@ -46,7 +46,24 @@ export function useStreamCheck(appId: AppId) {
             }),
           );
         } else {
-          // 仅当无法建立连接（DNS / 连接被拒 / TLS / 超时）才会到这里
+          // 仅当无法建立连接或真实调用失败时才会到这里
+          const isApiError = result.message.includes("HTTP ");
+          let hint = t("streamCheck.unreachableHint", {
+            defaultValue: "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
+          });
+          
+          if (isApiError) {
+            if (result.message.includes("401") || result.message.toLowerCase().includes("key")) {
+              hint = t("streamCheck.authErrorHint", { defaultValue: "认证失败，请检查您的 API 密钥 (API Key) 配置。" });
+            } else if (result.message.includes("429") || result.message.toLowerCase().includes("quota") || result.message.toLowerCase().includes("limit")) {
+              hint = t("streamCheck.quotaErrorHint", { defaultValue: "频控受限或额度用尽，请检查账户可用额度。" });
+            } else if (result.message.includes("404") || result.message.toLowerCase().includes("model")) {
+              hint = t("streamCheck.modelErrorHint", { defaultValue: "请求模型不存在，或当前渠道未开通该模型访问权限。" });
+            } else {
+              hint = t("streamCheck.apiErrorHint", { defaultValue: "大模型接口调用失败，请根据具体返回的 HTTP 错误进行排查。" });
+            }
+          }
+
           toast.error(
             t("streamCheck.unreachable", {
               providerName: providerName,
@@ -54,10 +71,7 @@ export function useStreamCheck(appId: AppId) {
               defaultValue: `${providerName} 无法连通: ${result.message}`,
             }),
             {
-              description: t("streamCheck.unreachableHint", {
-                defaultValue:
-                  "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
-              }),
+              description: hint,
               duration: 8000,
               closeButton: true,
             },
