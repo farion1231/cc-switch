@@ -2627,7 +2627,14 @@
     "timeout": "逾時時間（秒）",
     "maxRetries": "最大重試次數",
     "degradedThreshold": "緩慢閾值（毫秒）",
-    "error": "{{providerName}} 檢查出錯：{{error}}"
+    "error": "{{providerName}} 檢查出錯：{{error}}",
+    "enableModelCheck": "啟用大模型可用性真實調用檢測",
+    "enableModelCheckHint": "開啟後，系統在檢測時會發起極輕量的 API 真實調用，自動驗證 API 金鑰與模型權限（僅推薦中轉或自定義 API 開啟）。",
+    "modelCheckNote": "真實可用性檢測會向供應商發送極小的數據包，以驗證 API 金鑰與模型本身的有效性。這可能會消耗 1~2 個 Token 額度。",
+    "authErrorHint": "認證失敗，請檢查您的 API 金鑰 (API Key) 配置。",
+    "quotaErrorHint": "頻控受限或額度用盡，請檢查帳戶可用額度。",
+    "modelErrorHint": "請求模型不存在，或當前渠道未開通該模型訪問權限。",
+    "apiErrorHint": "大模型接口調用失敗，請根據具體返回的 HTTP 錯誤進行排查。"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",

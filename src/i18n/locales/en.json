@@ -2655,7 +2655,14 @@
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
     "degradedThreshold": "Slow-response threshold (ms)",
-    "error": "{{providerName}} check error: {{error}}"
+    "error": "{{providerName}} check error: {{error}}",
+    "enableModelCheck": "Enable Real Model Availability Check",
+    "enableModelCheckHint": "When enabled, the system will perform a lightweight real API call during check to verify API key and model permissions.",
+    "modelCheckNote": "Real availability check sends a minimal request to verify the API key and model validity. This may consume 1-2 tokens.",
+    "authErrorHint": "Authentication failed. Please check your API Key configuration.",
+    "quotaErrorHint": "Rate limit exceeded or quota exhausted. Please check your account balance.",
+    "modelErrorHint": "The requested model does not exist, or you lack access permissions.",
+    "apiErrorHint": "API call failed. Please troubleshoot based on the HTTP status code returned."
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",

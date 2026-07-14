@@ -2655,7 +2655,14 @@
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
     "degradedThreshold": "低速判定しきい値（ミリ秒）",
-    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
+    "enableModelCheck": "モデルの可用性リアルチェックを有効化",
+    "enableModelCheckHint": "有効にすると、チェック中に軽量なリアルAPIコールを送信し、APIキーとモデル権限を自動的に検証します。",
+    "modelCheckNote": "リアル可用性チェックは、最小限のリクエストを送信してAPIキーとモデルの有効性を検証します。1〜2トークンを消費する場合があります。",
+    "authErrorHint": "認証に失敗しました。APIキーの設定を確認してください。",
+    "quotaErrorHint": "レート制限を超過したか、または残高が不足しています。",
+    "modelErrorHint": "要求されたモデルが存在しないか、アクセス権限がありません。",
+    "apiErrorHint": "API呼び出しに失敗しました。返されたHTTPステータスコードに基づいてトラブルシューティングを行ってください。"
   },
   "proxyConfig": {
     "proxyEnabled": "ルーティング総スイッチ",
