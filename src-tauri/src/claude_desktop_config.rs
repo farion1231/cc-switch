@@ -32,6 +32,48 @@ pub const ANTHROPIC_CLAUDE_ROUTE_PREFIX: &str = "anthropic/claude-";
 /// Claude Desktop schema 不接受此后缀，import 边界翻译为 `supports1m` 字段。
 pub const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
+/// Parse window token like "1M" / "200K" / "1000000". Returns None for invalid or zero.
+pub fn parse_window_token(token: &str) -> Option<u64> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let (num_part, multiplier) = match token.chars().last() {
+        Some('K' | 'k') => (&token[..token.len() - 1], 1_000u64),
+        Some('M' | 'm') => (&token[..token.len() - 1], 1_000_000u64),
+        Some(_) => (token, 1u64),
+        None => return None,
+    };
+    num_part
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|value| value * multiplier)
+        .filter(|value| *value > 0)
+}
+
+/// Parse context window suffix from model name end, returns (slug, Option<u64>).
+/// Only treats ] as suffix when it is the last char; does not strip on invalid inner.
+pub fn parse_context_window_suffix(model: &str) -> (&str, Option<u64>) {
+    let trimmed = model.trim();
+    if let Some(close) = trimmed.rfind(']') {
+        if close == trimmed.len() - 1 {
+            if let Some(open) = trimmed[..close].rfind('[') {
+                if open > 0 {
+                    let slug = trimmed[..open].trim();
+                    let inner = trimmed[open + 1..close].trim();
+                    if !slug.is_empty() {
+                        if let Some(window) = parse_window_token(inner) {
+                            return (slug, Some(window));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (model, None)
+}
+
 const CURRENT_OPUS_ROUTE_ID: &str = "claude-opus-4-8";
 const LEGACY_OPUS_ROUTE_ID: &str = "claude-opus-4-7";
 
@@ -2218,5 +2260,54 @@ mod tests {
             None,
         );
         assert!(!is_compatible_direct_provider(&missing_bearer));
+    }
+
+    #[test]
+    fn parse_context_window_suffix_1m() {
+        let (slug, window) = parse_context_window_suffix("deepseek-v4-pro[1m]");
+        assert_eq!(slug, "deepseek-v4-pro");
+        assert_eq!(window, Some(1000000));
+    }
+
+    #[test]
+    fn parse_context_window_suffix_200k() {
+        let (slug, window) = parse_context_window_suffix("glm-5.2[200k]");
+        assert_eq!(slug, "glm-5.2");
+        assert_eq!(window, Some(200000));
+    }
+
+    #[test]
+    fn parse_context_window_suffix_uppercase() {
+        let (slug, window) = parse_context_window_suffix("model[500K]");
+        assert_eq!(slug, "model");
+        assert_eq!(window, Some(500000));
+    }
+
+    #[test]
+    fn parse_context_window_suffix_pure_number() {
+        let (slug, window) = parse_context_window_suffix("model[1000000]");
+        assert_eq!(slug, "model");
+        assert_eq!(window, Some(1000000));
+    }
+
+    #[test]
+    fn parse_context_window_suffix_no_suffix() {
+        let (slug, window) = parse_context_window_suffix("model");
+        assert_eq!(slug, "model");
+        assert_eq!(window, None);
+    }
+
+    #[test]
+    fn parse_context_window_suffix_invalid() {
+        let (slug, window) = parse_context_window_suffix("model[invalid]");
+        assert_eq!(slug, "model[invalid]");
+        assert_eq!(window, None);
+    }
+
+    #[test]
+    fn parse_window_token_handles_empty_and_zero() {
+        assert_eq!(parse_window_token(""), None);
+        assert_eq!(parse_window_token("0"), None);
+        assert_eq!(parse_window_token("0K"), None);
     }
 }
