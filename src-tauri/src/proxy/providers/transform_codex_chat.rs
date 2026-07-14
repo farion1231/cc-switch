@@ -1114,6 +1114,21 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             if let Some(strict) = tool.get("strict").cloned() {
                 obj.entry("strict".to_string()).or_insert(strict);
             }
+            // Codex's Automations/Scheduled functions can declare
+            // `parameters: null` (e.g. `codex_app__automation_update`). A JSON
+            // `null` is distinct from a missing key: `.cloned()` yields
+            // `Some(Null)`, so it would pass through verbatim and downstream
+            // providers that strictly validate the function schema (DeepSeek)
+            // reject it with HTTP 400 "schema must be a JSON Schema of 'type:
+            // object', got 'type: null'". Normalize an explicit null (or a
+            // missing parameters field) to a minimal valid object schema.
+            // (#5300)
+            let parameters = obj
+                .get("parameters")
+                .cloned()
+                .filter(|v| !v.is_null())
+                .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+            obj.insert("parameters".to_string(), parameters);
         }
         return Some(chat_tool);
     }
@@ -1121,7 +1136,15 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     let mut function = json!({
         "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
+        // Same null/missing normalization as the `function`-object branch above:
+        // `tool.get("parameters")` returns `Some(Null)` for an explicit null,
+        // which would bypass the `unwrap_or_else` fallback and forward `null`
+        // to the provider. Treat null and missing identically (#5300).
+        "parameters": tool
+            .get("parameters")
+            .cloned()
+            .filter(|v| !v.is_null())
+            .unwrap_or_else(|| json!({"type": "object", "properties": {}}))
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
@@ -1981,6 +2004,80 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_normalizes_null_tool_parameters_for_strict_schemas() {
+        // #5300: Codex's Automations functions (e.g. `codex_app__automation_update`)
+        // declare `parameters: null` instead of a valid JSON Schema. DeepSeek
+        // strictly validates the function schema and rejected the forwarded
+        // `null` with HTTP 400 "schema must be a JSON Schema of 'type: object',
+        // got 'type: null'". Both tool shapes Codex emits must normalize null
+        // (and a missing parameters field) to a minimal valid object schema.
+        // Flat form — the parameters field sits on the tool itself.
+        let flat = json!({
+            "model": "deepseek-v4-pro",
+            "input": [{"role": "user", "content": "run the automation"}],
+            "tools": [{
+                "type": "function",
+                "name": "codex_app__automation_update",
+                "description": "Update an automation",
+                "parameters": null
+            }]
+        });
+        let result = responses_to_chat_completions(flat).unwrap();
+        assert_eq!(result["tools"][0]["function"]["name"], "codex_app__automation_update");
+        let params = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert!(params["properties"].is_object());
+        assert_eq!(params["properties"].as_object().unwrap().len(), 0);
+        // A null parameters must never survive into the converted request.
+        assert!(!params.is_null());
+
+        // Nested form — the tool carries a `function` object whose parameters
+        // is null (the other conversion branch).
+        let nested = json!({
+            "model": "deepseek-v4-pro",
+            "input": [{"role": "user", "content": "run the automation"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "codex_app__automation_update",
+                    "description": "Update an automation",
+                    "parameters": null
+                }
+            }]
+        });
+        let result = responses_to_chat_completions(nested).unwrap();
+        assert_eq!(result["tools"][0]["function"]["name"], "codex_app__automation_update");
+        let params = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert!(params["properties"].is_object());
+        assert!(!params.is_null());
+
+        // A real schema is preserved unchanged (regression guard).
+        let real = json!({
+            "model": "deepseek-v4-pro",
+            "input": [{"role": "user", "content": "hi"}],
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"]
+                }
+            }]
+        });
+        let result = responses_to_chat_completions(real).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["properties"]["city"]["type"],
+            "string"
+        );
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"]["required"][0],
+            "city"
+        );
     }
 
     #[test]
