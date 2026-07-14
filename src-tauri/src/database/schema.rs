@@ -490,6 +490,11 @@ impl Database {
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
                     }
+                    13 => {
+                        log::info!("迁移数据库从 v13 到 v14（添加提示词排序支持）");
+                        Self::migrate_v13_to_v14(conn)?;
+                        Self::set_user_version(conn, 14)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1356,6 +1361,14 @@ impl Database {
                 "input_token_semantics",
                 "INTEGER NOT NULL DEFAULT 0",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v13 -> v14：为提示词增加持久化排序字段。
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "prompts")? {
+            Self::add_column_if_missing(conn, "prompts", "sort_index", "INTEGER")?;
         }
         Ok(())
     }
