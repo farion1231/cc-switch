@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+import type { SkillStorageLocation } from "@/types";
 
 const INSTALLED_SKILL_CONTENTS_QUERY_KEY = [
   "skills",
@@ -41,6 +42,20 @@ export function useInstalledSkillContents() {
     queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
     queryFn: () => skillsApi.getInstalledContents(),
     staleTime: Infinity,
+  });
+}
+
+/** 迁移 Skill 主存储，并重新加载新目录中的 SKILL.md 正文。 */
+export function useMigrateSkillStorage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (target: SkillStorageLocation) =>
+      skillsApi.migrateStorage(target),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
+    },
   });
 }
 
