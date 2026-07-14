@@ -1246,7 +1246,14 @@
     "pricingModelSourceInherit": "グローバル設定を継承",
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
-    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択",
+    "testConfig": "接続性と可用性のテスト設定",
+    "useCustomTestConfig": "専用設定を使用",
+    "testConfigDesc": "このプロバイダー専用のテストパラメータを設定します。有効にすると、グローバルなテストモデルとプロンプトの設定が上書きされます。",
+    "testModelLabel": "テスト対象モデル名",
+    "testModelHint": "特定のモデル名（例：deepseek-chat、qwen-max）を入力します。auto に設定するか空にすると、自動検出を試みます。",
+    "testPromptLabel": "テストプロンプト",
+    "testPromptHint": "速度テスト中にこのプロバイダーに送信されるハンドシェイク要求テキスト（例：hi、ping）。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

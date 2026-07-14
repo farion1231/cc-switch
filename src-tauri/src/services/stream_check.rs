@@ -417,8 +417,14 @@ impl StreamCheckService {
             None => return Err(AppError::Message("Missing API Key configuration".to_string())),
         };
 
-        // 2. 提取 Model
-        let mut model = config.test_model.clone().filter(|s| !s.trim().is_empty());
+        // 2. 提取 Model：优先提取当前 Provider meta 的 testModel，若为空再使用全局配置
+        let mut model = provider.meta.as_ref()
+            .and_then(|m| m.test_model.clone())
+            .filter(|s| !s.trim().is_empty());
+
+        if model.is_none() {
+            model = config.test_model.clone().filter(|s| !s.trim().is_empty());
+        }
         
         // 如果 testModel 为 "auto" 或者未配置，尝试通过 API 动态探测
         if model.as_deref() == Some("auto") || model.is_none() {
@@ -447,10 +453,15 @@ impl StreamCheckService {
             }
         };
 
-        // 3. 提取 Prompt
-        let prompt = config.test_prompt.clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "hi".to_string());
+        // 3. 提取 Prompt：优先提取当前 Provider meta 的 testPrompt，若为空再使用全局配置，最后兜底为 "hi"
+        let mut prompt = provider.meta.as_ref()
+            .and_then(|m| m.test_prompt.clone())
+            .filter(|s| !s.trim().is_empty());
+
+        if prompt.is_none() {
+            prompt = config.test_prompt.clone().filter(|s| !s.trim().is_empty());
+        }
+        let prompt = prompt.unwrap_or_else(|| "hi".to_string());
 
         // 4. 根据接口格式进行探测
         let is_openai_compat = base_url.contains("/v1") 

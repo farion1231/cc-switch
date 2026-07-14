@@ -1246,7 +1246,14 @@
     "pricingModelSourceInherit": "Inherit global default",
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
-    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
+    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model",
+    "testConfig": "Connectivity & Availability Test Configuration",
+    "useCustomTestConfig": "Use Custom Config",
+    "testConfigDesc": "Configure separate testing parameters for this provider. Once enabled, these will override global testing model and prompt settings.",
+    "testModelLabel": "Test Model Name",
+    "testModelHint": "Input specific model name (e.g. deepseek-chat or qwen-max). Set to auto or leave empty for adaptive discovery.",
+    "testPromptLabel": "Test Prompt",
+    "testPromptHint": "The handshake request text sent to this provider during speed tests (like hi or ping)."
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",

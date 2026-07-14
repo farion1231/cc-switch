@@ -1218,7 +1218,14 @@
     "pricingModelSourceInherit": "繼承全域預設",
     "pricingModelSourceRequest": "請求模型",
     "pricingModelSourceResponse": "回傳模型",
-    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
+    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對",
+    "testConfig": "連通性與可用性測試配置",
+    "useCustomTestConfig": "使用專屬配置",
+    "testConfigDesc": "為此供應商配置單獨的測速測試參數，啟用後將覆蓋全局的測速模型和提示詞。",
+    "testModelLabel": "測試模型名稱",
+    "testModelHint": "支援輸入特定模型（如 deepseek-chat 或 qwen-max）。設為 auto 或留空將嘗試自適應探測。",
+    "testPromptLabel": "測試提示詞 (Prompt)",
+    "testPromptHint": "測試時發給該提供商的握手請求文本（如 hi 或 ping）。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
