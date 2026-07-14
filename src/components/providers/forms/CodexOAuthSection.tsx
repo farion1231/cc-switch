@@ -28,6 +28,8 @@ import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 
 interface CodexOAuthSectionProps {
   className?: string;
+  /** 是否展示每个账号的订阅额度 */
+  showAccountQuota?: boolean;
   /** 当前选中的 ChatGPT 账号 ID */
   selectedAccountId?: string | null;
   /** 账号选择回调 */
@@ -46,6 +48,7 @@ interface CodexOAuthSectionProps {
  */
 export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   className,
+  showAccountQuota = false,
   selectedAccountId,
   onAccountSelect,
   fastModeEnabled = false,
@@ -222,7 +225,9 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
                     </Button>
                   </div>
                 </div>
-                <CodexOauthAccountQuota accountId={account.id} />
+                {showAccountQuota && (
+                  <CodexOauthAccountQuota accountId={account.id} />
+                )}
               </div>
             ))}
           </div>
