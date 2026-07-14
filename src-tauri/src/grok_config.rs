@@ -714,7 +714,8 @@ default_reasoning_effort = "high"
 [model.old]
 model = "old-model"
 "#;
-        let profile = provider().settings_config["config"]
+        let provider = provider();
+        let profile = provider.settings_config["config"]
             .as_str()
             .expect("profile config");
         let merged = merge_grok_profile_config_text(existing, profile).expect("merge profile");
