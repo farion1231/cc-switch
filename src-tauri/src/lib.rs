@@ -1275,6 +1275,8 @@ pub fn run() {
             commands::upsert_prompt,
             commands::delete_prompt,
             commands::enable_prompt,
+            commands::set_prompt_enabled,
+            commands::update_prompts_sort_order,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
             // Profile management (项目配置方案)
