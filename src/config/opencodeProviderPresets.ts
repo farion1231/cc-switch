@@ -1390,6 +1390,29 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TokenRouter",
+    websiteUrl: "https://tokenrouter.com",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TokenRouter",
+      options: {
+        baseURL: "https://api.tokenrouter.com/v1",
+        apiKey: "",
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
