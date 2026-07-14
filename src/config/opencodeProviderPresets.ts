@@ -1620,21 +1620,24 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   },
   {
     name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     settingsConfig: {
       npm: "@ai-sdk/openai",
       name: "SudoCode",
       options: {
-        baseURL: "https://sudocode.us/v1",
+        baseURL: "https://api.sudocode.chat/v1",
         apiKey: "",
         setCacheKey: true,
       },
       models: {
-        "gpt-5.5": { name: "GPT-5.5" },
+        "gpt-5.6-sol": { name: "GPT-5.6 Sol" },
       },
     },
     category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     templateValues: {
       apiKey: {

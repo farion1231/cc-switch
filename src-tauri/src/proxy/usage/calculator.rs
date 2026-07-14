@@ -76,10 +76,13 @@ impl CostCalculator {
     ) -> CostBreakdown {
         let million = Decimal::from(1_000_000);
 
-        // OpenAI/Gemini 风格的 input_tokens 包含缓存命中，需要扣除后再按输入价计费；
+        // OpenAI/Gemini 风格的 input_tokens 包含缓存读取和写入，需要扣除后再按输入价计费；
         // Claude/Anthropic 风格的 input_tokens 已经是 fresh input，不能再次扣减。
         let billable_input_tokens = if input_includes_cache_read {
-            usage.input_tokens.saturating_sub(usage.cache_read_tokens)
+            usage
+                .input_tokens
+                .saturating_sub(usage.cache_read_tokens)
+                .saturating_sub(usage.cache_creation_tokens)
         } else {
             usage.input_tokens
         };
@@ -197,15 +200,15 @@ mod tests {
 
         let cost = CostCalculator::calculate_for_app("codex", &usage, &pricing, multiplier);
 
-        // Codex/OpenAI 语义：input_tokens 包含 cached_tokens，需要扣除 cache_read_tokens
-        assert_eq!(cost.input_cost, Decimal::from_str("0.0024").unwrap());
+        // Codex/OpenAI 语义：input_tokens 包含 cache read/write，两桶都需扣除。
+        assert_eq!(cost.input_cost, Decimal::from_str("0.0021").unwrap());
         assert_eq!(cost.output_cost, Decimal::from_str("0.0075").unwrap());
         assert_eq!(cost.cache_read_cost, Decimal::from_str("0.00006").unwrap());
         assert_eq!(
             cost.cache_creation_cost,
             Decimal::from_str("0.000375").unwrap()
         );
-        assert_eq!(cost.total_cost, Decimal::from_str("0.010335").unwrap());
+        assert_eq!(cost.total_cost, Decimal::from_str("0.010035").unwrap());
     }
 
     #[test]
