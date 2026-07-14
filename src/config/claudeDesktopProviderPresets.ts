@@ -253,7 +253,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "火山Agentplan",
-    websiteUrl: "https://www.volcengine.com/product/ark",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
@@ -272,7 +273,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "BytePlus",
-    websiteUrl: "https://www.byteplus.com/en/product/modelark",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
@@ -291,7 +293,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "DouBaoSeed",
-    websiteUrl: "https://www.volcengine.com/product/doubao",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
@@ -391,7 +394,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "openai_responses",
     providerType: "codex_oauth",
     requiresOAuth: true,
-    modelRoutes: brandedRoutes("gpt-5.5", "gpt-5.5", "gpt-5.4-mini"),
+    modelRoutes: brandedRoutes("gpt-5.6", "gpt-5.6", "gpt-5.6-luna"),
     icon: "openai",
     iconColor: "#000000",
   },
@@ -764,14 +767,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     category: "third_party",
-    baseUrl: "https://sudocode.us",
+    baseUrl: "https://api.sudocode.chat",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    endpointCandidates: ["https://api.sudocode.chat"],
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {
@@ -790,7 +796,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     category: "aggregator",
     baseUrl: "https://code0.ai",
     mode: "direct",

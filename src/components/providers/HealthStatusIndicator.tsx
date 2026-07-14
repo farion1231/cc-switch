@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
-import type { HealthStatus } from "@/lib/api/model-test";
+import type { HealthStatus } from "@/lib/api/connectivity-check";
 import { useTranslation } from "react-i18next";
 
 interface HealthStatusIndicatorProps {

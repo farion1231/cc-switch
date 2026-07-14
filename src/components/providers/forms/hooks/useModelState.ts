@@ -15,7 +15,8 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL"
   | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"
-  | "ANTHROPIC_CLASSIFIER_MODEL";
+  | "ANTHROPIC_CLASSIFIER_MODEL"
+  | "CLAUDE_CODE_SUBAGENT_MODEL";
 
 export const CLAUDE_ONE_M_MARKER = "[1M]";
 
@@ -82,6 +83,10 @@ function parseModelsFromConfig(settingsConfig: string) {
       typeof env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME === "string"
         ? env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME
         : stripClaudeOneMMarker(fable);
+    const subagent =
+      typeof env.CLAUDE_CODE_SUBAGENT_MODEL === "string"
+        ? env.CLAUDE_CODE_SUBAGENT_MODEL
+        : "";
 
     const classifierModel =
       typeof env.ANTHROPIC_CLASSIFIER_MODEL === "string"
@@ -99,6 +104,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       fable,
       fableName,
       classifierModel,
+      subagent,
     };
   } catch {
     return {
@@ -112,6 +118,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       fable: "",
       fableName: "",
       classifierModel: "",
+      subagent: "",
     };
   }
 }
@@ -145,6 +152,7 @@ export function useModelState({
   const [classifierModel, setClassifierModel] = useState(
     initial.classifierModel,
   );
+  const [subagentModel, setSubagentModel] = useState(initial.subagent);
 
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
@@ -176,6 +184,7 @@ export function useModelState({
     setDefaultFableModel(parsed.fable);
     setDefaultFableModelName(parsed.fableName);
     setClassifierModel(parsed.classifierModel);
+    setSubagentModel(parsed.subagent);
   }, [settingsConfig]);
 
   const handleModelChange = useCallback(
@@ -199,6 +208,7 @@ export function useModelState({
       if (field === "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
         setDefaultFableModelName(value);
       if (field === "ANTHROPIC_CLASSIFIER_MODEL") setClassifierModel(value);
+      if (field === "CLAUDE_CODE_SUBAGENT_MODEL") setSubagentModel(value);
 
       try {
         const currentConfig = latestConfigRef.current
@@ -248,6 +258,8 @@ export function useModelState({
     setDefaultFableModelName,
     classifierModel,
     setClassifierModel,
+    subagentModel,
+    setSubagentModel,
     handleModelChange,
   };
 }

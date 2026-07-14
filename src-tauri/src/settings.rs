@@ -366,12 +366,14 @@ pub struct AppSettings {
     /// User has confirmed the usage query first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_confirmed: Option<bool>,
-    /// User has confirmed the stream check first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_check_confirmed: Option<bool>,
+    pub usage_dashboard_refresh_interval_ms: Option<u32>,
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
+    /// Whether to show the project profile switcher on the main page header
+    #[serde(default = "default_show_profile_switcher")]
+    pub show_profile_switcher: bool,
     /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
     /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
     #[serde(default)]
@@ -488,6 +490,10 @@ fn default_minimize_to_tray_on_close() -> bool {
     true
 }
 
+fn default_show_profile_switcher() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -501,8 +507,9 @@ impl Default for AppSettings {
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
-            stream_check_confirmed: None,
+            usage_dashboard_refresh_interval_ms: None,
             enable_failover_toggle: false,
+            show_profile_switcher: true,
             preserve_codex_official_auth_on_switch: false,
             unify_codex_session_history: false,
             unify_codex_migrate_existing: None,

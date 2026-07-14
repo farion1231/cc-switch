@@ -15,6 +15,7 @@ concurrency:
 jobs:
   release:
     runs-on: ${{ matrix.os }}
+    environment: release
     strategy:
       fail-fast: false
       matrix:

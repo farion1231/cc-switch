@@ -6,6 +6,7 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  PromptCacheRoutingMode,
 } from "../types";
 import type { PresetTheme } from "./claudeProviderPresets";
 
@@ -36,6 +37,8 @@ export interface CodexProviderPreset {
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
+  // Session-based prompt-cache routing override for Chat Completions upstreams
+  promptCacheRouting?: PromptCacheRoutingMode;
 }
 
 /**
@@ -77,8 +80,9 @@ function modelCatalog(
         displayName?: string;
         contextWindow?: number;
         // Native Responses (direct) overrides for the generated
-        // model-catalogs.json; omit to inherit the native template defaults
-        // (supports_parallel_tool_calls=false, input_modalities=["text"]).
+        // model-catalogs.json. Omitted input modalities are inferred by the
+        // backend: confirmed text-only models stay text-only; everything else
+        // defaults to text+image.
         supportsParallelToolCalls?: boolean;
         inputModalities?: string[];
         // Vendor's OFFICIAL base_instructions; omit to inherit the neutral
@@ -151,7 +155,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   },
   {
     name: "火山Agentplan",
-    websiteUrl: "https://www.volcengine.com/product/ark",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     auth: generateThirdPartyAuth(""),
@@ -177,7 +182,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   },
   {
     name: "BytePlus",
-    websiteUrl: "https://www.byteplus.com/en/product/modelark",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     auth: generateThirdPartyAuth(""),
@@ -205,7 +211,8 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   },
   {
     name: "DouBaoSeed",
-    websiteUrl: "https://www.volcengine.com/product/doubao",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     auth: generateThirdPartyAuth(""),
@@ -367,7 +374,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig("code0", "https://code0.ai/v1", "gpt-5.5"),
@@ -601,6 +608,7 @@ requires_openai_auth = true`,
     ),
     endpointCandidates: ["https://api.kimi.com/coding/v1"],
     apiFormat: "openai_chat",
+    promptCacheRouting: "enabled",
     modelCatalog: modelCatalog([
       {
         model: "kimi-for-coding",
@@ -1190,24 +1198,26 @@ requires_openai_auth = true`,
   },
   {
     name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
-model = "gpt-5.5"
-review_model = "gpt-5.5"
+model = "gpt-5.6-sol"
+review_model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 disable_response_storage = true
-model_verbosity = "high"
 
 [model_providers.custom]
-name = "sudocode"
-base_url = "https://sudocode.us/v1"
+name = "SudoCode"
+base_url = "https://api.sudocode.chat/v1"
 wire_api = "responses"
 requires_openai_auth = true`,
-    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
+    endpointCandidates: ["https://api.sudocode.chat/v1"],
     apiFormat: "openai_responses",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {
