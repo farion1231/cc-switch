@@ -564,6 +564,61 @@ impl SkillService {
         Ok(skills.into_values().collect())
     }
 
+    /// 读取所有已安装 Skill 的 SKILL.md 正文，供前端构建本地搜索索引。
+    ///
+    /// 无法读取的单个 Skill 会被跳过，避免一个损坏或已被手动删除的文件
+    /// 阻塞整个已安装列表。
+    pub fn get_installed_contents(db: &Arc<Database>) -> Result<HashMap<String, String>> {
+        let skills = db.get_all_installed_skills()?;
+        let ssot_dir = Self::get_ssot_dir()?;
+        let mut contents = HashMap::with_capacity(skills.len());
+
+        for skill in skills.values() {
+            let Some(directory) = Self::sanitize_install_name(&skill.directory) else {
+                log::warn!(
+                    "Skip reading content for Skill {}: invalid directory '{}'",
+                    skill.id,
+                    skill.directory
+                );
+                continue;
+            };
+            let skill_md = ssot_dir.join(directory).join("SKILL.md");
+            match fs::read_to_string(&skill_md) {
+                Ok(content) => {
+                    contents.insert(
+                        skill.id.clone(),
+                        Self::extract_skill_body(&content).to_string(),
+                    );
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Failed to read Skill content for {} at {}: {}",
+                        skill.id,
+                        skill_md.display(),
+                        error
+                    );
+                }
+            }
+        }
+
+        Ok(contents)
+    }
+
+    fn extract_skill_body(content: &str) -> &str {
+        let content = content.trim_start_matches('\u{feff}');
+        if !content.starts_with("---") {
+            return content;
+        }
+
+        let mut sections = content.splitn(3, "---");
+        sections.next();
+        sections.next();
+        sections
+            .next()
+            .unwrap_or(content)
+            .trim_start_matches(['\r', '\n'])
+    }
+
     /// 安装 Skill
     ///
     /// 流程：
@@ -3067,6 +3122,17 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    #[test]
+    fn extract_skill_body_excludes_front_matter() {
+        let content = "---\nname: Example\ndescription: Test skill\n---\nSearchable body";
+
+        assert_eq!(SkillService::extract_skill_body(content), "Searchable body");
+        assert_eq!(
+            SkillService::extract_skill_body("Plain content"),
+            "Plain content"
+        );
     }
 
     #[test]

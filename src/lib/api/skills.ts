@@ -141,6 +141,11 @@ export const skillsApi = {
     return await invoke("get_installed_skills");
   },
 
+  /** 获取已安装 Skills 的 SKILL.md 正文搜索索引（id -> content） */
+  async getInstalledContents(): Promise<Record<string, string>> {
+    return await invoke("get_installed_skill_contents");
+  },
+
   /** 获取可恢复的 Skill 备份列表 */
   async getBackups(): Promise<SkillBackupEntry[]> {
     return await invoke("get_skill_backups");

@@ -2,20 +2,28 @@ import React from "react";
 import { Badge } from "@/components/ui/badge";
 import type { AppId } from "@/lib/api/types";
 import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
+import { cn } from "@/lib/utils";
 
 interface AppCountBarProps {
   totalLabel: string;
   counts: Partial<Record<AppId, number>>;
   appIds?: AppId[];
+  className?: string;
 }
 
 export const AppCountBar: React.FC<AppCountBarProps> = ({
   totalLabel,
   counts,
   appIds = APP_IDS,
+  className,
 }) => {
   return (
-    <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6 flex items-center justify-between gap-4">
+    <div
+      className={cn(
+        "flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6 flex items-center justify-between gap-4",
+        className,
+      )}
+    >
       <Badge variant="outline" className="bg-background/50 h-7 px-3">
         {totalLabel}
       </Badge>

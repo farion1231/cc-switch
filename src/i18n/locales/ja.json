@@ -2267,6 +2267,18 @@
     },
     "search": "スキルを検索",
     "searchPlaceholder": "スキル名またはリポジトリで検索...",
+    "installedSearchScopeLabel": "検索範囲",
+    "installedSearchScope": {
+      "all": "すべて",
+      "name": "名前",
+      "content": "内容"
+    },
+    "installedSearchPlaceholder": {
+      "all": "名前または内容で検索",
+      "name": "スキル名で検索",
+      "content": "説明とスキル本文を検索"
+    },
+    "installedSearchNoResults": "「{{query}}」に一致するインストール済みスキルはありません",
     "searchSource": {
       "repos": "リポジトリ",
       "skillssh": "skills.sh"

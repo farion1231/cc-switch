@@ -1,10 +1,12 @@
 import { createRef } from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
+import type { InstalledSkill } from "@/lib/api/skills";
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
@@ -13,6 +15,34 @@ const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
 const deleteSkillBackupMock = vi.fn();
 const restoreSkillBackupMock = vi.fn();
+let installedSkillsMock: InstalledSkill[] = [];
+let installedSkillContentsMock: Record<string, string> = {};
+
+function createInstalledSkill(
+  id: string,
+  name: string,
+  description: string,
+  repoOwner?: string,
+): InstalledSkill {
+  return {
+    id,
+    name,
+    description,
+    directory: id,
+    repoOwner,
+    repoName: repoOwner ? "skills-repo" : undefined,
+    apps: {
+      claude: true,
+      codex: false,
+      gemini: false,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+    },
+    installedAt: 0,
+    updatedAt: 0,
+  };
+}
 
 vi.mock("sonner", () => ({
   toast: {
@@ -24,8 +54,11 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/hooks/useSkills", () => ({
   useInstalledSkills: () => ({
-    data: [],
+    data: installedSkillsMock,
     isLoading: false,
+  }),
+  useInstalledSkillContents: () => ({
+    data: installedSkillContentsMock,
   }),
   useSkillBackups: () => ({
     data: [],
@@ -77,6 +110,8 @@ vi.mock("@/hooks/useSkills", () => ({
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    installedSkillsMock = [];
+    installedSkillContentsMock = {};
     scanUnmanagedMock.mockResolvedValue({
       data: [
         {
@@ -116,5 +151,103 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
     });
+  });
+
+  it("filters installed skills across all supported fields but not repository", async () => {
+    installedSkillsMock = [
+      createInstalledSkill(
+        "alpha",
+        "Alpha Helper",
+        "General utilities",
+        "owner-a",
+      ),
+      createInstalledSkill(
+        "beta",
+        "Beta Helper",
+        "Database cleanup",
+        "owner-b",
+      ),
+      createInstalledSkill(
+        "gamma",
+        "Gamma Helper",
+        "Deployment utilities",
+        "exclusive-owner",
+      ),
+    ];
+    installedSkillContentsMock = {
+      alpha: "Use this skill for frontend reviews.",
+      beta: "Use this skill for database maintenance.",
+      gamma: "Run a Kubernetes rollout safely.",
+    };
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    const user = userEvent.setup();
+    const search = screen.getByPlaceholderText(
+      "skills.installedSearchPlaceholder.all",
+    );
+
+    await user.type(search, "alpha");
+    expect(screen.getByText("Alpha Helper")).toBeInTheDocument();
+    expect(screen.queryByText("Beta Helper")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "cleanup");
+    expect(screen.getByText("Beta Helper")).toBeInTheDocument();
+    expect(screen.queryByText("Alpha Helper")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "kubernetes rollout");
+    expect(screen.getByText("Gamma Helper")).toBeInTheDocument();
+    expect(screen.queryByText("Beta Helper")).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "exclusive-owner");
+    expect(screen.getByText("skills.noResults")).toBeInTheDocument();
+    expect(screen.queryByText("Gamma Helper")).not.toBeInTheDocument();
+  });
+
+  it("lets users limit installed skill search to name or content", async () => {
+    installedSkillsMock = [
+      createInstalledSkill("alpha", "Alpha Helper", "General utilities"),
+      createInstalledSkill("beta", "Beta Helper", "Alpha database cleanup"),
+    ];
+    installedSkillContentsMock = {
+      alpha: "Review frontend code.",
+      beta: "Run maintenance safely.",
+    };
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    const user = userEvent.setup();
+    const search = screen.getByPlaceholderText(
+      "skills.installedSearchPlaceholder.all",
+    );
+
+    await user.click(screen.getByText("skills.installedSearchScope.name"));
+    expect(search).toHaveAttribute(
+      "placeholder",
+      "skills.installedSearchPlaceholder.name",
+    );
+    await user.type(search, "alpha");
+    expect(screen.getByText("Alpha Helper")).toBeInTheDocument();
+    expect(screen.queryByText("Beta Helper")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("skills.installedSearchScope.content"));
+    expect(search).toHaveAttribute(
+      "placeholder",
+      "skills.installedSearchPlaceholder.content",
+    );
+    expect(screen.queryByText("Alpha Helper")).not.toBeInTheDocument();
+    expect(screen.getByText("Beta Helper")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "frontend code");
+    expect(screen.getByText("Alpha Helper")).toBeInTheDocument();
+    expect(screen.queryByText("Beta Helper")).not.toBeInTheDocument();
   });
 });

@@ -2267,6 +2267,18 @@
     },
     "search": "搜索技能",
     "searchPlaceholder": "搜索技能名称或仓库名称...",
+    "installedSearchScopeLabel": "搜索范围",
+    "installedSearchScope": {
+      "all": "全部",
+      "name": "名称",
+      "content": "内容"
+    },
+    "installedSearchPlaceholder": {
+      "all": "按名称或内容搜索",
+      "name": "按 Skill 名称搜索",
+      "content": "搜索描述和 Skill 正文"
+    },
+    "installedSearchNoResults": "未找到与“{{query}}”匹配的已安装技能",
     "searchSource": {
       "repos": "仓库",
       "skillssh": "skills.sh"
