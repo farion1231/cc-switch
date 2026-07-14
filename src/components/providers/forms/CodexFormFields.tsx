@@ -626,14 +626,21 @@ export function CodexFormFields({
           </CollapsibleTrigger>
           {!advancedExpanded && (
             <p className="mt-1 ml-1 text-xs text-muted-foreground">
-              {t("codexConfig.advancedSectionHint", {
-                defaultValue:
-                  "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
-              })}
+              {isCopilotPreset
+                ? t("codexConfig.advancedSectionHintCopilot", {
+                    defaultValue:
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。GitHub Copilot 始终需要本地路由（token 动态注入），任何上游格式都需开启路由接管。",
+                  })
+                : t("codexConfig.advancedSectionHint", {
+                    defaultValue:
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                  })}
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
-            {/* 上游格式 —— Chat 需开启路由接管（走代理转换），Responses 原生直连。
+            {/* 上游格式 —— Chat/Anthropic 需开启路由接管（走代理转换），Responses 原生直连。
+                但 Copilot 即使走 Responses 也强制路由（token 动态注入 + 指纹头），
+                故 Copilot 下 Responses 标签与说明也标注「需开启路由」。
                 沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换。 */}
             {shouldShowSpeedTest && (
               <div className="space-y-3">
@@ -662,9 +669,13 @@ export function CodexFormFields({
                         })}
                       </SelectItem>
                       <SelectItem value="openai_responses">
-                        {t("codexConfig.upstreamFormatResponses", {
-                          defaultValue: "Responses（原生）",
-                        })}
+                        {isCopilotPreset
+                          ? t("codexConfig.upstreamFormatResponsesCopilot", {
+                              defaultValue: "Responses（原生，需开启路由）",
+                            })
+                          : t("codexConfig.upstreamFormatResponses", {
+                              defaultValue: "Responses（原生）",
+                            })}
                       </SelectItem>
                       <SelectItem value="anthropic">
                         {t("codexConfig.upstreamFormatAnthropic", {
@@ -674,10 +685,15 @@ export function CodexFormFields({
                     </SelectContent>
                   </Select>
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.upstreamFormatHint", {
-                      defaultValue:
-                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
-                    })}
+                    {isCopilotPreset
+                      ? t("codexConfig.upstreamFormatHintCopilot", {
+                          defaultValue:
+                            "GitHub Copilot 的 token 由后端动态注入且需指纹头，始终需要本地路由；即使选 Responses（原生）也必须开启路由接管。Chat 与 Anthropic Messages 同样需要。",
+                        })
+                      : t("codexConfig.upstreamFormatHint", {
+                          defaultValue:
+                            "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
+                        })}
                   </p>
                 </div>
 
