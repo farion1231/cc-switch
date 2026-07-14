@@ -743,7 +743,18 @@ impl ProviderAdapter for CodexAdapter {
         let already_has_v1 = base_trimmed.ends_with("/v1");
         let origin_only = is_origin_only_url(base_trimmed);
 
-        let mut url = if already_has_v1 {
+        // GitHub Copilot 的 Chat Completions 端点是裸 /chat/completions（无 /v1 前缀），
+        // 而 Responses 走 /v1/responses。纯 origin 的 Copilot base（企业版动态 endpoint
+        // 常是 https://api.enterprise.githubcopilot.com）若按常规补 /v1，会得到
+        // /v1/chat/completions → 404。这里对 Copilot 的 chat 路径直接裸拼，不补 /v1。
+        let is_copilot_chat = base_trimmed.contains("githubcopilot.com")
+            && endpoint_trimmed
+                .trim_end_matches('/')
+                .ends_with("chat/completions");
+
+        let mut url = if is_copilot_chat {
+            format!("{base_trimmed}/{endpoint_trimmed}")
+        } else if already_has_v1 {
             // 已经有 /v1，直接拼接
             format!("{base_trimmed}/{endpoint_trimmed}")
         } else if origin_only {
@@ -1255,6 +1266,28 @@ wire_api = "anthropic"
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_copilot_chat_no_v1() {
+        let adapter = CodexAdapter::new();
+        // Copilot 的 chat 端点是裸 /chat/completions，纯 origin 也不补 /v1（否则 404）
+        let url = adapter.build_url(
+            "https://api.enterprise.githubcopilot.com",
+            "/chat/completions",
+        );
+        assert_eq!(
+            url,
+            "https://api.enterprise.githubcopilot.com/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_build_url_copilot_responses_keeps_v1() {
+        let adapter = CodexAdapter::new();
+        // Copilot 的 responses 仍走 /v1/responses（不受 chat 特判影响）
+        let url = adapter.build_url("https://api.githubcopilot.com", "/v1/responses");
+        assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
     }
 
     // 官方客户端检测测试

@@ -320,7 +320,7 @@ export function CodexFormFields({
 
   const handleFetchModels = useCallback(() => {
     // GitHub Copilot（托管账号）：用登录账号取模型，无需 API Key。
-    // 首版仅支持 gpt 系列，过滤 vendor 为 openai 的模型。
+    // 返回 Copilot 后端暴露的全部模型（不再按 vendor 过滤）。
     if (isCopilotPreset) {
       const seq = ++fetchModelsSeqRef.current;
       setIsFetchingModels(true);
@@ -330,9 +330,10 @@ export function CodexFormFields({
       fetchModels
         .then((models) => {
           if (seq !== fetchModelsSeqRef.current) return;
-          const mapped: FetchedModel[] = models
-            .filter((m) => m.vendor?.toLowerCase() === "openai")
-            .map((m) => ({ id: m.id, ownedBy: m.vendor ?? null }));
+          const mapped: FetchedModel[] = models.map((m) => ({
+            id: m.id,
+            ownedBy: m.vendor ?? null,
+          }));
           setFetchedModels(mapped);
           if (mapped.length === 0) {
             toast.info(t("providerForm.fetchModelsEmpty"));
