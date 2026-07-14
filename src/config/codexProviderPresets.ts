@@ -122,6 +122,40 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     iconColor: "#00A67E",
   },
   {
+    name: "grok-go",
+    websiteUrl: "https://github.com/RongleCat/grok-go",
+    apiKeyUrl: "https://github.com/RongleCat/grok-go",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "grok-go",
+      "http://127.0.0.1:8787/v1",
+      "grok-4-fast",
+    ),
+    endpointCandidates: ["http://127.0.0.1:8787/v1"],
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "grok-4",
+        displayName: "Grok 4",
+      },
+      {
+        model: "grok-4-fast",
+        displayName: "Grok 4 Fast",
+      },
+      {
+        model: "grok-3",
+        displayName: "Grok 3",
+      },
+      {
+        model: "grok-3-mini",
+        displayName: "Grok 3 Mini",
+      },
+    ]),
+    icon: "openai",
+    iconColor: "#111827",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
