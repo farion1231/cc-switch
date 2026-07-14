@@ -7,7 +7,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
@@ -55,9 +54,9 @@ import type {
   ClaudeApiKeyField,
 } from "@/types";
 import {
-  hasClaudeOneMMarker,
-  setClaudeOneMMarker,
-  stripClaudeOneMMarker,
+  parseModelSuffix,
+  setModelSuffix,
+  stripModelSuffix,
   type ClaudeModelEnvField,
 } from "./hooks/useModelState";
 import {
@@ -247,7 +246,6 @@ export function ClaudeFormFields({
   const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
-  const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -524,7 +522,7 @@ export function ClaudeFormFields({
     modelField: ClaudeModelEnvField;
     displayNameField?: ClaudeModelEnvField;
     inputId: string;
-    supportsOneM: boolean;
+    supportsContextWindow: boolean;
   };
 
   const modelRoleRows: ModelRoleRow[] = [
@@ -536,7 +534,7 @@ export function ClaudeFormFields({
       modelField: "ANTHROPIC_DEFAULT_SONNET_MODEL",
       displayNameField: "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
       inputId: "claudeDefaultSonnetModel",
-      supportsOneM: true,
+      supportsContextWindow: true,
     },
     {
       role: "opus",
@@ -546,7 +544,7 @@ export function ClaudeFormFields({
       modelField: "ANTHROPIC_DEFAULT_OPUS_MODEL",
       displayNameField: "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
       inputId: "claudeDefaultOpusModel",
-      supportsOneM: true,
+      supportsContextWindow: true,
     },
     {
       role: "fable",
@@ -556,7 +554,7 @@ export function ClaudeFormFields({
       modelField: "ANTHROPIC_DEFAULT_FABLE_MODEL",
       displayNameField: "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
       inputId: "claudeDefaultFableModel",
-      supportsOneM: true,
+      supportsContextWindow: true,
     },
     {
       role: "haiku",
@@ -566,7 +564,7 @@ export function ClaudeFormFields({
       modelField: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
       displayNameField: "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
       inputId: "claudeDefaultHaikuModel",
-      supportsOneM: false,
+      supportsContextWindow: true,
     },
     {
       role: "subagent",
@@ -576,28 +574,21 @@ export function ClaudeFormFields({
       model: subagentModel,
       modelField: "CLAUDE_CODE_SUBAGENT_MODEL",
       inputId: "claudeCodeSubagentModel",
-      supportsOneM: true,
+      supportsContextWindow: true,
     },
   ];
 
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
-    const oldModelBase = stripClaudeOneMMarker(row.model).trim();
-    const normalizedValue = row.supportsOneM
-      ? value
-      : stripClaudeOneMMarker(value);
-    const nextModelBase = stripClaudeOneMMarker(normalizedValue).trim();
+    const oldModelBase = stripModelSuffix(row.model).trim();
+    const nextModelBase = stripModelSuffix(value).trim();
     const displayName = row.displayName?.trim() ?? "";
     const shouldSyncDisplayName = !displayName || displayName === oldModelBase;
-    onModelChange(row.modelField, normalizedValue);
+    onModelChange(row.modelField, value);
     if (row.displayNameField && shouldSyncDisplayName) {
       onModelChange(row.displayNameField, nextModelBase);
     }
   };
 
-  const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
-    if (!row.supportsOneM) return;
-    handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
-  };
 
   return (
     <>
@@ -833,14 +824,12 @@ export function ClaudeFormFields({
                         subagentModel;
                       if (value) {
                         for (const row of modelRoleRows) {
-                          const roleValue = row.supportsOneM
-                            ? value
-                            : stripClaudeOneMMarker(value);
+                          const roleValue = value;
                           onModelChange(row.modelField, roleValue);
                           if (row.displayNameField) {
                             onModelChange(
                               row.displayNameField,
-                              stripClaudeOneMMarker(roleValue),
+                              stripModelSuffix(roleValue),
                             );
                           }
                         }
@@ -913,9 +902,8 @@ export function ClaudeFormFields({
               </div>
 
               {modelRoleRows.map((row) => {
-                const modelBase = stripClaudeOneMMarker(row.model);
-                const usesOneM =
-                  row.supportsOneM && hasClaudeOneMMarker(row.model);
+                const modelBase = stripModelSuffix(row.model);
+                const suffixResult = parseModelSuffix(row.model);
 
                 return (
                   <div
@@ -954,26 +942,23 @@ export function ClaudeFormFields({
                       modelBase,
                       row.modelField,
                       t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                      (value) =>
-                        handleRoleModelChange(
-                          row,
-                          row.supportsOneM
-                            ? setClaudeOneMMarker(value, usesOneM)
-                            : stripClaudeOneMMarker(value),
-                        ),
+                      (value) => handleRoleModelChange(row, value),
                     )}
-                    {row.supportsOneM && (
-                      <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-                        <Checkbox
-                          checked={usesOneM}
-                          onCheckedChange={(checked) =>
-                            handleRoleOneMChange(row, checked === true)
-                          }
-                        />
-                        {t("providerForm.modelOneMLabel", {
-                          defaultValue: "1M",
+                    {row.supportsContextWindow && (
+                      <Input
+                        inputMode="text"
+                        className="w-[90px] text-center font-mono text-sm"
+                        value={suffixResult.window ? row.model.slice(row.model.lastIndexOf("[")) : ""}
+                        onChange={(event) => {
+                          handleRoleModelChange(row, setModelSuffix(row.model, event.target.value));
+                        }}
+                        placeholder={t("providerForm.modelContextWindowPlaceholder", {
+                          defaultValue: "1M / 200K",
                         })}
-                      </label>
+                        aria-label={t("providerForm.modelContextWindowLabel", {
+                          defaultValue: "Context Window",
+                        })}
+                      />
                     )}
                   </div>
                 );
@@ -989,31 +974,25 @@ export function ClaudeFormFields({
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_minmax(0,104px)]">
                 {renderModelInput(
                   "claudeModel",
-                  stripClaudeOneMMarker(claudeModel),
+                  stripModelSuffix(claudeModel),
                   "ANTHROPIC_MODEL",
                   t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                  (value) =>
-                    onModelChange(
-                      "ANTHROPIC_MODEL",
-                      setClaudeOneMMarker(value, fallbackUsesOneM),
-                    ),
+                  (value) => onModelChange("ANTHROPIC_MODEL", value),
                 )}
-                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-                  <Checkbox
-                    checked={fallbackUsesOneM}
-                    onCheckedChange={(checked) => {
-                      const base = stripClaudeOneMMarker(claudeModel).trim();
-                      if (!base) return;
-                      onModelChange(
-                        "ANTHROPIC_MODEL",
-                        setClaudeOneMMarker(base, checked === true),
-                      );
-                    }}
-                  />
-                  {t("providerForm.modelOneMLabel", {
-                    defaultValue: "1M",
+                <Input
+                  inputMode="text"
+                  className="w-[90px] text-center font-mono text-sm"
+                  value={parseModelSuffix(claudeModel).window ? claudeModel.slice(claudeModel.lastIndexOf("[")) : ""}
+                  onChange={(event) => {
+                    onModelChange("ANTHROPIC_MODEL", setModelSuffix(claudeModel, event.target.value));
+                  }}
+                  placeholder={t("providerForm.modelContextWindowPlaceholder", {
+                    defaultValue: "1M / 200K",
                   })}
-                </label>
+                  aria-label={t("providerForm.modelContextWindowLabel", {
+                    defaultValue: "Context Window",
+                  })}
+                />
               </div>
               <p className="text-xs text-muted-foreground">
                 {t("providerForm.fallbackModelHint", {
