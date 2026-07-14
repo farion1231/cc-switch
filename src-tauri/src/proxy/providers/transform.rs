@@ -104,6 +104,11 @@ fn gpt_5_minor(model: Option<&str>) -> Option<u32> {
 ///    - `disabled` / absent → `None`
 pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
     let gpt_5_minor = gpt_5_minor(body.get("model").and_then(Value::as_str));
+    let clamp_xhigh_to_high = body
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(is_openai_o_series)
+        || matches!(gpt_5_minor, Some(0 | 1));
 
     // --- Priority 1: explicit output_config.effort ---
     if let Some(effort) = body
@@ -114,10 +119,10 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
             "low" => Some("low"),
             "medium" => Some("medium"),
             "high" => Some("high"),
-            "xhigh" if matches!(gpt_5_minor, Some(0 | 1)) => Some("high"),
+            "xhigh" if clamp_xhigh_to_high => Some("high"),
             "xhigh" => Some("xhigh"),
             "max" if matches!(gpt_5_minor, Some(6)) => Some("max"),
-            "max" if matches!(gpt_5_minor, Some(0 | 1)) => Some("high"),
+            "max" if clamp_xhigh_to_high => Some("high"),
             "max" => Some("xhigh"),
             _ => None, // unknown value — do not inject
         };
@@ -126,7 +131,7 @@ pub fn resolve_reasoning_effort(body: &Value) -> Option<&'static str> {
     // --- Priority 2: thinking.type + budget_tokens fallback ---
     let thinking = body.get("thinking")?;
     match thinking.get("type").and_then(|t| t.as_str()) {
-        Some("adaptive") if matches!(gpt_5_minor, Some(0 | 1)) => Some("high"),
+        Some("adaptive") if clamp_xhigh_to_high => Some("high"),
         Some("adaptive") => Some("xhigh"),
         Some("enabled") => {
             let budget = thinking.get("budget_tokens").and_then(|b| b.as_u64());
@@ -1702,6 +1707,23 @@ mod tests {
             assert_eq!(resolve_reasoning_effort(&xhigh_body), Some(xhigh));
             assert_eq!(resolve_reasoning_effort(&max_body), Some(max));
         }
+    }
+
+    #[test]
+    fn test_o_series_output_config_efforts_clamp_to_high() {
+        for effort in ["xhigh", "max"] {
+            let body = json!({
+                "model": "o3",
+                "output_config": {"effort": effort}
+            });
+            assert_eq!(resolve_reasoning_effort(&body), Some("high"));
+        }
+
+        let body = json!({
+            "model": "o4-mini",
+            "thinking": {"type": "adaptive"}
+        });
+        assert_eq!(resolve_reasoning_effort(&body), Some("high"));
     }
 
     #[test]
