@@ -371,7 +371,7 @@ jobs:
           echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS' && secrets.APPLE_ID != ''
+        if: runner.os == 'macOS'
         shell: bash
         timeout-minutes: 30
         env:
@@ -379,6 +379,10 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [ -z "${APPLE_ID:-}" ]; then
+            echo "⚠️ APPLE_ID is empty, skipping notarization."
+            exit 0
+          fi
           set -euo pipefail
 
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
@@ -413,9 +417,13 @@ jobs:
           done
 
       - name: Verify macOS code signing and notarization
-        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
+        if: runner.os == 'macOS'
         shell: bash
         run: |
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "⚠️ APPLE_SIGNING_IDENTITY is empty, skipping verification."
+            exit 0
+          fi
           set -euo pipefail
 
           # Verify .app (from Tauri bundle)
