@@ -164,8 +164,13 @@ pub fn apply_codex_chat_default_max_output_tokens(
     if !codex_provider_uses_chat_completions(provider) {
         return false;
     }
-    // Client already specified a limit - respect it.
-    if body.get("max_output_tokens").is_some() {
+    // Client already specified a limit via any of the three fields
+    // accepted by the Responses->Chat converter - respect it and don't
+    // inject a conflicting default.
+    if body.get("max_output_tokens").is_some()
+        || body.get("max_tokens").is_some()
+        || body.get("max_completion_tokens").is_some()
+    {
         return false;
     }
     let Some(default) = codex_provider_default_max_output_tokens(provider) else {
@@ -1143,5 +1148,93 @@ wire_api = "responses"
 
         assert!(!injected);
         assert!(body.get("max_output_tokens").is_none());
+    }
+
+    // --- Conversion-level regression tests ---
+    // Verify that apply_codex_chat_default_max_output_tokens + the Responses->Chat
+    // converter never produce conflicting limit fields in the final output.
+
+    #[test]
+    fn conversion_default_injected_non_o_series_uses_max_tokens() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+
+        // Non-o-series: max_output_tokens maps to max_tokens only.
+        assert_eq!(result.get("max_tokens").and_then(|v| v.as_u64()), Some(8192));
+        assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn conversion_default_injected_o_series_uses_max_completion_tokens() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "o3",
+            "input": "ping"
+        });
+
+        apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+
+        // O-series: max_output_tokens maps to max_completion_tokens only.
+        assert_eq!(result.get("max_completion_tokens").and_then(|v| v.as_u64()), Some(8192));
+        assert!(result.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn conversion_client_max_tokens_no_conflict_with_default() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping",
+            "max_tokens": 2048
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        assert!(!injected);
+
+        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+
+        // Client's max_tokens preserved; no conflicting max_completion_tokens.
+        assert_eq!(result.get("max_tokens").and_then(|v| v.as_u64()), Some(2048));
+        assert!(result.get("max_completion_tokens").is_none());
+        assert!(result.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn conversion_client_max_completion_tokens_no_conflict_with_default() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "o3",
+            "input": "ping",
+            "max_completion_tokens": 2048
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        assert!(!injected);
+
+        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+
+        // Client's max_completion_tokens preserved; no conflicting max_tokens.
+        assert_eq!(result.get("max_completion_tokens").and_then(|v| v.as_u64()), Some(2048));
+        assert!(result.get("max_tokens").is_none());
+        assert!(result.get("max_output_tokens").is_none());
     }
 }
