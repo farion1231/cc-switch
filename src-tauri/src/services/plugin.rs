@@ -81,6 +81,16 @@ pub struct UnifiedPlugin {
     pub supported_actions: PluginActions,
 }
 
+type PluginInstallationKey = (String, Option<String>, Option<String>);
+
+fn plugin_installation_key(plugin: &UnifiedPlugin) -> PluginInstallationKey {
+    (
+        plugin.plugin_id.clone(),
+        plugin.scope.clone(),
+        plugin.project_path.clone(),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginMarketplace {
@@ -273,21 +283,31 @@ pub fn parse_plugins_json(
         .cloned()
         .unwrap_or_default();
 
-    let mut plugins = BTreeMap::<String, UnifiedPlugin>::new();
+    let mut available_plugins = BTreeMap::<String, UnifiedPlugin>::new();
     if include_available {
         for value in available_values {
             if let Some(plugin) = plugin_from_value(app, &value, false) {
-                plugins.insert(plugin.plugin_id.clone(), plugin);
+                available_plugins.insert(plugin.plugin_id.clone(), plugin);
             }
         }
     }
+    let mut plugins = BTreeMap::<PluginInstallationKey, UnifiedPlugin>::new();
+    let mut installed_ids = BTreeSet::new();
     for value in installed_values {
         if let Some(mut plugin) = plugin_from_value(app, &value, true) {
-            if let Some(available) = plugins.get(&plugin.plugin_id) {
+            if let Some(available) = available_plugins.get(&plugin.plugin_id) {
                 plugin.description = plugin.description.or_else(|| available.description.clone());
                 plugin.source = plugin.source.or_else(|| available.source.clone());
             }
-            plugins.insert(plugin.plugin_id.clone(), plugin);
+            installed_ids.insert(plugin.plugin_id.clone());
+            plugins.insert(plugin_installation_key(&plugin), plugin);
+        }
+    }
+    if include_available {
+        for available in available_plugins.into_values() {
+            if !installed_ids.contains(&available.plugin_id) {
+                plugins.insert(plugin_installation_key(&available), available);
+            }
         }
     }
     Ok(plugins.into_values().collect())
@@ -674,6 +694,37 @@ mod tests {
         let plugins = parse_plugins_json(PluginApp::Claude, claude, false).unwrap();
         assert_eq!(plugins[0].name, "ponytail");
         assert!(plugins[0].supported_actions.enable);
+    }
+
+    #[test]
+    fn preserves_claude_plugin_installs_across_scopes_and_projects() {
+        let claude = r#"[
+            {"id":"ponytail@ponytail","scope":"user","enabled":true},
+            {"id":"ponytail@ponytail","scope":"project","projectPath":"/tmp/project-a","enabled":false},
+            {"id":"ponytail@ponytail","scope":"project","projectPath":"/tmp/project-b","enabled":true},
+            {"id":"ponytail@ponytail","scope":"local","projectPath":"/tmp/project-a","enabled":true}
+        ]"#;
+
+        let plugins = parse_plugins_json(PluginApp::Claude, claude, false).unwrap();
+
+        assert_eq!(plugins.len(), 4);
+        assert!(plugins.iter().any(|plugin| {
+            plugin.scope.as_deref() == Some("user") && plugin.project_path.is_none()
+        }));
+        assert!(plugins.iter().any(|plugin| {
+            plugin.scope.as_deref() == Some("project")
+                && plugin.project_path.as_deref() == Some("/tmp/project-a")
+                && !plugin.enabled
+        }));
+        assert!(plugins.iter().any(|plugin| {
+            plugin.scope.as_deref() == Some("project")
+                && plugin.project_path.as_deref() == Some("/tmp/project-b")
+                && plugin.enabled
+        }));
+        assert!(plugins.iter().any(|plugin| {
+            plugin.scope.as_deref() == Some("local")
+                && plugin.project_path.as_deref() == Some("/tmp/project-a")
+        }));
     }
 
     #[test]

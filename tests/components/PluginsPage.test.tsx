@@ -60,6 +60,26 @@ const projectInstalledClaudePlugin = {
   projectPath: "/tmp/the_old_days",
 };
 
+const scopedClaudePlugins = [
+  {
+    ...projectInstalledClaudePlugin,
+    scope: "user" as const,
+    projectPath: undefined,
+    enabled: true,
+  },
+  projectInstalledClaudePlugin,
+  {
+    ...projectInstalledClaudePlugin,
+    projectPath: "/tmp/the_futures",
+    enabled: false,
+  },
+  {
+    ...projectInstalledClaudePlugin,
+    scope: "local" as const,
+    projectPath: "/tmp/the_old_days",
+  },
+];
+
 describe("PluginsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -114,6 +134,39 @@ describe("PluginsPage", () => {
     expect(screen.getByRole("combobox")).toHaveTextContent(
       "plugins.scope.user",
     );
+  });
+
+  it("keeps every Claude installation of the same plugin actionable", async () => {
+    pluginsMock.mockImplementation((app: string, includeAvailable: boolean) => {
+      if (includeAvailable || app === "codex") {
+        return { data: [], isLoading: false };
+      }
+      return { data: scopedClaudePlugins, isLoading: false };
+    });
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    expect(screen.getByText(/user/)).toBeInTheDocument();
+    expect(screen.getByText(/\/tmp\/the_old_days/)).toBeInTheDocument();
+    expect(screen.getByText(/\/tmp\/the_futures/)).toBeInTheDocument();
+    expect(screen.getAllByRole("switch")).toHaveLength(4);
+    expect(
+      screen.getAllByRole("button", { name: "plugins.update" }),
+    ).toHaveLength(4);
+
+    const projectPath = screen.getByText(/\/tmp\/the_futures/);
+    const installationRow = projectPath.closest("div");
+    expect(installationRow).not.toBeNull();
+    await user.click(within(installationRow!).getByRole("switch"));
+
+    expect(mutationMock.mutateAsync).toHaveBeenCalledWith({
+      action: "setEnabled",
+      app: "claude",
+      pluginId: "ponytail@ponytail",
+      enabled: true,
+      scope: "project",
+      projectPath: "/tmp/the_futures",
+    });
   });
 
   it("shows the selected client filter", async () => {

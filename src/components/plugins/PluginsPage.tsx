@@ -53,6 +53,15 @@ type ConfirmAction =
   | { type: "uninstall"; plugin: UnifiedPlugin }
   | { type: "marketplace"; marketplace: PluginMarketplace };
 
+function pluginInstallationKey(plugin: UnifiedPlugin) {
+  return [
+    plugin.pluginId,
+    plugin.app,
+    plugin.scope ?? "",
+    plugin.projectPath ?? "",
+  ].join("\u0000");
+}
+
 export default function PluginsPage() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"installed" | "discover">("installed");
@@ -267,7 +276,7 @@ export default function PluginsPage() {
                 </div>
                 {entries.map((plugin) => (
                   <div
-                    key={`${plugin.pluginId}-${plugin.app}`}
+                    key={pluginInstallationKey(plugin)}
                     className="flex flex-wrap items-center gap-3 bg-muted/20 px-4 py-2"
                   >
                     <Badge variant="outline">
@@ -277,6 +286,7 @@ export default function PluginsPage() {
                       {plugin.version ?? t("plugins.unknownVersion")} ·{" "}
                       {plugin.marketplaceName}
                       {plugin.scope ? ` · ${plugin.scope}` : ""}
+                      {plugin.projectPath ? ` · ${plugin.projectPath}` : ""}
                     </span>
                     <div className="ml-auto flex items-center gap-2">
                       {tab === "installed" && plugin.installed && (
