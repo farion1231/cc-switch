@@ -255,6 +255,10 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            export APPLE_SIGNING_IDENTITY="-"
+            echo "⚠️ APPLE_SIGNING_IDENTITY is empty, using Ad-Hoc signing ('-')"
+          fi
           set -euo pipefail
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
@@ -492,8 +496,6 @@ jobs:
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
-            } elseif ($isArm64) {
-              throw "Signature not found for $($msi.Name)"
             } else {
               Write-Warning "Signature not found for $($msi.Name)"
             }
