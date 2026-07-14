@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 
 use crate::app_config::AppType;
 use crate::config::write_text_file;
+use crate::database::PromptSortUpdate;
 use crate::error::AppError;
 use crate::prompt::Prompt;
 use crate::prompt_files::prompt_file_path;
@@ -31,30 +32,9 @@ impl PromptService {
         _id: &str,
         prompt: Prompt,
     ) -> Result<(), AppError> {
-        // 检查是否为已启用的提示词
-        let is_enabled = prompt.enabled;
-
+        Self::backup_external_live_content(state, &app, Some(&prompt.content))?;
         state.db.save_prompt(app.as_str(), &prompt)?;
-
-        if is_enabled {
-            // 启用提示词：写入内容到文件
-            let target_path = prompt_file_path(&app)?;
-            write_text_file(&target_path, &prompt.content)?;
-        } else {
-            // 禁用提示词：检查是否还有其他已启用的提示词
-            let prompts = state.db.get_prompts(app.as_str())?;
-            let any_enabled = prompts.values().any(|p| p.enabled);
-
-            if !any_enabled {
-                // 所有提示词都已禁用，清空文件
-                let target_path = prompt_file_path(&app)?;
-                if target_path.exists() {
-                    write_text_file(&target_path, "")?;
-                }
-            }
-        }
-
-        Ok(())
+        Self::write_enabled_prompts(state, &app)
     }
 
     pub fn delete_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
@@ -71,76 +51,40 @@ impl PromptService {
     }
 
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
-        // 回填当前 live 文件内容到已启用的提示词，或创建备份
-        let target_path = prompt_file_path(&app)?;
-        if target_path.exists() {
-            if let Ok(live_content) = std::fs::read_to_string(&target_path) {
-                if !live_content.trim().is_empty() {
-                    let mut prompts = state.db.get_prompts(app.as_str())?;
+        Self::set_prompt_enabled(state, app, id, true)
+    }
 
-                    // 尝试回填到当前已启用的提示词
-                    if let Some((enabled_id, enabled_prompt)) = prompts
-                        .iter_mut()
-                        .find(|(_, p)| p.enabled)
-                        .map(|(id, p)| (id.clone(), p))
-                    {
-                        let timestamp = get_unix_timestamp()?;
-                        enabled_prompt.content = live_content.clone();
-                        enabled_prompt.updated_at = Some(timestamp);
-                        log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
-                        state.db.save_prompt(app.as_str(), enabled_prompt)?;
-                    } else {
-                        // 没有已启用的提示词，则创建一次备份（避免重复备份）
-                        let content_exists = prompts
-                            .values()
-                            .any(|p| p.content.trim() == live_content.trim());
-                        if !content_exists {
-                            let timestamp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs() as i64;
-                            let backup_id = format!("backup-{timestamp}");
-                            let backup_prompt = Prompt {
-                                id: backup_id.clone(),
-                                name: format!(
-                                    "原始提示词 {}",
-                                    chrono::Local::now().format("%Y-%m-%d %H:%M")
-                                ),
-                                content: live_content,
-                                description: Some("自动备份的原始提示词".to_string()),
-                                enabled: false,
-                                created_at: Some(timestamp),
-                                updated_at: Some(timestamp),
-                            };
-                            log::info!("回填 live 提示词内容，创建备份: {backup_id}");
-                            state.db.save_prompt(app.as_str(), &backup_prompt)?;
-                        }
-                    }
-                }
-            }
-        }
+    pub fn set_prompt_enabled(
+        state: &AppState,
+        app: AppType,
+        id: &str,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        Self::backup_external_live_content(state, &app, None)?;
+        state.db.set_prompt_enabled(app.as_str(), id, enabled)?;
+        Self::write_enabled_prompts(state, &app)
+    }
 
-        // 启用目标提示词并写入文件
-        let mut prompts = state.db.get_prompts(app.as_str())?;
+    /// 替换完整启用集合，供 Profile 切换等批量场景使用。
+    pub fn set_enabled_prompts(
+        state: &AppState,
+        app: AppType,
+        enabled_ids: &[String],
+    ) -> Result<(), AppError> {
+        Self::backup_external_live_content(state, &app, None)?;
+        state.db.set_enabled_prompts(app.as_str(), enabled_ids)?;
+        Self::write_enabled_prompts(state, &app)
+    }
 
-        for prompt in prompts.values_mut() {
-            prompt.enabled = false;
-        }
-
-        if let Some(prompt) = prompts.get_mut(id) {
-            prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
-            state.db.save_prompt(app.as_str(), prompt)?;
-        } else {
-            return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
-        }
-
-        // Save all prompts to disable others
-        for (_, prompt) in prompts.iter() {
-            state.db.save_prompt(app.as_str(), prompt)?;
-        }
-
-        Ok(())
+    /// 更新列表顺序；启用项的合并顺序与列表顺序始终一致。
+    pub fn update_sort_order(
+        state: &AppState,
+        app: AppType,
+        updates: &[PromptSortUpdate],
+    ) -> Result<(), AppError> {
+        Self::backup_external_live_content(state, &app, None)?;
+        state.db.update_prompts_sort_order(app.as_str(), updates)?;
+        Self::write_enabled_prompts(state, &app)
     }
 
     pub fn import_from_file(state: &AppState, app: AppType) -> Result<String, AppError> {
@@ -238,5 +182,105 @@ impl PromptService {
 
         log::info!("自动导入完成: {}", app.as_str());
         Ok(1)
+    }
+
+    fn write_enabled_prompts(state: &AppState, app: &AppType) -> Result<(), AppError> {
+        let prompts = state.db.get_prompts(app.as_str())?;
+        let content = merge_enabled_prompt_content(prompts.values());
+        let target_path = prompt_file_path(app)?;
+
+        // 没有启用项且文件本就不存在时，不额外创建空文件。
+        if content.is_empty() && !target_path.exists() {
+            return Ok(());
+        }
+
+        write_text_file(&target_path, &content)
+    }
+
+    /// 如果 live 文件已被外部修改，则整体备份；多提示词场景无法安全地把
+    /// 合并后的改动反向拆回某一条提示词。
+    fn backup_external_live_content(
+        state: &AppState,
+        app: &AppType,
+        incoming_content: Option<&str>,
+    ) -> Result<(), AppError> {
+        let target_path = prompt_file_path(app)?;
+        if !target_path.exists() {
+            return Ok(());
+        }
+
+        let live_content =
+            std::fs::read_to_string(&target_path).map_err(|e| AppError::io(&target_path, e))?;
+        if live_content.trim().is_empty() {
+            return Ok(());
+        }
+
+        let prompts = state.db.get_prompts(app.as_str())?;
+        let expected = merge_enabled_prompt_content(prompts.values());
+        if live_content.trim() == expected.trim()
+            || (expected.is_empty()
+                && (incoming_content.is_some_and(|content| content.trim() == live_content.trim())
+                    || prompts
+                        .values()
+                        .any(|prompt| prompt.content.trim() == live_content.trim())))
+        {
+            return Ok(());
+        }
+
+        let timestamp = get_unix_timestamp()?;
+        let backup_id = format!("backup-{timestamp}");
+        let backup_prompt = Prompt {
+            id: backup_id.clone(),
+            name: format!(
+                "原始提示词 {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M")
+            ),
+            content: live_content,
+            description: Some("自动备份的原始提示词".to_string()),
+            enabled: false,
+            created_at: Some(timestamp),
+            updated_at: Some(timestamp),
+        };
+        log::info!("检测到外部修改的 live 提示词，创建整体备份: {backup_id}");
+        state.db.save_prompt(app.as_str(), &backup_prompt)
+    }
+}
+
+fn merge_enabled_prompt_content<'a>(prompts: impl Iterator<Item = &'a Prompt>) -> String {
+    prompts
+        .filter(|prompt| prompt.enabled)
+        .map(|prompt| prompt.content.as_str())
+        .filter(|content| !content.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prompt(id: &str, content: &str, enabled: bool) -> Prompt {
+        Prompt {
+            id: id.to_string(),
+            name: id.to_string(),
+            content: content.to_string(),
+            description: None,
+            enabled,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn merges_enabled_prompts_in_iteration_order() {
+        let prompts = [
+            prompt("first", "  first  ", true),
+            prompt("disabled", "ignored", false),
+            prompt("second", "second\n", true),
+        ];
+        assert_eq!(
+            merge_enabled_prompt_content(prompts.iter()),
+            "  first  \n\nsecond\n"
+        );
     }
 }

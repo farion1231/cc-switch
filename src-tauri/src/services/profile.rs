@@ -9,7 +9,7 @@
 //! - 供应商：`ProviderService::switch`（内建代理接管热切换与接管下禁切官方）
 //! - MCP：`McpService::toggle_app`（改标志 + 单 server 物化）
 //! - Skills：`SkillService::toggle_app`（改标志 + 单 skill 物化）
-//! - Prompt：`PromptService::enable_prompt`（互斥激活 + 原子写 live）
+//! - Prompt：`PromptService::set_enabled_prompts`（批量启用 + 按顺序合并写 live）
 //!
 //! apply 为 best-effort：单项失败收集为 warning 继续，不整体回滚。
 
@@ -114,6 +114,32 @@ impl<T> PerApp<T> {
     }
 }
 
+/// Profile 中启用的提示词 id 列表。
+///
+/// 新版始终序列化为数组；反序列化时兼容旧版保存的单个字符串 id。
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct PromptIds(pub Vec<String>);
+
+impl<'de> Deserialize<'de> for PromptIds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum PromptIdsRepr {
+            One(String),
+            Many(Vec<String>),
+        }
+
+        Ok(match PromptIdsRepr::deserialize(deserializer)? {
+            PromptIdsRepr::One(id) => Self(vec![id]),
+            PromptIdsRepr::Many(ids) => Self(ids),
+        })
+    }
+}
+
 /// Profile 的 JSON 快照结构（与前端 TS 类型严格对应）
 ///
 /// 所有槽位都是 Option：None = 该侧从未拍过快照（应用时不动），
@@ -128,8 +154,8 @@ pub struct ProfilePayload {
     pub mcp: PerApp<Option<Vec<String>>>,
     /// 每 app 启用的 Skill id 集合
     pub skills: PerApp<Option<Vec<String>>>,
-    /// 每 app 激活的 prompt id
-    pub prompts: PerApp<Option<String>>,
+    /// 每 app 启用的 prompt id 列表（顺序与合并顺序一致）
+    pub prompts: PerApp<Option<PromptIds>>,
 }
 
 impl ProfilePayload {
@@ -225,12 +251,15 @@ impl ProfileService {
                 );
             }
             if let Some(slot) = payload.prompts.get_mut(app) {
-                *slot = state
-                    .db
-                    .get_prompts(app.as_str())?
-                    .values()
-                    .find(|p| p.enabled)
-                    .map(|p| p.id.clone());
+                *slot = Some(PromptIds(
+                    state
+                        .db
+                        .get_prompts(app.as_str())?
+                        .values()
+                        .filter(|p| p.enabled)
+                        .map(|p| p.id.clone())
+                        .collect(),
+                ));
             }
         }
         Ok(payload)
@@ -433,22 +462,31 @@ impl ProfileService {
                 }
             }
 
-            // 5. Prompt（None = 不动；已激活则幂等跳过，避免无谓的文件写与备份）
-            if let Some(Some(target_prompt)) = payload.prompts.get(app) {
+            // 5. Prompt（None = 不动；Some(空) = 禁用全部）
+            if let Some(Some(target_prompts)) = payload.prompts.get(app) {
                 let prompts = state.db.get_prompts(app_str)?;
-                match prompts.get(target_prompt) {
-                    None => warnings.push(format!(
-                        "[{app_str}] prompt '{target_prompt}' no longer exists, skipped"
-                    )),
-                    Some(p) if p.enabled => {}
-                    Some(_) => {
-                        if let Err(e) =
-                            PromptService::enable_prompt(state, app.clone(), target_prompt)
-                        {
-                            warnings.push(format!(
-                                "[{app_str}] enable prompt '{target_prompt}' failed: {e}"
-                            ));
-                        }
+                let mut valid_ids = Vec::new();
+                for id in &target_prompts.0 {
+                    if prompts.contains_key(id) {
+                        valid_ids.push(id.clone());
+                    } else {
+                        warnings.push(format!(
+                            "[{app_str}] prompt '{id}' no longer exists, skipped"
+                        ));
+                    }
+                }
+
+                let current: HashSet<&str> = prompts
+                    .values()
+                    .filter(|prompt| prompt.enabled)
+                    .map(|prompt| prompt.id.as_str())
+                    .collect();
+                let target: HashSet<&str> = valid_ids.iter().map(String::as_str).collect();
+                if current != target {
+                    if let Err(e) =
+                        PromptService::set_enabled_prompts(state, app.clone(), &valid_ids)
+                    {
+                        warnings.push(format!("[{app_str}] set enabled prompts failed: {e}"));
                     }
                 }
             }
@@ -494,7 +532,7 @@ mod tests {
             prompts: PerApp {
                 claude: None,
                 claude_desktop: None,
-                codex: Some("pr1".into()),
+                codex: Some(PromptIds(ids(&["pr1", "pr2"]))),
             },
         };
         let json = serde_json::to_string(&payload).unwrap();
@@ -504,6 +542,21 @@ mod tests {
         assert!(json.contains("\"codex\""));
         let back: ProfilePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn test_payload_accepts_legacy_single_prompt_id() {
+        let back: ProfilePayload = serde_json::from_str(
+            r#"{"prompts":{"claude":"legacy-prompt","claude-desktop":null,"codex":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            back.prompts.claude,
+            Some(PromptIds(vec!["legacy-prompt".to_string()]))
+        );
+
+        let json = serde_json::to_string(&back).unwrap();
+        assert!(json.contains(r#""claude":["legacy-prompt"]"#));
     }
 
     #[test]
