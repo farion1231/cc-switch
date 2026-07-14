@@ -29,6 +29,7 @@ use crate::{
     app_config::AppType,
     provider::{LocalProxyRequestOverrides, Provider},
 };
+use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
@@ -37,6 +38,22 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 const PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<(), ProxyError> {
+    let authorization = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim);
+    match authorization {
+        None | Some("") => Err(ProxyError::AuthError(
+            "Codex 官方登录不可用，请先在 Codex 中完成 ChatGPT 登录".to_string(),
+        )),
+        Some(value) if value.contains(PROXY_AUTH_PLACEHOLDER) => Err(ProxyError::AuthError(
+            "已切换到 OpenAI 官方供应商，请重启 Codex 或新建会话以加载官方登录配置".to_string(),
+        )),
+        Some(_) => Ok(()),
+    }
+}
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -985,7 +1002,7 @@ impl RequestForwarder {
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
                     //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
-                    let category = self.categorize_proxy_error(&e);
+                    let category = self.categorize_proxy_error(&e, provider);
 
                     match category {
                         ErrorCategory::Retryable => {
@@ -1129,6 +1146,12 @@ impl RequestForwarder {
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
+        let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
+            && super::providers::is_codex_official_provider(provider);
+
+        if codex_official_auth_passthrough {
+            validate_codex_official_authorization(headers)?;
+        }
 
         // 应用模型映射（独立于格式转换）
         // Claude Desktop proxy 模式必须先把 Desktop 可见的 claude-* route
@@ -1384,6 +1407,10 @@ impl RequestForwarder {
         // 转换请求体（如果需要）
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
+            let explicit_prompt_cache_key = mapped_body
+                .get("prompt_cache_key")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
             let restored = self
                 .codex_chat_history
                 .enrich_request(&mut mapped_body)
@@ -1396,10 +1423,18 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
-            )?
+            )?;
+            super::providers::inject_codex_chat_prompt_cache_key(
+                provider,
+                &mut chat_body,
+                explicit_prompt_cache_key.as_deref(),
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+            );
+            chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
@@ -1450,15 +1485,10 @@ impl RequestForwarder {
             // configured TTL rather than silently forcing 5m on this conversion path.
             // otherwise system/tools/history are re-sent at full price every round,
             // inflating cost and first-token latency. The injector handles the
-            // string→array `system` conversion and the 4-breakpoint cap.
+            // string→array `system` conversion and the new-breakpoint budget.
             super::cache_injector::inject(
                 &mut anthropic_body,
-                &super::types::OptimizerConfig {
-                    enabled: true,
-                    thinking_optimizer: false,
-                    cache_injection: true,
-                    cache_ttl: self.optimizer_config.cache_ttl.clone(),
-                },
+                &codex_anthropic_cache_config(&self.optimizer_config),
             );
             anthropic_body
         } else if needs_transform {
@@ -1832,6 +1862,17 @@ impl RequestForwarder {
                 || key_str.eq_ignore_ascii_case("x-api-key")
                 || key_str.eq_ignore_ascii_case("x-goog-api-key")
             {
+                // The built-in Codex official provider deliberately has no
+                // credential in CC Switch. `requires_openai_auth = true` makes
+                // Codex send its native ChatGPT authorization, which must reach
+                // the fixed official upstream unchanged. Other credential
+                // headers are still discarded.
+                if codex_official_auth_passthrough && key_str.eq_ignore_ascii_case("authorization")
+                {
+                    saw_auth = true;
+                    ordered_headers.append(key.clone(), value.clone());
+                    continue;
+                }
                 if !saw_auth {
                     saw_auth = true;
                     for (ah_name, ah_value) in &auth_headers {
@@ -2138,6 +2179,21 @@ impl RequestForwarder {
                 response = self
                     .validate_codex_anthropic_success_response(response)
                     .await?;
+            } else if matches!(
+                resolved_claude_api_format.as_deref(),
+                Some("openai_responses")
+            ) {
+                if !request_is_streaming || response.is_json() {
+                    // Claude→Responses gateways can also return a semantic failure in an
+                    // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
+                    // retry loop so an early failure can still select another provider.
+                    response = self.validate_responses_success_response(response).await?;
+                } else {
+                    // Delay committing the downstream stream until the upstream emits
+                    // either productive output or a valid non-failure terminal event.
+                    // A response.failed/error before output remains failover-safe.
+                    response = self.validate_responses_stream_start(response).await?;
+                }
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -2222,6 +2278,113 @@ impl RequestForwarder {
         }
 
         Ok(ProxyResponse::buffered(status, headers, raw))
+    }
+
+    async fn validate_responses_success_response(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let status = response.status();
+        let headers = response.headers().clone();
+        let encoding = get_content_encoding(&headers);
+        let raw = response.bytes().await?;
+        let decoded = match encoding {
+            Some(encoding) => match decompress_body(&encoding, &raw) {
+                Ok(Some(decompressed)) => decompressed,
+                _ => raw.to_vec(),
+            },
+            None => raw.to_vec(),
+        };
+
+        if let Some(message) = responses_error_envelope_message(&decoded) {
+            return Err(ProxyError::TransformError(format!(
+                "Responses upstream returned a 2xx failure: {message}"
+            )));
+        }
+
+        Ok(ProxyResponse::buffered(status, headers, raw))
+    }
+
+    async fn validate_responses_stream_start(
+        &self,
+        response: ProxyResponse,
+    ) -> Result<ProxyResponse, ProxyError> {
+        const MAX_PRIME_BYTES: usize = 256 * 1024;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let mut stream = Box::pin(response.bytes_stream());
+        let mut replay_chunks: Vec<Bytes> = Vec::new();
+        let mut parse_buffer = String::new();
+        let mut utf8_remainder = Vec::new();
+
+        loop {
+            let next = if self.streaming_first_byte_timeout.is_zero() {
+                stream.next().await
+            } else {
+                tokio::time::timeout(self.streaming_first_byte_timeout, stream.next())
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout(format!(
+                            "Responses stream produced no semantic output within {}s",
+                            self.streaming_first_byte_timeout.as_secs()
+                        ))
+                    })?
+            };
+
+            let Some(chunk) = next else {
+                if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                    outcome?;
+                    let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
+                    return Ok(ProxyResponse::streamed(status, headers, replay));
+                }
+                if !parse_buffer.trim().is_empty() {
+                    if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
+                        outcome?;
+                        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
+                        return Ok(ProxyResponse::streamed(status, headers, replay));
+                    }
+                }
+                return Err(ProxyError::ForwardFailed(
+                    "Responses stream ended before producing output or a terminal event"
+                        .to_string(),
+                ));
+            };
+            let chunk = chunk.map_err(|error| {
+                ProxyError::ForwardFailed(format!(
+                    "Failed while validating Responses stream start: {error}"
+                ))
+            })?;
+            crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+            replay_chunks.push(chunk);
+
+            // Some compatible gateways ignore `stream:true` and return a complete
+            // Responses JSON document without a JSON content-type. Recognize that
+            // shape before looking for SSE delimiters; pretty-printed JSON may itself
+            // contain blank lines and must stay intact.
+            if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
+                outcome?;
+                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+                return Ok(ProxyResponse::streamed(status, headers, replay));
+            }
+
+            while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
+                if let Some(outcome) = inspect_responses_start_event(&block) {
+                    outcome?;
+                    let replay =
+                        futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+                    return Ok(ProxyResponse::streamed(status, headers, replay));
+                }
+            }
+
+            if replay_chunks.iter().map(Bytes::len).sum::<usize>() >= MAX_PRIME_BYTES {
+                log::warn!(
+                    "[Claude/Responses] semantic stream priming exceeded {MAX_PRIME_BYTES} bytes; committing buffered stream"
+                );
+                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
+                return Ok(ProxyResponse::streamed(status, headers, replay));
+            }
+        }
     }
 
     async fn prime_streaming_response(
@@ -2364,7 +2527,23 @@ impl RequestForwarder {
         }
     }
 
-    fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
+    fn categorize_proxy_error(&self, error: &ProxyError, provider: &Provider) -> ErrorCategory {
+        // Authentication belongs to the Codex client for the built-in official
+        // route. Retrying another provider would silently move the conversation
+        // away from the selected official account and poison its health state.
+        if super::providers::is_codex_official_provider(provider)
+            && (matches!(error, ProxyError::AuthError(_))
+                || matches!(
+                    error,
+                    ProxyError::UpstreamError {
+                        status: 401 | 403,
+                        ..
+                    }
+                ))
+        {
+            return ErrorCategory::NonRetryable;
+        }
+
         match error {
             // 网络和上游错误：都应该尝试下一个供应商
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
@@ -2649,6 +2828,137 @@ fn codex_anthropic_error_envelope_message(body: &[u8]) -> Option<String> {
         .map(str::to_string)
         .unwrap_or_else(|| error.to_string());
     Some(format!("{error_type}: {message}"))
+}
+
+fn responses_error_envelope_message(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let status = value.get("status").and_then(Value::as_str);
+    let has_error = value.get("error").is_some_and(|error| !error.is_null());
+    if !matches!(status, Some("failed" | "cancelled")) && !has_error {
+        return None;
+    }
+
+    let error = value.get("error").unwrap_or(&value);
+    let error_type = error
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| error.get("code").and_then(Value::as_str))
+        .unwrap_or_else(|| status.unwrap_or("error"));
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or(match status {
+            Some("cancelled") => "response generation was cancelled",
+            _ => "response generation failed",
+        });
+    Some(format!("{error_type}: {message}"))
+}
+
+/// Prompt caching is part of the Codex→Anthropic protocol bridge rather than an
+/// optional Bedrock optimizer. Codex requests do not contain Anthropic
+/// `cache_control`, so keep bridge caching on by default while still honoring the
+/// dedicated cache-injection switch. Injected breakpoints always use Anthropic's
+/// standard 5-minute TTL.
+fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
+    OptimizerConfig {
+        enabled: true,
+        thinking_optimizer: false,
+        cache_injection: config.cache_injection,
+    }
+}
+
+/// A streaming request may receive a whole JSON document even when the gateway
+/// omits `application/json`. `None` means either "not JSON" or "not complete yet";
+/// a parsed document is safe to commit unless it is a semantic failure envelope.
+fn inspect_responses_json_document(buffer: &str) -> Option<Result<(), ProxyError>> {
+    let trimmed = buffer.trim();
+    if !matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'[')) {
+        return None;
+    }
+    let _: Value = serde_json::from_str(trimmed).ok()?;
+    if let Some(message) = responses_error_envelope_message(trimmed.as_bytes()) {
+        return Some(Err(ProxyError::TransformError(format!(
+            "Responses upstream returned a 2xx failure: {message}"
+        ))));
+    }
+    Some(Ok(()))
+}
+
+/// Inspect one complete Responses SSE block while the response is still inside
+/// the retry loop. `None` means the event is lifecycle-only and priming should
+/// continue; `Some(Ok(()))` means it is safe to commit/replay the stream.
+fn inspect_responses_start_event(block: &str) -> Option<Result<(), ProxyError>> {
+    let mut named_event = None;
+    let mut data_lines = Vec::new();
+    for line in block.lines() {
+        if let Some(event) = crate::proxy::sse::strip_sse_field(line, "event") {
+            named_event = Some(event.trim().to_string());
+        } else if let Some(data) = crate::proxy::sse::strip_sse_field(line, "data") {
+            data_lines.push(data);
+        }
+    }
+    if data_lines.is_empty() {
+        return None;
+    }
+    let value: Value = match serde_json::from_str(&data_lines.join("\n")) {
+        Ok(value) => value,
+        Err(_) => return None,
+    };
+    let event = named_event
+        .as_deref()
+        .filter(|event| !event.is_empty())
+        .or_else(|| value.get("type").and_then(Value::as_str))
+        .unwrap_or("");
+
+    let response = value.get("response").unwrap_or(&value);
+    if matches!(
+        response.get("status").and_then(Value::as_str),
+        Some("failed" | "cancelled")
+    ) || response.get("error").is_some_and(|error| !error.is_null())
+    {
+        let error = response.get("error").unwrap_or(response);
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| error.as_str())
+            .unwrap_or("Responses upstream failed before output");
+        let error_type = error
+            .get("type")
+            .and_then(Value::as_str)
+            .or_else(|| error.get("code").and_then(Value::as_str))
+            .or_else(|| response.get("status").and_then(Value::as_str))
+            .unwrap_or("upstream_error");
+        return Some(Err(ProxyError::TransformError(format!(
+            "Responses upstream {error_type}: {message}"
+        ))));
+    }
+
+    match event {
+        "response.failed" | "error" => {
+            let error = response.get("error").unwrap_or(response);
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .or_else(|| error.as_str())
+                .unwrap_or("Responses upstream emitted an error before output");
+            let error_type = error
+                .get("type")
+                .and_then(Value::as_str)
+                .or_else(|| error.get("code").and_then(Value::as_str))
+                .unwrap_or("upstream_error");
+            Some(Err(ProxyError::TransformError(format!(
+                "Responses upstream {error_type}: {message}"
+            ))))
+        }
+        "response.created" | "response.in_progress" | "response.queued" => None,
+        "" => None,
+        // Productive output, incomplete, and completed terminals are all safe to
+        // expose. Mid-stream failures after this point are surfaced by the converter
+        // but intentionally do not switch providers.
+        _ => Some(Ok(())),
+    }
 }
 
 /// Rewrite Codex's `/responses` (and variants) to Anthropic's `/v1/messages`, preserving the query.
@@ -3067,9 +3377,10 @@ fn log_prompt_cache_trace(
         .get("stream")
         .map(value_for_log)
         .unwrap_or_else(|| "absent".to_string());
+    let cache_controls = cache_control_summary(body);
 
     log::debug!(
-        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, tools_hash={}, input_hash={}, include_hash={}, body_hash={}",
+        "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, system_hash={}, tools_hash={}, input_hash={}, messages_hash={}, include_hash={}, cache_controls={}, body_hash={}",
         app_type.as_str(),
         provider.id,
         endpoint,
@@ -3079,11 +3390,52 @@ fn log_prompt_cache_trace(
         store,
         stream,
         short_value_hash(body.get("instructions")),
+        short_value_hash(body.get("system")),
         short_value_hash(body.get("tools")),
         short_value_hash(body.get("input")),
+        short_value_hash(body.get("messages")),
         short_value_hash(body.get("include")),
+        cache_controls,
         short_value_hash(Some(body)),
     );
+}
+
+fn cache_control_summary(value: &Value) -> String {
+    fn walk(value: &Value, count: &mut usize, ttls: &mut std::collections::BTreeSet<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(cache_control) = object.get("cache_control") {
+                    *count += 1;
+                    let ttl = cache_control
+                        .get("ttl")
+                        .and_then(Value::as_str)
+                        .unwrap_or("default");
+                    ttls.insert(ttl.to_string());
+                }
+                for child in object.values() {
+                    walk(child, count, ttls);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    walk(child, count, ttls);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut count = 0;
+    let mut ttls = std::collections::BTreeSet::new();
+    walk(value, &mut count, &mut ttls);
+    format!(
+        "count={count},ttls={}",
+        if ttls.is_empty() {
+            "none".to_string()
+        } else {
+            ttls.into_iter().collect::<Vec<_>>().join("|")
+        }
+    )
 }
 
 fn value_for_log(value: &Value) -> String {
@@ -3805,6 +4157,139 @@ mod tests {
         assert!(
             codex_anthropic_error_envelope_message(br#"{"type":"message","content":[]}"#).is_none()
         );
+    }
+
+    #[test]
+    fn responses_2xx_failure_is_detected_for_failover() {
+        assert_eq!(
+            responses_error_envelope_message(
+                br#"{"status":"failed","error":{"type":"server_error","message":"busy"},"output":[]}"#
+            )
+            .as_deref(),
+            Some("server_error: busy")
+        );
+        assert_eq!(
+            responses_error_envelope_message(br#"{"status":"cancelled","output":[]}"#).as_deref(),
+            Some("cancelled: response generation was cancelled")
+        );
+        assert!(responses_error_envelope_message(
+            br#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#
+        )
+        .is_none());
+        assert!(responses_error_envelope_message(
+            br#"{"status":"completed","error":null,"output":[]}"#
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn responses_stream_start_semantic_failure_is_retryable() {
+        let created = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}"
+        );
+        assert!(inspect_responses_start_event(created).is_none());
+
+        let failed = concat!(
+            "event: response.failed\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"message\":\"boom\"}}}"
+        );
+        assert!(matches!(
+            inspect_responses_start_event(failed),
+            Some(Err(ProxyError::TransformError(message))) if message.contains("boom")
+        ));
+
+        let delta = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}"
+        );
+        assert!(matches!(inspect_responses_start_event(delta), Some(Ok(()))));
+    }
+
+    #[test]
+    fn responses_stream_start_accepts_unlabelled_whole_json() {
+        assert!(matches!(
+            inspect_responses_json_document(
+                r#"{
+                    "status": "completed",
+
+                    "output": []
+                }"#
+            ),
+            Some(Ok(()))
+        ));
+        assert!(inspect_responses_json_document(r#"{"status":"completed""#).is_none());
+
+        let failed = inspect_responses_json_document(
+            r#"{"status":"failed","error":{"message":"backend unavailable"}}"#,
+        );
+        assert!(
+            matches!(failed, Some(Err(ProxyError::TransformError(message))) if message.contains("backend unavailable"))
+        );
+    }
+
+    #[test]
+    fn codex_anthropic_cache_is_default_on_but_honors_sub_switch() {
+        let default = codex_anthropic_cache_config(&OptimizerConfig::default());
+        assert!(default.enabled);
+        assert!(default.cache_injection);
+
+        let disabled = codex_anthropic_cache_config(&OptimizerConfig {
+            cache_injection: false,
+            ..OptimizerConfig::default()
+        });
+        assert!(disabled.enabled);
+        assert!(!disabled.cache_injection);
+    }
+
+    #[test]
+    fn invalid_client_history_is_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(None);
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::InvalidRequest("invalid historical tool arguments".to_string()),
+                &provider,
+            ),
+            ErrorCategory::NonRetryable
+        );
+    }
+
+    #[test]
+    fn official_codex_auth_failures_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let mut provider = test_provider_with_type(None);
+        provider.id = "codex-official".to_string();
+        provider.category = Some("official".to_string());
+
+        for error in [
+            ProxyError::AuthError("restart Codex".to_string()),
+            ProxyError::UpstreamError {
+                status: 401,
+                body: None,
+            },
+            ProxyError::UpstreamError {
+                status: 403,
+                body: None,
+            },
+        ] {
+            assert_eq!(
+                forwarder.categorize_proxy_error(&error, &provider),
+                ErrorCategory::NonRetryable
+            );
+        }
+    }
+
+    #[test]
+    fn official_codex_rejects_stale_proxy_placeholder_with_restart_hint() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer PROXY_MANAGED"),
+        );
+        let error = validate_codex_official_authorization(&headers)
+            .expect_err("stale placeholder must be rejected");
+        assert!(matches!(error, ProxyError::AuthError(message) if message.contains("重启 Codex")));
     }
 
     #[test]
