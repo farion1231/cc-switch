@@ -1166,10 +1166,17 @@ wire_api = "responses"
         });
 
         apply_codex_chat_default_max_output_tokens(&provider, &mut body);
-        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
 
         // Non-o-series: max_output_tokens maps to max_tokens only.
-        assert_eq!(result.get("max_tokens").and_then(|v| v.as_u64()), Some(8192));
+        assert_eq!(
+            result.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(8192)
+        );
         assert!(result.get("max_completion_tokens").is_none());
     }
 
@@ -1185,10 +1192,17 @@ wire_api = "responses"
         });
 
         apply_codex_chat_default_max_output_tokens(&provider, &mut body);
-        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
 
         // O-series: max_output_tokens maps to max_completion_tokens only.
-        assert_eq!(result.get("max_completion_tokens").and_then(|v| v.as_u64()), Some(8192));
+        assert_eq!(
+            result.get("max_completion_tokens").and_then(|v| v.as_u64()),
+            Some(8192)
+        );
         assert!(result.get("max_tokens").is_none());
     }
 
@@ -1207,10 +1221,17 @@ wire_api = "responses"
         let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
         assert!(!injected);
 
-        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
 
         // Client's max_tokens preserved; no conflicting max_completion_tokens.
-        assert_eq!(result.get("max_tokens").and_then(|v| v.as_u64()), Some(2048));
+        assert_eq!(
+            result.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
         assert!(result.get("max_completion_tokens").is_none());
         assert!(result.get("max_output_tokens").is_none());
     }
@@ -1230,10 +1251,17 @@ wire_api = "responses"
         let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
         assert!(!injected);
 
-        let result = super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(body, None).unwrap();
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
 
         // Client's max_completion_tokens preserved; no conflicting max_tokens.
-        assert_eq!(result.get("max_completion_tokens").and_then(|v| v.as_u64()), Some(2048));
+        assert_eq!(
+            result.get("max_completion_tokens").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
         assert!(result.get("max_tokens").is_none());
         assert!(result.get("max_output_tokens").is_none());
     }
