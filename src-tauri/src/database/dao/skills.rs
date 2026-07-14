@@ -232,32 +232,21 @@ impl Database {
         Ok(())
     }
 
-    /// 初始化默认的 Skill 仓库（启动时调用，补充缺失的默认仓库）
+    /// 初始化默认的 Skill 仓库（启动时调用，仅在仓库表为空时写入）
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
-        // 获取已有仓库列表
-        let existing = self.get_skill_repos()?;
-        let existing_keys: std::collections::HashSet<(String, String)> = existing
-            .iter()
-            .map(|r| (r.owner.clone(), r.name.clone()))
-            .collect();
+        if !self.get_skill_repos()?.is_empty() {
+            return Ok(0);
+        }
 
-        // 获取默认仓库列表
         let default_store = crate::services::skill::SkillStore::default();
         let mut count = 0;
 
-        // 仅插入缺失的默认仓库
         for repo in &default_store.repos {
-            let key = (repo.owner.clone(), repo.name.clone());
-            if !existing_keys.contains(&key) {
-                self.save_skill_repo(repo)?;
-                count += 1;
-                log::info!("补充默认 Skill 仓库: {}/{}", repo.owner, repo.name);
-            }
+            self.save_skill_repo(repo)?;
+            count += 1;
+            log::info!("初始化默认 Skill 仓库: {}/{}", repo.owner, repo.name);
         }
 
-        if count > 0 {
-            log::info!("补充默认 Skill 仓库完成，新增 {count} 个");
-        }
         Ok(count)
     }
 }

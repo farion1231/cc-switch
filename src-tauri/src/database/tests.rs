@@ -152,6 +152,25 @@ fn normalize_default(default: &Option<String>) -> Option<String> {
 }
 
 #[test]
+fn deleted_default_skill_repo_is_not_restored() {
+    let db = Database::memory().expect("create memory db");
+
+    assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 4);
+    db.delete_skill_repo("anthropics", "skills")
+        .expect("delete repo");
+
+    assert_eq!(
+        db.init_default_skill_repos().expect("reinitialize repos"),
+        0
+    );
+    assert!(!db
+        .get_skill_repos()
+        .expect("get repos")
+        .iter()
+        .any(|repo| repo.owner == "anthropics" && repo.name == "skills"));
+}
+
+#[test]
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
