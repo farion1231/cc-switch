@@ -23,8 +23,59 @@ use super::gemini_auth::{
 use super::normalize_claude_models_in_value;
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
+    let base_url = [
+        settings
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(Value::as_str),
+        settings.get("base_url").and_then(Value::as_str),
+        settings.get("baseURL").and_then(Value::as_str),
+        settings.get("apiEndpoint").and_then(Value::as_str),
+        settings.pointer("/apiEndpoint/url").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty())
+    .map(str::to_string);
+    let fallback_api_key = settings
+        .get("apiKey")
+        .or_else(|| settings.get("api_key"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
     let mut v = settings.clone();
     if let Some(obj) = v.as_object_mut() {
+        let env = obj.entry("env".to_string()).or_insert_with(|| json!({}));
+        if !env.is_object() {
+            *env = json!({});
+        }
+        if let Some(env) = env.as_object_mut() {
+            let has_base_url = env
+                .get("ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            if !has_base_url {
+                if let Some(base_url) = base_url {
+                    env.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(base_url));
+                }
+            }
+
+            let has_anthropic_key = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+                .into_iter()
+                .any(|key| {
+                    env.get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                });
+            if !has_anthropic_key {
+                if let Some(api_key) = fallback_api_key {
+                    env.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key));
+                }
+            }
+        }
+
         // Internal-only fields - never write to Claude Code settings.json
         obj.remove("api_format");
         obj.remove("apiFormat");
@@ -1894,6 +1945,33 @@ mod tests {
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
         }
+    }
+
+    #[test]
+    fn sanitize_claude_settings_normalizes_fallback_credentials_for_live_profile() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": ""
+            },
+            "apiEndpoint": {
+                "url": " https://fallback.example.com/anthropic/ "
+            },
+            "apiKey": " fallback-key ",
+            "api_format": "anthropic"
+        });
+
+        let live = sanitize_claude_settings_for_live(&settings);
+        assert_eq!(
+            live.pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://fallback.example.com/anthropic/")
+        );
+        assert_eq!(
+            live.pointer("/env/ANTHROPIC_API_KEY")
+                .and_then(Value::as_str),
+            Some("fallback-key")
+        );
+        assert!(live.get("api_format").is_none());
     }
 
     /// C5 回归锁：前端表单的合并/剥离必须走 toml_edit 文档模型。

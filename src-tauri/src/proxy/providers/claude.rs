@@ -112,7 +112,7 @@ fn claude_settings_base_url(settings: &Value) -> Option<&str> {
     claude_settings_base_url_candidates(settings)
         .into_iter()
         .flatten()
-        .next()
+        .find(|url| !url.trim().is_empty())
 }
 
 fn should_normalize_anthropic_tool_thinking_history(
@@ -964,6 +964,20 @@ mod tests {
 
         let url = adapter.extract_base_url(&provider).unwrap();
         assert_eq!(url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn test_extract_base_url_skips_blank_env_candidate() {
+        let adapter = ClaudeAdapter::new();
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "   "
+            },
+            "baseURL": "https://fallback.example.com/anthropic/"
+        }));
+
+        let url = adapter.extract_base_url(&provider).unwrap();
+        assert_eq!(url, "https://fallback.example.com/anthropic");
     }
 
     #[test]
