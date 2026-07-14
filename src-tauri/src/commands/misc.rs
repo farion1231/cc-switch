@@ -387,6 +387,9 @@ fn build_tool_lifecycle_command(
         // 仍应让管道前段失败参与整条脚本判定。
         lines.push("set -e".to_string());
         lines.push("set -o pipefail".to_string());
+        // 非交互式 bash 默认 PATH 不含 Homebrew 目录(macOS ARM: /opt/homebrew/bin),
+        // 导致 npm/node 等工具找不到 Homebrew 安装的版本。将常见 Homebrew bin 目录加入 PATH 兜底。
+        lines.push("export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"".to_string());
     }
 
     #[cfg(target_os = "windows")]
