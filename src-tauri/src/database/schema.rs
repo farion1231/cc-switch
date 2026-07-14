@@ -73,11 +73,16 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 4. Prompts 表
-        conn.execute("CREATE TABLE IF NOT EXISTS prompts (
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS prompts (
             id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL,
-            description TEXT, enabled BOOLEAN NOT NULL DEFAULT 1, created_at INTEGER, updated_at INTEGER,
+            description TEXT, enabled BOOLEAN NOT NULL DEFAULT 1, sort_index INTEGER,
+            created_at INTEGER, updated_at INTEGER,
             PRIMARY KEY (id, app_type)
-        )", []).map_err(|e| AppError::Database(e.to_string()))?;
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 5. Skills 表（v3.10.0+ 统一结构）
         conn.execute(
@@ -551,6 +556,7 @@ impl Database {
         // prompts 表
         Self::add_column_if_missing(conn, "prompts", "description", "TEXT")?;
         Self::add_column_if_missing(conn, "prompts", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
+        Self::add_column_if_missing(conn, "prompts", "sort_index", "INTEGER")?;
         Self::add_column_if_missing(conn, "prompts", "created_at", "INTEGER")?;
         Self::add_column_if_missing(conn, "prompts", "updated_at", "INTEGER")?;
 
