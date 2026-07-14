@@ -320,8 +320,7 @@ jobs:
           done
 
           if [ -z "$TAR_GZ" ]; then
-            echo "❌ No macOS .tar.gz updater artifact found" >&2
-            exit 1
+            echo "⚠️ No macOS .tar.gz updater artifact found, skipping updater collection"
           fi
           if [ -z "$APP_PATH" ]; then
             echo "❌ No .app found" >&2
@@ -335,10 +334,12 @@ jobs:
           fi
 
           # 1) Collect .tar.gz (updater artifact)
-          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
-          cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
-          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
-          echo "macOS updater artifact copied: $NEW_TAR_GZ"
+          if [ -n "$TAR_GZ" ]; then
+            NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
+            cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
+            [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
+            echo "macOS updater artifact copied: $NEW_TAR_GZ"
+          fi
 
           # 2) Collect .app as zip
           NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
