@@ -46,7 +46,7 @@ const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-8";
 const CLAUDE_TAKEOVER_FABLE_MODEL: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1m]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
@@ -312,10 +312,9 @@ impl ProxyService {
     }
 
     fn has_claude_one_m_marker(model: &str) -> bool {
-        model
-            .trim_end()
-            .to_ascii_lowercase()
-            .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+        crate::claude_desktop_config::parse_context_window_suffix(model)
+            .1
+            .is_some()
     }
 
     fn strip_claude_one_m_marker(model: &str) -> String {
