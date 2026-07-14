@@ -6,6 +6,7 @@ use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::AppHandle;
@@ -2645,10 +2646,16 @@ fn extract_env_vars_from_config(
         }
     }
 
-    // Codex 使用 auth 字段转换为 OPENAI_API_KEY
+    // Codex 的 auth 是对象 { "OPENAI_API_KEY": "..." }，提取其中的 key。
+    // 旧代码把 auth 当字符串读（v.as_str()），对象永远匹配不到，导致启动的
+    // Codex 终端拿不到 OPENAI_API_KEY。
     if *app_type == AppType::Codex {
-        if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
-            env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
+        if let Some(api_key) = obj
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str())
+        {
+            env_vars.push(("OPENAI_API_KEY".to_string(), api_key.to_string()));
         }
     }
 
@@ -2703,24 +2710,21 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
-    provider_id: &str,
+    _provider_id: &str,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    // 使用 provider_id 的简单 hash 作为文件名的一部分，避免非 ASCII 字符
-    // (如中文供应商名) 导致批处理文件编码问题（cmd.exe 用系统代码页
-    // 读取 UTF-8 文件时会把中文字节错当成命令分隔符）。
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(&provider_id, &mut hasher);
-    let provider_hash = std::hash::Hasher::finish(&hasher);
-    let config_file = temp_dir.join(format!(
-        "claude_{:x}_{}.json",
-        provider_hash,
-        std::process::id()
-    ));
-
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
+    // 随机 ASCII 文件名既避免中文 provider_id 的 cmd.exe 编码问题，也避免
+    // 由 hash + PID 组成的可预测路径遭受抢占或符号链接攻击。
+    let mut config_file = tempfile::Builder::new()
+        .prefix("claude_")
+        .suffix(".json")
+        .tempfile_in(&temp_dir)
+        .map_err(|e| format!("创建临时配置文件失败: {e}"))?;
+    write_claude_config(config_file.as_file_mut(), &env_vars)?;
+    let (_, config_file) = config_file
+        .keep()
+        .map_err(|e| format!("保留临时配置文件失败: {}", e.error))?;
 
     #[cfg(target_os = "macos")]
     {
@@ -2746,7 +2750,7 @@ fn launch_terminal_with_env(
 
 /// 写入 claude 配置文件
 fn write_claude_config(
-    config_file: &std::path::Path,
+    config_file: &mut std::fs::File,
     env_vars: &[(String, String)],
 ) -> Result<(), String> {
     let mut config_obj = serde_json::Map::new();
@@ -2761,7 +2765,9 @@ fn write_claude_config(
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
 
-    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
+    config_file
+        .write_all(config_json.as_bytes())
+        .map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
 /// macOS: 根据用户首选终端启动
@@ -3539,6 +3545,18 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn extract_env_vars_reads_codex_api_key_from_auth_object() {
+        let config = serde_json::json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" }
+        });
+
+        assert_eq!(
+            extract_env_vars_from_config(&config, &AppType::Codex),
+            vec![("OPENAI_API_KEY".to_string(), "sk-test".to_string())]
+        );
+    }
 
     #[cfg(unix)]
     fn set_test_executable(path: &Path, executable: bool) {

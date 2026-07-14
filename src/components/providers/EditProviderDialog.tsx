@@ -11,6 +11,8 @@ import {
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 
+const UNSAFE_DEEP_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** 深度合并两个对象，source 覆盖 target 的同名字段 */
 function deepMerge(
   target: Record<string, unknown>,
@@ -18,6 +20,8 @@ function deepMerge(
 ): Record<string, unknown> {
   const result = { ...target };
   for (const key of Object.keys(source)) {
+    if (UNSAFE_DEEP_MERGE_KEYS.has(key)) continue;
+
     const sv = source[key];
     const tv = result[key];
     if (
