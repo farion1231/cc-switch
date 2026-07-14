@@ -1867,7 +1867,10 @@
     "enabled": "Enabled",
     "enable": "Enable",
     "enabledName": "Enabled: {{name}}",
+    "enabledNames": "{{count}} enabled: {{names}}",
     "noneEnabled": "No prompt enabled",
+    "mergeOrderHint": "Enabled prompts are merged into the config file in list order. Drag to reorder them.",
+    "dragHandle": "Drag to reorder prompt",
     "currentFile": "Current {{filename}} Content",
     "empty": "No prompts yet",
     "emptyDescription": "Click the button above to add or import prompts",
@@ -1887,6 +1890,8 @@
     "enableFailed": "Failed to enable",
     "disableSuccess": "Disabled successfully",
     "disableFailed": "Failed to disable",
+    "sortSuccess": "Prompt order updated",
+    "sortFailed": "Failed to update prompt order",
     "importSuccess": "Imported successfully",
     "importFailed": "Failed to import",
     "confirm": {
@@ -2394,7 +2399,7 @@
       "name": "Name",
       "description": "Description",
       "contentPreview": "Content Preview",
-      "enabledWarning": "After import, this prompt will be enabled immediately and other prompts will be disabled"
+      "enabledWarning": "After import, this prompt will be enabled and merged in order with other enabled prompts"
     },
     "skill": {
       "title": "Add Claude Skill Repository",

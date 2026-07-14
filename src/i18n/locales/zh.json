@@ -1867,7 +1867,10 @@
     "enabled": "已启用",
     "enable": "启用",
     "enabledName": "已启用: {{name}}",
+    "enabledNames": "已启用 {{count}} 个：{{names}}",
     "noneEnabled": "未启用任何提示词",
+    "mergeOrderHint": "已启用的提示词会按当前列表顺序合并写入配置文件，可拖拽调整顺序。",
+    "dragHandle": "拖拽调整提示词顺序",
     "currentFile": "当前 {{filename}} 内容",
     "empty": "暂无提示词",
     "emptyDescription": "点击右上角按钮添加或导入提示词",
@@ -1887,6 +1890,8 @@
     "enableFailed": "启用失败",
     "disableSuccess": "禁用成功",
     "disableFailed": "禁用失败",
+    "sortSuccess": "提示词顺序已更新",
+    "sortFailed": "更新提示词顺序失败",
     "importSuccess": "导入成功",
     "importFailed": "导入失败",
     "confirm": {
@@ -2394,7 +2399,7 @@
       "name": "名称",
       "description": "描述",
       "contentPreview": "内容预览",
-      "enabledWarning": "导入后将立即启用此提示词，其他提示词将被禁用"
+      "enabledWarning": "导入后将立即启用此提示词，并与其他已启用提示词按顺序合并"
     },
     "skill": {
       "title": "添加 Claude Skill 仓库",

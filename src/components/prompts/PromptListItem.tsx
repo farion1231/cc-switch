@@ -1,6 +1,8 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Edit3, Trash2 } from "lucide-react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Edit3, GripVertical, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Prompt } from "@/lib/api";
 import PromptToggle from "./PromptToggle";
@@ -21,12 +23,38 @@ const PromptListItem: React.FC<PromptListItemProps> = ({
   onDelete,
 }) => {
   const { t } = useTranslation();
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
 
   const enabled = prompt.enabled === true;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   return (
-    <div className="group relative h-16 rounded-xl border border-border-default bg-muted/50 p-4 transition-all duration-300 hover:bg-muted hover:border-border-default/80 hover:shadow-sm">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`group relative h-16 rounded-xl border border-border-default bg-muted/50 p-4 transition-all duration-300 hover:bg-muted hover:border-border-default/80 hover:shadow-sm ${isDragging ? "z-10 opacity-80 shadow-lg" : ""}`}
+    >
       <div className="flex items-center gap-4 h-full">
+        <button
+          type="button"
+          className="-ml-2 flex-shrink-0 cursor-grab p-1 text-muted-foreground/50 transition-colors hover:text-muted-foreground active:cursor-grabbing"
+          aria-label={t("prompts.dragHandle")}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical size={16} />
+        </button>
+
         {/* Toggle 开关 */}
         <div className="flex-shrink-0">
           <PromptToggle

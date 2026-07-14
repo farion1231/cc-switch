@@ -1839,7 +1839,10 @@
     "enabled": "已啟用",
     "enable": "啟用",
     "enabledName": "已啟用：{{name}}",
+    "enabledNames": "已啟用 {{count}} 個：{{names}}",
     "noneEnabled": "未啟用任何提示詞",
+    "mergeOrderHint": "已啟用的提示詞會依目前清單順序合併寫入設定檔，可拖曳調整順序。",
+    "dragHandle": "拖曳調整提示詞順序",
     "currentFile": "目前 {{filename}} 內容",
     "empty": "暫無提示詞",
     "emptyDescription": "點擊右上角按鈕新增或匯入提示詞",
@@ -1859,6 +1862,8 @@
     "enableFailed": "啟用失敗",
     "disableSuccess": "停用成功",
     "disableFailed": "停用失敗",
+    "sortSuccess": "提示詞順序已更新",
+    "sortFailed": "更新提示詞順序失敗",
     "importSuccess": "匯入成功",
     "importFailed": "匯入失敗",
     "confirm": {
@@ -2366,7 +2371,7 @@
       "name": "名稱",
       "description": "描述",
       "contentPreview": "內容預覽",
-      "enabledWarning": "匯入後將立即啟用此提示詞，其他提示詞將被停用"
+      "enabledWarning": "匯入後將立即啟用此提示詞，並與其他已啟用提示詞依序合併"
     },
     "skill": {
       "title": "新增 Claude Skill 儲存庫",

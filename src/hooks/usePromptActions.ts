@@ -59,60 +59,24 @@ export function usePromptActions(appId: AppId) {
     [appId, reload, t],
   );
 
-  const enablePrompt = useCallback(
-    async (id: string) => {
-      try {
-        await promptsApi.enablePrompt(appId, id);
-        await reload();
-        toast.success(t("prompts.enableSuccess"), { closeButton: true });
-      } catch (error) {
-        toast.error(t("prompts.enableFailed"));
-        throw error;
-      }
-    },
-    [appId, reload, t],
-  );
-
   const toggleEnabled = useCallback(
     async (id: string, enabled: boolean) => {
       // Optimistic update
       const previousPrompts = prompts;
-
-      // 如果要启用当前提示词，先禁用其他所有提示词
-      if (enabled) {
-        const updatedPrompts = Object.keys(prompts).reduce(
-          (acc, key) => {
-            acc[key] = {
-              ...prompts[key],
-              enabled: key === id,
-            };
-            return acc;
-          },
-          {} as Record<string, Prompt>,
-        );
-        setPrompts(updatedPrompts);
-      } else {
-        setPrompts((prev) => ({
-          ...prev,
-          [id]: {
-            ...prev[id],
-            enabled: false,
-          },
-        }));
-      }
+      setPrompts((prev) => ({
+        ...prev,
+        [id]: {
+          ...prev[id],
+          enabled,
+        },
+      }));
 
       try {
-        if (enabled) {
-          await promptsApi.enablePrompt(appId, id);
-          toast.success(t("prompts.enableSuccess"), { closeButton: true });
-        } else {
-          // 禁用提示词 - 需要后端支持
-          await promptsApi.upsertPrompt(appId, id, {
-            ...prompts[id],
-            enabled: false,
-          });
-          toast.success(t("prompts.disableSuccess"), { closeButton: true });
-        }
+        await promptsApi.setEnabled(appId, id, enabled);
+        toast.success(
+          enabled ? t("prompts.enableSuccess") : t("prompts.disableSuccess"),
+          { closeButton: true },
+        );
         await reload();
       } catch (error) {
         // Rollback on failure
@@ -120,6 +84,34 @@ export function usePromptActions(appId: AppId) {
         toast.error(
           enabled ? t("prompts.enableFailed") : t("prompts.disableFailed"),
         );
+        throw error;
+      }
+    },
+    [appId, prompts, reload, t],
+  );
+
+  const reorderPrompts = useCallback(
+    async (orderedIds: string[]) => {
+      const previousPrompts = prompts;
+      const reordered = orderedIds.reduce(
+        (acc, id) => {
+          acc[id] = prompts[id];
+          return acc;
+        },
+        {} as Record<string, Prompt>,
+      );
+      setPrompts(reordered);
+
+      try {
+        await promptsApi.updateSortOrder(
+          appId,
+          orderedIds.map((id, sortIndex) => ({ id, sortIndex })),
+        );
+        await reload();
+        toast.success(t("prompts.sortSuccess"), { closeButton: true });
+      } catch (error) {
+        setPrompts(previousPrompts);
+        toast.error(t("prompts.sortFailed"));
         throw error;
       }
     },
@@ -145,8 +137,8 @@ export function usePromptActions(appId: AppId) {
     reload,
     savePrompt,
     deletePrompt,
-    enablePrompt,
     toggleEnabled,
+    reorderPrompts,
     importFromFile,
   };
 }
