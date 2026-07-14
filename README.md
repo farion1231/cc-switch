@@ -125,8 +125,8 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 </tr>
 
 <tr>
-<td width="180"><a href="https://code0.ai?source=ccswitch"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
-<td>Thanks to <a href="https://code0.ai?source=ccswitch">code0.ai</a> for sponsoring this project! code0.ai is an AI coding service platform built for developers, supporting Claude Code, Codex, Gemini, and other mainstream AI coding capabilities. It helps individual developers and teams use AI Agents more stably and efficiently for coding, debugging, refactoring, and automation workflows. ccswitch users can contact customer support via the <a href="https://code0.ai?source=ccswitch">code0.ai website</a> to claim test credits and experience a reliable AI coding service.</td>
+<td width="180"><a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY"><img src="assets/partners/logos/code0.png" alt="code0.ai" width="150"></a></td>
+<td>Thanks to <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai</a> for sponsoring this project! code0.ai is an AI coding service platform built for developers, supporting Claude Code, Codex, Gemini, and other mainstream AI coding capabilities. It helps individual developers and teams use AI Agents more stably and efficiently for coding, debugging, refactoring, and automation workflows. ccswitch users can contact customer support via the <a href="https://code0.ai/agent/register/B2XHxGjGmRvqgznY">code0.ai website</a> to claim test credits and experience a reliable AI coding service.</td>
 </tr>
 
 <tr>
@@ -177,6 +177,11 @@ TeamoRouter also offers enterprise features including centralized billing, team 
 <tr>
 <td width="180"><a href="https://nekocode.ai?aff=CCSWITCH"><img src="assets/partners/logos/nekocode-banner.png" alt="NekoCode" width="150"></a></td>
 <td>Thanks to <a href="https://nekocode.ai?aff=CCSWITCH">NekoCode</a> for sponsoring this project! NekoCode provides developers with a stable, efficient, and reliable API relay service for Claude, Codex, and other AI models. With transparent pricing and flexible pay-as-you-go billing, it offers a simple and cost-effective way to access AI models. CC Switch users can enjoy an exclusive 10% discount: register via <a href="https://nekocode.ai?aff=CCSWITCH">this link</a> and enter promo code <code>cc-switch</code> during recharge to receive 10% off your top-up!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.newapi.ai/"><img src="assets/partners/logos/newapi-banner.png" alt="new-api" width="150"></a></td>
+<td>Thanks to the open-source AI infrastructure project <a href="https://www.newapi.ai/">new-api</a> for its strong support of this project! new-api is an open-source AI infrastructure project from QuantumNous and one of the leading unified LLM access-and-distribution projects by activity and adoption, focused on helping developers, teams, and enterprises build manageable, scalable AI service platforms at lower cost. As a fellow project rooted in the open-source ecosystem, new-api hopes to sponsor and support the continued growth of more outstanding open-source projects. 🌟 Star new-api to show your support: <a href="https://github.com/QuantumNous/new-api">https://github.com/QuantumNous/new-api</a>. Website: <a href="https://www.newapi.ai/">https://www.newapi.ai/</a>.</td>
 </tr>
 
 </table>

@@ -248,7 +248,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "Code0",
     websiteUrl: "https://code0.ai",
-    apiKeyUrl: "https://code0.ai?source=ccswitch",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
     settingsConfig: {
       name: "code0",
       base_url: "https://code0.ai/v1",
@@ -285,7 +285,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "火山Agentplan",
-    websiteUrl: "https://www.volcengine.com/product/ark",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
@@ -314,7 +315,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "BytePlus",
-    websiteUrl: "https://www.byteplus.com/en/product/modelark",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
@@ -343,7 +345,8 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "DouBaoSeed",
-    websiteUrl: "https://www.volcengine.com/product/doubao",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     settingsConfig: {
@@ -1058,24 +1061,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   },
   {
     name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     settingsConfig: {
       name: "sudocode",
-      base_url: "https://sudocode.us/v1",
+      base_url: "https://api.sudocode.chat/v1",
       api_key: "",
       api_mode: "codex_responses",
       models: [
         {
-          id: "gpt-5.5",
-          name: "GPT-5.5",
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
         },
       ],
     },
     category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
     icon: "sudocode",
     suggestedDefaults: {
-      model: { default: "gpt-5.5", provider: "sudocode" },
+      model: { default: "gpt-5.6-sol", provider: "sudocode" },
     },
   },
   {

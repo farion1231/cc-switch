@@ -124,7 +124,7 @@ pub enum AuthStrategy {
     ///
     /// - Header: `Authorization: Bearer <access_token>`
     /// - Header: `ChatGPT-Account-Id: <account_id>` (来自 forwarder 注入)
-    /// - Header: `originator: cc-switch`
+    /// - Header: `originator: codex_cli_rs` + `version: <codex 版本>`（成对，后端按此做模型 cohort 路由）
     ///
     /// 使用动态获取的 OpenAI access_token（通过 Device Code 流程获取）
     CodexOAuth,
