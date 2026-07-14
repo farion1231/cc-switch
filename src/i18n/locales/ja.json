@@ -297,6 +297,11 @@
       "restoreBackup": "オンにした際に移行した公式セッションを公式履歴へ復元する（バックアップから正確に復元）",
       "confirm": "オフにする"
     },
+    "codexHistoryVisibilityRepair": {
+      "title": "Codex Desktop サイドバー履歴を復元",
+      "message": "Codex 履歴 metadata を現在の provider（{{provider}}）へ同期します。\n\n診断結果：\n• 同期が必要な rollout ファイル：{{rollout}}\n• 修復が必要な SQLite 行：{{sqlite}}\n• 正規化が必要なプロジェクトパス：{{roots}}\n• session_index 再構築エントリ：{{index}}\n• 警告：{{warnings}}\n\n修復前に自動バックアップします。会話本文は変更しません。\n\n注意：プロバイダーをまたいで古いセッションを再開すると、相手側バックエンドがセッション内の encrypted_content 推論内容を復号できず、会話の継続に失敗する場合があります。\n\n修復後は Codex Desktop を手動で再起動し、app-server も手動で更新してください。",
+      "confirm": "バックアップして修復"
+    },
     "usage": {
       "title": "使用量クエリの設定",
       "message": "使用量クエリにはカスタムスクリプトまたは API パラメータが必要です。プロバイダーから必要な情報を取得していることをご確認ください。\n\n設定方法が不明な場合は、プロバイダーのドキュメントを先にご確認ください。",
@@ -686,6 +691,13 @@
     "unifyCodexHistoryRestoreFailed": "公式セッション履歴の復元に失敗しました。もう一度お試しください",
     "unifyCodexHistoryRestoreNothing": "現在の Codex ディレクトリに復元可能な移行バックアップはありません",
     "unifyCodexHistoryRestoreSkippedToggleOn": "統一セッション履歴が再度有効化されたため、復元をスキップしました",
+    "codexHistoryVisibilityRepair": "Codex Desktop サイドバー履歴を復元",
+    "codexHistoryVisibilityRepairDescription": "rollout、SQLite、プロジェクトパスキャッシュ、session_index の不一致によって履歴記録が消える問題を診断・修復します。\n修復後は Codex Desktop を手動で再起動し、app-server も手動で更新してください。",
+    "codexHistoryVisibilityRepairAction": "診断",
+    "codexHistoryVisibilityRepairing": "修復中",
+    "codexHistoryVisibilityDiagnoseFailed": "Codex 履歴表示の診断に失敗しました",
+    "codexHistoryVisibilityRepairFailed": "Codex 履歴表示の修復に失敗しました",
+    "codexHistoryVisibilityRepairCompleted": "Codex 履歴表示を修復しました（rollout {{rollout}} 件、SQLite {{sqlite}} 行、インデックス {{index}} 行）。Codex Desktop を手動で再起動し、app-server も手動で更新してください。バックアップ：{{backup}}",
     "appVisibility": {
       "title": "ホームページ表示",
       "description": "ホームページに表示するアプリを選択",

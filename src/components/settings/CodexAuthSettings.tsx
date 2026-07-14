@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { History, KeyRound } from "lucide-react";
+import { History, KeyRound, Loader2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import { ToggleRow } from "@/components/ui/toggle-row";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { settingsApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { settingsApi, type CodexHistoryVisibilityDiagnosis } from "@/lib/api";
 
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
@@ -22,7 +23,12 @@ export function CodexAuthSettings({
   const { t } = useTranslation();
   const [showEnableConfirm, setShowEnableConfirm] = useState(false);
   const [showDisableConfirm, setShowDisableConfirm] = useState(false);
+  const [showRepairConfirm, setShowRepairConfirm] = useState(false);
   const [hasUnifyBackup, setHasUnifyBackup] = useState(false);
+  const [historyDiagnosis, setHistoryDiagnosis] =
+    useState<CodexHistoryVisibilityDiagnosis | null>(null);
+  const [isDiagnosingHistory, setIsDiagnosingHistory] = useState(false);
+  const [isRepairingHistory, setIsRepairingHistory] = useState(false);
 
   const handleUnifyHistoryChange = (checked: boolean) => {
     if (checked) {
@@ -88,6 +94,65 @@ export function CodexAuthSettings({
     }
   };
 
+  const handleDiagnoseHistoryVisibility = async () => {
+    setIsDiagnosingHistory(true);
+    try {
+      const diagnosis = await settingsApi.diagnoseCodexHistoryVisibility();
+      setHistoryDiagnosis(diagnosis);
+      setShowRepairConfirm(true);
+    } catch (error) {
+      console.error("Failed to diagnose codex history visibility:", error);
+      toast.error(t("settings.codexHistoryVisibilityDiagnoseFailed"));
+    } finally {
+      setIsDiagnosingHistory(false);
+    }
+  };
+
+  const handleRepairHistoryVisibility = async () => {
+    setShowRepairConfirm(false);
+    setIsRepairingHistory(true);
+    try {
+      const result = await settingsApi.repairCodexHistoryVisibility();
+      toast.success(
+        t("settings.codexHistoryVisibilityRepairCompleted", {
+          rollout: result.changedRolloutFiles,
+          sqlite:
+            result.sqliteProviderRowsUpdated +
+            result.sqliteUserEventRowsUpdated +
+            result.sqliteCwdRowsUpdated,
+          index: result.sessionIndexRebuilt
+            ? result.sessionIndexEntriesWritten
+            : 0,
+          backup: result.backupDir,
+        }),
+      );
+      if (result.warnings.length > 0) {
+        toast.info(result.warnings[0]);
+      }
+    } catch (error) {
+      console.error("Failed to repair codex history visibility:", error);
+      toast.error(t("settings.codexHistoryVisibilityRepairFailed"));
+    } finally {
+      setIsRepairingHistory(false);
+    }
+  };
+
+  const repairMessage = historyDiagnosis
+    ? t("confirm.codexHistoryVisibilityRepair.message", {
+        provider: historyDiagnosis.currentProvider,
+        rollout: historyDiagnosis.rolloutFilesNeedingProviderSync,
+        sqlite:
+          historyDiagnosis.sqliteRowsNeedingProviderSync +
+          historyDiagnosis.sqliteUserEventRowsNeedingRepair +
+          historyDiagnosis.sqliteCwdRowsNeedingRepair,
+        roots: historyDiagnosis.workspaceRootsNeedingRepair,
+        index: historyDiagnosis.sessionIndexNeedsRebuild
+          ? historyDiagnosis.sqliteRows
+          : 0,
+        warnings: historyDiagnosis.warnings.length,
+      })
+    : "";
+
   return (
     <section className="space-y-4">
       <div className="flex items-center gap-2 pb-2 border-b border-border/40">
@@ -113,6 +178,38 @@ export function CodexAuthSettings({
         onCheckedChange={handleUnifyHistoryChange}
       />
 
+      <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card/50 p-4 transition-colors hover:bg-muted/50">
+        <div className="flex items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background ring-1 ring-border">
+            <Wrench className="h-4 w-4 text-amber-500" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-medium leading-none">
+              {t("settings.codexHistoryVisibilityRepair")}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.codexHistoryVisibilityRepairDescription")}
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleDiagnoseHistoryVisibility}
+          disabled={isDiagnosingHistory || isRepairingHistory}
+        >
+          {isDiagnosingHistory || isRepairingHistory ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Wrench className="h-3.5 w-3.5" />
+          )}
+          {isRepairingHistory
+            ? t("settings.codexHistoryVisibilityRepairing")
+            : t("settings.codexHistoryVisibilityRepairAction")}
+        </Button>
+      </div>
+
       <ConfirmDialog
         isOpen={showEnableConfirm}
         title={t("confirm.unifyCodexHistory.title")}
@@ -136,6 +233,16 @@ export function CodexAuthSettings({
         confirmText={t("confirm.unifyCodexHistoryOff.confirm")}
         onConfirm={(restoreBackup) => void handleDisableConfirm(restoreBackup)}
         onCancel={() => setShowDisableConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={showRepairConfirm}
+        title={t("confirm.codexHistoryVisibilityRepair.title")}
+        message={repairMessage}
+        confirmText={t("confirm.codexHistoryVisibilityRepair.confirm")}
+        variant="info"
+        onConfirm={() => void handleRepairHistoryVisibility()}
+        onCancel={() => setShowRepairConfirm(false)}
       />
     </section>
   );

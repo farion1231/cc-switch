@@ -27,6 +27,12 @@ const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
 /// `config.toml` contents, used to detect a `sqlite_home` override.
 pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    // Newer Codex Desktop builds keep the state database under a sqlite/
+    // subdirectory. Keep the legacy root path too for older installs.
+    push_unique_path(
+        &mut paths,
+        config_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME),
+    );
     push_unique_path(&mut paths, config_dir.join(CODEX_STATE_DB_FILENAME));
     // Codex lets SQLite state move away from CODEX_HOME; config takes precedence.
     if let Some(sqlite_home) = sqlite_home_from_codex_config(config_text) {
@@ -83,13 +89,14 @@ mod tests {
     fn includes_config_sqlite_home() {
         let temp = tempdir().expect("tempdir");
         let sqlite_home = temp.path().join("sqlite-home");
-        let config_text = format!("sqlite_home = \"{}\"\n", sqlite_home.display());
+        let config_text = format!("sqlite_home = '{}'\n", sqlite_home.display());
 
         let paths = codex_state_db_paths(temp.path(), &config_text);
 
         assert_eq!(
             paths,
             vec![
+                temp.path().join("sqlite").join(CODEX_STATE_DB_FILENAME),
                 temp.path().join(CODEX_STATE_DB_FILENAME),
                 sqlite_home.join(CODEX_STATE_DB_FILENAME),
             ]
