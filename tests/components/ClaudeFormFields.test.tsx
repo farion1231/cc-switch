@@ -86,6 +86,8 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     defaultFableModel: "",
     defaultFableModelName: "",
 classifierModel: "",
+    classifierDisableThinking: false,
+    onClassifierDisableThinkingChange: vi.fn(),
     subagentModel: "",
     onModelChange: vi.fn(),
     speedTestEndpoints: [],

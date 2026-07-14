@@ -131,6 +131,8 @@ interface ClaudeFormFieldsProps {
 
   // Classifier Model (Auto Mode hijacking)
   classifierModel: string;
+  classifierDisableThinking: boolean;
+  onClassifierDisableThinkingChange: (enabled: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -203,6 +205,8 @@ export function ClaudeFormFields({
   subagentModel,
   onModelChange,
   classifierModel,
+  classifierDisableThinking,
+  onClassifierDisableThinkingChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -1003,6 +1007,23 @@ export function ClaudeFormFields({
                     "可选。Auto Mode 分类器请求将被路由到此模型（基于 max_tokens ≤ 256 判定）。留空则不启用分类器劫持。",
                 })}
               </p>
+              <div className="flex items-center gap-2 pt-1">
+                <Checkbox
+                  id="classifierDisableThinking"
+                  checked={classifierDisableThinking}
+                  onCheckedChange={(checked) =>
+                    onClassifierDisableThinkingChange(checked === true)
+                  }
+                />
+                <label
+                  htmlFor="classifierDisableThinking"
+                  className="text-sm cursor-pointer"
+                >
+                  {t("providerForm.classifierDisableThinkingLabel", {
+                    defaultValue: "关闭分类器模型的思考模式",
+                  })}
+                </label>
+              </div>
             </div>
 
             <div className="space-y-2 border-t pt-4">

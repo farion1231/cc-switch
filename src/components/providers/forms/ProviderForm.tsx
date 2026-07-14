@@ -471,6 +471,8 @@ function ProviderFormFull({
     defaultFableModelName,
     classifierModel,
     subagentModel,
+    classifierDisableThinking,
+    handleClassifierDisableThinkingChange,
     handleModelChange,
   } = useModelState({
     settingsConfig: form.getValues("settingsConfig"),
@@ -2148,6 +2150,10 @@ function ProviderFormFull({
               defaultFableModel={defaultFableModel}
               defaultFableModelName={defaultFableModelName}
               classifierModel={classifierModel}
+              classifierDisableThinking={classifierDisableThinking}
+              onClassifierDisableThinkingChange={
+                handleClassifierDisableThinkingChange
+              }
               subagentModel={subagentModel}
               onModelChange={handleModelChange}
               speedTestEndpoints={speedTestEndpoints}

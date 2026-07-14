@@ -93,6 +93,9 @@ function parseModelsFromConfig(settingsConfig: string) {
         ? env.ANTHROPIC_CLASSIFIER_MODEL
         : "";
 
+    const classifierDisableThinking =
+      env.ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING === true;
+
     return {
       model,
       haiku,
@@ -105,6 +108,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       fableName,
       classifierModel,
       subagent,
+      classifierDisableThinking,
     };
   } catch {
     return {
@@ -119,6 +123,7 @@ function parseModelsFromConfig(settingsConfig: string) {
       fableName: "",
       classifierModel: "",
       subagent: "",
+      classifierDisableThinking: false,
     };
   }
 }
@@ -153,6 +158,9 @@ export function useModelState({
     initial.classifierModel,
   );
   const [subagentModel, setSubagentModel] = useState(initial.subagent);
+  const [classifierDisableThinking, setClassifierDisableThinking] = useState(
+    initial.classifierDisableThinking,
+  );
 
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
@@ -185,6 +193,7 @@ export function useModelState({
     setDefaultFableModelName(parsed.fableName);
     setClassifierModel(parsed.classifierModel);
     setSubagentModel(parsed.subagent);
+    setClassifierDisableThinking(parsed.classifierDisableThinking);
   }, [settingsConfig]);
 
   const handleModelChange = useCallback(
@@ -237,6 +246,37 @@ export function useModelState({
     [onConfigChange],
   );
 
+  const handleClassifierDisableThinkingChange = useCallback(
+    (enabled: boolean) => {
+      isUserEditingRef.current = true;
+      setClassifierDisableThinking(enabled);
+
+      try {
+        const currentConfig = latestConfigRef.current
+          ? JSON.parse(latestConfigRef.current)
+          : { env: {} };
+        if (!currentConfig.env) currentConfig.env = {};
+        const env = currentConfig.env as Record<string, unknown>;
+
+        if (enabled) {
+          env["ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING"] = true;
+        } else {
+          delete env["ANTHROPIC_CLASSIFIER_MODEL_DISABLE_THINKING"];
+        }
+
+        const updatedConfig = JSON.stringify(currentConfig, null, 2);
+        latestConfigRef.current = updatedConfig;
+        onConfigChange(updatedConfig);
+      } catch (err) {
+        console.error(
+          "Failed to update classifier disable thinking config:",
+          err,
+        );
+      }
+    },
+    [onConfigChange],
+  );
+
   return {
     claudeModel,
     setClaudeModel,
@@ -260,6 +300,9 @@ export function useModelState({
     setClassifierModel,
     subagentModel,
     setSubagentModel,
+    classifierDisableThinking,
+    setClassifierDisableThinking,
+    handleClassifierDisableThinkingChange,
     handleModelChange,
   };
 }
