@@ -1,9 +1,12 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  parseModelSuffix,
   hasClaudeOneMMarker,
   setClaudeOneMMarker,
   stripClaudeOneMMarker,
+  setModelSuffix,
+  stripModelSuffix,
   useModelState,
 } from "@/components/providers/forms/hooks/useModelState";
 
@@ -144,5 +147,69 @@ describe("useModelState", () => {
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
       "deepseek-v4-pro[1M]",
     );
+  });
+});
+
+describe("parseModelSuffix", () => {
+  it("parses [1m] suffix", () => {
+    expect(parseModelSuffix("deepseek-v4-pro[1m]")).toEqual({
+      slug: "deepseek-v4-pro",
+      window: 1000000,
+    });
+  });
+
+  it("parses [200k] suffix", () => {
+    expect(parseModelSuffix("glm-5.2[200k]")).toEqual({
+      slug: "glm-5.2",
+      window: 200000,
+    });
+  });
+
+  it("parses uppercase [500K]", () => {
+    expect(parseModelSuffix("model[500K]")).toEqual({
+      slug: "model",
+      window: 500000,
+    });
+  });
+
+  it("parses pure number [1000000]", () => {
+    expect(parseModelSuffix("model[1000000]")).toEqual({
+      slug: "model",
+      window: 1000000,
+    });
+  });
+
+  it("returns undefined window for no suffix", () => {
+    expect(parseModelSuffix("model")).toEqual({
+      slug: "model",
+      window: undefined,
+    });
+  });
+
+  it("does not strip invalid suffix", () => {
+    expect(parseModelSuffix("model[invalid]")).toEqual({
+      slug: "model[invalid]",
+      window: undefined,
+    });
+  });
+});
+
+describe("setModelSuffix", () => {
+  it("appends lowercase suffix", () => {
+    expect(setModelSuffix("model", "1M")).toBe("model[1m]");
+  });
+
+  it("clears suffix when empty", () => {
+    expect(setModelSuffix("model[1m]", "")).toBe("model");
+  });
+
+  it("replaces existing suffix", () => {
+    expect(setModelSuffix("model[1m]", "200K")).toBe("model[200k]");
+  });
+});
+
+describe("stripModelSuffix", () => {
+  it("strips [200k]", () => {
+    expect(stripModelSuffix("model[200k]")).toBe("model");
   });
 });
