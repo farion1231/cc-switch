@@ -3554,6 +3554,18 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn lifecycle_script_adds_homebrew_bins_before_npm_install() {
+        let script = build_tool_lifecycle_command(&["codex"], ToolLifecycleAction::Install, None)
+            .expect("Codex install script should build");
+
+        assert!(script.starts_with(
+            "set -e\nset -o pipefail\nexport PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\n"
+        ));
+        assert!(script.contains("npm i -g @openai/codex@latest"));
+    }
+
     #[test]
     fn test_build_provider_command_line_uses_user_shell_environment() {
         assert_eq!(
