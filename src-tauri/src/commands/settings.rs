@@ -692,6 +692,35 @@ pub async fn set_copilot_optimizer_config(
     Ok(true)
 }
 
+/// 获取 Codex reasoning 自动续写配置
+#[tauri::command]
+pub async fn get_codex_continue_config(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<crate::proxy::codex_continue::CodexContinueConfig, String> {
+    state
+        .db
+        .get_codex_continue_config()
+        .map_err(|e| e.to_string())
+}
+
+/// 设置 Codex reasoning 自动续写配置
+#[tauri::command]
+pub async fn set_codex_continue_config(
+    state: tauri::State<'_, crate::AppState>,
+    config: crate::proxy::codex_continue::CodexContinueConfig,
+) -> Result<bool, String> {
+    let mut normalized = config;
+    normalized.step = normalized.step.max(3);
+    if normalized.marker.trim().is_empty() {
+        normalized.marker = crate::proxy::codex_continue::CodexContinueConfig::default().marker;
+    }
+    state
+        .db
+        .set_codex_continue_config(&normalized)
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 获取日志配置
 #[tauri::command]
 pub async fn get_log_config(

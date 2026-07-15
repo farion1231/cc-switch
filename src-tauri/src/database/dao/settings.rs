@@ -307,6 +307,31 @@ impl Database {
         self.set_setting("copilot_optimizer_config", &json)
     }
 
+    // --- Codex reasoning continuation (CodexCont) ---
+
+    /// 获取 Codex reasoning 自动续写配置
+    ///
+    /// 返回配置，如果不存在则返回默认值（默认开启以保持既有行为）。
+    pub fn get_codex_continue_config(
+        &self,
+    ) -> Result<crate::proxy::codex_continue::CodexContinueConfig, AppError> {
+        match self.get_setting("codex_continue_config")? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| AppError::Database(format!("解析 CodexCont 配置失败: {e}"))),
+            None => Ok(crate::proxy::codex_continue::CodexContinueConfig::default()),
+        }
+    }
+
+    /// 更新 Codex reasoning 自动续写配置
+    pub fn set_codex_continue_config(
+        &self,
+        config: &crate::proxy::codex_continue::CodexContinueConfig,
+    ) -> Result<(), AppError> {
+        let json = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 CodexCont 配置失败: {e}")))?;
+        self.set_setting("codex_continue_config", &json)
+    }
+
     // --- 日志配置 ---
 
     /// 获取日志配置

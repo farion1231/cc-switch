@@ -6,7 +6,6 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
-mod codex_state_db;
 mod commands;
 mod config;
 mod database;
@@ -1230,6 +1229,8 @@ pub fn run() {
             commands::set_optimizer_config,
             commands::get_copilot_optimizer_config,
             commands::set_copilot_optimizer_config,
+            commands::get_codex_continue_config,
+            commands::set_codex_continue_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
