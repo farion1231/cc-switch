@@ -454,6 +454,16 @@ export function DeepLinkImportDialog() {
                           </div>
                         </div>
                       )}
+                      {request.apiFormat && (
+                        <div className="grid grid-cols-3 items-center gap-4">
+                          <div className="font-medium text-sm text-muted-foreground">
+                            {t("deeplink.apiFormat")}
+                          </div>
+                          <div className="col-span-2 text-sm font-mono">
+                            {request.apiFormat}
+                          </div>
+                        </div>
+                      )}
                       {request.model && (
                         <div className="grid grid-cols-3 items-center gap-4">
                           <div className="font-medium text-sm text-muted-foreground">

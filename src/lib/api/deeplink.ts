@@ -21,6 +21,7 @@ export interface DeepLinkImportRequest {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  apiFormat?: string;
 
   // Prompt fields
   content?: string;

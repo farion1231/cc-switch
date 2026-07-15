@@ -2366,6 +2366,7 @@
     "haikuModel": "Haiku モデル",
     "sonnetModel": "Sonnet モデル",
     "opusModel": "Opus モデル",
+    "apiFormat": "API フォーマット / ルーティング",
     "multiModel": "マルチモーダルモデル",
     "notes": "メモ",
     "import": "インポート",

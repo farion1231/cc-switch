@@ -129,6 +129,22 @@ fn parse_provider_deeplink(
     let config_url = params.get("configUrl").cloned();
     let enabled = params.get("enabled").and_then(|v| v.parse::<bool>().ok());
 
+    // API format / local-route switch (v3.16.5+)
+    let api_format = params
+        .get("apiFormat")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if let Some(ref fmt) = api_format {
+        if !matches!(
+            fmt.as_str(),
+            "anthropic" | "openai_chat" | "openai_responses"
+        ) {
+            return Err(AppError::InvalidInput(format!(
+                "Invalid apiFormat: must be 'anthropic', 'openai_chat', or 'openai_responses', got '{fmt}'"
+            )));
+        }
+    }
+
     // Extract usage script fields (v3.9+)
     let usage_enabled = params
         .get("usageEnabled")
@@ -157,6 +173,7 @@ fn parse_provider_deeplink(
         haiku_model,
         sonnet_model,
         opus_model,
+        api_format,
         content: None,
         description: None,
         apps: None,
@@ -229,6 +246,7 @@ fn parse_prompt_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         apps: None,
         repo: None,
         directory: None,
@@ -295,6 +313,7 @@ fn parse_mcp_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         content: None,
         description: None,
         repo: None,
@@ -350,6 +369,7 @@ fn parse_skill_deeplink(
         haiku_model: None,
         sonnet_model: None,
         opus_model: None,
+        api_format: None,
         content: None,
         description: None,
         apps: None,
