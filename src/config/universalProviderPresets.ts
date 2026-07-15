@@ -75,6 +75,114 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       "NewAPI 是一个可自部署的 API 网关，支持 Anthropic、OpenAI、Gemini 等多种协议",
   },
   {
+    name: "Astraflow",
+    providerType: "astraflow",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: false,
+    },
+    defaultModels: {
+      claude: {
+        model: "claude-sonnet-4-6",
+        haikuModel: "claude-haiku-4-5-20251001",
+        sonnetModel: "claude-sonnet-4-6",
+        opusModel: "claude-opus-4-6",
+      },
+      codex: {
+        model: "o4-mini",
+        reasoningEffort: "high",
+      },
+      gemini: NEWAPI_DEFAULT_MODELS.gemini,
+    },
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
+    name: "Astraflow",
+    providerType: "astraflow",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: false,
+    },
+    defaultModels: {
+      claude: {
+        model: "claude-sonnet-4-6",
+        haikuModel: "claude-haiku-4-5-20251001",
+        sonnetModel: "claude-sonnet-4-6",
+        opusModel: "claude-opus-4-6",
+      },
+      codex: {
+        model: "o4-mini",
+        reasoningEffort: "high",
+      },
+      gemini: NEWAPI_DEFAULT_MODELS.gemini,
+    },
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
+    name: "Astraflow",
+    providerType: "astraflow",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: false,
+    },
+    defaultModels: {
+      claude: {
+        model: "claude-sonnet-4-6",
+        haikuModel: "claude-haiku-4-5-20251001",
+        sonnetModel: "claude-sonnet-4-6",
+        opusModel: "claude-opus-4-6",
+      },
+      codex: {
+        model: "o4-mini",
+        reasoningEffort: "high",
+      },
+      gemini: NEWAPI_DEFAULT_MODELS.gemini,
+    },
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
+    name: "Astraflow",
+    providerType: "astraflow",
+    defaultApps: {
+      claude: true,
+      codex: true,
+      gemini: false,
+    },
+    defaultModels: {
+      claude: {
+        model: "claude-sonnet-4-6",
+        haikuModel: "claude-haiku-4-5-20251001",
+        sonnetModel: "claude-sonnet-4-6",
+        opusModel: "claude-opus-4-6",
+      },
+      codex: {
+        model: "o4-mini",
+        reasoningEffort: "high",
+      },
+      gemini: NEWAPI_DEFAULT_MODELS.gemini,
+    },
+    websiteUrl: "https://astraflow.ucloud-global.com",
+    icon: "ucloud",
+    iconColor: "#0052D9",
+    description:
+      "Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)",
+  },
+  {
     name: "自定义网关",
     providerType: "custom_gateway",
     defaultApps: {
