@@ -474,7 +474,7 @@ jobs:
             Write-Warning 'No Windows MSI installer found'
           }
 
-          # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
+          # 绿色版（portable）：可执行文件、便携标记和数据目录打 zip（不参与 Updater）
           $exeCandidates = if ($isArm64) {
             @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
           } else {
@@ -502,14 +502,51 @@ jobs:
               )
             }
             $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
+
+            # Compress-Archive 不保证保留空目录，因此为每个便携数据目录创建空占位文件。
+            $portableDataDir = Join-Path $portableDir 'data'
+            $portableDataSubdirectories = @('app', 'cache', 'temp', 'tauri', 'webview2')
+            foreach ($subdirectory in $portableDataSubdirectories) {
+              $subdirectoryPath = Join-Path $portableDataDir $subdirectory
+              New-Item -ItemType Directory -Force -Path $subdirectoryPath | Out-Null
+              New-Item -ItemType File -Force -Path (Join-Path $subdirectoryPath '.gitkeep') | Out-Null
+            }
+
             $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
             Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+
+            # 发布前验证 ZIP，防止后续打包逻辑意外丢失 portable.ini 或 data 目录。
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $portableZipPath = (Resolve-Path $portableZip).Path
+            $zipArchive = [System.IO.Compression.ZipFile]::OpenRead($portableZipPath)
+            try {
+              $zipEntries = @(
+                $zipArchive.Entries |
+                  ForEach-Object { $_.FullName.Replace('\', '/') }
+              )
+              $requiredEntries = @(
+                'cc-switch.exe',
+                'portable.ini',
+                'data/app/.gitkeep',
+                'data/cache/.gitkeep',
+                'data/temp/.gitkeep',
+                'data/tauri/.gitkeep',
+                'data/webview2/.gitkeep'
+              )
+              $missingEntries = @($requiredEntries | Where-Object { $_ -notin $zipEntries })
+              if ($missingEntries.Count -gt 0) {
+                throw "Portable ZIP is missing required entries: $($missingEntries -join ', ')"
+              }
+            } finally {
+              $zipArchive.Dispose()
+            }
+
             Remove-Item -Recurse -Force $portableDir
             Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
           } elseif ($isArm64) {
             throw 'Portable ARM64 exe not found'
           } else {
-            Write-Warning 'Portable exe not found'
+            throw 'Portable x64 exe not found'
           }
 
       - name: Prepare Linux Assets
