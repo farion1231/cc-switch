@@ -15,6 +15,28 @@ use support::{
     create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
 };
 
+fn test_mcp_server(id: &str, claude: bool, codex: bool) -> McpServer {
+    McpServer {
+        id: id.to_string(),
+        name: id.to_string(),
+        server: json!({
+            "type": "stdio",
+            "command": "echo"
+        }),
+        apps: McpApps {
+            claude,
+            codex,
+            gemini: false,
+            opencode: false,
+            hermes: false,
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: Vec::new(),
+    }
+}
+
 #[test]
 fn import_default_config_claude_persists_provider() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -403,6 +425,257 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
     assert!(
         toml_text.contains("codex-server"),
         "codex config should include the enabled server definition"
+    );
+}
+
+#[test]
+fn codex_toggle_invalid_toml_restores_db_for_enable_and_disable() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let config_path = codex_dir.join("config.toml");
+    let original = b"model = \"gpt-5\"\n[mcp_servers.echo]\ncommand = \"echo\"\nbroken = [\n";
+    fs::write(&config_path, original).expect("seed invalid Codex config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&test_mcp_server("echo", false, false))
+        .expect("seed disabled Codex MCP");
+
+    let enable_err = McpService::toggle_app(&state, "echo", AppType::Codex, true)
+        .expect_err("invalid TOML must reject enable");
+    assert!(
+        enable_err.to_string().contains("解析 config.toml 失败"),
+        "unexpected enable error: {enable_err}"
+    );
+    let after_enable = state
+        .db
+        .get_all_mcp_servers()
+        .expect("read MCP after enable");
+    assert!(
+        !after_enable.get("echo").expect("echo exists").apps.codex,
+        "failed enable must restore disabled DB state"
+    );
+    assert_eq!(
+        fs::read(&config_path).expect("read invalid config after enable"),
+        original,
+        "failed enable must not alter invalid TOML"
+    );
+
+    let mut enabled = after_enable.get("echo").expect("echo exists").clone();
+    enabled.apps.codex = true;
+    state
+        .db
+        .save_mcp_server(&enabled)
+        .expect("seed enabled Codex MCP");
+
+    let disable_err = McpService::toggle_app(&state, "echo", AppType::Codex, false)
+        .expect_err("invalid TOML must reject disable");
+    assert!(
+        disable_err.to_string().contains("解析 config.toml 失败"),
+        "unexpected disable error: {disable_err}"
+    );
+    let after_disable = state
+        .db
+        .get_all_mcp_servers()
+        .expect("read MCP after disable");
+    assert!(
+        after_disable.get("echo").expect("echo exists").apps.codex,
+        "failed disable must restore enabled DB state"
+    );
+    assert_eq!(
+        fs::read(&config_path).expect("read invalid config after disable"),
+        original,
+        "failed disable must not alter invalid TOML"
+    );
+}
+
+#[test]
+fn claude_toggle_invalid_json_restores_db_for_enable_and_disable() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let config_path = get_claude_mcp_path();
+    let original = br#"{"mcpServers":{"echo":{"command":"echo"}},"broken":"#;
+    fs::write(&config_path, original).expect("seed invalid Claude config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&test_mcp_server("echo", false, false))
+        .expect("seed disabled Claude MCP");
+
+    let enable_err = McpService::toggle_app(&state, "echo", AppType::Claude, true)
+        .expect_err("invalid JSON must reject enable");
+    assert!(
+        enable_err.to_string().contains("JSON 解析错误"),
+        "unexpected enable error: {enable_err}"
+    );
+    let after_enable = state
+        .db
+        .get_all_mcp_servers()
+        .expect("read MCP after enable");
+    assert!(
+        !after_enable.get("echo").expect("echo exists").apps.claude,
+        "failed enable must restore disabled DB state"
+    );
+    assert_eq!(
+        fs::read(&config_path).expect("read invalid config after enable"),
+        original,
+        "failed enable must not alter invalid JSON"
+    );
+
+    let mut enabled = after_enable.get("echo").expect("echo exists").clone();
+    enabled.apps.claude = true;
+    state
+        .db
+        .save_mcp_server(&enabled)
+        .expect("seed enabled Claude MCP");
+
+    let disable_err = McpService::toggle_app(&state, "echo", AppType::Claude, false)
+        .expect_err("invalid JSON must reject disable");
+    assert!(
+        disable_err.to_string().contains("JSON 解析错误"),
+        "unexpected disable error: {disable_err}"
+    );
+    let after_disable = state
+        .db
+        .get_all_mcp_servers()
+        .expect("read MCP after disable");
+    assert!(
+        after_disable.get("echo").expect("echo exists").apps.claude,
+        "failed disable must restore enabled DB state"
+    );
+    assert_eq!(
+        fs::read(&config_path).expect("read invalid config after disable"),
+        original,
+        "failed disable must not alter invalid JSON"
+    );
+}
+
+#[test]
+fn repeated_codex_toggle_preserves_unrelated_config_and_bytes() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    let config_path = codex_dir.join("config.toml");
+    fs::write(
+        &config_path,
+        r#"# retain this comment
+model = "gpt-5"
+custom_setting = "keep"
+
+[mcp_servers.external]
+type = "stdio"
+command = "external"
+"#,
+    )
+    .expect("seed Codex config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&test_mcp_server("managed", false, false))
+        .expect("seed managed MCP");
+
+    McpService::toggle_app(&state, "managed", AppType::Codex, true).expect("enable Codex MCP");
+    let enabled_once = fs::read(&config_path).expect("read enabled Codex config");
+    let enabled_text = String::from_utf8(enabled_once.clone()).expect("Codex config is UTF-8");
+    assert!(enabled_text.contains("[mcp_servers.managed]"));
+    assert!(enabled_text.contains("[mcp_servers.external]"));
+    assert!(enabled_text.contains("custom_setting = \"keep\""));
+    assert!(enabled_text.contains("# retain this comment"));
+
+    McpService::toggle_app(&state, "managed", AppType::Codex, true).expect("repeat Codex enable");
+    assert_eq!(
+        fs::read(&config_path).expect("read repeated Codex enable"),
+        enabled_once,
+        "repeated enable must not change Codex config bytes"
+    );
+
+    McpService::toggle_app(&state, "managed", AppType::Codex, false).expect("disable Codex MCP");
+    let disabled_once = fs::read(&config_path).expect("read disabled Codex config");
+    let disabled_text = String::from_utf8(disabled_once.clone()).expect("Codex config is UTF-8");
+    assert!(!disabled_text.contains("[mcp_servers.managed]"));
+    assert!(disabled_text.contains("[mcp_servers.external]"));
+    assert!(disabled_text.contains("custom_setting = \"keep\""));
+
+    McpService::toggle_app(&state, "managed", AppType::Codex, false).expect("repeat Codex disable");
+    assert_eq!(
+        fs::read(&config_path).expect("read repeated Codex disable"),
+        disabled_once,
+        "repeated disable must not change Codex config bytes"
+    );
+}
+
+#[test]
+fn repeated_claude_toggle_preserves_unrelated_config_and_bytes() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let config_path = get_claude_mcp_path();
+    fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&json!({
+            "hasCompletedOnboarding": true,
+            "customSetting": "keep",
+            "mcpServers": {
+                "external": {
+                    "type": "stdio",
+                    "command": "external"
+                }
+            }
+        }))
+        .expect("serialize Claude config"),
+    )
+    .expect("seed Claude config");
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_mcp_server(&test_mcp_server("managed", false, false))
+        .expect("seed managed MCP");
+
+    McpService::toggle_app(&state, "managed", AppType::Claude, true).expect("enable Claude MCP");
+    let enabled_once = fs::read(&config_path).expect("read enabled Claude config");
+    let enabled_value: serde_json::Value =
+        serde_json::from_slice(&enabled_once).expect("parse enabled Claude config");
+    assert!(enabled_value.pointer("/mcpServers/managed").is_some());
+    assert!(enabled_value.pointer("/mcpServers/external").is_some());
+    assert_eq!(enabled_value["hasCompletedOnboarding"], json!(true));
+    assert_eq!(enabled_value["customSetting"], json!("keep"));
+
+    McpService::toggle_app(&state, "managed", AppType::Claude, true).expect("repeat Claude enable");
+    assert_eq!(
+        fs::read(&config_path).expect("read repeated Claude enable"),
+        enabled_once,
+        "repeated enable must not change Claude config bytes"
+    );
+
+    McpService::toggle_app(&state, "managed", AppType::Claude, false).expect("disable Claude MCP");
+    let disabled_once = fs::read(&config_path).expect("read disabled Claude config");
+    let disabled_value: serde_json::Value =
+        serde_json::from_slice(&disabled_once).expect("parse disabled Claude config");
+    assert!(disabled_value.pointer("/mcpServers/managed").is_none());
+    assert!(disabled_value.pointer("/mcpServers/external").is_some());
+    assert_eq!(disabled_value["hasCompletedOnboarding"], json!(true));
+    assert_eq!(disabled_value["customSetting"], json!("keep"));
+
+    McpService::toggle_app(&state, "managed", AppType::Claude, false)
+        .expect("repeat Claude disable");
+    assert_eq!(
+        fs::read(&config_path).expect("read repeated Claude disable"),
+        disabled_once,
+        "repeated disable must not change Claude config bytes"
     );
 }
 

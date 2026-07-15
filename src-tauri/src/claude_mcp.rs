@@ -351,6 +351,7 @@ pub fn set_mcp_servers_map(
     } else {
         serde_json::json!({})
     };
+    let before = root.clone();
 
     // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
     // 检测目标路径是否为 WSL，若是则跳过 cmd /c 包装
@@ -359,7 +360,12 @@ pub fn set_mcp_servers_map(
         log::info!("检测到 WSL 路径，跳过 cmd /c 包装: {}", path.display());
     }
     let mut out: Map<String, Value> = Map::new();
-    for (id, spec) in servers.iter() {
+    let mut ids: Vec<&String> = servers.keys().collect();
+    ids.sort();
+    for id in ids {
+        let spec = servers
+            .get(id)
+            .expect("server id collected from the same map must exist");
         let mut obj = if let Some(map) = spec.as_object() {
             map.clone()
         } else {
@@ -397,6 +403,10 @@ pub fn set_mcp_servers_map(
             .as_object_mut()
             .ok_or_else(|| AppError::Config("~/.claude.json 根必须是对象".into()))?;
         obj.insert("mcpServers".into(), Value::Object(out));
+    }
+
+    if root == before {
+        return Ok(());
     }
 
     write_json_value(&path, &root)?;

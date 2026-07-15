@@ -338,6 +338,9 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
 
     // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
     let new_text = doc.to_string();
+    if new_text == base_text {
+        return Ok(());
+    }
     let path = crate::codex_config::get_codex_config_path();
     crate::config::write_text_file(&path, &new_text)?;
     Ok(())
@@ -358,16 +361,17 @@ pub fn sync_single_server_to_codex(
     // 读取现有的 config.toml
     let config_path = crate::codex_config::get_codex_config_path();
 
-    let mut doc = if config_path.exists() {
+    let (mut doc, original_text) = if config_path.exists() {
         let content =
             std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
         // 解析失败必须报错而不是用空文档顶替：写回空文档会把用户
         // config.toml 里的其它段落（model/model_providers/注释等）整体清空
-        content
+        let doc = content
             .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| AppError::McpValidation(format!("解析 config.toml 失败: {e}")))?
+            .map_err(|e| AppError::McpValidation(format!("解析 config.toml 失败: {e}")))?;
+        (doc, content)
     } else {
-        toml_edit::DocumentMut::new()
+        (toml_edit::DocumentMut::new(), String::new())
     };
 
     // 清理可能存在的错误格式 [mcp.servers]
@@ -393,6 +397,9 @@ pub fn sync_single_server_to_codex(
 
     // 写回文件
     let new_text = doc.to_string();
+    if new_text == original_text {
+        return Ok(());
+    }
     crate::config::write_text_file(&config_path, &new_text)?;
 
     Ok(())
@@ -413,27 +420,30 @@ pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     let content =
         std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
 
-    // 尝试解析现有配置，如果失败则直接返回（无法删除不存在的内容）
-    let mut doc = match content.parse::<toml_edit::DocumentMut>() {
-        Ok(doc) => doc,
-        Err(e) => {
-            log::warn!("解析 Codex config.toml 失败: {e}，跳过删除操作");
-            return Ok(());
-        }
-    };
+    // 无法解析时不能把“未删除”报告为成功；调用方需要据此恢复 DB 状态。
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| AppError::McpValidation(format!("解析 config.toml 失败: {e}")))?;
+
+    let mut changed = false;
 
     // 从正确的位置删除：[mcp_servers]
     if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|s| s.as_table_mut()) {
-        mcp_servers.remove(id);
+        changed |= mcp_servers.remove(id).is_some();
     }
 
     // 同时清理可能存在于错误位置的数据：[mcp.servers]（如果存在）
     if let Some(mcp_table) = doc.get_mut("mcp").and_then(|t| t.as_table_mut()) {
         if let Some(servers) = mcp_table.get_mut("servers").and_then(|s| s.as_table_mut()) {
             if servers.remove(id).is_some() {
+                changed = true;
                 log::warn!("从错误的 MCP 格式 [mcp.servers] 中清理了服务器 '{id}'");
             }
         }
+    }
+
+    if !changed {
+        return Ok(());
     }
 
     // 写回文件

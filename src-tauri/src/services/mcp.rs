@@ -72,18 +72,41 @@ impl McpService {
         app: AppType,
         enabled: bool,
     ) -> Result<(), AppError> {
-        let mut servers = state.db.get_all_mcp_servers()?;
+        let servers = state.db.get_all_mcp_servers()?;
+        let Some(previous) = servers.get(server_id).cloned() else {
+            return Ok(());
+        };
 
-        if let Some(server) = servers.get_mut(server_id) {
-            server.apps.set_enabled_for(&app, enabled);
-            state.db.save_mcp_server(server)?;
+        let mut desired = previous.clone();
+        let guarded_toggle = matches!(app, AppType::Claude | AppType::Codex);
+        let db_changed = previous.apps.is_enabled_for(&app) != enabled;
+        desired.apps.set_enabled_for(&app, enabled);
 
-            // 同步到对应应用
-            if enabled {
-                Self::sync_server_to_app(state, server, &app)?;
-            } else {
-                Self::remove_server_from_app(state, server_id, &app)?;
+        // 本次一致性保证仅覆盖 Codex 和 Claude Code；其它客户端保持原有 DB 写入行为。
+        if db_changed || !guarded_toggle {
+            state.db.save_mcp_server(&desired)?;
+        }
+
+        // 即使 DB 已经是目标状态，也要再次核对 live 配置，使重试可以修复历史不一致。
+        let live_result = if enabled {
+            Self::sync_server_to_app(state, &desired, &app)
+        } else {
+            Self::remove_server_from_app(state, server_id, &app)
+        };
+
+        if let Err(live_err) = live_result {
+            if !guarded_toggle || !db_changed {
+                return Err(live_err);
             }
+
+            // Codex/Claude live 失败时恢复完整旧记录，避免 UI 与客户端状态分裂。
+            if let Err(rollback_err) = state.db.save_mcp_server(&previous) {
+                return Err(AppError::Message(format!(
+                    "MCP live 配置更新失败: {live_err}; 同时恢复数据库状态失败: {rollback_err}"
+                )));
+            }
+
+            return Err(live_err);
         }
 
         Ok(())
