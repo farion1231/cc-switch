@@ -177,6 +177,35 @@ export const normalizeCodexCatalogModelsForSave = (
   return normalized;
 };
 
+/**
+ * 确定要落盘的 providerType（新建时从预设获取，编辑时从现有数据获取）。
+ *
+ * `isCopilotProvider` 兜底：自定义供应商仅凭 base_url 含 githubcopilot.com 被
+ * 识别为 Copilot 时（未选预设、initialData.meta 也没有该标记），仍必须把
+ * providerType 落盘为 "github_copilot"——Rust CodexAdapter::extract_auth /
+ * Provider::is_github_copilot 只认 meta.providerType 或 Claude 侧的
+ * ANTHROPIC_BASE_URL，Codex 的 base_url 不会被后端复查，缺了这个标记会导致
+ * GitHubCopilot 认证策略不生效、token 不会被动态注入。
+ */
+export const resolveProviderTypeForSave = ({
+  templatePresetProviderType,
+  activePresetProviderType,
+  initialProviderType,
+  isCopilotProvider,
+}: {
+  templatePresetProviderType?: string;
+  activePresetProviderType?: string;
+  initialProviderType?: string;
+  isCopilotProvider: boolean;
+}): string | undefined => {
+  return (
+    templatePresetProviderType ||
+    activePresetProviderType ||
+    initialProviderType ||
+    (isCopilotProvider ? "github_copilot" : undefined)
+  );
+};
+
 const normalizeCodexChatReasoningForSave = (
   value?: CodexChatReasoning,
 ): CodexChatReasoning | undefined => {
@@ -1455,11 +1484,12 @@ function ProviderFormFull({
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
-    // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
-    const providerType =
-      templatePreset?.providerType ||
-      activePreset?.providerType ||
-      initialData?.meta?.providerType;
+    const providerType = resolveProviderTypeForSave({
+      templatePresetProviderType: templatePreset?.providerType,
+      activePresetProviderType: activePreset?.providerType,
+      initialProviderType: initialData?.meta?.providerType,
+      isCopilotProvider,
+    });
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),

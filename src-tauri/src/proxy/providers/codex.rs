@@ -527,6 +527,27 @@ pub fn is_origin_only_url(value: &str) -> bool {
     }
 }
 
+/// 判断 base_url 的 host 是否为 GitHub Copilot 的 Chat Completions endpoint：
+/// - github.com 账号：`api.githubcopilot.com`（`copilot_auth::copilot_api_base`）
+/// - GHES 账号：`copilot-api.{ghes_domain}`（同上，动态 endpoint）
+///
+/// 按 host 而非整串 `contains` 判断，避免 `https://evil.com/?x=githubcopilot.com`
+/// 之类路径/查询串误判，同时忽略端口号。
+fn is_copilot_chat_host(base_trimmed: &str) -> bool {
+    let after_scheme = base_trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(base_trimmed);
+    let host_and_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host = host_and_port
+        .split(':')
+        .next()
+        .unwrap_or(host_and_port)
+        .to_ascii_lowercase();
+
+    host.ends_with("githubcopilot.com") || host.starts_with("copilot-api.")
+}
+
 fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
 
@@ -745,9 +766,12 @@ impl ProviderAdapter for CodexAdapter {
 
         // GitHub Copilot 的 Chat Completions 端点是裸 /chat/completions（无 /v1 前缀），
         // 而 Responses 走 /v1/responses。纯 origin 的 Copilot base（企业版动态 endpoint
-        // 常是 https://api.enterprise.githubcopilot.com）若按常规补 /v1，会得到
-        // /v1/chat/completions → 404。这里对 Copilot 的 chat 路径直接裸拼，不补 /v1。
-        let is_copilot_chat = base_trimmed.contains("githubcopilot.com")
+        // 常是 https://api.enterprise.githubcopilot.com，GHES 则是
+        // https://copilot-api.{ghes_domain}，见 copilot_auth::copilot_api_base）若按
+        // 常规补 /v1，会得到 /v1/chat/completions → 404。这里对 Copilot 的 chat 路径
+        // 直接裸拼，不补 /v1；host 判定同时覆盖 *.githubcopilot.com 与 GHES 的
+        // copilot-api.* 两种形态。
+        let is_copilot_chat = is_copilot_chat_host(base_trimmed)
             && endpoint_trimmed
                 .trim_end_matches('/')
                 .ends_with("chat/completions");
@@ -1288,6 +1312,45 @@ wire_api = "anthropic"
         // Copilot 的 responses 仍走 /v1/responses（不受 chat 特判影响）
         let url = adapter.build_url("https://api.githubcopilot.com", "/v1/responses");
         assert_eq!(url, "https://api.githubcopilot.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_copilot_chat_ghes_no_v1() {
+        let adapter = CodexAdapter::new();
+        // GHES 动态 endpoint 是 copilot-api.{domain}（见 copilot_auth::copilot_api_base），
+        // 与 github.com 账号的 api.githubcopilot.com 是两种不同的 host 形态，同样不补 /v1
+        let url = adapter.build_url("https://copilot-api.ghe.example.com", "/chat/completions");
+        assert_eq!(url, "https://copilot-api.ghe.example.com/chat/completions");
+    }
+
+    #[test]
+    fn test_build_url_copilot_chat_ghes_with_port_no_v1() {
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url(
+            "https://copilot-api.ghe.example.com:8443",
+            "/chat/completions",
+        );
+        assert_eq!(
+            url,
+            "https://copilot-api.ghe.example.com:8443/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_build_url_copilot_responses_ghes_keeps_v1() {
+        let adapter = CodexAdapter::new();
+        // GHES 的 responses 端点同样应保留 /v1（不受 chat 裸拼特判影响）
+        let url = adapter.build_url("https://copilot-api.ghe.example.com", "/v1/responses");
+        assert_eq!(url, "https://copilot-api.ghe.example.com/v1/responses");
+    }
+
+    #[test]
+    fn test_build_url_non_copilot_origin_still_adds_v1_for_chat() {
+        let adapter = CodexAdapter::new();
+        // 普通第三方 origin（非 Copilot）的 chat/completions 仍应补 /v1，
+        // 确认 host 判定没有误伤非 Copilot 供应商
+        let url = adapter.build_url("https://api.example.com", "/chat/completions");
+        assert_eq!(url, "https://api.example.com/v1/chat/completions");
     }
 
     // 官方客户端检测测试

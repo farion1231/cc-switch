@@ -31,6 +31,7 @@ import { CopilotAuthSection } from "./CopilotAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
+  type CopilotModel,
 } from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
@@ -51,6 +52,27 @@ import type {
 
 interface EndpointCandidate {
   url: string;
+}
+
+/**
+ * Codex 首版仅支持 OpenAI (gpt) 系列：走 Responses 格式，不复用 Claude 侧的
+ * Copilot vendor 自动判定/格式切换（forwarder.rs 的 is_copilot_openai_vendor_model
+ * 只服务 Claude adapter），选中非 OpenAI 模型会直接把它发到 /v1/responses 而 400。
+ *
+ * 按 `vendor === "openai"`（忽略大小写）过滤，而非按 "gpt-" 前缀匹配，避免误伤
+ * o1/o3 等非 gpt- 命名的 OpenAI 模型。导出用于单元测试；后续若要支持其它 vendor
+ * （如设计文档中的 Claude/Gemini 1M 分层），需要先在 forwarder 侧为 Codex 补上
+ * 对应的转换路径，再放宽此过滤。
+ */
+export function mapCopilotModelsForCodex(
+  models: CopilotModel[],
+): FetchedModel[] {
+  return models
+    .filter((m) => m.vendor?.toLowerCase() === "openai")
+    .map((m) => ({
+      id: m.id,
+      ownedBy: m.vendor ?? null,
+    }));
 }
 
 interface CodexFormFieldsProps {
@@ -320,7 +342,8 @@ export function CodexFormFields({
 
   const handleFetchModels = useCallback(() => {
     // GitHub Copilot（托管账号）：用登录账号取模型，无需 API Key。
-    // 返回 Copilot 后端暴露的全部模型（不再按 vendor 过滤）。
+    // 见文件顶部 mapCopilotModelsForCodex 的说明：首版仅保留 vendor === "openai"
+    // 的模型。
     if (isCopilotPreset) {
       const seq = ++fetchModelsSeqRef.current;
       setIsFetchingModels(true);
@@ -330,10 +353,7 @@ export function CodexFormFields({
       fetchModels
         .then((models) => {
           if (seq !== fetchModelsSeqRef.current) return;
-          const mapped: FetchedModel[] = models.map((m) => ({
-            id: m.id,
-            ownedBy: m.vendor ?? null,
-          }));
+          const mapped = mapCopilotModelsForCodex(models);
           setFetchedModels(mapped);
           if (mapped.length === 0) {
             toast.info(t("providerForm.fetchModelsEmpty"));
