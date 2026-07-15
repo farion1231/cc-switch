@@ -308,7 +308,7 @@ impl Provider {
             // Listed explicitly (not `_`) so a new AppType fails to compile here.
             AppType::Claude | AppType::ClaudeDesktop => {
                 let env = settings.get("env");
-                let base_url = str_at(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")));
+                let base_url = self.claude_base_url().unwrap_or_default().to_string();
                 let api_key = first_non_empty(
                     env,
                     &[
@@ -318,6 +318,11 @@ impl Provider {
                         "GOOGLE_API_KEY",
                     ],
                 );
+                let api_key = if api_key.trim().is_empty() {
+                    first_non_empty(Some(settings), &["apiKey", "api_key"])
+                } else {
+                    api_key
+                };
                 (base_url, api_key)
             }
         };
@@ -2087,6 +2092,27 @@ model = "gpt-5.4""#
             (
                 "https://api.deepseek.com/anthropic".to_string(),
                 "sk-claude".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_claude_uses_runtime_fallback_fields() {
+        let p = provider_with(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "",
+                "ANTHROPIC_AUTH_TOKEN": "",
+                "ANTHROPIC_API_KEY": "",
+            },
+            "baseURL": "https://api.example.com/anthropic/",
+            "apiKey": "sk-imported",
+        }));
+
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Claude),
+            (
+                "https://api.example.com/anthropic".to_string(),
+                "sk-imported".to_string()
             )
         );
     }
