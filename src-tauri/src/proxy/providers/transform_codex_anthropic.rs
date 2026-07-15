@@ -534,11 +534,25 @@ fn convert_input_to_messages(
                 let input: Value = if args_str.trim().is_empty() {
                     json!({})
                 } else {
-                    serde_json::from_str(args_str).map_err(|error| {
-                        ProxyError::InvalidRequest(format!(
-                            "Invalid function_call arguments for '{name}': {error}"
-                        ))
-                    })?
+                    // Strategy 2: degrade gracefully on invalid historical arguments.
+                    // A truncated arguments string from a prior turn (upstream
+                    // connection drop during SSE) would otherwise lock the entire
+                    // session — every subsequent request replays the broken item and
+                    // hits this same error. Fall back to {} so the conversation can
+                    // continue; Anthropic will reject the tool call if the input is
+                    // truly required, but at least the session is not permanently
+                    // stuck.
+                    match serde_json::from_str(args_str) {
+                        Ok(v) => v,
+                        Err(error) => {
+                            log::warn!(
+                                "[Codex/Anthropic] Degrading invalid function_call arguments \
+                                 for '{name}' (call_id={call_id}): {error}; raw: {}",
+                                &args_str[..args_str.len().min(200)]
+                            );
+                            json!({})
+                        }
+                    }
                 };
                 if !input.is_object() {
                     return Err(ProxyError::InvalidRequest(format!(
@@ -1794,20 +1808,37 @@ mod tests {
     }
 
     #[test]
-    fn test_request_invalid_or_non_object_arguments_error() {
-        for arguments in ["{broken", "[1,2]"] {
-            let input = json!({
-                "model":"c",
-                "input":[
-                    {"type":"function_call","call_id":"c1","name":"t","arguments":arguments},
-                    {"type":"function_call_output","call_id":"c1","output":"ok"}
-                ]
-            });
-            assert!(matches!(
-                responses_request_to_anthropic(input, 4096),
-                Err(ProxyError::InvalidRequest(_))
-            ));
-        }
+    fn test_request_invalid_arguments_degrades_gracefully() {
+        // Invalid JSON (e.g. truncated by upstream) should degrade to {} instead
+        // of erroring, so the session is not permanently locked.
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"type":"function_call","call_id":"c1","name":"t","arguments":"{broken"},
+                {"type":"function_call_output","call_id":"c1","output":"ok"}
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        // Degraded to empty object — session continues.
+        let tool_use = result["messages"][1]["content"][0].clone();
+        assert_eq!(tool_use["type"], "tool_use");
+        assert_eq!(tool_use["input"], json!({}));
+    }
+
+    #[test]
+    fn test_request_non_object_arguments_still_errors() {
+        // A valid JSON array is not a JSON object — this should still be rejected.
+        let input = json!({
+            "model":"c",
+            "input":[
+                {"type":"function_call","call_id":"c1","name":"t","arguments":"[1,2]"},
+                {"type":"function_call_output","call_id":"c1","output":"ok"}
+            ]
+        });
+        assert!(matches!(
+            responses_request_to_anthropic(input, 4096),
+            Err(ProxyError::InvalidRequest(_))
+        ));
     }
 
     #[test]
