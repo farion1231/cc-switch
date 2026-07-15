@@ -211,6 +211,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "apinebula",
   },
   {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-flash-lite",
+      },
+    },
+    baseURL: "https://sudocode.us",
+    model: "gemini-3.1-flash-lite",
+    description: "SudoCode.us",
+    category: "third_party",
+    isPartner: true,
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    icon: "sudocode-us",
+  },
+  {
     name: "Cubence",
     websiteUrl: "https://cubence.com",
     apiKeyUrl: "https://cubence.com/signup?code=CCSWITCH&source=ccs",
