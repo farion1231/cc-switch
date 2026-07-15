@@ -71,11 +71,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 continue;
             };
 
-            // type 缺省为 stdio
-            let typ = entry_tbl
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("stdio");
+            let typ = infer_codex_mcp_type(entry_tbl);
 
             // 构建 JSON 规范
             let mut spec = serde_json::Map::new();
@@ -270,6 +266,22 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
     }
 
     Ok(changed_total)
+}
+
+fn infer_codex_mcp_type(entry_tbl: &toml::value::Table) -> &str {
+    if let Some(typ) = entry_tbl.get("type").and_then(|v| v.as_str()) {
+        return typ;
+    }
+
+    if entry_tbl
+        .get("url")
+        .and_then(|v| v.as_str())
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        return "sse";
+    }
+
+    "stdio"
 }
 
 /// 将 config.json 中 Codex 的 enabled==true 项以 TOML 形式写入 ~/.codex/config.toml
