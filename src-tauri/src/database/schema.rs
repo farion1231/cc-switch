@@ -2785,7 +2785,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 13);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         assert!(Database::has_column(
             &conn,
             "proxy_request_logs",
