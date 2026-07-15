@@ -83,7 +83,9 @@ mod tests {
     fn includes_config_sqlite_home() {
         let temp = tempdir().expect("tempdir");
         let sqlite_home = temp.path().join("sqlite-home");
-        let config_text = format!("sqlite_home = \"{}\"\n", sqlite_home.display());
+        // 用 TOML 字面量字符串(单引号)承载路径：Windows 路径含反斜杠，basic string(双引号)
+        // 会把 `\U`/`\s` 等当作非法转义导致解析失败。
+        let config_text = format!("sqlite_home = '{}'\n", sqlite_home.display());
 
         let paths = codex_state_db_paths(temp.path(), &config_text);
 

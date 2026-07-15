@@ -374,20 +374,15 @@ fn parse_branch_from_source_url(source_url: Option<&str>) -> Option<String> {
 
 /// 获取 `~/.agents/skills/` 目录（存在时返回）
 fn get_agents_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir()
-        .map(|h| h.join(".agents").join("skills"))
-        .filter(|p| p.exists())
+    let dir = crate::config::get_home_dir().join(".agents").join("skills");
+    dir.exists().then_some(dir)
 }
 
 /// 解析 `~/.agents/.skill-lock.json`，返回 skill_name -> 仓库信息
 fn parse_agents_lock() -> HashMap<String, LockRepoInfo> {
-    let path = match dirs::home_dir() {
-        Some(h) => h.join(".agents").join(".skill-lock.json"),
-        None => {
-            log::warn!("无法获取 HOME 目录，跳过解析 agents lock 文件");
-            return HashMap::new();
-        }
-    };
+    let path = crate::config::get_home_dir()
+        .join(".agents")
+        .join(".skill-lock.json");
     let content = match fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
@@ -482,12 +477,7 @@ impl SkillService {
         let dir = match location {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
             SkillStorageLocation::Unified => {
-                let home = dirs::home_dir().context(format_skill_error(
-                    "GET_HOME_DIR_FAILED",
-                    &[],
-                    Some("checkPermission"),
-                ))?;
-                home.join(".agents").join("skills")
+                crate::config::get_home_dir().join(".agents").join("skills")
             }
         };
         fs::create_dir_all(&dir)?;
@@ -538,12 +528,10 @@ impl SkillService {
             }
         }
 
-        // 默认路径：回退到用户主目录下的标准位置
-        let home = dirs::home_dir().context(format_skill_error(
-            "GET_HOME_DIR_FAILED",
-            &[],
-            Some("checkPermission"),
-        ))?;
+        // 默认路径：回退到用户主目录下的标准位置。
+        // 必须走 get_home_dir()（可被 CC_SWITCH_TEST_HOME 覆盖）：Windows 上 dirs::home_dir()
+        // 走 Known Folder API，测试无法隔离真实用户目录。
+        let home = crate::config::get_home_dir();
 
         Ok(match app {
             AppType::Claude => home.join(".claude").join("skills"),
@@ -1167,8 +1155,7 @@ impl SkillService {
         let new_dir = match target {
             SkillStorageLocation::CcSwitch => get_app_config_dir().join("skills"),
             SkillStorageLocation::Unified => {
-                let home = dirs::home_dir().context("Cannot determine home directory")?;
-                home.join(".agents").join("skills")
+                crate::config::get_home_dir().join(".agents").join("skills")
             }
         };
         fs::create_dir_all(&new_dir)?;
@@ -3067,6 +3054,36 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    #[test]
+    // serial：与 backup/s3_sync/deeplink 等同样读写进程级 CC_SWITCH_TEST_HOME 的测试互斥，
+    // EnvGuard 只负责恢复不提供互斥。
+    #[serial_test::serial]
+    fn get_app_skills_dir_honors_test_home_override() {
+        // 回归：曾直呼 dirs::home_dir() 绕过 CC_SWITCH_TEST_HOME——Unix 上碰巧跟 $HOME
+        // 一致所以测试能过，Windows 上 dirs 走 Known Folder API，测试隔离整体失效
+        // （tests/skill_sync.rs 扫到 runner 真实用户目录）。
+        struct EnvGuard(Option<std::ffi::OsString>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                }
+            }
+        }
+        let temp = tempdir().expect("tempdir");
+        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
+        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+
+        let dir =
+            SkillService::get_app_skills_dir(&AppType::Claude).expect("resolve claude skills dir");
+        assert!(
+            dir.starts_with(temp.path()),
+            "skills dir must live under the overridden test home, got {}",
+            dir.display()
+        );
     }
 
     #[test]
