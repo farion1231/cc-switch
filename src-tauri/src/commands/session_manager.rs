@@ -1,6 +1,8 @@
 #![allow(non_snake_case)]
 
 use crate::session_manager;
+use std::path::PathBuf;
+use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String> {
@@ -58,6 +60,33 @@ pub async fn get_session_messages(
 /// 相比之下 `cwd` 的处理**不属于**这条豁免：它是磁盘上扫来的项目路径，正常使用
 /// 就可能含 `$(...)`，与 renderer 是否可信无关，因此在
 /// `session_manager::terminal::shell_escape` 里做了完整的单引号转义。
+#[tauri::command]
+pub async fn export_session_markdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    defaultName: String,
+    markdown: String,
+) -> Result<Option<String>, String> {
+    let destination = app
+        .dialog()
+        .file()
+        .add_filter("Markdown", &["md"])
+        .set_file_name(&defaultName)
+        .blocking_save_file();
+
+    let Some(destination) = destination else {
+        return Ok(None);
+    };
+
+    let file_path = destination.to_string();
+    let path = PathBuf::from(&file_path);
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(path, markdown))
+        .await
+        .map_err(|error| format!("Failed to export session: {error}"))?
+        .map_err(|error| format!("Failed to write Markdown file: {error}"))?;
+
+    Ok(Some(file_path))
+}
+
 #[tauri::command]
 pub async fn launch_session_terminal(
     command: String,
