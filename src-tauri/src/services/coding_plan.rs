@@ -427,9 +427,10 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
 
     // 个人版老端点(向后兼容绝大多数个人用户)
     let personal_url = format!("https://{api_domain}/v1/api/openplatform/coding_plan/remains");
-    let result = query_minimax_endpoint(&client, &personal_url, api_key).await;
-    if result.success && !result.tiers.is_empty() {
-        return result;
+    match query_minimax_endpoint(&client, &personal_url, api_key).await {
+        Ok(result) if result.success && !result.tiers.is_empty() => return Ok(result),
+        Err(e) => return Err(e),
+        _ => {}
     }
 
     // 团队版新端点(team-seat 用户兜底)
@@ -437,13 +438,13 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
     query_minimax_endpoint(&client, &team_url, api_key).await
 }
 
-/// 调单个 MiniMax endpoint 并解析。返回的 `SubscriptionQuota` 可能 `success=false`
+/// 调单个 MiniMax endpoint 并解析。返回的 `Result<SubscriptionQuota, String>` 中 `Ok` 值可能 `success=false`
 /// 或 `tiers` 为空,交给调用方决定是否 fallback 到下一个 URL。
 async fn query_minimax_endpoint(
     client: &reqwest::Client,
     url: &str,
     api_key: &str,
-) -> SubscriptionQuota {
+) -> Result<SubscriptionQuota, String> {
     let resp = match client
         .get(url)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -1444,7 +1445,7 @@ pub async fn get_coding_plan_quota(
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
+        parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, query_minimax_endpoint, parse_zhipu_token_tiers,
         query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
         volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
         TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -1946,6 +1947,100 @@ mod tests {
         });
         let tiers = parse_minimax_tiers(&body);
         assert!(tiers.is_empty());
+    }
+
+    // ── query_minimax_endpoint 瞬时/确定性通道回归 ──
+    //
+    // 瞬时错误（connection refused / 连接中断 / 读体截断）必须走 Err 通道，
+    // 让调用方 reject 后重试并保持旧额度不变。确定性的 HTTP 响应（含认证失败、
+    // 状态码错误、空响应）必须走 Ok(SubscriptionQuota { success: false }) 通道。
+    // 参考 SaladDay review: https://github.com/farion1231/cc-switch/pull/4797
+
+    fn spawn_local_server(response: Option<String>) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                if let Some(resp) = response {
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}/"), handle)
+    }
+
+    #[tokio::test]
+    async fn minimax_endpoint_transient_connection_refused_returns_err() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{port}/");
+        let result = query_minimax_endpoint(&client, &url, "sk-test").await;
+        let err = result.expect_err("connection refused must return Err");
+        assert!(err.contains("Network error"), "err={err}");
+    }
+
+    #[tokio::test]
+    async fn minimax_endpoint_transient_closed_before_response_returns_err() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                // 不写响应直接关闭 → 连接重置（瞬时错误必须走 Err）
+                drop(stream);
+            }
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{port}/");
+        let result = query_minimax_endpoint(&client, &url, "sk-test").await;
+        let err = result.expect_err("closed before response must return Err");
+        assert!(
+            err.contains("Network error") || err.contains("connection"),
+            "err={err}"
+        );
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn minimax_endpoint_valid_response_returns_ok_with_tiers() {
+        let body = json!({
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 80.0,
+                "current_weekly_remaining_percent": 70.0,
+                "current_interval_status": 1,
+                "current_weekly_status": 1,
+                "end_time": 1_780_329_600_000_i64,
+                "weekly_end_time": 1_780_848_000_000_i64
+            }],
+            "base_resp": { "status_code": 0, "status_msg": "success" }
+        });
+        let body_str = body.to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK
+content-type: application/json
+content-length: {}
+connection: close
+
+{}",
+            body_str.len(),
+            body_str
+        );
+        let (url, handle) = spawn_local_server(Some(response));
+        let client = reqwest::Client::new();
+        let result = query_minimax_endpoint(&client, &url, "sk-test").await;
+        let quota = result.expect("valid response must return Ok");
+        assert!(quota.success, "quota should be success");
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].utilization, 20.0);
+        assert_eq!(quota.tiers[1].utilization, 30.0);
+        handle.join().expect("server thread");
     }
 
     #[test]
