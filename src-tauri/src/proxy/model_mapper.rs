@@ -246,7 +246,7 @@ pub fn apply_classifier_override(
     body["model"] = serde_json::json!(classifier);
 
     if disable_thinking {
-        body["thinking"] = json!({"type": "disabled"});
+        body["thinking"] = serde_json::json!({"type": "disabled"});
         log::debug!("[Classifier] thinking disabled for classifier request");
     }
 
