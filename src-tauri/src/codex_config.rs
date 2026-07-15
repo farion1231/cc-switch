@@ -7,9 +7,10 @@ use crate::config::{
 };
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
+use once_cell::sync::OnceCell;
 use serde_json::{json, Value};
 use std::fs;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use toml_edit::DocumentMut;
 
 pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
@@ -20,6 +21,17 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+// Generating a ProxyChat catalog only needs one stable Codex model template per
+// process. Without this cache every provider switch/takeover can start the
+// Codex CLI again, which is especially expensive for npm-installed `codex.cmd`
+// on Windows. Tests deliberately bypass the global cache because they isolate
+// CODEX_HOME and seed different model templates.
+#[cfg(not(test))]
+static CODEX_MODEL_CATALOG_TEMPLATE_CACHE: OnceCell<Value> = OnceCell::new();
 
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
@@ -804,13 +816,28 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn codex_bundled_models_command(candidate: &Path) -> Command {
+    let mut command = Command::new(candidate);
+    command
+        .args(["debug", "models", "--bundled"])
+        .stdin(Stdio::null());
+
+    // A release build uses the Windows GUI subsystem, so a console child that
+    // is created without this flag gets its own transient console window. npm
+    // installs Codex as `codex.cmd`, which Windows launches through cmd.exe.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
+}
+
 fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
     for candidate in codex_cli_candidates() {
         let candidate_label = candidate.to_string_lossy();
-        let output = match Command::new(&candidate)
-            .args(["debug", "models", "--bundled"])
-            .output()
-        {
+        let output = match codex_bundled_models_command(&candidate).output() {
             Ok(output) => output,
             Err(err) => {
                 log::debug!("failed to run `{candidate_label} debug models --bundled`: {err}");
@@ -864,7 +891,7 @@ fn load_codex_native_responses_template() -> Value {
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 
-fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+fn load_codex_model_catalog_template_uncached() -> Result<Value, AppError> {
     // ① models_cache.json (created by Codex when it connects to OpenAI)
     if let Some(template) = load_codex_model_template_from_cache()? {
         return Ok(template);
@@ -881,6 +908,29 @@ fn load_codex_model_catalog_template() -> Result<Value, AppError> {
     Err(AppError::Message(format!(
         "Codex model catalog template `{CODEX_MODEL_CATALOG_TEMPLATE_SLUG}` not found. Please start Codex once so models_cache.json is available, or ensure the `codex` CLI is on PATH."
     )))
+}
+
+fn get_or_load_codex_model_catalog_template<F>(
+    cache: &OnceCell<Value>,
+    loader: F,
+) -> Result<Value, AppError>
+where
+    F: FnOnce() -> Result<Value, AppError>,
+{
+    cache.get_or_try_init(loader).cloned()
+}
+
+#[cfg(not(test))]
+fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    get_or_load_codex_model_catalog_template(
+        &CODEX_MODEL_CATALOG_TEMPLATE_CACHE,
+        load_codex_model_catalog_template_uncached,
+    )
+}
+
+#[cfg(test)]
+fn load_codex_model_catalog_template() -> Result<Value, AppError> {
+    load_codex_model_catalog_template_uncached()
 }
 
 fn codex_model_catalog_from_specs(
@@ -3307,6 +3357,63 @@ web_search = "disabled"
                 .any(|candidate| candidate == Path::new("codex")),
             "codex CLI candidates must include the PATH entry"
         );
+    }
+
+    #[test]
+    fn codex_bundled_models_command_uses_expected_program_and_args() {
+        let command = codex_bundled_models_command(Path::new("codex"));
+        assert_eq!(command.get_program(), "codex");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["debug", "models", "--bundled"]
+        );
+    }
+
+    #[test]
+    fn successful_model_catalog_template_load_is_cached() {
+        use std::cell::Cell;
+
+        let cache = OnceCell::new();
+        let calls = Cell::new(0);
+        let first = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({ "slug": "first" }))
+        })
+        .expect("first template load");
+        let second = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({ "slug": "second" }))
+        })
+        .expect("cached template load");
+
+        assert_eq!(first, json!({ "slug": "first" }));
+        assert_eq!(second, first);
+        assert_eq!(calls.get(), 1, "successful template should load only once");
+    }
+
+    #[test]
+    fn failed_model_catalog_template_load_can_retry() {
+        use std::cell::Cell;
+
+        let cache = OnceCell::new();
+        let calls = Cell::new(0);
+        let first = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Err(AppError::Message("temporary failure".to_string()))
+        });
+        assert!(first.is_err());
+
+        let second = get_or_load_codex_model_catalog_template(&cache, || {
+            calls.set(calls.get() + 1);
+            Ok(json!({ "slug": "recovered" }))
+        })
+        .expect("retry template load");
+
+        assert_eq!(second, json!({ "slug": "recovered" }));
+        assert_eq!(calls.get(), 2, "failed loads must not poison the cache");
     }
 
     #[test]
