@@ -117,8 +117,8 @@ pub struct ProviderService;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClaudeSwitchPlan {
-    activation_mode: ClaudeActivationMode,
-    override_dir: Option<String>,
+    pub(crate) activation_mode: ClaudeActivationMode,
+    pub(crate) override_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -7604,7 +7604,7 @@ impl ProviderService {
         Self::sync_claude_profile_assets_to_profile(state, profile_dir, plugin_applied)
     }
 
-    fn sync_claude_profile_assets_to_profile(
+    pub(crate) fn sync_claude_profile_assets_to_profile(
         state: &AppState,
         profile_dir: &Path,
         plugin_applied: bool,

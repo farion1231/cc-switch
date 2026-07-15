@@ -80,6 +80,7 @@ struct ClaudeDirectHotSwitchRollback {
     previous_local_current: Option<String>,
     previous_db_current: Option<String>,
     previous_config_env: Option<String>,
+    profile_assets: Option<(String, bool)>,
 }
 
 impl ProxyService {
@@ -2182,6 +2183,22 @@ impl ProxyService {
             return Err(err);
         }
 
+        if let Some((profile_dir, plugin_applied)) = claude_rollback
+            .as_ref()
+            .and_then(|rollback| rollback.profile_assets.as_ref())
+        {
+            let state = crate::store::AppState::new(self.db.clone());
+            if let Err(err) = ProviderService::sync_claude_profile_assets_to_profile(
+                &state,
+                std::path::Path::new(profile_dir),
+                *plugin_applied,
+            ) {
+                log::warn!(
+                    "直接代理热切换后重投影 Claude profile 资产失败（将在下次同步时自愈）: {err}"
+                );
+            }
+        }
+
         outcome
     }
 
@@ -2201,6 +2218,21 @@ impl ProxyService {
             .get_provider_by_id(provider_id, app_type)
             .map_err(|e| format!("读取供应商失败: {e}"))?
             .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+        let plan = ProviderService::claude_switch_plan(&provider);
+        ProviderService::validate_claude_runtime_switch_plan(&plan)
+            .map_err(|e| format!("验证 Claude profile 切换失败: {e}"))?;
+        let profile_assets =
+            if matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
+                let profile_dir = plan.override_dir.clone().ok_or_else(|| {
+                    "Claude profile-and-config hot switch requires a profile directory".to_string()
+                })?;
+                let plugin_applied =
+                    crate::claude_plugin::is_claude_config_applied_for_db(self.db.as_ref())
+                        .map_err(|e| format!("读取 Claude plugin 状态失败: {e}"))?;
+                Some((profile_dir, plugin_applied))
+            } else {
+                None
+            };
         let rollback = ClaudeDirectHotSwitchRollback {
             previous_provider_override_dir: crate::settings::get_settings()
                 .claude_provider_config_dir,
@@ -2213,11 +2245,9 @@ impl ProxyService {
                 "CLAUDE_CONFIG_DIR",
             )
             .map_err(|e| format!("读取 CLAUDE_CONFIG_DIR 失败: {e}"))?,
+            profile_assets,
         };
 
-        let plan = ProviderService::claude_switch_plan(&provider);
-        ProviderService::validate_claude_runtime_switch_plan(&plan)
-            .map_err(|e| format!("验证 Claude profile 切换失败: {e}"))?;
         if let Err(err) = ProviderService::apply_claude_switch_plan(&plan) {
             let _ = self.rollback_direct_claude_hot_switch(&rollback);
             return Err(format!("应用 Claude profile 切换失败: {err}"));
@@ -5654,6 +5684,148 @@ model = "gpt-5.1-codex"
                 .as_deref(),
             Some(profile_dir.to_string_lossy().as_ref()),
             "direct proxy hot-switch should update CLAUDE_CONFIG_DIR"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn direct_hot_switch_projects_claude_profile_and_config_assets() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let _env_guard = UserEnvVarGuard::new("CLAUDE_CONFIG_DIR");
+        crate::services::env_manager::set_user_env_var("CLAUDE_CONFIG_DIR", None)
+            .expect("clear test env var");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let previous_provider = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example"
+                }
+            }),
+            None,
+        );
+        let profile_dir = home.dir.path().join("profile-b");
+        std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        let mut profile_provider = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key",
+                    "ANTHROPIC_BASE_URL": "https://api.b.example"
+                }
+            }),
+            None,
+        );
+        profile_provider.meta = Some(ProviderMeta {
+            claude_profile_dir: Some(profile_dir.to_string_lossy().into_owned()),
+            claude_activation_mode: Some(ClaudeActivationMode::ProfileAndConfig),
+            ..Default::default()
+        });
+
+        db.save_provider("claude", &previous_provider)
+            .expect("save previous provider");
+        db.save_provider("claude", &profile_provider)
+            .expect("save profile provider");
+        db.set_current_provider("claude", "a")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_mcp_server(&crate::app_config::McpServer {
+            id: "managed-mcp".to_string(),
+            name: "Managed MCP".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "python",
+                "args": ["-m", "managed_mcp"]
+            }),
+            apps: crate::app_config::McpApps {
+                claude: true,
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        })
+        .expect("save managed mcp server");
+        db.save_prompt(
+            AppType::Claude.as_str(),
+            &crate::Prompt {
+                id: "managed-prompt".to_string(),
+                name: "Managed Prompt".to_string(),
+                content: "managed direct hot-switch prompt".to_string(),
+                description: None,
+                enabled: true,
+                created_at: Some(1),
+                updated_at: None,
+            },
+        )
+        .expect("save enabled prompt");
+        let skill_dir = "managed-direct-switch-skill";
+        let ssot_skill_dir = crate::services::skill::SkillService::get_ssot_dir()
+            .expect("ssot dir")
+            .join(skill_dir);
+        std::fs::create_dir_all(&ssot_skill_dir).expect("create ssot skill dir");
+        std::fs::write(
+            ssot_skill_dir.join("SKILL.md"),
+            "# Managed Direct Switch Skill\n",
+        )
+        .expect("write skill manifest");
+        db.save_skill(&crate::InstalledSkill {
+            id: "local:managed-direct-switch-skill".to_string(),
+            name: "Managed Direct Switch Skill".to_string(),
+            description: None,
+            directory: skill_dir.to_string(),
+            repo_owner: None,
+            repo_name: None,
+            repo_branch: None,
+            readme_url: None,
+            apps: crate::SkillApps::only(&AppType::Claude),
+            installed_at: 1,
+            content_hash: None,
+            updated_at: 0,
+        })
+        .expect("save enabled skill");
+        crate::claude_plugin::write_claude_config_for_db(db.as_ref())
+            .expect("seed managed plugin config");
+
+        service
+            .hot_switch_provider("claude", "b")
+            .await
+            .expect("direct hot switch provider");
+
+        let profile_mcp: Value =
+            read_json_file(&profile_dir.join(".claude.json")).expect("read profile MCP config");
+        assert_eq!(
+            profile_mcp["mcpServers"]["managed-mcp"]["args"],
+            json!(["-m", "managed_mcp"]),
+            "direct proxy hot-switch should project enabled MCP servers"
+        );
+        assert_eq!(
+            std::fs::read_to_string(profile_dir.join("CLAUDE.md")).expect("read profile prompt"),
+            "managed direct hot-switch prompt",
+            "direct proxy hot-switch should project the enabled prompt"
+        );
+        assert!(
+            profile_dir
+                .join("skills")
+                .join(skill_dir)
+                .join("SKILL.md")
+                .is_file(),
+            "direct proxy hot-switch should project enabled skills"
+        );
+        let profile_plugin: Value =
+            read_json_file(&profile_dir.join("config.json")).expect("read profile plugin config");
+        assert_eq!(
+            profile_plugin["primaryApiKey"],
+            Value::String("any".to_string()),
+            "direct proxy hot-switch should project applied plugin config"
         );
     }
 
