@@ -1060,7 +1060,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "SudoCode",
+    name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
@@ -1082,6 +1082,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "sudocode",
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "sudocode" },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "sudocode_us",
+      base_url: "https://sudocode.us/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "sudocode_us" },
     },
   },
   {
