@@ -2855,12 +2855,33 @@ fn build_unix_claude_launch_script(
         })
         .unwrap_or_else(|| format!("trap 'rm -f {script_path}' EXIT"));
 
+    let claude_command = config_file
+        .map(|config_file| {
+            format!(
+                "claude --settings {}",
+                shell_single_quote(&config_file.to_string_lossy())
+            )
+        })
+        .unwrap_or_else(|| "claude".to_string());
+    let claude_command = claude_profile_dir
+        .or(claude_config_dir)
+        .map(|config_dir| {
+            format!(
+                "export CLAUDE_CONFIG_DIR={} && {claude_command}",
+                shell_single_quote(config_dir)
+            )
+        })
+        .unwrap_or(claude_command);
+    let provider_command = match (config_file, claude_profile_dir.or(claude_config_dir)) {
+        (Some(config_file), None) => {
+            build_provider_command_line(shell, &config_file.to_string_lossy(), cwd)
+        }
+        _ => build_claude_command_line(shell, &claude_command, cwd),
+    };
+
     let config_fragment = config_file
         .map(|config_file| {
-            let config_path_display = config_file.to_string_lossy();
-            let config_path = shell_single_quote(config_path_display.as_ref());
-            let provider_command =
-                build_provider_command_line(shell, config_path_display.as_ref(), cwd);
+            let config_path = shell_single_quote(&config_file.to_string_lossy());
             format!(
                 r#"echo "Using provider-specific claude config:"
 echo {config_path}
@@ -2870,15 +2891,14 @@ echo {config_path}
                 provider_command = provider_command,
             )
         })
-        .unwrap_or_else(|| format!("{}\n", build_claude_command_line(shell, "claude", cwd)));
+        .unwrap_or_else(|| format!("{provider_command}\n"));
 
     if let Some(profile_dir) = claude_profile_dir {
         return format!(
             r#"#!/usr/bin/env sh
 {cleanup}
-export CLAUDE_CONFIG_DIR={profile_dir}
 echo "Using Claude profile dir:"
-echo "$CLAUDE_CONFIG_DIR"
+echo {profile_dir}
 {config_fragment}{final_cd_command}{exec_line}
 "#,
             cleanup = cleanup,
@@ -2893,9 +2913,8 @@ echo "$CLAUDE_CONFIG_DIR"
         return format!(
             r#"#!/usr/bin/env sh
 {cleanup}
-export CLAUDE_CONFIG_DIR={config_dir}
 echo "Using Claude config dir:"
-echo "$CLAUDE_CONFIG_DIR"
+echo {config_dir}
 {config_fragment}{final_cd_command}{exec_line}
 "#,
             cleanup = cleanup,
@@ -4036,8 +4055,15 @@ mod tests {
             "/bin/bash",
         );
 
-        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
-        assert!(script.contains(r#"'/bin/bash' -ic 'cd '"'"'/tmp/project'"'"' && claude'"#));
+        let launch_command = build_claude_command_line(
+            "/bin/bash",
+            "export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' && claude",
+            Some(Path::new("/tmp/project")),
+        );
+        assert!(script.contains(&launch_command));
+        assert!(!script
+            .lines()
+            .any(|line| line.starts_with("export CLAUDE_CONFIG_DIR=")));
         assert!(!script.contains("--settings"));
         assert!(!script.contains("claude_"));
     }
@@ -4053,7 +4079,15 @@ mod tests {
             "/bin/bash",
         );
 
-        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api'"));
+        let launch_command = build_claude_command_line(
+            "/bin/bash",
+            "export CLAUDE_CONFIG_DIR='/tmp/.claude-profiles/api' && claude --settings '/tmp/claude_provider.json'",
+            Some(Path::new("/tmp/project")),
+        );
+        assert!(script.contains(&launch_command));
+        assert!(!script
+            .lines()
+            .any(|line| line.starts_with("export CLAUDE_CONFIG_DIR=")));
         assert!(script.contains("claude --settings"));
         assert!(script.contains("/tmp/claude_provider.json"));
         assert!(script.contains("rm -f '/tmp/claude_provider.json' '/tmp/launcher.sh'"));
@@ -4101,7 +4135,15 @@ mod tests {
             "/bin/bash",
         );
 
-        assert!(script.contains("export CLAUDE_CONFIG_DIR='/tmp/.configured-claude'"));
+        let launch_command = build_claude_command_line(
+            "/bin/bash",
+            "export CLAUDE_CONFIG_DIR='/tmp/.configured-claude' && claude --settings '/tmp/claude_provider.json'",
+            Some(Path::new("/tmp/project")),
+        );
+        assert!(script.contains(&launch_command));
+        assert!(!script
+            .lines()
+            .any(|line| line.starts_with("export CLAUDE_CONFIG_DIR=")));
         assert!(!script.contains("unset CLAUDE_CONFIG_DIR"));
         assert!(script.contains("claude --settings"));
         assert!(script.contains("/tmp/claude_provider.json"));
