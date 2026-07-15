@@ -12,15 +12,49 @@ import { UsageDashboard } from "@/components/usage/UsageDashboard";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
+const rebuildSessionUsageMock = vi.hoisted(() => vi.fn());
+const toastSuccessMock = vi.hoisted(() => vi.fn());
+const toastWarningMock = vi.hoisted(() => vi.fn());
+const toastErrorMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, fallback?: string) =>
+      typeof fallback === "string" ? fallback : key,
     i18n: {
       resolvedLanguage: "en",
       language: "en",
     },
   }),
+}));
+
+vi.mock("@/lib/api/usage", () => ({
+  usageApi: { rebuildSessionUsage: rebuildSessionUsageMock },
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: toastSuccessMock,
+    warning: toastWarningMock,
+    error: toastErrorMock,
+  },
+}));
+
+vi.mock("@/components/ConfirmDialog", () => ({
+  ConfirmDialog: ({
+    isOpen,
+    confirmText,
+    onConfirm,
+  }: {
+    isOpen: boolean;
+    confirmText: string;
+    onConfirm: () => void;
+  }) =>
+    isOpen ? (
+      <button type="button" onClick={onConfirm}>
+        {confirmText}
+      </button>
+    ) : null,
 }));
 
 vi.mock("framer-motion", () => ({
@@ -98,11 +132,14 @@ const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
       queries: { retry: false },
     },
   });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <UsageDashboard {...props} />
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <UsageDashboard {...props} />
+      </QueryClientProvider>,
+    ),
+  };
 };
 
 describe("UsageDashboard", () => {
@@ -111,6 +148,12 @@ describe("UsageDashboard", () => {
     useModelStatsMock.mockReset();
     useProviderStatsMock.mockReturnValue({ data: [] });
     useModelStatsMock.mockReturnValue({ data: [] });
+    rebuildSessionUsageMock.mockResolvedValue({
+      imported: 42,
+      skipped: 3,
+      filesScanned: 7,
+      errors: [],
+    });
   });
 
   it("uses the saved refresh interval when mounted", () => {
@@ -151,5 +194,31 @@ describe("UsageDashboard", () => {
     await waitFor(() =>
       expect(screen.getByTestId("select-30000")).toBeInTheDocument(),
     );
+  });
+
+  it("confirms before rebuilding session usage", async () => {
+    const { queryClient } = renderDashboard();
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.sessionSync.rebuild" }),
+    );
+    expect(rebuildSessionUsageMock).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "usage.sessionSync.rebuildConfirm",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(rebuildSessionUsageMock).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: ["usage"],
+      }),
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith("usage.sessionSync.rebuilt");
   });
 });

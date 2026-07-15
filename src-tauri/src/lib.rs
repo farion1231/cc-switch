@@ -1088,6 +1088,17 @@ pub fn run() {
                         }
                     }
 
+                    fn run_session_sync(name: &str, db: &crate::database::Database) {
+                        match crate::services::session_usage::sync_all_session_usage(db) {
+                            Ok(result) => {
+                                for error in result.errors {
+                                    log::warn!("{name}: {error}");
+                                }
+                            }
+                            Err(error) => log::warn!("{name} failed: {error}"),
+                        }
+                    }
+
                     let db = &db_for_session_sync;
 
                     // 首次同步
@@ -1095,22 +1106,7 @@ pub fn run() {
                         "Usage cost startup backfill",
                         db.backfill_missing_usage_costs(),
                     );
-                    run_step(
-                        "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
-                    );
-                    run_step(
-                        "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
-                    );
-                    run_step(
-                        "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
-                    );
-                    run_step(
-                        "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
-                    );
+                    run_session_sync("Session usage initial sync", db);
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -1119,22 +1115,7 @@ pub fn run() {
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        run_step(
-                            "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
-                        );
-                        run_step(
-                            "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
-                        );
-                        run_step(
-                            "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
-                        );
+                        run_session_sync("Session usage periodic sync", db);
                     }
                 });
             });
@@ -1406,6 +1387,7 @@ pub fn run() {
             commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,
+            commands::rebuild_session_usage,
             commands::get_usage_data_sources,
             // Stream health check
             commands::stream_check_provider,

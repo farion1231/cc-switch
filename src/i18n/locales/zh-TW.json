@@ -1449,7 +1449,15 @@
       "resync": "同步",
       "imported": "從工作階段日誌匯入了 {{count}} 筆紀錄",
       "upToDate": "工作階段日誌已是最新",
-      "failed": "工作階段同步失敗"
+      "failed": "工作階段同步失敗",
+      "rebuild": "重新掃描",
+      "rebuildTrigger": "清除已匯入的用量並重新掃描工作階段日誌",
+      "rebuildTitle": "重新掃描工作階段用量？",
+      "rebuildMessage": "已匯入的工作階段用量與掃描進度將被清除，然後從本機 Claude、Codex、Gemini 與 OpenCode 日誌重新建構。聊天檔案、代理請求日誌與設定不會被刪除。",
+      "rebuildConfirm": "清除並重新掃描",
+      "rebuilt": "已掃描 {{files}} 個檔案並重新建構 {{count}} 筆紀錄",
+      "rebuildPartial": "重新掃描完成，但有 {{count}} 個工作階段日誌錯誤",
+      "rebuildFailed": "重新掃描工作階段用量失敗"
     },
     "totalRecords": "共 {{total}} 筆紀錄",
     "goToPage": "跳轉",

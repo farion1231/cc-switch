@@ -22,10 +22,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::SystemTime;
 
+static SESSION_USAGE_SYNC_LOCK: Mutex<()> = Mutex::new(());
+
 /// 同步结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSyncResult {
     pub imported: u32,
@@ -41,6 +44,100 @@ pub struct DataSourceSummary {
     pub data_source: String,
     pub request_count: u32,
     pub total_cost_usd: String,
+}
+
+/// 串行同步所有本地会话来源，避免手动重建与后台同步交错写入。
+pub fn sync_all_session_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    let _guard = SESSION_USAGE_SYNC_LOCK
+        .lock()
+        .map_err(|_| AppError::Database("会话用量同步锁已损坏".to_string()))?;
+    Ok(sync_all_session_usage_unlocked(db))
+}
+
+/// 清除可由本地会话日志恢复的统计数据并立即全量重扫。
+/// 代理请求日志、会话原文件、账号配置和其他应用数据均不受影响。
+pub fn rebuild_session_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    let _guard = SESSION_USAGE_SYNC_LOCK
+        .lock()
+        .map_err(|_| AppError::Database("会话用量同步锁已损坏".to_string()))?;
+
+    clear_rebuildable_session_usage(db)?;
+    let result = sync_all_session_usage_unlocked(db);
+    crate::usage_events::notify_log_recorded();
+    Ok(result)
+}
+
+type SessionSyncFn = fn(&Database) -> Result<SessionSyncResult, AppError>;
+
+fn sync_all_session_usage_unlocked(db: &Database) -> SessionSyncResult {
+    let syncers: [(&str, SessionSyncFn); 4] = [
+        ("Claude", sync_claude_session_logs),
+        (
+            "Codex",
+            crate::services::session_usage_codex::sync_codex_usage,
+        ),
+        (
+            "Gemini",
+            crate::services::session_usage_gemini::sync_gemini_usage,
+        ),
+        (
+            "OpenCode",
+            crate::services::session_usage_opencode::sync_opencode_usage,
+        ),
+    ];
+    let mut combined = SessionSyncResult::default();
+
+    for (source, sync) in syncers {
+        match sync(db) {
+            Ok(result) => {
+                combined.imported += result.imported;
+                combined.skipped += result.skipped;
+                combined.files_scanned += result.files_scanned;
+                combined.errors.extend(result.errors);
+            }
+            Err(error) => combined.errors.push(format!("{source} 同步失败: {error}")),
+        }
+    }
+
+    combined
+}
+
+fn clear_rebuildable_session_usage(db: &Database) -> Result<(), AppError> {
+    let mut conn = lock_conn!(db.conn);
+    let transaction = conn
+        .transaction()
+        .map_err(|error| AppError::Database(format!("开始重建会话用量失败: {error}")))?;
+
+    let detail_rows = transaction
+        .execute(
+            "DELETE FROM proxy_request_logs
+             WHERE data_source IN (
+                'session_log', 'codex_db', 'codex_session',
+                'gemini_session', 'opencode_session'
+             )",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("清除会话用量明细失败: {error}")))?;
+    let rollup_rows = transaction
+        .execute(
+            "DELETE FROM usage_daily_rollups
+             WHERE provider_id IN (
+                '_session', '_codex_session', '_gemini_session', '_opencode_session'
+             )",
+            [],
+        )
+        .map_err(|error| AppError::Database(format!("清除会话用量汇总失败: {error}")))?;
+    let cursor_rows = transaction
+        .execute("DELETE FROM session_log_sync", [])
+        .map_err(|error| AppError::Database(format!("清除会话扫描进度失败: {error}")))?;
+
+    transaction
+        .commit()
+        .map_err(|error| AppError::Database(format!("提交会话用量重建失败: {error}")))?;
+    log::info!(
+        "[SESSION-SYNC] 已重置会话用量: 明细 {detail_rows} 条, 汇总 {rollup_rows} 条, 游标 {cursor_rows} 条"
+    );
+    Ok(())
 }
 
 /// 从 JSONL 中解析出的 assistant 消息使用数据
@@ -693,6 +790,75 @@ mod tests {
             row.get(0)
         })?;
         assert_eq!(count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_clear_rebuildable_session_usage_preserves_proxy_data() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (request_id, provider_id, data_source) in [
+                ("proxy", "custom-provider", "proxy"),
+                ("claude-session", "_session", "session_log"),
+                ("legacy-codex", "_codex_session", "codex_db"),
+                ("codex-session", "_codex_session", "codex_session"),
+                ("gemini-session", "_gemini_session", "gemini_session"),
+                ("opencode-session", "_opencode_session", "opencode_session"),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        latency_ms, status_code, created_at, data_source
+                     ) VALUES (?1, ?2, 'codex', 'test-model', 0, 200, 1, ?3)",
+                    rusqlite::params![request_id, provider_id, data_source],
+                )?;
+            }
+
+            for provider_id in [
+                "custom-provider",
+                "_session",
+                "_codex_session",
+                "_gemini_session",
+                "_opencode_session",
+            ] {
+                conn.execute(
+                    "INSERT INTO usage_daily_rollups (
+                        date, app_type, provider_id, model
+                     ) VALUES ('2026-07-01', 'codex', ?1, ?1)",
+                    [provider_id],
+                )?;
+            }
+
+            conn.execute(
+                "INSERT INTO session_log_sync (
+                    file_path, last_modified, last_line_offset, last_synced_at
+                 ) VALUES ('/tmp/session.jsonl', 1, 10, 1)",
+                [],
+            )?;
+        }
+
+        clear_rebuildable_session_usage(&db)?;
+
+        let conn = lock_conn!(db.conn);
+        let detail_ids = conn
+            .prepare("SELECT request_id FROM proxy_request_logs ORDER BY request_id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(detail_ids, vec!["proxy"]);
+
+        let rollup_providers = conn
+            .prepare("SELECT provider_id FROM usage_daily_rollups ORDER BY provider_id")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(rollup_providers, vec!["custom-provider"]);
+
+        let cursor_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM session_log_sync", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(cursor_count, 0);
 
         Ok(())
     }

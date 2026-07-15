@@ -19,6 +19,8 @@ import {
   RefreshCw,
   Coins,
   LayoutGrid,
+  Loader2,
+  RotateCcw,
 } from "lucide-react";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import {
@@ -43,6 +45,10 @@ import { getLocaleFromLanguage } from "./format";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { usageApi } from "@/lib/api/usage";
+import { toast } from "sonner";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
 
@@ -93,6 +99,8 @@ export function UsageDashboard({
   const [refreshIntervalMs, setRefreshIntervalMs] = useState(() =>
     normalizeRefreshInterval(savedRefreshIntervalMs),
   );
+  const [rebuildingSessionUsage, setRebuildingSessionUsage] = useState(false);
+  const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
 
   useEffect(() => {
     setRefreshIntervalMs(normalizeRefreshInterval(savedRefreshIntervalMs));
@@ -134,6 +142,37 @@ export function UsageDashboard({
         error,
       );
       setRefreshIntervalMs(previous);
+    }
+  };
+
+  const handleRebuildSessionUsage = async () => {
+    setShowRebuildConfirm(false);
+    setRebuildingSessionUsage(true);
+    try {
+      const result = await usageApi.rebuildSessionUsage();
+      await queryClient.invalidateQueries({ queryKey: usageKeys.all });
+
+      if (result.errors.length > 0) {
+        toast.warning(
+          t("usage.sessionSync.rebuildPartial", {
+            count: result.errors.length,
+          }),
+          { description: result.errors.slice(0, 3).join("\n") },
+        );
+      } else {
+        toast.success(
+          t("usage.sessionSync.rebuilt", {
+            count: result.imported,
+            files: result.filesScanned,
+          }),
+        );
+      }
+    } catch (error) {
+      toast.error(t("usage.sessionSync.rebuildFailed"), {
+        description: String(error),
+      });
+    } finally {
+      setRebuildingSessionUsage(false);
     }
   };
 
@@ -321,6 +360,22 @@ export function UsageDashboard({
               </SelectContent>
             </Select>
 
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5 px-3 text-xs"
+              onClick={() => setShowRebuildConfirm(true)}
+              disabled={rebuildingSessionUsage}
+              title={t("usage.sessionSync.rebuildTrigger")}
+            >
+              {rebuildingSessionUsage ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              {t("usage.sessionSync.rebuild")}
+            </Button>
+
             <UsageDateRangePicker
               selection={range}
               triggerLabel={rangeLabel}
@@ -429,6 +484,15 @@ export function UsageDashboard({
           </AccordionContent>
         </AccordionItem>
       </Accordion>
+
+      <ConfirmDialog
+        isOpen={showRebuildConfirm}
+        title={t("usage.sessionSync.rebuildTitle")}
+        message={t("usage.sessionSync.rebuildMessage")}
+        confirmText={t("usage.sessionSync.rebuildConfirm")}
+        onConfirm={() => void handleRebuildSessionUsage()}
+        onCancel={() => setShowRebuildConfirm(false)}
+      />
     </motion.div>
   );
 }

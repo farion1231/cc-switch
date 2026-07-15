@@ -1477,7 +1477,15 @@
       "resync": "同期",
       "imported": "セッションログから {{count}} 件のレコードをインポートしました",
       "upToDate": "セッションログは最新です",
-      "failed": "セッション同期に失敗しました"
+      "failed": "セッション同期に失敗しました",
+      "rebuild": "再スキャン",
+      "rebuildTrigger": "インポート済みの使用量を消去してセッションログを再スキャン",
+      "rebuildTitle": "セッション使用量を再スキャンしますか？",
+      "rebuildMessage": "インポート済みのセッション使用量とスキャン進捗を消去し、ローカルの Claude、Codex、Gemini、OpenCode ログから再構築します。チャットファイル、プロキシリクエストログ、設定は削除されません。",
+      "rebuildConfirm": "消去して再スキャン",
+      "rebuilt": "{{files}} 個のファイルを再スキャンし、{{count}} 件のレコードを再構築しました",
+      "rebuildPartial": "再スキャンは完了しましたが、{{count}} 件のセッションログエラーがありました",
+      "rebuildFailed": "セッション使用量の再スキャンに失敗しました"
     },
     "totalRecords": "全 {{total}} 件",
     "goToPage": "移動",

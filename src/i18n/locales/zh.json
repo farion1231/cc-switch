@@ -1477,7 +1477,15 @@
       "resync": "同步",
       "imported": "从会话日志导入了 {{count}} 条记录",
       "upToDate": "会话日志已是最新",
-      "failed": "会话同步失败"
+      "failed": "会话同步失败",
+      "rebuild": "重新扫描",
+      "rebuildTrigger": "清除已导入的用量并重新扫描会话日志",
+      "rebuildTitle": "重新扫描会话用量？",
+      "rebuildMessage": "已导入的会话用量和扫描进度将被清除，然后从本地 Claude、Codex、Gemini 和 OpenCode 日志重新构建。聊天文件、代理请求日志和设置不会被删除。",
+      "rebuildConfirm": "清除并重新扫描",
+      "rebuilt": "已扫描 {{files}} 个文件并重建 {{count}} 条记录",
+      "rebuildPartial": "重新扫描完成，但有 {{count}} 个会话日志错误",
+      "rebuildFailed": "重新扫描会话用量失败"
     },
     "totalRecords": "共 {{total}} 条记录",
     "goToPage": "跳转",

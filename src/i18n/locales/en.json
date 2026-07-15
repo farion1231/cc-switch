@@ -1477,7 +1477,15 @@
       "resync": "Sync",
       "imported": "Imported {{count}} records from session logs",
       "upToDate": "Session logs are up to date",
-      "failed": "Session sync failed"
+      "failed": "Session sync failed",
+      "rebuild": "Rescan",
+      "rebuildTrigger": "Clear imported usage and rescan session logs",
+      "rebuildTitle": "Rescan session usage?",
+      "rebuildMessage": "Imported session usage and scan progress will be cleared, then rebuilt from local Claude, Codex, Gemini, and OpenCode logs. Chat files, proxy request logs, and settings will not be deleted.",
+      "rebuildConfirm": "Clear and Rescan",
+      "rebuilt": "Rescanned {{files}} files and rebuilt {{count}} records",
+      "rebuildPartial": "Rescan completed with {{count}} session log errors",
+      "rebuildFailed": "Session usage rescan failed"
     },
     "totalRecords": "{{total}} records total",
     "goToPage": "Go",

@@ -180,6 +180,10 @@ export const usageApi = {
     return invoke("sync_session_usage");
   },
 
+  rebuildSessionUsage: async (): Promise<SessionSyncResult> => {
+    return invoke("rebuild_session_usage");
+  },
+
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
     return invoke("get_usage_data_sources");
   },
