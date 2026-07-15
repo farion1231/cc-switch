@@ -26,7 +26,12 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelDropdown,
+  ApiKeyHeaderSection,
+} from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -99,6 +104,10 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Custom API Key Header
+  apiKeyHeaderName?: string;
+  onApiKeyHeaderNameChange: (name: string | undefined) => void;
 
   // Local proxy User-Agent override
   customUserAgent: string;
@@ -190,6 +199,8 @@ export function CodexFormFields({
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
+  apiKeyHeaderName,
+  onApiKeyHeaderNameChange,
   customUserAgent,
   onCustomUserAgentChange,
   localProxyHeadersOverride,
@@ -449,6 +460,12 @@ export function CodexFormFields({
             defaultValue: "输入 API Key，将自动填充到配置",
           }),
         }}
+      />
+
+      {/* API Key Header 自定义 */}
+      <ApiKeyHeaderSection
+        apiKeyHeaderName={apiKeyHeaderName}
+        onApiKeyHeaderNameChange={onApiKeyHeaderNameChange}
       />
 
       {/* Codex Base URL 输入框 */}

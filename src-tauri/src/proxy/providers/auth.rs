@@ -13,6 +13,8 @@ pub struct AuthInfo {
     pub strategy: AuthStrategy,
     /// OAuth access_token（用于 GoogleOAuth 策略）
     pub access_token: Option<String>,
+    /// 自定义认证 Header 名称（设置后将以原始 key 值替代默认的 Bearer 认证）
+    pub custom_auth_header: Option<String>,
 }
 
 impl AuthInfo {
@@ -22,6 +24,7 @@ impl AuthInfo {
             api_key,
             strategy,
             access_token: None,
+            custom_auth_header: None,
         }
     }
 
@@ -31,6 +34,7 @@ impl AuthInfo {
             api_key,
             strategy: AuthStrategy::GoogleOAuth,
             access_token: Some(access_token),
+            custom_auth_header: None,
         }
     }
 
