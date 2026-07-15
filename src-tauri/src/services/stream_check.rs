@@ -481,22 +481,41 @@ impl StreamCheckService {
         let prompt = prompt.unwrap_or_else(|| "hi".to_string());
 
         // 4. 根据接口格式进行探测
-        let is_openai_compat = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
-            Some("openai_chat") | Some("openai_responses") => true,
-            Some("anthropic") => false,
+        let is_anthropic_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+            Some("openai_chat") | Some("openai_responses") => false,
+            Some("anthropic") => true,
             _ => {
-                (base_url.contains("/v1") && !base_url.contains("/anthropic"))
-                    || base_url.contains("openrouter.ai")
+                (*app_type == AppType::Claude || *app_type == AppType::ClaudeDesktop)
+                    && !((base_url.contains("/v1") && !base_url.contains("/anthropic"))
+                        || base_url.contains("openrouter.ai"))
             }
+        };
+
+        let is_responses_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+            Some("openai_responses") => true,
+            _ => false,
         };
 
         if *app_type == AppType::Gemini {
             Self::probe_gemini_api(client, base_url, &api_key, &model, &prompt, timeout).await
-        } else if *app_type == AppType::Claude && !is_openai_compat {
+        } else if is_anthropic_proto {
             Self::probe_anthropic_api(client, base_url, &api_key, &model, &prompt, timeout).await
+        } else if is_responses_proto {
+            Self::probe_responses_api(client, base_url, &api_key, &model, &prompt, timeout).await
         } else {
             Self::probe_openai_api(client, base_url, &api_key, &model, &prompt, timeout).await
         }
+    }
+
+    fn truncate_utf8_bytes(s: &str, max_bytes: usize) -> String {
+        if s.len() <= max_bytes {
+            return s.to_string();
+        }
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 
     fn extract_env_value(provider: &Provider, keys: &[&str]) -> Option<String> {
@@ -566,7 +585,7 @@ impl StreamCheckService {
             } else {
                 err_text
             };
-            let truncated_msg = if msg.len() > 150 { format!("{}...", &msg[..150]) } else { msg };
+            let truncated_msg = Self::truncate_utf8_bytes(&msg, 150);
             Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
         }
     }
@@ -613,7 +632,59 @@ impl StreamCheckService {
             } else {
                 err_text
             };
-            let truncated_msg = if msg.len() > 150 { format!("{}...", &msg[..150]) } else { msg };
+            let truncated_msg = Self::truncate_utf8_bytes(&msg, 150);
+            Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
+        }
+    }
+
+    async fn probe_responses_api(
+        client: &Client,
+        base_url: &str,
+        key: &str,
+        model: &str,
+        prompt: &str,
+        timeout: std::time::Duration,
+    ) -> Result<u16, AppError> {
+        let mut url = base_url.trim().to_string();
+        if !url.ends_with("/responses") && !url.ends_with("/responses/compact") {
+            if url.contains("/v1") {
+                url = format!("{}/responses", url.trim_end_matches('/'));
+            } else {
+                url = format!("{}/v1/responses", url.trim_end_matches('/'));
+            }
+        }
+
+        let payload = serde_json::json!({
+            "model": model,
+            "input": [{
+                "role": "user",
+                "content": [{ "type": "input_text", "text": prompt }]
+            }],
+            "max_output_tokens": 5
+        });
+
+        let resp = client.post(&url)
+            .timeout(timeout)
+            .header("Authorization", format!("Bearer {key}"))
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| AppError::Message(format!("Connection failed: {e}")))?;
+
+        let status = resp.status().as_u16();
+        if status == 200 {
+            Ok(status)
+        } else {
+            let err_text = resp.text().await.unwrap_or_default();
+            let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
+                err_json.pointer("/error/message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(err_text)
+            } else {
+                err_text
+            };
+            let truncated_msg = Self::truncate_utf8_bytes(&msg, 150);
             Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
         }
     }
@@ -626,7 +697,7 @@ impl StreamCheckService {
         prompt: &str,
         timeout: std::time::Duration,
     ) -> Result<u16, AppError> {
-        if !base_url.contains("googleapis.com") && (base_url.contains("/v1") || !base_url.contains("/v1beta")) {
+        if !base_url.contains("googleapis.com") && base_url.contains("/v1") && !base_url.contains("/v1beta") {
             return Self::probe_openai_api(client, base_url, key, model, prompt, timeout).await;
         }
         
@@ -664,7 +735,7 @@ impl StreamCheckService {
             } else {
                 err_text
             };
-            let truncated_msg = if msg.len() > 150 { format!("{}...", &msg[..150]) } else { msg };
+            let truncated_msg = Self::truncate_utf8_bytes(&msg, 150);
             Err(AppError::Message(format!("HTTP {status}: {truncated_msg}")))
         }
     }
