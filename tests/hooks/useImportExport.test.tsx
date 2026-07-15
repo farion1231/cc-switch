@@ -96,6 +96,30 @@ describe("useImportExport Hook", () => {
     expect(onImportSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it("should only open one file dialog while import selection is in flight", async () => {
+    let resolveFileDialog: (filePath: string | null) => void;
+    openFileDialogMock.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveFileDialog = resolve;
+        }),
+    );
+    importConfigMock.mockResolvedValue({ success: true });
+    const { result } = renderHook(() => useImportExport());
+
+    const firstImport = result.current.importConfig();
+    const secondImport = result.current.importConfig();
+
+    expect(openFileDialogMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFileDialog!("/config.sql");
+      await Promise.all([firstImport, secondImport]);
+    });
+
+    expect(importConfigMock).toHaveBeenCalledTimes(1);
+  });
+
   it("should keep idle state when user cancels import file selection", async () => {
     openFileDialogMock.mockResolvedValue(null);
     const { result } = renderHook(() => useImportExport());

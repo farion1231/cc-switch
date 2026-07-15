@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { settingsApi } from "@/lib/api";
@@ -39,6 +39,7 @@ export function useImportExport(
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [backupId, setBackupId] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const importInFlightRef = useRef(false);
 
   const clearSelection = useCallback(() => {
     setSelectedFile("");
@@ -66,13 +67,15 @@ export function useImportExport(
   }, [t]);
 
   const importConfig = useCallback(async () => {
-    if (isImporting) return;
+    if (importInFlightRef.current || isImporting) return;
+    importInFlightRef.current = true;
 
     let fileToImport = selectedFile;
     if (!fileToImport) {
       try {
         const filePath = await settingsApi.openFileDialog();
         if (!filePath) {
+          importInFlightRef.current = false;
           return;
         }
         fileToImport = filePath;
@@ -84,11 +87,13 @@ export function useImportExport(
             defaultValue: "选择文件失败",
           }),
         );
+        importInFlightRef.current = false;
         return;
       }
     }
 
     if (!fileToImport) {
+      importInFlightRef.current = false;
       return;
     }
 
@@ -152,6 +157,7 @@ export function useImportExport(
       );
     } finally {
       setIsImporting(false);
+      importInFlightRef.current = false;
     }
   }, [isImporting, onImportSuccess, selectedFile, t]);
 
