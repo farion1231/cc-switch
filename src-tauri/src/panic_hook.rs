@@ -6,7 +6,7 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::panic;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// 应用版本号（从 Cargo.toml 读取）
@@ -20,8 +20,11 @@ pub fn init_app_config_dir(dir: PathBuf) {
 
 /// 获取默认应用配置目录（不会 panic）
 fn default_app_config_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+    default_app_config_dir_from_home(dirs::home_dir())
+}
+
+fn default_app_config_dir_from_home(home: Option<PathBuf>) -> PathBuf {
+    home.unwrap_or_else(|| PathBuf::from("."))
         .join(".cc-switch")
 }
 
@@ -35,12 +38,20 @@ fn get_app_config_dir() -> PathBuf {
 
 /// 获取崩溃日志文件路径
 fn get_crash_log_path() -> PathBuf {
-    get_app_config_dir().join("crash.log")
+    crash_log_path_for(&get_app_config_dir())
+}
+
+fn crash_log_path_for(app_config_dir: &Path) -> PathBuf {
+    app_config_dir.join("crash.log")
 }
 
 /// 获取日志目录路径
 pub fn get_log_dir() -> PathBuf {
-    get_app_config_dir().join("logs")
+    log_dir_for(&get_app_config_dir())
+}
+
+fn log_dir_for(app_config_dir: &Path) -> PathBuf {
+    app_config_dir.join("logs")
 }
 
 /// 安全获取环境信息（不会 panic）
@@ -189,10 +200,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_crash_log_path() {
-        let path = get_crash_log_path();
-        assert!(path.ends_with("crash.log"));
-        assert!(path.to_string_lossy().contains(".cc-switch"));
+    fn default_normal_config_dir_is_derived_from_home() {
+        let home = PathBuf::from("normal-home");
+
+        assert_eq!(
+            default_app_config_dir_from_home(Some(home.clone())),
+            home.join(".cc-switch")
+        );
+        assert_eq!(
+            default_app_config_dir_from_home(None),
+            PathBuf::from(".").join(".cc-switch")
+        );
+    }
+
+    #[test]
+    fn initialized_app_dir_derives_log_paths_without_global_state() {
+        let app_dir = PathBuf::from("portable/data/app");
+
+        assert_eq!(crash_log_path_for(&app_dir), app_dir.join("crash.log"));
+        assert_eq!(log_dir_for(&app_dir), app_dir.join("logs"));
     }
 
     #[test]

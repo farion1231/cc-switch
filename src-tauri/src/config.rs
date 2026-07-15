@@ -179,40 +179,58 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
-/// 获取应用配置目录路径 (~/.cc-switch)
-pub fn get_app_config_dir() -> PathBuf {
-    if let Some(custom) = crate::app_store::get_app_config_dir_override() {
-        return custom;
+fn app_config_dir_from_sources<StoreOverride, NormalFallback>(
+    portable_app_dir: Option<&Path>,
+    store_override: StoreOverride,
+    normal_fallback: NormalFallback,
+) -> PathBuf
+where
+    StoreOverride: FnOnce() -> Option<PathBuf>,
+    NormalFallback: FnOnce() -> PathBuf,
+{
+    if let Some(portable_app_dir) = portable_app_dir {
+        return portable_app_dir.to_path_buf();
     }
 
-    let default_dir = get_home_dir().join(".cc-switch");
+    store_override().unwrap_or_else(normal_fallback)
+}
 
-    // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
-    // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
-    // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
-    // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
-    #[cfg(windows)]
-    {
-        let default_db = default_dir.join("cc-switch.db");
-        if !default_db.exists() {
-            if let Ok(home_env) = std::env::var("HOME") {
-                let trimmed = home_env.trim();
-                if !trimmed.is_empty() {
-                    let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
-                    if legacy_dir.join("cc-switch.db").exists() {
-                        log::info!(
-                            "Detected v3.10.3 legacy database at {}, using it instead of {}",
-                            legacy_dir.display(),
-                            default_dir.display()
-                        );
-                        return legacy_dir;
+/// 获取应用配置目录路径 (~/.cc-switch)
+pub fn get_app_config_dir() -> PathBuf {
+    app_config_dir_from_sources(
+        crate::portable::paths().map(|paths| paths.app_dir()),
+        crate::app_store::get_app_config_dir_override,
+        || {
+            let default_dir = get_home_dir().join(".cc-switch");
+
+            // 兼容 v3.10.3：当用户环境存在 `HOME` 且与真实用户目录不同，
+            // v3.10.3 可能在 `HOME/.cc-switch/` 下创建/使用了数据库。
+            // 这里仅在“默认位置没有数据库”时回退到旧位置，避免再次出现“供应商消失”问题，
+            // 同时也避免新安装因为 `HOME` 被设置而写入非预期路径。
+            #[cfg(windows)]
+            {
+                let default_db = default_dir.join("cc-switch.db");
+                if !default_db.exists() {
+                    if let Ok(home_env) = std::env::var("HOME") {
+                        let trimmed = home_env.trim();
+                        if !trimmed.is_empty() {
+                            let legacy_dir = PathBuf::from(trimmed).join(".cc-switch");
+                            if legacy_dir.join("cc-switch.db").exists() {
+                                log::info!(
+                                    "Detected v3.10.3 legacy database at {}, using it instead of {}",
+                                    legacy_dir.display(),
+                                    default_dir.display()
+                                );
+                                return legacy_dir;
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
 
-    default_dir
+            default_dir
+        },
+    )
 }
 
 /// 获取应用配置文件路径
@@ -354,6 +372,32 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_app_dir_has_priority_without_reading_normal_sources() {
+        let portable_dir = PathBuf::from("portable/data/app");
+
+        let selected = app_config_dir_from_sources(
+            Some(&portable_dir),
+            || panic!("portable mode must not read the Store override"),
+            || panic!("portable mode must not inspect the normal home fallback"),
+        );
+
+        assert_eq!(selected, portable_dir);
+    }
+
+    #[test]
+    fn normal_app_dir_preserves_store_override_priority() {
+        let store_dir = PathBuf::from("custom/app");
+
+        let selected = app_config_dir_from_sources(
+            None,
+            || Some(store_dir.clone()),
+            || panic!("a Store override must win over the normal fallback"),
+        );
+
+        assert_eq!(selected, store_dir);
+    }
 
     #[test]
     fn derive_mcp_path_from_override_uses_config_dir_for_custom_path() {

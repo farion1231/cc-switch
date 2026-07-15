@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api";
+import * as envApi from "@/lib/api/env";
 import {
   resetProviderState,
   setCurrentProviderId,
@@ -261,6 +263,24 @@ describe("App integration with MSW", () => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
   });
+
+  it("does not check environment conflicts in portable mode", async () => {
+    const portableSpy = vi
+      .spyOn(settingsApi, "isPortable")
+      .mockResolvedValue(true);
+    const checkEnvSpy = vi
+      .spyOn(envApi, "checkEnvConflicts")
+      .mockResolvedValue([]);
+    const { default: App } = await import("@/App");
+
+    renderApp(App);
+
+    await waitFor(() => expect(portableSpy).toHaveBeenCalledTimes(1));
+    expect(checkEnvSpy).not.toHaveBeenCalled();
+
+    portableSpy.mockRestore();
+    checkEnvSpy.mockRestore();
+  }, 15_000);
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
     setProviders("openclaw", {

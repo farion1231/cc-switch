@@ -179,6 +179,25 @@ function App() {
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [isPortable, setIsPortable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    settingsApi
+      .isPortable()
+      .then((portable) => {
+        if (active) setIsPortable(portable);
+      })
+      .catch((error) => {
+        console.error("[App] Failed to detect portable mode:", error);
+        if (active) setIsPortable(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
@@ -556,6 +575,8 @@ function App() {
   }, [t, queryClient]);
 
   useEffect(() => {
+    if (isPortable !== false) return;
+
     const checkEnvOnSwitch = async () => {
       try {
         const conflicts = await checkEnvConflicts(activeApp);
@@ -584,7 +605,7 @@ function App() {
     };
 
     checkEnvOnSwitch();
-  }, [activeApp]);
+  }, [activeApp, isPortable]);
 
   const currentViewRef = useRef(currentView);
 
@@ -1102,7 +1123,7 @@ function App() {
           )}
         </div>
       )}
-      {showEnvBanner && envConflicts.length > 0 && (
+      {isPortable === false && showEnvBanner && envConflicts.length > 0 && (
         <EnvWarningBanner
           conflicts={envConflicts}
           onDismiss={() => {

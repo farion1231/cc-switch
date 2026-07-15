@@ -1,0 +1,114 @@
+name: Build Windows Portable
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Portable archive version label
+        required: true
+        default: v3.17.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-portable-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-portable:
+    name: Build Windows x64 Portable
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows executable
+        shell: pwsh
+        env:
+          CI: 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pnpm tauri build --no-bundle
+
+      - name: Prepare and verify Portable artifact
+        shell: pwsh
+        env:
+          PORTABLE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if ($env:PORTABLE_VERSION -notmatch '^v?[0-9A-Za-z][0-9A-Za-z._-]*$') {
+            throw "Invalid portable version label: $env:PORTABLE_VERSION"
+          }
+
+          $exePath = 'src-tauri/target/release/cc-switch.exe'
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            throw "Portable x64 executable not found: $exePath"
+          }
+
+          $portableDir = Join-Path $env:GITHUB_WORKSPACE 'portable-artifact'
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item -LiteralPath $exePath -Destination $portableDir
+
+          @(
+            '# CC Switch portable build marker',
+            'portable=true',
+            'arch=x86_64'
+          ) | Set-Content -LiteralPath (Join-Path $portableDir 'portable.ini') -Encoding UTF8
+
+          $dataSubdirectories = @('app', 'cache', 'temp', 'tauri', 'webview2')
+          foreach ($subdirectory in $dataSubdirectories) {
+            $directory = Join-Path $portableDir "data/$subdirectory"
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+            New-Item -ItemType File -Force -Path (Join-Path $directory '.gitkeep') | Out-Null
+          }
+
+          $requiredPaths = @(
+            'cc-switch.exe',
+            'portable.ini',
+            'data/app/.gitkeep',
+            'data/cache/.gitkeep',
+            'data/temp/.gitkeep',
+            'data/tauri/.gitkeep',
+            'data/webview2/.gitkeep'
+          )
+          $missingPaths = @(
+            $requiredPaths | Where-Object {
+              -not (Test-Path -LiteralPath (Join-Path $portableDir $_) -PathType Leaf)
+            }
+          )
+          if ($missingPaths.Count -gt 0) {
+            throw "Portable artifact is missing required paths: $($missingPaths -join ', ')"
+          }
+
+          Write-Host "Portable artifact ready: $portableDir"
+
+      - name: Upload Portable artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CC-Switch-${{ inputs.version }}-Windows-Portable
+          path: portable-artifact/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30

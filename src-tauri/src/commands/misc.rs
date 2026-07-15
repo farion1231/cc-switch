@@ -67,12 +67,7 @@ pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
 /// 判断是否为便携版（绿色版）运行
 #[tauri::command]
 pub async fn is_portable_mode() -> Result<bool, String> {
-    let exe_path = std::env::current_exe().map_err(|e| format!("获取可执行路径失败: {e}"))?;
-    if let Some(dir) = exe_path.parent() {
-        Ok(dir.join("portable.ini").is_file())
-    } else {
-        Ok(false)
-    }
+    Ok(crate::portable::is_portable())
 }
 
 /// 获取应用启动阶段的初始化错误（若有）。

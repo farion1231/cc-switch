@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
 use crate::app_config::AppType;
@@ -547,11 +547,9 @@ impl Default for AppSettings {
 impl AppSettings {
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
-        Some(
-            crate::config::get_home_dir()
-                .join(".cc-switch")
-                .join("settings.json"),
-        )
+        Some(settings_path_for_app_dir(
+            &crate::config::get_app_config_dir(),
+        ))
     }
 
     fn normalize_paths(&mut self) {
@@ -642,6 +640,10 @@ impl AppSettings {
             Self::default()
         }
     }
+}
+
+fn settings_path_for_app_dir(app_dir: &Path) -> PathBuf {
+    app_dir.join("settings.json")
 }
 
 fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
@@ -1024,6 +1026,24 @@ pub fn get_skill_storage_location() -> SkillStorageLocation {
         .skill_storage_location
 }
 
+#[cfg(test)]
+mod skill_storage_tests {
+    use super::AppSettings;
+    use crate::services::skill::SkillStorageLocation;
+
+    #[test]
+    fn skill_storage_defaults_to_cc_switch_and_keeps_unified_available() {
+        assert_eq!(
+            AppSettings::default().skill_storage_location,
+            SkillStorageLocation::CcSwitch
+        );
+        assert_ne!(
+            SkillStorageLocation::CcSwitch,
+            SkillStorageLocation::Unified
+        );
+    }
+}
+
 /// 设置 Skill 存储位置
 pub fn set_skill_storage_location(location: SkillStorageLocation) -> Result<(), AppError> {
     mutate_settings(|s| {
@@ -1119,6 +1139,16 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+
+    #[test]
+    fn settings_path_is_derived_from_app_config_dir() {
+        let app_dir = PathBuf::from("portable/data/app");
+
+        assert_eq!(
+            settings_path_for_app_dir(&app_dir),
+            app_dir.join("settings.json")
+        );
+    }
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {

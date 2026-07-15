@@ -6,6 +6,7 @@ import type { Settings } from "@/types";
 const mutateAsyncMock = vi.fn();
 const useSettingsQueryMock = vi.fn();
 const setAppConfigDirOverrideMock = vi.fn();
+const setAutoLaunchMock = vi.fn();
 const applyClaudePluginConfigMock = vi.fn();
 const applyClaudeOnboardingSkipMock = vi.fn();
 const clearClaudeOnboardingSkipMock = vi.fn();
@@ -65,6 +66,7 @@ vi.mock("@/lib/api", () => ({
   settingsApi: {
     setAppConfigDirOverride: (...args: unknown[]) =>
       setAppConfigDirOverrideMock(...args),
+    setAutoLaunch: (...args: unknown[]) => setAutoLaunchMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
       applyClaudePluginConfigMock(...args),
     applyClaudeOnboardingSkip: (...args: unknown[]) =>
@@ -140,6 +142,7 @@ describe("useSettings hook", () => {
     mutateAsyncMock.mockReset();
     useSettingsQueryMock.mockReset();
     setAppConfigDirOverrideMock.mockReset();
+    setAutoLaunchMock.mockReset();
     applyClaudePluginConfigMock.mockReset();
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
@@ -180,6 +183,7 @@ describe("useSettings hook", () => {
 
     mutateAsyncMock.mockResolvedValue(true);
     setAppConfigDirOverrideMock.mockResolvedValue(true);
+    setAutoLaunchMock.mockResolvedValue(true);
     applyClaudePluginConfigMock.mockResolvedValue(true);
     applyClaudeOnboardingSkipMock.mockResolvedValue(true);
     clearClaudeOnboardingSkipMock.mockResolvedValue(true);
@@ -348,6 +352,93 @@ describe("useSettings hook", () => {
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
+  it("sanitizes and syncs live config when only the Hermes directory changes", async () => {
+    serverSettings = {
+      ...serverSettings,
+      hermesConfigDir: "/server/hermes",
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        hermesConfigDir: "  /custom/hermes  ",
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+
+    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+    expect(payload.hermesConfigDir).toBe("/custom/hermes");
+    expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not update app directory or auto-launch when portable settings are saved", async () => {
+    serverSettings = {
+      ...serverSettings,
+      launchOnStartup: false,
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        launchOnStartup: true,
+      },
+    });
+    directorySettingsMock = createDirectorySettingsMock({
+      appConfigDir: "/portable/data/app",
+      initialAppConfigDir: "/previous/app",
+    });
+    metadataMock = createMetadataMock({ isPortable: true });
+
+    const { result } = renderHook(() => useSettings());
+
+    let saveResult: { requiresRestart: boolean } | null = null;
+    await act(async () => {
+      saveResult = await result.current.saveSettings();
+    });
+
+    expect(saveResult).toEqual({ requiresRestart: false });
+    expect(setAppConfigDirOverrideMock).not.toHaveBeenCalled();
+    expect(setAutoLaunchMock).not.toHaveBeenCalled();
+    expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
+  });
+
+  it("does not update auto-launch during portable auto-save", async () => {
+    serverSettings = {
+      ...serverSettings,
+      launchOnStartup: false,
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        launchOnStartup: false,
+      },
+    });
+    metadataMock = createMetadataMock({ isPortable: true });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.autoSaveSettings({ launchOnStartup: true });
+    });
+
+    expect(setAutoLaunchMock).not.toHaveBeenCalled();
+  });
+
   it("shows toast when Claude plugin sync fails but continues flow", async () => {
     // 设置服务器状态为 false,本地状态为 true,触发状态变化
     serverSettings = {
@@ -420,7 +511,9 @@ describe("useSettings hook", () => {
     });
 
     // 修复生效：读的是缓存实时值 true，payload=false，差异触发 clear_claude_config
-    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({ official: true });
+    expect(applyClaudePluginConfigMock).toHaveBeenCalledWith({
+      official: true,
+    });
     expect(syncCurrentProvidersLiveMock).toHaveBeenCalled();
   });
 
