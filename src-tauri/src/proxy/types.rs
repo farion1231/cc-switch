@@ -219,11 +219,11 @@ pub struct RectifierConfig {
     /// 让对话不中断。总开关，管辖「显式声明 text-only」与「上游报错后兜底」两条事实驱动路径。
     #[serde(default = "default_true")]
     pub request_media_fallback: bool,
-    /// 请求整流：启发式 text-only 模型名匹配（默认开启）
+    /// 请求整流：确认纯文本注册表的发送前降级（默认开启）
     ///
-    /// 在模型未声明能力时，按内置模型名列表预测性地剥离图片（发送前）。
-    /// 受 request_media_fallback 管辖；单独关闭后仅保留「显式声明」与「上游兜底」，
-    /// 避免内置列表把多模态模型误判成 text-only 而静默剥图。
+    /// 在模型未声明能力时，按内置的确认纯文本注册表预先剥离图片。
+    /// 受 request_media_fallback 管辖；单独关闭只停用代理的注册表预判，
+    /// 仍保留「显式声明」与「上游兜底」，且不改变 Codex 模型目录声明。
     #[serde(default = "default_true")]
     pub request_media_heuristic: bool,
 }
@@ -264,13 +264,6 @@ pub struct OptimizerConfig {
     /// Cache 注入子开关（总开关开启后默认生效）
     #[serde(default = "default_true")]
     pub cache_injection: bool,
-    /// Cache TTL: "5m" | "1h"（默认 "1h"）
-    #[serde(default = "default_cache_ttl")]
-    pub cache_ttl: String,
-}
-
-fn default_cache_ttl() -> String {
-    "1h".to_string()
 }
 
 impl Default for OptimizerConfig {
@@ -279,7 +272,6 @@ impl Default for OptimizerConfig {
             enabled: false,
             thinking_optimizer: true,
             cache_injection: true,
-            cache_ttl: "1h".to_string(),
         }
     }
 }
