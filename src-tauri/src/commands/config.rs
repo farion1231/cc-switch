@@ -275,6 +275,23 @@ pub async fn get_common_config_snippet(
         .map_err(|e| e.to_string())
 }
 
+/// 对前端编辑器里的 config.toml 文本做通用配置片段的合并/剥离。
+/// 放后端是为了走 toml_edit（保注释、保键序）；前端 smol-toml 的
+/// 整文档重序列化会破坏用户手写格式。
+#[tauri::command]
+pub async fn update_toml_common_config_snippet(
+    config_toml: String,
+    snippet_toml: String,
+    enabled: bool,
+) -> Result<String, String> {
+    crate::services::provider::update_toml_common_config_snippet(
+        &config_toml,
+        &snippet_toml,
+        enabled,
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn set_common_config_snippet(
     app_type: String,

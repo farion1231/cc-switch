@@ -4,6 +4,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
+use crate::services::sql_helpers::{fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH};
 use crate::services::usage_stats::effective_usage_log_filter;
 use chrono::{Duration, Local, TimeZone};
 
@@ -115,6 +116,8 @@ impl Database {
     fn do_rollup_and_prune(conn: &rusqlite::Connection, cutoff: i64) -> Result<u64, AppError> {
         // Aggregate old logs, merging with any pre-existing rollup rows via LEFT JOIN.
         let effective_filter = effective_usage_log_filter("l");
+        let fresh_detail_input = fresh_input_sql("l");
+        let fresh_old_input = fresh_input_sql("old");
         // request_model 维度保留路由接管的「客户端别名 → 真实模型」映射，
         // pricing_model 维度保留写入时的计价基准（request 计价模式下与 model 分叉）；
         // 明细行的这两列可能为 NULL（历史/手工数据），归一为 ''。
@@ -124,15 +127,16 @@ impl Database {
                  request_count, success_count,
                  input_tokens, output_tokens,
                  cache_read_tokens, cache_creation_tokens,
-                 total_cost_usd, avg_latency_ms)
+                 input_token_semantics, total_cost_usd, avg_latency_ms)
             SELECT
                 d, a, p, m, rm, pm,
                 COALESCE(old.request_count, 0) + new_req,
                 COALESCE(old.success_count, 0) + new_succ,
-                COALESCE(old.input_tokens, 0) + new_in,
+                COALESCE({fresh_old_input}, 0) + new_in,
                 COALESCE(old.output_tokens, 0) + new_out,
                 COALESCE(old.cache_read_tokens, 0) + new_cr,
                 COALESCE(old.cache_creation_tokens, 0) + new_cc,
+                {INPUT_TOKEN_SEMANTICS_FRESH},
                 CAST(COALESCE(CAST(old.total_cost_usd AS REAL), 0) + new_cost AS TEXT),
                 CASE WHEN COALESCE(old.request_count, 0) + new_req > 0
                     THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
@@ -147,7 +151,7 @@ impl Database {
                     COALESCE(l.pricing_model, '') as pm,
                     COUNT(*) as new_req,
                     SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END) as new_succ,
-                    COALESCE(SUM(l.input_tokens), 0) as new_in,
+                    COALESCE(SUM({fresh_detail_input}), 0) as new_in,
                     COALESCE(SUM(l.output_tokens), 0) as new_out,
                     COALESCE(SUM(l.cache_read_tokens), 0) as new_cr,
                     COALESCE(SUM(l.cache_creation_tokens), 0) as new_cc,
@@ -327,7 +331,7 @@ mod tests {
         let (provider_id, request_count, input_tokens, output_tokens, cache_read_tokens) = &rows[0];
         assert_eq!(provider_id, "openai");
         assert_eq!(*request_count, 1);
-        assert_eq!(*input_tokens, 100);
+        assert_eq!(*input_tokens, 90, "rollup stores normalized fresh input");
         assert_eq!(*output_tokens, 20);
         assert_eq!(*cache_read_tokens, 10);
 
@@ -336,6 +340,40 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(remaining, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rollup_normalizes_total_cache_semantics_to_fresh() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_token_semantics, total_cost_usd,
+                    latency_ms, status_code, created_at
+                ) VALUES ('total-semantics-rollup', 'p1', 'codex', 'gpt-5.5',
+                          100, 5, 10, 20, 1, '0.10', 100, 200, ?1)",
+                [old_ts],
+            )?;
+        }
+
+        assert_eq!(db.rollup_and_prune(30)?, 1);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let row: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT input_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_token_semantics
+             FROM usage_daily_rollups WHERE model = 'gpt-5.5'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(row, (70, 10, 20, 2));
 
         Ok(())
     }

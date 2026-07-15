@@ -427,6 +427,62 @@ fn migration_v10_to_v11_rebuilds_rollups_with_request_model_dimension() {
 }
 
 #[test]
+fn schema_create_tables_repairs_dev_global_profile_marker() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+
+    // 模拟跑过未发布开发版的库：user_version 已是 12（迁移不会再跑），
+    // 但 current 标记还是全局 key（现按应用分组）
+    conn.execute_batch(
+        r#"
+        CREATE TABLE profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            sort_order INTEGER,
+            created_at INTEGER,
+            updated_at INTEGER
+        );
+        INSERT INTO profiles (id, name, payload) VALUES ('p1', 'Project A', '{}');
+        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+        INSERT INTO settings (key, value) VALUES ('current_profile_id', 'p1');
+        "#,
+    )
+    .expect("seed dev v12 shape");
+    Database::set_user_version(&conn, 12).expect("set user_version=12");
+
+    Database::create_tables_on_conn(&conn).expect("create tables should repair marker");
+
+    // 全局 current 标记改名为 claude 组标记，旧 key 删除
+    let claude_marker: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scoped current marker");
+    assert_eq!(claude_marker, "p1");
+    let old_marker: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = 'current_profile_id'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count old marker");
+    assert_eq!(old_marker, 0);
+
+    // 修复必须幂等：再跑一遍不应破坏已迁移的标记
+    Database::create_tables_on_conn(&conn).expect("repair is idempotent");
+    let claude_marker: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'current_profile_id_claude'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scoped current marker survives");
+    assert_eq!(claude_marker, "p1");
+}
+
+#[test]
 fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

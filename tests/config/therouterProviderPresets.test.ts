@@ -17,12 +17,12 @@ describe("TheRouter provider presets", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe("https://api.therouter.ai");
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe("");
     expect(env.ANTHROPIC_API_KEY).toBe("");
-    expect(env.ANTHROPIC_MODEL).toBe("anthropic/claude-sonnet-4.6");
+    expect(env.ANTHROPIC_MODEL).toBe("anthropic/claude-sonnet-5");
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(
       "anthropic/claude-haiku-4.5",
     );
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
     );
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("anthropic/claude-opus-4.8");
   });

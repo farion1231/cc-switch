@@ -18,12 +18,18 @@ use super::{
     handler_context::RequestContext,
     providers::{
         codex_chat_common::extract_reasoning_field_text,
-        codex_chat_history::record_responses_sse_stream, get_adapter, get_claude_api_format,
+        codex_chat_history::record_responses_sse_stream,
+        get_adapter, get_claude_api_format,
         streaming::create_anthropic_sse_stream,
+        streaming_codex_anthropic::{
+            create_responses_sse_stream_from_anthropic_with_context,
+            responses_sse_events_from_anthropic_message,
+        },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::create_anthropic_sse_stream_from_responses, transform,
-        transform_codex_chat, transform_gemini, transform_responses,
+        streaming_responses::create_anthropic_sse_stream_from_responses,
+        transform, transform_codex_anthropic, transform_codex_chat, transform_gemini,
+        transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
@@ -277,6 +283,90 @@ fn validate_claude_desktop_gateway_auth(
 /// Claude 格式转换处理（独有逻辑）
 ///
 /// 支持 OpenAI Chat Completions 和 Responses API 两种格式的转换
+struct ClaudeUsageLog {
+    model: String,
+    request_model: String,
+    outbound_model: String,
+    app_type: &'static str,
+    provider_id: String,
+    session_id: String,
+    usage: TokenUsage,
+    latency_ms: u64,
+    status_code: u16,
+    is_streaming: bool,
+}
+
+fn prepare_claude_usage_log(
+    ctx: &RequestContext,
+    response: &Value,
+    status_code: u16,
+    is_streaming: bool,
+) -> Option<ClaudeUsageLog> {
+    let usage =
+        TokenUsage::from_claude_response(response).filter(TokenUsage::has_billable_tokens)?;
+
+    let model = response
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .or_else(|| ctx.outbound_model.clone())
+        .unwrap_or_else(|| ctx.request_model.clone());
+
+    Some(ClaudeUsageLog {
+        model,
+        request_model: ctx.request_model.clone(),
+        outbound_model: ctx
+            .outbound_model
+            .clone()
+            .unwrap_or_else(|| ctx.request_model.clone()),
+        app_type: ctx.app_type_str,
+        provider_id: ctx.provider.id.clone(),
+        session_id: ctx.session_id.clone(),
+        usage,
+        latency_ms: ctx.latency_ms(),
+        status_code,
+        is_streaming,
+    })
+}
+
+async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
+    log_usage(
+        state,
+        &log.provider_id,
+        log.app_type,
+        &log.model,
+        &log.request_model,
+        &log.outbound_model,
+        log.usage,
+        log.latency_ms,
+        None,
+        log.is_streaming,
+        log.status_code,
+        Some(log.session_id),
+    )
+    .await;
+}
+
+fn spawn_claude_usage_log(
+    state: &ProxyState,
+    ctx: &RequestContext,
+    response: &Value,
+    status_code: u16,
+    is_streaming: bool,
+) {
+    if !usage_logging_enabled(state) {
+        return;
+    }
+    let Some(log) = prepare_claude_usage_log(ctx, response, status_code, is_streaming) else {
+        return;
+    };
+    let state = state.clone();
+    tokio::spawn(async move {
+        write_claude_usage_log(&state, log).await;
+    });
+}
+
 async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
@@ -468,8 +558,20 @@ async fn handle_claude_transform(
         }
     };
 
+    // Preserve raw Responses usage so a post-upstream conversion failure still
+    // records the tokens already consumed by the successful upstream request.
+    let raw_usage_response = (api_format == "openai_responses").then(|| {
+        json!({
+            "id": upstream_response.get("id").cloned().unwrap_or(Value::Null),
+            "model": upstream_response.get("model").cloned().unwrap_or(Value::Null),
+            "usage": transform_responses::build_anthropic_usage_from_responses(
+                upstream_response.get("usage")
+            )
+        })
+    });
+
     // 根据 api_format 选择非流式转换器
-    let anthropic_response = if api_format == "openai_responses" {
+    let transform_result = if api_format == "openai_responses" {
         transform_responses::responses_to_anthropic(upstream_response)
     } else if api_format == "gemini_native" {
         transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
@@ -481,58 +583,28 @@ async fn handle_claude_transform(
         )
     } else {
         transform::openai_to_anthropic(upstream_response)
-    }
-    .map_err(|e| {
-        log::error!("[Claude] 转换响应失败: {e}");
-        e
-    })?;
+    };
+    let anthropic_response = match transform_result {
+        Ok(response) => response,
+        Err(error) => {
+            log::error!("[Claude] 转换响应失败: {error}");
+            if usage_logging_enabled(state) {
+                if let Some(log) = raw_usage_response.as_ref().and_then(|response| {
+                    prepare_claude_usage_log(ctx, response, status.as_u16(), false)
+                }) {
+                    // The upstream request already succeeded and consumed tokens. Persist
+                    // usage before returning the terminal transform error to the client.
+                    write_claude_usage_log(state, log).await;
+                }
+            }
+            return Err(error);
+        }
+    };
 
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
     // 在上游缺 stream_options.include_usage 时没有 usage，写入只会产生无意义空行
-    if let Some(usage) =
-        TokenUsage::from_claude_response(&anthropic_response).filter(|u| u.has_billable_tokens())
-    {
-        // 转换后的响应缺失/合成空 model 时，回退到映射后的出站模型（接管真值），
-        // 再回退到客户端请求别名
-        let model = anthropic_response
-            .get("model")
-            .and_then(|m| m.as_str())
-            .filter(|m| !m.is_empty())
-            .map(str::to_string)
-            .or_else(|| ctx.outbound_model.clone())
-            .unwrap_or_else(|| ctx.request_model.clone());
-        let latency_ms = ctx.latency_ms();
-
-        let request_model = ctx.request_model.clone();
-        let outbound_model = ctx
-            .outbound_model
-            .clone()
-            .unwrap_or_else(|| ctx.request_model.clone());
-        let app_type_str = ctx.app_type_str;
-        tokio::spawn({
-            let state = state.clone();
-            let provider_id = ctx.provider.id.clone();
-            let session_id = ctx.session_id.clone();
-            async move {
-                log_usage(
-                    &state,
-                    &provider_id,
-                    app_type_str,
-                    &model,
-                    &request_model,
-                    &outbound_model,
-                    usage,
-                    latency_ms,
-                    None,
-                    false,
-                    status.as_u16(),
-                    Some(session_id),
-                )
-                .await;
-            }
-        });
-    }
+    spawn_claude_usage_log(state, ctx, &anthropic_response, status.as_u16(), false);
 
     // 构建响应
     let mut builder = axum::response::Response::builder().status(status);
@@ -739,6 +811,18 @@ pub async fn handle_responses(
     ctx.provider = result.provider;
     let response = result.response;
 
+    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+        return handle_codex_anthropic_to_responses_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+            codex_tool_context,
+        )
+        .await;
+    }
+
     if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
         return handle_codex_chat_to_responses_transform(
             response,
@@ -817,6 +901,18 @@ pub async fn handle_responses_compact(
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
     let response = result.response;
+
+    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+        return handle_codex_anthropic_to_responses_transform(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+            codex_tool_context,
+        )
+        .await;
+    }
 
     if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
         return handle_codex_chat_to_responses_transform(
@@ -1063,6 +1159,255 @@ async fn handle_codex_chat_to_responses_transform(
             log::error!("[Codex] 构建 Responses 响应失败: {e}");
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
+}
+
+/// Response-transform handler for the Codex (Responses) ↔ Anthropic Messages gateway.
+///
+/// Parallel to `handle_codex_chat_to_responses_transform`: the upstream speaks
+/// Anthropic Messages, and this converts the response back into the Responses form
+/// Codex expects (both streaming and non-streaming). Error bodies reuse
+/// `handle_codex_chat_error_response` (whose extraction logic also works for
+/// Anthropic's `{"error":{type,message}}`). It does not involve codex_chat_history
+/// (tool ids round-trip natively through Anthropic).
+async fn handle_codex_anthropic_to_responses_transform(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+    codex_tool_context: transform_codex_chat::CodexToolContext,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+
+    if !status.is_success() {
+        return handle_codex_chat_error_response(response, ctx, status).await;
+    }
+
+    // Preserve live streaming when the gateway marks SSE correctly or omits an
+    // explicit JSON media type. Explicit JSON is buffered below so 2xx error
+    // envelopes and gateways that ignore stream:true can be converted faithfully.
+    if response.is_sse() || (is_stream && !response.is_json()) {
+        let stream = response.bytes_stream();
+        let sse_stream =
+            create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
+        return build_codex_anthropic_sse_response(
+            sse_stream,
+            ctx,
+            state,
+            status,
+            connection_guard,
+        );
+    }
+
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    let anthropic_response: Value = match serde_json::from_slice(&body_bytes) {
+        Ok(value) => value,
+        // Fallback sniffing symmetric to the chat / claude side (#2234): when the
+        // upstream returns an Anthropic SSE body with an unmarked Content-Type,
+        // aggregate it back into a message before continuing the conversion.
+        Err(_) if body_looks_like_sse(&body_str) => {
+            log::warn!("[Codex] Upstream returned an unmarked Anthropic SSE body, falling back to aggregation");
+            transform_codex_anthropic::anthropic_sse_to_message_value(&body_str).map_err(|e| {
+                log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
+                e
+            })?
+        }
+        Err(e) => {
+            log::error!(
+                "[Codex] Failed to parse Anthropic upstream response: {e}, body: {body_str}"
+            );
+            return Err(upstream_body_parse_error(
+                "Failed to parse upstream anthropic response",
+                &e,
+                &response_headers,
+                &body_str,
+            ));
+        }
+    };
+
+    if is_stream {
+        let events =
+            responses_sse_events_from_anthropic_message(&anthropic_response, codex_tool_context);
+        let sse_stream = futures::stream::iter(events.into_iter().map(Ok::<Bytes, std::io::Error>));
+        return build_codex_anthropic_sse_response(
+            sse_stream,
+            ctx,
+            state,
+            status,
+            connection_guard,
+        );
+    }
+
+    let _connection_guard = connection_guard;
+    let responses_response =
+        transform_codex_anthropic::anthropic_response_to_responses_with_context(
+            anthropic_response,
+            &codex_tool_context,
+        )
+        .map_err(|e| {
+            log::error!("[Codex] Failed to convert Anthropic response to Responses: {e}");
+            e
+        })?;
+
+    if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response)
+        .filter(TokenUsage::has_billable_tokens)
+    {
+        let model = responses_response
+            .get("model")
+            .and_then(|m| m.as_str())
+            .filter(|m| !m.is_empty())
+            .map(str::to_string)
+            .or_else(|| ctx.outbound_model.clone())
+            .unwrap_or_else(|| ctx.request_model.clone());
+        let request_model = ctx.request_model.clone();
+        let outbound_model = ctx
+            .outbound_model
+            .clone()
+            .unwrap_or_else(|| ctx.request_model.clone());
+        let app_type_str = ctx.app_type_str;
+        tokio::spawn({
+            let state = state.clone();
+            let provider_id = ctx.provider.id.clone();
+            let session_id = ctx.session_id.clone();
+            let latency_ms = ctx.latency_ms();
+            async move {
+                log_usage(
+                    &state,
+                    &provider_id,
+                    app_type_str,
+                    &model,
+                    &request_model,
+                    &outbound_model,
+                    usage,
+                    latency_ms,
+                    None,
+                    false,
+                    status.as_u16(),
+                    Some(session_id),
+                )
+                .await;
+            }
+        });
+    }
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    strip_hop_by_hop_response_headers(&mut response_headers);
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+
+    let response_body = serde_json::to_vec(&responses_response).map_err(|e| {
+        log::error!("[Codex] Failed to serialize Responses response: {e}");
+        ProxyError::TransformError(format!("Failed to serialize responses response: {e}"))
+    })?;
+
+    builder
+        .body(axum::body::Body::from(response_body))
+        .map_err(|e| {
+            log::error!("[Codex] Failed to build Responses response: {e}");
+            ProxyError::Internal(format!("Failed to build response: {e}"))
+        })
+}
+
+fn build_codex_anthropic_sse_response(
+    sse_stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    status: StatusCode,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<axum::response::Response, ProxyError> {
+    let usage_collector = if usage_logging_enabled(state) {
+        let state = state.clone();
+        let provider_id = ctx.provider.id.clone();
+        let request_model = ctx.request_model.clone();
+        let fallback_model = ctx
+            .outbound_model
+            .clone()
+            .unwrap_or_else(|| ctx.request_model.clone());
+        let app_type_str = ctx.app_type_str;
+        let start_time = ctx.start_time;
+        let session_id = ctx.session_id.clone();
+
+        Some(SseUsageCollector::new(
+            start_time,
+            Some(codex_stream_usage_event_filter),
+            move |events, first_token_ms| {
+                let usage = TokenUsage::from_codex_stream_events_auto(&events).unwrap_or_default();
+                if !usage.has_billable_tokens() {
+                    log::debug!("[Codex] Anthropic streaming response usage is all-zero or missing, skipping usage recording");
+                    return;
+                }
+                let model = usage
+                    .model
+                    .clone()
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or_else(|| fallback_model.clone());
+                let latency_ms = start_time.elapsed().as_millis() as u64;
+
+                let state = state.clone();
+                let provider_id = provider_id.clone();
+                let request_model = request_model.clone();
+                let outbound_model = fallback_model.clone();
+                let session_id = session_id.clone();
+
+                tokio::spawn(async move {
+                    log_usage(
+                        &state,
+                        &provider_id,
+                        app_type_str,
+                        &model,
+                        &request_model,
+                        &outbound_model,
+                        usage,
+                        latency_ms,
+                        first_token_ms,
+                        true,
+                        status.as_u16(),
+                        Some(session_id),
+                    )
+                    .await;
+                });
+            },
+        ))
+    } else {
+        None
+    };
+
+    let logged_stream = create_logged_passthrough_stream(
+        sse_stream,
+        ctx.tag,
+        usage_collector,
+        ctx.streaming_timeout_config(),
+        connection_guard,
+    );
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "Content-Type",
+        axum::http::HeaderValue::from_static("text/event-stream"),
+    );
+    headers.insert(
+        "Cache-Control",
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+
+    let body = axum::body::Body::from_stream(logged_stream);
+    Ok((headers, body).into_response())
 }
 
 /// 把上游 Chat Completions 的错误响应转换为 Responses API 错误形状。
