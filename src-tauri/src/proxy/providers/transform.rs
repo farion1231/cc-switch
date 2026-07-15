@@ -66,6 +66,7 @@ pub fn supports_reasoning_effort(model: &str) -> bool {
             .strip_prefix("gpt-")
             .and_then(|rest| rest.chars().next())
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
+        || model.to_lowercase().contains("deepseek-v4")
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -195,7 +196,10 @@ pub fn anthropic_to_openai_with_reasoning_content(
 
     // Map Anthropic thinking → OpenAI reasoning_effort
     if supports_reasoning_effort(model) {
-        if let Some(effort) = resolve_reasoning_effort(&body) {
+        if model.to_lowercase().contains("deepseek") {
+            // DeepSeek: always max reasoning
+            result["reasoning_effort"] = json!("max");
+        } else if let Some(effort) = resolve_reasoning_effort(&body) {
             result["reasoning_effort"] = json!(effort);
         }
     }
@@ -1560,6 +1564,9 @@ mod tests {
         assert!(supports_reasoning_effort("gpt-5"));
         assert!(supports_reasoning_effort("gpt-5.4"));
         assert!(supports_reasoning_effort("gpt-5-codex"));
+        assert!(supports_reasoning_effort("deepseek-v4-flash"));
+        assert!(supports_reasoning_effort("deepseek-v4-pro"));
+        assert!(supports_reasoning_effort("DeepSeek-V4-Flash"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
     }
