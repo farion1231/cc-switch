@@ -121,6 +121,32 @@ fn test_parse_missing_required_field() {
         .contains("Missing 'name' parameter"));
 }
 
+#[test]
+fn test_parse_provider_accepts_claude_desktop_aliases() {
+    // AppType::from_str accepts "claude-desktop", "claude_desktop" and
+    // "claudedesktop"; provider deep links must accept the same aliases so users
+    // can import Claude Desktop providers via ccswitch:// links (issue #3112).
+    for alias in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={alias}&name=Test&endpoint=https%3A%2F%2Fexample.com&apiKey=sk-test"
+        );
+        let request = parse_deeplink_url(&url)
+            .unwrap_or_else(|e| panic!("alias '{alias}' should be accepted, got: {e}"));
+        assert_eq!(request.app, Some("claude-desktop".to_string()));
+    }
+}
+
+#[test]
+fn test_parse_provider_invalid_app_error_lists_claude_desktop() {
+    let url = "ccswitch://v1/import?resource=provider&app=bogus&name=Test";
+    let err = parse_deeplink_url(url).unwrap_err().to_string();
+    assert!(err.contains("Invalid app type"), "got: {err}");
+    assert!(
+        err.contains("claude-desktop"),
+        "error message should advertise claude-desktop alias, got: {err}"
+    );
+}
+
 // =============================================================================
 // Utils Tests
 // =============================================================================
@@ -457,6 +483,35 @@ fn test_parse_and_merge_config_claude() {
     );
     assert_eq!(merged.homepage, Some("https://anthropic.com".to_string()));
     assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
+}
+
+#[test]
+fn test_parse_and_merge_config_claude_desktop_aliases() {
+    let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
+
+    for alias in ["claude-desktop", "claude_desktop", "claudedesktop"] {
+        let request = DeepLinkImportRequest {
+            version: "v1".to_string(),
+            resource: "provider".to_string(),
+            app: Some(alias.to_string()),
+            name: Some("Test".to_string()),
+            config: Some(config_b64.clone()),
+            config_format: Some("json".to_string()),
+            ..Default::default()
+        };
+
+        let merged = parse_and_merge_config(&request)
+            .unwrap_or_else(|e| panic!("alias '{alias}' should merge Claude config, got: {e}"));
+
+        assert_eq!(merged.api_key, Some("sk-ant-xxx".to_string()));
+        assert_eq!(
+            merged.endpoint,
+            Some("https://api.anthropic.com/v1".to_string())
+        );
+        assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
+        assert_eq!(merged.app, Some("claude-desktop".to_string()));
+    }
 }
 
 #[test]
