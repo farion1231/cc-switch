@@ -65,6 +65,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
     accent: "text-purple-600 dark:text-purple-400",
     iconBg: "bg-purple-500/10",
   },
+  antigravity: {
+    accent: "text-emerald-600 dark:text-emerald-400",
+    iconBg: "bg-emerald-500/10",
+  },
 };
 
 /**

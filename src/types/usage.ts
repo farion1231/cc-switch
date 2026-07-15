@@ -170,9 +170,15 @@ export interface UsageRangeSelection {
  * Desktop's full usage. The backend collapses `claude-desktop → claude` in
  * every dashboard query (see `folded_app_type_sql`).
  * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
- * appear only as managed apps elsewhere.
+ * appear only as managed apps elsewhere. `antigravity` is usage-only: it is
+ * imported from local Antigravity session DBs, not managed as a provider app.
  */
-export type AppType = "claude" | "codex" | "gemini" | "opencode";
+export type AppType =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "antigravity";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -181,6 +187,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "codex",
   "gemini",
   "opencode",
+  "antigravity",
 ];
 
 /**
