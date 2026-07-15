@@ -344,6 +344,14 @@ impl ProxyServer {
                 "/codex/v1/responses/compact",
                 post(handlers::handle_responses_compact),
             )
+            // Codex standalone Alpha Search API (semantic passthrough)
+            .route("/alpha/search", post(handlers::handle_alpha_search))
+            .route("/v1/alpha/search", post(handlers::handle_alpha_search))
+            .route("/v1/v1/alpha/search", post(handlers::handle_alpha_search))
+            .route(
+                "/codex/v1/alpha/search",
+                post(handlers::handle_alpha_search),
+            )
             // Gemini API (支持带前缀和不带前缀)
             //
             // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
@@ -391,5 +399,155 @@ impl ProxyServer {
             .provider_router
             .reset_provider_breaker(provider_id, app_type)
             .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::Provider;
+    use axum::http::{header, HeaderMap, StatusCode};
+    use serde_json::{json, Value};
+    use tokio::sync::Mutex;
+
+    #[derive(Debug)]
+    struct CapturedRequest {
+        path_and_query: String,
+        authorization: Option<String>,
+        body: Value,
+    }
+
+    #[tokio::test]
+    async fn alpha_search_routes_forward_to_canonical_upstream() {
+        let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+        let mock_app = Router::new().route(
+            "/v1/alpha/search",
+            post({
+                let captured = captured.clone();
+                move |request: axum::extract::Request| {
+                    let captured = captured.clone();
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = axum::body::to_bytes(body, 1024 * 1024)
+                            .await
+                            .expect("read mock request body");
+                        captured.lock().await.push(CapturedRequest {
+                            path_and_query: parts
+                                .uri
+                                .path_and_query()
+                                .map(|value| value.as_str().to_string())
+                                .unwrap_or_else(|| parts.uri.path().to_string()),
+                            authorization: parts
+                                .headers
+                                .get(header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                .map(ToString::to_string),
+                            body: serde_json::from_slice(&body).expect("parse mock request body"),
+                        });
+
+                        let mut headers = HeaderMap::new();
+                        headers.insert(
+                            header::CONTENT_TYPE,
+                            "application/json".parse().expect("content type"),
+                        );
+                        headers.insert(
+                            "x-upstream-request-id",
+                            "search-1".parse().expect("request id"),
+                        );
+                        (
+                            StatusCode::ACCEPTED,
+                            headers,
+                            r#"{"encrypted_output":"ciphertext"}"#,
+                        )
+                    }
+                }
+            }),
+        );
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "alpha-search-upstream".to_string(),
+            "Alpha Search Upstream".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider)
+            .expect("save test provider");
+        db.set_current_provider("codex", &provider.id)
+            .expect("select test provider");
+
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                enable_logging: false,
+                non_streaming_timeout: 10,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let aliases = [
+            "/alpha/search",
+            "/v1/alpha/search",
+            "/v1/v1/alpha/search",
+            "/codex/v1/alpha/search",
+        ];
+
+        for (index, path) in aliases.iter().enumerate() {
+            let response = client
+                .post(format!(
+                    "http://127.0.0.1:{}{}?client_version=0.144.1",
+                    proxy_info.port, path
+                ))
+                .header(header::AUTHORIZATION, "Bearer client-secret")
+                .json(&json!({
+                    "id": format!("search-{index}"),
+                    "model": "gpt-5.6-sol",
+                    "commands": {"search_query": [{"q": "test"}]}
+                }))
+                .send()
+                .await
+                .expect("send alpha search request");
+
+            assert_eq!(response.status(), StatusCode::ACCEPTED, "alias {path}");
+            assert_eq!(
+                response.text().await.expect("read proxy response"),
+                r#"{"encrypted_output":"ciphertext"}"#,
+                "alias {path}"
+            );
+        }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+
+        let captured = captured.lock().await;
+        assert_eq!(captured.len(), aliases.len());
+        for (index, request) in captured.iter().enumerate() {
+            assert_eq!(
+                request.path_and_query,
+                "/v1/alpha/search?client_version=0.144.1"
+            );
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some("Bearer upstream-secret")
+            );
+            assert_eq!(request.body["id"], format!("search-{index}"));
+            assert_eq!(request.body["model"], "gpt-5.6-sol");
+            assert_eq!(request.body["commands"]["search_query"][0]["q"], "test");
+        }
     }
 }
