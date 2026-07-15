@@ -394,39 +394,35 @@ impl StreamCheckService {
         None
     }
 
-    /// 解决测速模型检测时模型名称的兜底逻辑
-    fn extract_model_fallback(provider: &Provider, app_type: &AppType) -> String {
+    /// 提取供应商自身配置的模型（从 env 或者是 options 字段中）
+    fn extract_provider_own_model(provider: &Provider, app_type: &AppType) -> Option<String> {
         let env_keys = match app_type {
             AppType::Claude | AppType::ClaudeDesktop => vec!["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"],
             AppType::Gemini => vec!["GEMINI_MODEL"],
             _ => vec!["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"],
         };
         if let Some(m) = Self::extract_env_value(provider, &env_keys) {
-            return m;
+            return Some(m);
         }
 
         let settings = &provider.settings_config;
         if let Some(m) = settings.get("model").and_then(|v| v.as_str()) {
             if !m.trim().is_empty() {
-                return m.trim().to_string();
+                return Some(m.trim().to_string());
             }
         }
         if let Some(m) = settings.get("modelName").and_then(|v| v.as_str()) {
             if !m.trim().is_empty() {
-                return m.trim().to_string();
+                return Some(m.trim().to_string());
             }
         }
         if let Some(m) = settings.get("options").and_then(|o| o.get("model")).and_then(|v| v.as_str()) {
             if !m.trim().is_empty() {
-                return m.trim().to_string();
+                return Some(m.trim().to_string());
             }
         }
 
-        match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => "claude-3-5-sonnet-20241022".to_string(),
-            AppType::Gemini => "gemini-2.5-flash".to_string(),
-            _ => "gpt-4o-mini".to_string(),
-        }
+        None
     }
 
     /// 执行真实大模型可用性握手检测
@@ -445,10 +441,15 @@ impl StreamCheckService {
             return Err(AppError::Message("Missing API Key configuration".to_string()));
         }
 
-        // 2. 提取 Model：优先提取当前 Provider meta 的 testModel，若为空再使用全局配置
+        // 2. 提取 Model：
+        // 优先级：(1) provider 专属 test_model -> (2) provider 本身 env 里的模型 -> (3) 全局配置 test_model -> (4) API 动态探测 -> (5) 系统默认
         let mut model = provider.meta.as_ref()
             .and_then(|m| m.test_model.clone())
             .filter(|s| !s.trim().is_empty());
+
+        if model.is_none() {
+            model = Self::extract_provider_own_model(provider, app_type);
+        }
 
         if model.is_none() {
             model = config.test_model.clone().filter(|s| !s.trim().is_empty());
@@ -461,10 +462,13 @@ impl StreamCheckService {
             }
         }
 
-        let model = match model {
-            Some(m) => m,
-            None => Self::extract_model_fallback(provider, app_type),
-        };
+        let model = model.unwrap_or_else(|| {
+            match app_type {
+                AppType::Claude | AppType::ClaudeDesktop => "claude-3-5-sonnet-20241022".to_string(),
+                AppType::Gemini => "gemini-2.5-flash".to_string(),
+                _ => "gpt-4o-mini".to_string(),
+            }
+        });
 
         // 3. 提取 Prompt：优先提取当前 Provider meta 的 testPrompt，若为空再使用全局配置，最后兜底为 "hi"
         let mut prompt = provider.meta.as_ref()
