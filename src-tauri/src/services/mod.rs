@@ -10,6 +10,7 @@ pub mod omo;
 pub mod profile;
 pub mod prompt;
 pub mod provider;
+pub mod provider_security;
 pub mod proxy;
 pub mod s3;
 pub mod s3_auto_sync;

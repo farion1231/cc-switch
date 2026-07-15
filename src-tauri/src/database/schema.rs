@@ -39,6 +39,7 @@ impl Database {
                 meta TEXT NOT NULL DEFAULT '{}',
                 is_current BOOLEAN NOT NULL DEFAULT 0,
                 in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                revision INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (id, app_type)
             )",
             [],
@@ -196,7 +197,14 @@ impl Database {
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy'
+            data_source TEXT NOT NULL DEFAULT 'proxy',
+            reasoning_tokens INTEGER, reasoning_source TEXT,
+            continuation_status TEXT NOT NULL DEFAULT 'not_attempted',
+            continuation_rounds INTEGER NOT NULL DEFAULT 0,
+            session_enriched INTEGER NOT NULL DEFAULT 0, turn_id TEXT,
+            prompt_replaced INTEGER NOT NULL DEFAULT 0,
+            identity_corrected INTEGER NOT NULL DEFAULT 0,
+            prompt_fingerprint TEXT
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -391,6 +399,59 @@ impl Database {
             [],
         );
 
+        Self::create_v14_security_tables(conn)?;
+
+        Ok(())
+    }
+
+    /// 创建 v14 Provider 安全与 Codex 推理表。
+    fn create_v14_security_tables(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS codex_reasoning_rounds (
+                request_id TEXT NOT NULL,
+                round_index INTEGER NOT NULL,
+                reasoning_tokens INTEGER,
+                decision TEXT NOT NULL,
+                status TEXT NOT NULL,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT,
+                PRIMARY KEY (request_id, round_index),
+                FOREIGN KEY (request_id) REFERENCES proxy_request_logs(request_id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS provider_credential_audit (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                changed_fields TEXT NOT NULL,
+                before_fingerprint TEXT NOT NULL,
+                after_fingerprint TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_provider_credential_audit_provider_created
+                ON provider_credential_audit(app_type, provider_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS provider_rollback_snapshots (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                app_type TEXT NOT NULL,
+                provider_json TEXT NOT NULL,
+                source_revision INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_provider_rollback_provider_created
+                ON provider_rollback_snapshots(app_type, provider_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_provider_rollback_expires
+                ON provider_rollback_snapshots(expires_at);
+            CREATE TABLE IF NOT EXISTS app_configuration_state (
+                app_type TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                reason TEXT,
+                detected_at INTEGER,
+                updated_at INTEGER NOT NULL
+            );",
+        )
+        .map_err(|e| AppError::Database(format!("创建 v14 安全表失败: {e}")))?;
         Ok(())
     }
 
@@ -484,6 +545,11 @@ impl Database {
                         log::info!("迁移数据库从 v12 到 v13（记录输入 token 缓存语义）");
                         Self::migrate_v12_to_v13(conn)?;
                         Self::set_user_version(conn, 13)?;
+                    }
+                    13 => {
+                        log::info!("迁移数据库从 v13 到 v14（Provider 安全与 Codex 推理数据）");
+                        Self::migrate_v13_to_v14(conn)?;
+                        Self::set_user_version(conn, 14)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -1352,6 +1418,39 @@ impl Database {
             )?;
         }
         Ok(())
+    }
+
+    /// v13 -> v14：Provider 凭据安全、回滚状态与 Codex 推理元数据。
+    fn migrate_v13_to_v14(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "providers")? {
+            Self::add_column_if_missing(
+                conn,
+                "providers",
+                "revision",
+                "INTEGER NOT NULL DEFAULT 1",
+            )?;
+        }
+
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            for (column, definition) in [
+                ("reasoning_tokens", "INTEGER"),
+                ("reasoning_source", "TEXT"),
+                (
+                    "continuation_status",
+                    "TEXT NOT NULL DEFAULT 'not_attempted'",
+                ),
+                ("continuation_rounds", "INTEGER NOT NULL DEFAULT 0"),
+                ("session_enriched", "INTEGER NOT NULL DEFAULT 0"),
+                ("turn_id", "TEXT"),
+                ("prompt_replaced", "INTEGER NOT NULL DEFAULT 0"),
+                ("identity_corrected", "INTEGER NOT NULL DEFAULT 0"),
+                ("prompt_fingerprint", "TEXT"),
+            ] {
+                Self::add_column_if_missing(conn, "proxy_request_logs", column, definition)?;
+            }
+        }
+
+        Self::create_v14_security_tables(conn)
     }
 
     /// 插入默认模型定价数据
@@ -2766,7 +2865,7 @@ mod tests {
 
         Database::apply_schema_migrations_on_conn(&conn)?;
 
-        assert_eq!(Database::get_user_version(&conn)?, 13);
+        assert_eq!(Database::get_user_version(&conn)?, 14);
         assert!(Database::has_column(
             &conn,
             "proxy_request_logs",

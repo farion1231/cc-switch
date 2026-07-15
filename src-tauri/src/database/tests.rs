@@ -5,6 +5,7 @@
 use super::*;
 use crate::app_config::MultiAppConfig;
 use crate::provider::{Provider, ProviderManager};
+use crate::services::provider_security::normalize_base_url;
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
 use serde_json::json;
@@ -149,6 +150,58 @@ fn normalize_default(default: &Option<String>) -> Option<String> {
     default
         .as_ref()
         .map(|s| s.trim_matches('\'').trim_matches('"').to_string())
+}
+
+#[test]
+fn v13_to_v14_adds_security_and_reasoning_schema() -> Result<(), AppError> {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn)?;
+    Database::set_user_version(&conn, 13)?;
+
+    Database::apply_schema_migrations_on_conn(&conn)?;
+
+    assert_eq!(Database::get_user_version(&conn)?, 14);
+    assert!(Database::has_column(&conn, "providers", "revision")?);
+    for column in [
+        "reasoning_tokens",
+        "reasoning_source",
+        "continuation_status",
+        "continuation_rounds",
+        "session_enriched",
+        "turn_id",
+        "prompt_replaced",
+        "identity_corrected",
+        "prompt_fingerprint",
+    ] {
+        assert!(
+            Database::has_column(&conn, "proxy_request_logs", column)?,
+            "proxy_request_logs.{column} should exist after v14 migration"
+        );
+    }
+    for table in [
+        "codex_reasoning_rounds",
+        "provider_credential_audit",
+        "provider_rollback_snapshots",
+        "app_configuration_state",
+    ] {
+        assert!(
+            Database::table_exists(&conn, table)?,
+            "{table} should exist after v14 migration"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn normalized_base_url_equates_default_port_and_trailing_slash() {
+    assert_eq!(
+        normalize_base_url(" HTTPS://Example.COM:443/v1/ ").expect("normalize https URL"),
+        "https://example.com/v1"
+    );
+    assert_eq!(
+        normalize_base_url("http://EXAMPLE.com:80/").expect("normalize http URL"),
+        "http://example.com"
+    );
 }
 
 #[test]
