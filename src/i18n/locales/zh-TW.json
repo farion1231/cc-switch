@@ -848,7 +848,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "piAgent": "Pi Agent"
   },
   "sessionManager": {
     "title": "工作階段管理",
@@ -2929,5 +2930,83 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "pi": {
+    "title": "Pi Agent 提供商",
+    "descriptionPrefix": "在以下檔案中設定自訂提供商：",
+    "descriptionSuffix": "。內建提供商（OpenAI、Anthropic、Google 等）透過 /login 或環境變數即可開箱即用。",
+    "refresh": "重新整理",
+    "addProvider": "新增提供商",
+    "toast": {
+      "readFailed": "讀取 Pi models.json 失敗",
+      "saved": "Pi 提供商已儲存",
+      "savedDesc": "備份：{{path}}",
+      "applyFailed": "套用 Pi 提供商補丁失敗",
+      "deleted": "Pi 提供商已刪除",
+      "deleteFailed": "刪除 Pi 提供商失敗",
+      "noBaseUrl": "該提供商未設定基礎 URL",
+      "reachable": "提供商 \"{{id}}\" 可達",
+      "reachableDesc": "{{url}} → HTTP {{status}}",
+      "timeout": "提供商 \"{{id}}\" 逾時（10秒）",
+      "unreachable": "提供商 \"{{id}}\" 不可達"
+    },
+    "list": {
+      "builtin": "內建覆寫",
+      "empty": "~/.pi/agent/models.json 中尚未設定提供商",
+      "emptyHint": "點擊「新增提供商」設定自訂提供商，或透過 /login 使用 Pi 的內建提供商。",
+      "models": "{{count}} 個模型",
+      "models_plural": "{{count}} 個模型",
+      "edit": "編輯",
+      "duplicate": "複製",
+      "testConnectivity": "測試連通性",
+      "delete": "刪除",
+      "moreModels": "+{{count}} 個"
+    },
+    "form": {
+      "quickStart": "快速開始 — 選擇提供商",
+      "apiTemplate": "API 範本",
+      "providerConfig": "提供商設定",
+      "providerId": "提供商 ID",
+      "providerIdHint": "models.json 中「providers」物件的鍵名",
+      "baseUrl": "基礎 URL",
+      "apiType": "API 類型",
+      "apiKey": "API 金鑰",
+      "apiKeyHint": "Pi 從環境變數解析 $VAR、從 shell 解析 !cmd，或使用字面值",
+      "models": "模型",
+      "addModel": "新增模型",
+      "modelNamePlaceholder": "顯示名稱",
+      "reasoning": "推理",
+      "contextWindow": "上下文視窗",
+      "compatFlags": "相容性旗標",
+      "developerRole": "developer 角色",
+      "reasoningEffort": "reasoning_effort",
+      "usageInStreaming": "串流中的 usage",
+      "eagerToolStreaming": "eager tool 串流",
+      "adaptiveThinking": "自適應思考",
+      "extraOptions": "額外選項",
+      "configJson": "設定 JSON",
+      "configJsonReadonly": "唯讀預覽（實際寫入內容）",
+      "configJsonLoading": "產生中…",
+      "headersLabel": "自訂標頭（JSON 物件，支援 $ENV_VAR 與 !command）",
+      "resetAll": "全部重設",
+      "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
+      "apiTypeOpenaiResponses": "OpenAI Responses",
+      "apiTypeAnthropicMessages": "Anthropic Messages",
+      "apiTypeGoogleGenerativeAi": "Google Generative AI",
+      "apiKeyModeEnv": "環境變數",
+      "apiKeyModeLiteral": "字面金鑰",
+      "apiKeyModeCommand": "Shell 命令",
+      "apiKeyModeNone": "無（使用 auth.json / /login）"
+    },
+    "editor": {
+      "title": "編輯供應商"
+    },
+    "deleteConfirm": {
+      "title": "刪除供應商",
+      "message": "確定要刪除供應商 \"{{id}}\" 嗎？此操作不可復原。"
+    },
+    "save": {
+      "providerIdRequired": "請填寫供應商識別"
+    }
   }
 }

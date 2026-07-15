@@ -877,7 +877,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "piAgent": "Pi Agent"
   },
   "sessionManager": {
     "title": "Session Manager",
@@ -2957,5 +2958,83 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "pi": {
+    "title": "Pi Agent Providers",
+    "descriptionPrefix": "Configure custom providers in",
+    "descriptionSuffix": ". Built-in providers (OpenAI, Anthropic, Google, etc.) work out of the box with /login or environment variables.",
+    "refresh": "Refresh",
+    "addProvider": "Add Provider",
+    "toast": {
+      "readFailed": "Failed to read Pi models.json",
+      "saved": "Pi provider saved",
+      "savedDesc": "Backup: {{path}}",
+      "applyFailed": "Failed to apply Pi provider patch",
+      "deleted": "Pi provider deleted",
+      "deleteFailed": "Failed to delete Pi provider",
+      "noBaseUrl": "No base URL configured for this provider",
+      "reachable": "Provider \"{{id}}\" is reachable",
+      "reachableDesc": "{{url}} → HTTP {{status}}",
+      "timeout": "Provider \"{{id}}\" timed out (10s)",
+      "unreachable": "Provider \"{{id}}\" is unreachable"
+    },
+    "list": {
+      "builtin": "Built-in Overrides",
+      "empty": "No providers configured in ~/.pi/agent/models.json",
+      "emptyHint": "Click \"Add Provider\" to configure a custom provider, or use Pi's built-in providers via /login.",
+      "models": "{{count}} model",
+      "models_plural": "{{count}} models",
+      "edit": "Edit",
+      "duplicate": "Duplicate",
+      "testConnectivity": "Test connectivity",
+      "delete": "Delete",
+      "moreModels": "+{{count}} more"
+    },
+    "form": {
+      "quickStart": "Quick Start — Select Provider",
+      "apiTemplate": "API Template",
+      "providerConfig": "Provider Configuration",
+      "providerId": "Provider ID",
+      "providerIdHint": "Key name in models.json \"providers\" object",
+      "baseUrl": "Base URL",
+      "apiType": "API Type",
+      "apiKey": "API Key",
+      "apiKeyHint": "Pi resolves $VAR from env, !cmd from shell, or literal value",
+      "models": "Models",
+      "addModel": "Add Model",
+      "modelNamePlaceholder": "Display name",
+      "reasoning": "Reasoning",
+      "contextWindow": "Context window",
+      "compatFlags": "Compatibility Flags",
+      "developerRole": "developer role",
+      "reasoningEffort": "reasoning_effort",
+      "usageInStreaming": "usage in streaming",
+      "eagerToolStreaming": "eager tool streaming",
+      "adaptiveThinking": "adaptive thinking",
+      "extraOptions": "Extra Options",
+      "configJson": "Config JSON",
+      "configJsonReadonly": "Read-only preview (actual written content)",
+      "configJsonLoading": "Generating…",
+      "headersLabel": "Custom Headers (JSON object, supports $ENV_VAR and !command)",
+      "resetAll": "Reset All",
+      "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
+      "apiTypeOpenaiResponses": "OpenAI Responses",
+      "apiTypeAnthropicMessages": "Anthropic Messages",
+      "apiTypeGoogleGenerativeAi": "Google Generative AI",
+      "apiKeyModeEnv": "Environment Variable",
+      "apiKeyModeLiteral": "Literal Key",
+      "apiKeyModeCommand": "Shell Command",
+      "apiKeyModeNone": "None (use auth.json / /login)"
+    },
+    "editor": {
+      "title": "Edit Provider"
+    },
+    "deleteConfirm": {
+      "title": "Delete Provider",
+      "message": "Are you sure you want to delete provider \"{{id}}\"? This action cannot be undone."
+    },
+    "save": {
+      "providerIdRequired": "Please enter a provider ID"
+    }
   }
 }

@@ -95,6 +95,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { PiAgentPanel } from "@/components/pi/PiAgentPanel";
 
 type View =
   | "providers"
@@ -130,6 +131,7 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
 
 const getInitialApp = (): AppId => {
@@ -197,6 +199,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    pi: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -207,6 +210,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.pi) return "pi";
     return "claude"; // fallback
   };
 
@@ -252,6 +256,7 @@ function App() {
   const mcpPanelRef = useRef<any>(null);
   const skillsPageRef = useRef<any>(null);
   const unifiedSkillsPanelRef = useRef<any>(null);
+  const piPanelRef = useRef<any>(null);
   // 订阅未管理 Skill 的共享缓存（实际扫描由 UnifiedSkillsPanel 进入页面时触发）。
   // 这里 enabled 默认 false，仅用于「导入」按钮的绿点提示，不主动发起扫描。
   const { data: unmanagedSkills } = useScanUnmanagedSkills();
@@ -287,7 +292,8 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -963,6 +969,10 @@ function App() {
         case "openclawAgents":
           return <AgentsDefaultsPanel />;
         default:
+          if (activeApp === "pi") {
+            return <PiAgentPanel ref={piPanelRef} />;
+          }
+
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
@@ -1245,7 +1255,8 @@ function App() {
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              activeApp !== "hermes" &&
+              activeApp !== "pi" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1500,7 +1511,7 @@ function App() {
                                 <History className="w-4 h-4" />
                               </Button>
                             </>
-                          ) : (
+                          ) : activeApp === "pi" ? null : (
                             <>
                               <Button
                                 variant="ghost"
@@ -1557,7 +1568,11 @@ function App() {
                     </div>
 
                     <Button
-                      onClick={() => setIsAddOpen(true)}
+                      onClick={() =>
+                        activeApp === "pi"
+                          ? piPanelRef.current?.openAdd()
+                          : setIsAddOpen(true)
+                      }
                       size="icon"
                       className={`ml-2 ${addActionButtonClass}`}
                     >

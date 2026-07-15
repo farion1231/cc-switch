@@ -877,7 +877,8 @@
     "gemini": "Gemini",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "piAgent": "Pi Agent"
   },
   "sessionManager": {
     "title": "会话管理",
@@ -2957,5 +2958,83 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "pi": {
+    "title": "Pi Agent 提供商",
+    "descriptionPrefix": "在以下文件中配置自定义提供商：",
+    "descriptionSuffix": "。内置提供商（OpenAI、Anthropic、Google 等）通过 /login 或环境变量即可开箱即用。",
+    "refresh": "刷新",
+    "addProvider": "添加提供商",
+    "toast": {
+      "readFailed": "读取 Pi models.json 失败",
+      "saved": "Pi 提供商已保存",
+      "savedDesc": "备份：{{path}}",
+      "applyFailed": "应用 Pi 提供商补丁失败",
+      "deleted": "Pi 提供商已删除",
+      "deleteFailed": "删除 Pi 提供商失败",
+      "noBaseUrl": "该提供商未配置基础 URL",
+      "reachable": "提供商 \"{{id}}\" 可达",
+      "reachableDesc": "{{url}} → HTTP {{status}}",
+      "timeout": "提供商 \"{{id}}\" 超时（10秒）",
+      "unreachable": "提供商 \"{{id}}\" 不可达"
+    },
+    "list": {
+      "builtin": "内置覆盖",
+      "empty": "~/.pi/agent/models.json 中尚未配置提供商",
+      "emptyHint": "点击“添加提供商”配置自定义提供商，或通过 /login 使用 Pi 的内置提供商。",
+      "models": "{{count}} 个模型",
+      "models_plural": "{{count}} 个模型",
+      "edit": "编辑",
+      "duplicate": "复制",
+      "testConnectivity": "测试连通性",
+      "delete": "删除",
+      "moreModels": "+{{count}} 个"
+    },
+    "form": {
+      "quickStart": "快速开始 — 选择提供商",
+      "apiTemplate": "API 模板",
+      "providerConfig": "提供商配置",
+      "providerId": "提供商 ID",
+      "providerIdHint": "models.json 中 “providers” 对象的键名",
+      "baseUrl": "基础 URL",
+      "apiType": "API 类型",
+      "apiKey": "API 密钥",
+      "apiKeyHint": "Pi 从环境变量解析 $VAR、从 shell 解析 !cmd，或使用字面值",
+      "models": "模型",
+      "addModel": "添加模型",
+      "modelNamePlaceholder": "显示名称",
+      "reasoning": "推理",
+      "contextWindow": "上下文窗口",
+      "compatFlags": "兼容性标志",
+      "developerRole": "developer 角色",
+      "reasoningEffort": "reasoning_effort",
+      "usageInStreaming": "流式中的 usage",
+      "eagerToolStreaming": "eager tool 流式",
+      "adaptiveThinking": "自适应思考",
+      "extraOptions": "额外选项",
+      "configJson": "配置 JSON",
+      "configJsonReadonly": "只读预览（实际写入内容）",
+      "configJsonLoading": "生成中…",
+      "headersLabel": "自定义请求头（JSON 对象，支持 $ENV_VAR 和 !command）",
+      "resetAll": "全部重置",
+      "apiTypeOpenaiCompletions": "OpenAI Chat Completions",
+      "apiTypeOpenaiResponses": "OpenAI Responses",
+      "apiTypeAnthropicMessages": "Anthropic Messages",
+      "apiTypeGoogleGenerativeAi": "Google Generative AI",
+      "apiKeyModeEnv": "环境变量",
+      "apiKeyModeLiteral": "字面密钥",
+      "apiKeyModeCommand": "Shell 命令",
+      "apiKeyModeNone": "无（使用 auth.json / /login）"
+    },
+    "editor": {
+      "title": "编辑供应商"
+    },
+    "deleteConfirm": {
+      "title": "删除供应商",
+      "message": "确定要删除供应商 \"{{id}}\" 吗？此操作不可撤销。"
+    },
+    "save": {
+      "providerIdRequired": "请填写供应商标识"
+    }
   }
 }
