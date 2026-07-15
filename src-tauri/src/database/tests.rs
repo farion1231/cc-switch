@@ -156,18 +156,31 @@ fn deleted_default_skill_repo_is_not_restored() {
     let db = Database::memory().expect("create memory db");
 
     assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 4);
-    db.delete_skill_repo("anthropics", "skills")
-        .expect("delete repo");
+    for repo in db.get_skill_repos().expect("get initialized repos") {
+        db.delete_skill_repo(&repo.owner, &repo.name)
+            .expect("delete repo");
+    }
+    assert!(db.get_skill_repos().expect("get deleted repos").is_empty());
 
     assert_eq!(
         db.init_default_skill_repos().expect("reinitialize repos"),
         0
     );
-    assert!(!db
-        .get_skill_repos()
-        .expect("get repos")
-        .iter()
-        .any(|repo| repo.owner == "anthropics" && repo.name == "skills"));
+    assert!(db.get_skill_repos().expect("get repos").is_empty());
+}
+
+#[test]
+fn existing_skill_repo_selection_is_not_supplemented() {
+    let db = Database::memory().expect("create memory db");
+    let default_store = crate::services::skill::SkillStore::default();
+    db.save_skill_repo(&default_store.repos[0])
+        .expect("save existing repo");
+
+    assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 0);
+    assert_eq!(db.get_skill_repos().expect("get repos").len(), 1);
+    assert!(db
+        .get_bool_flag("default_skill_repos_initialized")
+        .expect("get initialized flag"));
 }
 
 #[test]

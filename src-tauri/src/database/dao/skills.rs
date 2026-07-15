@@ -232,9 +232,17 @@ impl Database {
         Ok(())
     }
 
-    /// 初始化默认的 Skill 仓库（启动时调用，仅在仓库表为空时写入）
+    /// 初始化默认的 Skill 仓库（启动时调用，每个数据库仅执行一次）
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
+        const INITIALIZED_KEY: &str = "default_skill_repos_initialized";
+
+        if self.get_bool_flag(INITIALIZED_KEY)? {
+            return Ok(0);
+        }
+
+        // 兼容升级前已经存在的用户选择，并记录初始化状态，避免以后删空后恢复默认值。
         if !self.get_skill_repos()?.is_empty() {
+            self.set_setting(INITIALIZED_KEY, "true")?;
             return Ok(0);
         }
 
@@ -247,6 +255,7 @@ impl Database {
             log::info!("初始化默认 Skill 仓库: {}/{}", repo.owner, repo.name);
         }
 
+        self.set_setting(INITIALIZED_KEY, "true")?;
         Ok(count)
     }
 }
