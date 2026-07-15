@@ -985,7 +985,7 @@ impl RequestForwarder {
                     // 先分类错误，决定是否计入 provider 健康度
                     // —— NonRetryable / ClientAbort 是客户端层错误，无论换哪家 provider 都会被拒绝，
                     //    不应污染熔断器和数据库健康度（与 release_permit_neutral 同语义）。
-                    let category = self.categorize_proxy_error(&e);
+                    let category = self.categorize_proxy_error(&e, endpoint);
 
                     match category {
                         ErrorCategory::Retryable => {
@@ -1317,6 +1317,9 @@ impl RequestForwarder {
                     .map(ToString::to_string),
             )
         };
+        let is_gemini_count_tokens_request =
+            matches!(resolved_claude_api_format.as_deref(), Some("gemini_native"))
+                && is_claude_count_tokens_path(split_endpoint_and_query(endpoint).0);
 
         let codex_chat_base_is_full_endpoint = codex_responses_to_chat
             && base_url
@@ -1383,6 +1386,16 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
+
+        if is_gemini_count_tokens_request {
+            if let Some(model) = outbound_model.as_deref() {
+                let model = super::gemini_url::normalize_gemini_model_id(model);
+                request_body["model"] = serde_json::Value::String(format!("models/{model}"));
+            }
+            request_body = serde_json::json!({
+                "generateContentRequest": request_body
+            });
+        }
 
         if matches!(app_type, AppType::Codex) {
             self.apply_media_prevention(&mut request_body, provider);
@@ -2160,7 +2173,7 @@ impl RequestForwarder {
         }
     }
 
-    fn categorize_proxy_error(&self, error: &ProxyError) -> ErrorCategory {
+    fn categorize_proxy_error(&self, error: &ProxyError, endpoint: &str) -> ErrorCategory {
         match error {
             // 网络和上游错误：都应该尝试下一个供应商
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
@@ -2176,8 +2189,16 @@ impl RequestForwarder {
             //   415 Unsupported Media Type                    ← Content-Type 错误
             //   501 Not Implemented                           ← 上游协议确实不支持
             //
-            // 其他 4xx（401/403/404/408/409/429/451 等）和全部 5xx 都保留
+            // 其他 4xx（401/403/404/408/409/429/451 等）和全部 5xx 通常保留
             // Retryable —— 换一家 provider 可能持有不同的 key、配额、地域或模型映射。
+            // count_tokens 的 404 例外：该 Provider 仍可正常处理 messages，应交给客户端 fallback，
+            // 不能污染 Provider 健康度或自动切换当前渠道。
+            ProxyError::UpstreamError { status, .. }
+                if *status == 404
+                    && is_claude_count_tokens_path(split_endpoint_and_query(endpoint).0) =>
+            {
+                ErrorCategory::NonRetryable
+            }
             ProxyError::UpstreamError { status, .. } => match *status {
                 400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => ErrorCategory::NonRetryable,
                 _ => ErrorCategory::Retryable,
@@ -2343,6 +2364,13 @@ fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
 
+fn is_claude_count_tokens_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/v1/messages/count_tokens" | "/claude/v1/messages/count_tokens"
+    )
+}
+
 fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
@@ -2362,13 +2390,15 @@ fn rewrite_claude_transform_endpoint(
     body: &Value,
 ) -> (String, Option<String>) {
     let (path, query) = split_endpoint_and_query(endpoint);
-    let passthrough_query = if is_claude_messages_path(path) {
+    let is_messages = is_claude_messages_path(path);
+    let is_count_tokens = is_claude_count_tokens_path(path);
+    let passthrough_query = if is_messages || is_count_tokens {
         strip_beta_query(query)
     } else {
         query.map(ToString::to_string)
     };
 
-    if !is_claude_messages_path(path) {
+    if !is_messages && !is_count_tokens {
         return (endpoint.to_string(), passthrough_query);
     }
 
@@ -2379,11 +2409,14 @@ fn rewrite_claude_transform_endpoint(
         // form (`models/gemini-2.5-pro`) that Gemini SDKs emit. See
         // `normalize_gemini_model_id` for rationale.
         let model = super::gemini_url::normalize_gemini_model_id(model);
-        let is_stream = body
-            .get("stream")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false);
-        let target_path = if is_stream {
+        let is_stream = is_messages
+            && body
+                .get("stream")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        let target_path = if is_count_tokens {
+            format!("/v1beta/models/{model}:countTokens")
+        } else if is_stream {
             format!("/v1beta/models/{model}:streamGenerateContent")
         } else {
             format!("/v1beta/models/{model}:generateContent")
@@ -2400,6 +2433,10 @@ fn rewrite_claude_transform_endpoint(
         };
 
         return (rewritten, rewritten_query);
+    }
+
+    if is_count_tokens {
+        return (endpoint.to_string(), passthrough_query);
     }
 
     let target_path = if is_copilot && api_format == "openai_responses" {

@@ -49,6 +49,9 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
         // 配置错误/无效请求：400 Bad Request
         ProxyError::ConfigError(_) | ProxyError::InvalidRequest(_) => 400,
 
+        // 请求体超过本地代理限制：413 Payload Too Large
+        ProxyError::PayloadTooLarge(_) => 413,
+
         // 认证错误：401 Unauthorized
         ProxyError::AuthError(_) => 401,
 
@@ -134,6 +137,10 @@ mod tests {
         assert_eq!(
             map_proxy_error_to_status(&ProxyError::TransformError("bad transform".to_string())),
             422
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::PayloadTooLarge("too large".to_string())),
+            413
         );
         assert_eq!(
             map_proxy_error_to_status(&ProxyError::StreamIdleTimeout(30)),

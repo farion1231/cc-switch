@@ -38,10 +38,16 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{FromRequest, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::time::Duration;
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -116,27 +122,206 @@ pub async fn handle_messages(
 }
 
 pub async fn handle_messages_count_tokens(
+    State(state): State<ProxyState>,
     request: axum::extract::Request,
-) -> Result<Json<Value>, ProxyError> {
-    let body_bytes = request
-        .into_body()
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+) -> Result<axum::response::Response, ProxyError> {
+    handle_messages_count_tokens_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude count_tokens",
+        "claude",
+    )
+    .await
+}
 
-    Ok(Json(json!({
-        "input_tokens": estimate_anthropic_input_tokens(&body)
-    })))
+// Bounded compatibility estimates for providers that have no count_tokens API.
+// They intentionally model the media item, not its base64 transport size.
+const IMAGE_INPUT_TOKEN_ESTIMATE: u64 = 1_600;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CountTokensStrategy {
+    AnthropicNative,
+    GeminiNative,
+    LocalEstimate,
 }
 
 fn estimate_anthropic_input_tokens(body: &Value) -> u64 {
-    let chars = serde_json::to_string(body)
-        .map(|text| text.chars().count() as u64)
-        .unwrap_or(0);
-    (chars / 4).max(1)
+    estimate_anthropic_value(body).max(1)
+}
+
+fn estimate_anthropic_value(value: &Value) -> u64 {
+    match value {
+        Value::Null => 0,
+        Value::Bool(_) | Value::Number(_) => 1,
+        Value::String(text) => estimate_text_tokens(text),
+        Value::Array(values) => 1 + values.iter().map(estimate_anthropic_value).sum::<u64>(),
+        Value::Object(object) => {
+            match object.get("type").and_then(Value::as_str) {
+                Some("image") if object.get("source").is_some_and(Value::is_object) => {
+                    return IMAGE_INPUT_TOKEN_ESTIMATE
+                }
+                // Base64 sources are opaque media payloads. Their serialized
+                // byte length is unrelated to the model's input token accounting.
+                Some("base64")
+                    if object.contains_key("media_type") && object.contains_key("data") =>
+                {
+                    return 0
+                }
+                _ => {}
+            }
+
+            1 + object
+                .iter()
+                .map(|(key, value)| estimate_text_tokens(key) + estimate_anthropic_value(value))
+                .sum::<u64>()
+        }
+    }
+}
+
+fn estimate_text_tokens(text: &str) -> u64 {
+    let (ascii, non_ascii) = text.chars().fold((0_u64, 0_u64), |(ascii, non_ascii), ch| {
+        if ch.is_ascii() {
+            (ascii + 1, non_ascii)
+        } else {
+            (ascii, non_ascii + 1)
+        }
+    });
+    ascii.div_ceil(4) + non_ascii
+}
+
+fn contains_document_block(value: &Value) -> bool {
+    value
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flatten()
+        .any(|block| {
+            block.get("type").and_then(Value::as_str) == Some("document")
+                && block.get("source").is_some_and(Value::is_object)
+        })
+}
+
+fn count_tokens_strategy(
+    app_type: &AppType,
+    provider: &crate::provider::Provider,
+    body: &Value,
+) -> CountTokensStrategy {
+    let adapter = get_adapter(app_type);
+    if !adapter.needs_transform(provider) {
+        CountTokensStrategy::AnthropicNative
+    } else if get_claude_api_format(provider) == "gemini_native"
+        && body
+            .get("messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| !messages.is_empty())
+    {
+        CountTokensStrategy::GeminiNative
+    } else {
+        CountTokensStrategy::LocalEstimate
+    }
+}
+
+fn local_count_tokens_response(body: &Value) -> Result<axum::response::Response, ProxyError> {
+    if contains_document_block(body) {
+        return Err(ProxyError::UpstreamError {
+            status: StatusCode::NOT_FOUND.as_u16(),
+            body: Some(
+                json!({
+                    "type": "error",
+                    "error": {
+                        "type": "not_found_error",
+                        "message": "Accurate local PDF token counting is unavailable; use the client fallback"
+                    }
+                })
+                .to_string(),
+            ),
+        });
+    }
+
+    Ok(Json(json!({
+        "input_tokens": estimate_anthropic_input_tokens(body)
+    }))
+    .into_response())
+}
+
+async fn parse_count_tokens_json(request: axum::extract::Request) -> Result<Value, ProxyError> {
+    match Json::<Value>::from_request(request, &()).await {
+        Ok(Json(body)) => Ok(body),
+        Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            Err(ProxyError::PayloadTooLarge(
+                "count_tokens request body exceeds the configured limit".to_string(),
+            ))
+        }
+        Err(rejection) => Err(ProxyError::InvalidRequest(rejection.body_text())),
+    }
+}
+
+async fn handle_messages_count_tokens_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+) -> Result<axum::response::Response, ProxyError> {
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+    let headers = request.headers().clone();
+    let extensions = request.extensions().clone();
+    let body = parse_count_tokens_json(request).await?;
+
+    let ctx =
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let strategy = count_tokens_strategy(&app_type, &ctx.provider, &body);
+
+    if strategy == CountTokensStrategy::LocalEstimate {
+        return local_count_tokens_response(&body);
+    }
+
+    let endpoint = endpoint_with_query(&uri, "/v1/messages/count_tokens");
+    let forwarder = ctx.create_forwarder(&state);
+    let mut result = forwarder
+        .forward_with_retry(
+            &app_type,
+            method,
+            &endpoint,
+            body.clone(),
+            headers,
+            extensions,
+            vec![ctx.provider.clone()],
+        )
+        .await
+        .map_err(|err| err.error)?;
+
+    let _connection_guard = result.connection_guard.take();
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(result.response, tag, Duration::ZERO).await?;
+    strip_hop_by_hop_response_headers(&mut response_headers);
+
+    if strategy == CountTokensStrategy::GeminiNative {
+        let response: Value = serde_json::from_slice(&body_bytes).map_err(|e| {
+            ProxyError::TransformError(format!("Failed to parse Gemini countTokens response: {e}"))
+        })?;
+        let input_tokens = response
+            .get("totalTokens")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                ProxyError::TransformError(
+                    "Gemini countTokens response is missing totalTokens".to_string(),
+                )
+            })?;
+        return Ok(Json(json!({ "input_tokens": input_tokens })).into_response());
+    }
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in &response_headers {
+        builder = builder.header(key, value);
+    }
+    builder
+        .body(axum::body::Body::from(body_bytes))
+        .map_err(|e| ProxyError::Internal(format!("Failed to build count_tokens response: {e}")))
 }
 
 pub async fn handle_claude_desktop_messages(
@@ -158,9 +343,16 @@ pub async fn handle_claude_desktop_messages(
 pub async fn handle_claude_desktop_messages_count_tokens(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
-) -> Result<Json<Value>, ProxyError> {
+) -> Result<axum::response::Response, ProxyError> {
     validate_claude_desktop_gateway_auth(&state, request.headers())?;
-    handle_messages_count_tokens(request).await
+    handle_messages_count_tokens_for_app(
+        state,
+        request,
+        AppType::ClaudeDesktop,
+        "Claude Desktop count_tokens",
+        "claude-desktop",
+    )
+    .await
 }
 
 pub async fn handle_claude_desktop_models(
@@ -1327,6 +1519,7 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::ConfigError(_) => "cc_switch_config_error",
         ProxyError::TransformError(_) => "cc_switch_transform_error",
         ProxyError::InvalidRequest(_) => "cc_switch_invalid_request",
+        ProxyError::PayloadTooLarge(_) => "cc_switch_payload_too_large",
         ProxyError::AuthError(_) => "cc_switch_auth_error",
         ProxyError::UpstreamError { .. } => "cc_switch_upstream_error",
         ProxyError::DatabaseError(_) => "cc_switch_database_error",
@@ -2077,10 +2270,380 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        count_tokens_strategy, estimate_anthropic_input_tokens,
+        handle_claude_desktop_messages_count_tokens, handle_messages_count_tokens,
+        local_count_tokens_response, parse_count_tokens_json, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        CountTokensStrategy,
     };
-    use crate::proxy::ProxyError;
+    use crate::{
+        database::Database,
+        provider::{Provider, ProviderMeta},
+        proxy::{
+            failover_switch::FailoverSwitchManager,
+            provider_router::ProviderRouter,
+            providers::{
+                codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
+            },
+            server::ProxyState,
+            ProxyConfig, ProxyError, ProxyStatus,
+        },
+    };
+    use axum::{
+        body::Body,
+        extract::{DefaultBodyLimit, State},
+        http::{header, Request, StatusCode},
+        routing::{any, post},
+        Json, Router,
+    };
+    use bytes::Bytes;
+    use http_body_util::BodyExt;
+    use serde_json::{json, Value};
+    use std::{collections::HashMap, sync::Arc};
+    use tokio::sync::{oneshot, Mutex, RwLock};
+
+    fn build_proxy_state(db: Arc<Database>) -> ProxyState {
+        ProxyState {
+            db: db.clone(),
+            config: Arc::new(RwLock::new(ProxyConfig::default())),
+            status: Arc::new(RwLock::new(ProxyStatus::default())),
+            start_time: Arc::new(RwLock::new(None)),
+            current_providers: Arc::new(RwLock::new(HashMap::new())),
+            provider_router: Arc::new(ProviderRouter::new(db.clone())),
+            gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            app_handle: None,
+            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+        }
+    }
+
+    fn provider_with_format(id: &str, base_url: &str, api_format: Option<&str>) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            "Test Provider".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            api_format: api_format.map(str::to_string),
+            ..ProviderMeta::default()
+        });
+        provider
+    }
+
+    fn json_request(uri: &str, body: impl Into<Body>) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body.into())
+            .unwrap()
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    async fn spawn_mock_upstream(
+        status: StatusCode,
+        response_body: &'static str,
+    ) -> (String, oneshot::Receiver<(String, Value)>) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (capture_tx, capture_rx) = oneshot::channel();
+        let capture_tx = Arc::new(Mutex::new(Some(capture_tx)));
+        let app = Router::new().fallback(any(move |uri: axum::http::Uri, body: Bytes| {
+            let capture_tx = capture_tx.clone();
+            async move {
+                if let Some(tx) = capture_tx.lock().await.take() {
+                    tx.send((uri.to_string(), serde_json::from_slice(&body).unwrap()))
+                        .unwrap();
+                }
+                (
+                    status,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    response_body,
+                )
+            }
+        }));
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), capture_rx)
+    }
+
+    #[test]
+    fn count_tokens_estimator_counts_tool_only_requests() {
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [],
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get the current weather",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"]
+                }
+            }]
+        });
+
+        assert!(estimate_anthropic_input_tokens(&body) > 10);
+    }
+
+    #[test]
+    fn gemini_tool_only_count_tokens_uses_local_estimate() {
+        let gemini = provider_with_format(
+            "gemini",
+            "https://generativelanguage.googleapis.com",
+            Some("gemini_native"),
+        );
+        let body = json!({
+            "model": "gemini-2.5-pro",
+            "messages": [],
+            "tools": [{
+                "name": "get_weather",
+                "input_schema": {"type": "object", "properties": {}}
+            }]
+        });
+        assert_eq!(
+            count_tokens_strategy(&crate::app_config::AppType::Claude, &gemini, &body),
+            CountTokensStrategy::LocalEstimate
+        );
+    }
+
+    #[test]
+    fn count_tokens_estimator_does_not_count_base64_as_text() {
+        let image = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "A".repeat(1_011_412)
+                    }
+                }, {"type": "text", "text": "Describe this image"}]
+            }]
+        });
+        let document = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": "A".repeat(1_011_412)
+                    }
+                }]
+            }]
+        });
+
+        let image_tokens = estimate_anthropic_input_tokens(&image);
+        assert!((1_600..5_000).contains(&image_tokens));
+        assert!(matches!(
+            local_count_tokens_response(&document),
+            Err(ProxyError::UpstreamError { status: 404, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn count_tokens_json_rejects_invalid_and_configured_oversized_bodies() {
+        let invalid = json_request("/v1/messages/count_tokens", Body::from("{"));
+        assert!(matches!(
+            parse_count_tokens_json(invalid).await,
+            Err(ProxyError::InvalidRequest(_))
+        ));
+
+        let app = Router::new()
+            .route(
+                "/",
+                post(|request: Request<Body>| async move {
+                    parse_count_tokens_json(request).await.map(Json)
+                }),
+            )
+            .layer(DefaultBodyLimit::max(32));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}/"))
+            .json(&json!({ "data": "A".repeat(64) }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn anthropic_format_forwards_native_count_tokens() {
+        let (base_url, upstream) =
+            spawn_mock_upstream(StatusCode::OK, r#"{"input_tokens":1551}"#).await;
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = provider_with_format("anthropic", &base_url, None);
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let state = build_proxy_state(db);
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let response = handle_messages_count_tokens(
+            State(state),
+            json_request(
+                "/claude/v1/messages/count_tokens?beta=true",
+                Body::from(body.to_string()),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response_json(response).await["input_tokens"], 1551);
+
+        let (uri, request_body) = upstream.await.unwrap();
+        assert_eq!(uri, "/v1/messages/count_tokens?beta=true");
+        assert_eq!(request_body["model"], "claude-sonnet-4-5");
+    }
+
+    #[tokio::test]
+    async fn gemini_native_uses_count_tokens_and_maps_total_tokens() {
+        let (base_url, upstream) =
+            spawn_mock_upstream(StatusCode::OK, r#"{"totalTokens":42}"#).await;
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = provider_with_format("gemini", &base_url, Some("gemini_native"));
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let state = build_proxy_state(db);
+        let body = json!({
+            "model": "gemini-2.5-pro",
+            "system": "You are helpful",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Summarize these files"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": "image-data"
+                        }
+                    },
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": "document-data"
+                        }
+                    }
+                ]
+            }],
+            "tools": [{
+                "name": "get_weather",
+                "description": "Get weather",
+                "input_schema": {"type": "object", "properties": {}}
+            }]
+        });
+
+        let response = handle_messages_count_tokens(
+            State(state),
+            json_request("/v1/messages/count_tokens", Body::from(body.to_string())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response_json(response).await["input_tokens"], 42);
+
+        let (uri, request_body) = upstream.await.unwrap();
+        assert_eq!(uri, "/v1beta/models/gemini-2.5-pro:countTokens");
+        assert_eq!(
+            request_body["generateContentRequest"]["model"],
+            "models/gemini-2.5-pro"
+        );
+        assert!(request_body["generateContentRequest"]["contents"].is_array());
+        assert!(request_body["generateContentRequest"]["tools"].is_array());
+        let parts = request_body["generateContentRequest"]["contents"][0]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "image/jpeg");
+        assert_eq!(parts[1]["inlineData"]["data"], "image-data");
+        assert_eq!(parts[2]["inlineData"]["mimeType"], "application/pdf");
+        assert_eq!(parts[2]["inlineData"]["data"], "document-data");
+    }
+
+    #[tokio::test]
+    async fn anthropic_count_tokens_preserves_upstream_404_for_client_fallback() {
+        let (base_url, upstream) = spawn_mock_upstream(
+            StatusCode::NOT_FOUND,
+            r#"{"error":{"message":"not found"}}"#,
+        )
+        .await;
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = provider_with_format("anthropic", &base_url, None);
+        db.save_provider("claude", &provider).unwrap();
+        db.set_current_provider("claude", &provider.id).unwrap();
+        let state = build_proxy_state(db);
+
+        let error = handle_messages_count_tokens(
+            State(state),
+            json_request(
+                "/v1/messages/count_tokens",
+                Body::from(r#"{"model":"claude-sonnet-4-5","messages":[]}"#),
+            ),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ProxyError::UpstreamError { status: 404, .. }
+        ));
+        assert_eq!(upstream.await.unwrap().0, "/v1/messages/count_tokens");
+    }
+
+    #[tokio::test]
+    async fn desktop_count_tokens_requires_gateway_auth_and_accepts_valid_token() {
+        let db = Arc::new(Database::memory().unwrap());
+        let provider =
+            provider_with_format("desktop-openai", "http://127.0.0.1:1", Some("openai_chat"));
+        db.save_provider("claude-desktop", &provider).unwrap();
+        db.set_current_provider("claude-desktop", &provider.id)
+            .unwrap();
+        let state = build_proxy_state(db.clone());
+        let token = crate::claude_desktop_config::get_or_create_gateway_token(db.as_ref()).unwrap();
+        let body = r#"{"model":"claude-sonnet-4-5","tools":[]}"#;
+
+        let unauthorized = handle_claude_desktop_messages_count_tokens(
+            State(state.clone()),
+            json_request("/claude-desktop/v1/messages/count_tokens", Body::from(body)),
+        )
+        .await;
+        assert!(matches!(unauthorized, Err(ProxyError::AuthError(_))));
+
+        let mut authorized =
+            json_request("/claude-desktop/v1/messages/count_tokens", Body::from(body));
+        authorized.headers_mut().insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        let response = handle_claude_desktop_messages_count_tokens(State(state), authorized)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
