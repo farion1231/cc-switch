@@ -1,3 +1,6 @@
+#[cfg(test)]
+use crate::model_capabilities::is_confirmed_text_only_model as confirmed_text_only_model;
+use crate::model_capabilities::{image_input_capability_from_settings, ImageInputCapability};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Value};
@@ -9,9 +12,9 @@ pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 /// Two paths, both reached only when the caller's media-fallback switch is on:
 /// - explicit capability from the provider config (modelCatalog / modalities) is
 ///   always trusted — it is declaration-driven, never a guess;
-/// - the curated `known_text_only_model` list is a heuristic *prediction* and only
-///   runs when `allow_heuristic` is true, so a mislabeled multimodal model cannot
-///   have its images silently stripped when the user opts out.
+/// - the confirmed text-only registry is used for proactive replacement only
+///   when `allow_heuristic` is true. This switch controls silent request-body
+///   mutation, not the capability truth advertised by the Codex model catalog.
 pub fn replace_images_for_text_only_model(
     body: &mut Value,
     provider: &Provider,
@@ -27,13 +30,9 @@ pub fn replace_images_for_text_only_model(
         .map(str::trim)
         .unwrap_or("");
 
-    match explicit_model_image_support(provider, model) {
-        Some(true) => return 0,
-        Some(false) => return replace_images_in_body(body),
-        None => {}
-    }
-
-    if !allow_heuristic || !known_text_only_model(model) {
+    if image_input_capability_from_settings(&provider.settings_config, model, allow_heuristic)
+        != ImageInputCapability::Unsupported
+    {
         return 0;
     }
 
@@ -237,95 +236,6 @@ fn replace_image_block_with_text_marker(block: &mut Value, text_type: &str) {
     }
 }
 
-fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
-    let settings = &provider.settings_config;
-    [
-        settings
-            .get("modelCatalog")
-            .and_then(|catalog| catalog.get("models")),
-        settings.get("modelCatalog"),
-        settings.get("models"),
-    ]
-    .into_iter()
-    .flatten()
-    .find_map(|value| explicit_model_image_support_in_value(value, model))
-}
-
-fn known_text_only_model(model: &str) -> bool {
-    let normalized = normalize_model_id(model);
-    let tail = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
-
-    const EXACT_TAILS: &[&str] = &[
-        "ark-code-latest",
-        "deepseek-chat",
-        "deepseek-reasoner",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-        "glm-5.1",
-        // 精确匹配而非 TAIL_PREFIXES：智谱视觉版沿用 4v/5v 命名（glm-5.2v），
-        // 前缀匹配会误剥未来多模态变体的图片。
-        "glm-5.2",
-        "kat-coder",
-        "kat-coder-pro",
-        "kat-coder-pro v1",
-        "kat-coder-pro v2",
-        "kat-coder-pro-v1",
-        "kat-coder-pro-v2",
-        "ling-2.5-1t",
-        "longcat-2.0",
-        "longcat-flash-chat",
-        "mimo-v2.5-pro",
-        "us.deepseek.r1-v1",
-    ];
-
-    const TAIL_PREFIXES: &[&str] = &["minimax-m2.7", "qwen3-coder", "step-3.5-flash"];
-
-    EXACT_TAILS.contains(&tail) || TAIL_PREFIXES.iter().any(|prefix| tail.starts_with(prefix))
-}
-
-fn explicit_model_image_support_in_value(value: &Value, model: &str) -> Option<bool> {
-    if let Some(models) = value.as_array() {
-        return models.iter().find_map(|entry| {
-            model_entry_matches(entry, None, model).then(|| explicit_image_support(entry))?
-        });
-    }
-
-    let object = value.as_object()?;
-    object.iter().find_map(|(key, entry)| {
-        model_entry_matches(entry, Some(key), model).then(|| explicit_image_support(entry))?
-    })
-}
-
-fn explicit_image_support(entry: &Value) -> Option<bool> {
-    if let Some(value) = entry
-        .get("supportsImage")
-        .or_else(|| entry.get("supports_image"))
-        .or_else(|| entry.get("vision"))
-        .and_then(Value::as_bool)
-    {
-        return Some(value);
-    }
-
-    [
-        entry.get("input"),
-        entry.pointer("/modalities/input"),
-        entry.get("input_modalities"),
-        entry.get("inputModalities"),
-    ]
-    .into_iter()
-    .flatten()
-    .find_map(input_modalities_support_image)
-}
-
-fn input_modalities_support_image(value: &Value) -> Option<bool> {
-    let modalities = value.as_array()?;
-    Some(modalities.iter().any(|item| {
-        item.as_str()
-            .map(str::trim)
-            .is_some_and(|item| item.eq_ignore_ascii_case("image"))
-    }))
-}
-
 fn extract_error_text(body: &str) -> String {
     if let Ok(value) = serde_json::from_str::<Value>(body) {
         let candidates = [
@@ -348,43 +258,6 @@ fn extract_error_text(body: &str) -> String {
     }
 
     body.to_string()
-}
-
-fn model_entry_matches(entry: &Value, key: Option<&str>, model: &str) -> bool {
-    key.is_some_and(|key| model_ids_match(key, model))
-        || ["model", "id", "name"]
-            .into_iter()
-            .filter_map(|field| entry.get(field).and_then(Value::as_str))
-            .any(|candidate| model_ids_match(candidate, model))
-}
-
-fn model_ids_match(candidate: &str, model: &str) -> bool {
-    let candidate = normalize_model_id(candidate);
-    let model = normalize_model_id(model);
-    if candidate.is_empty() || model.is_empty() {
-        return false;
-    }
-    if candidate == model {
-        return true;
-    }
-
-    let candidate_tail = candidate.rsplit('/').next().unwrap_or(candidate.as_str());
-    let model_tail = model.rsplit('/').next().unwrap_or(model.as_str());
-    candidate_tail == model_tail || candidate == model_tail || candidate_tail == model
-}
-
-fn normalize_model_id(value: &str) -> String {
-    let mut normalized = value
-        .trim()
-        .trim_start_matches("models/")
-        .trim()
-        .to_ascii_lowercase();
-    if let Some(stripped) =
-        normalized.strip_suffix(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
-    {
-        normalized = stripped.trim().to_string();
-    }
-    normalized
 }
 
 #[cfg(test)]
@@ -431,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn known_text_only_models_replace_images_before_send() {
+    fn confirmed_text_only_models_replace_images_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
             "model": "deepseek/deepseek-v4-pro",
@@ -453,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn known_text_only_models_replace_chat_image_url_before_send() {
+    fn confirmed_text_only_models_replace_chat_image_url_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
             "model": "deepseek-v4-flash",
@@ -477,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn known_text_only_models_replace_codex_input_image_before_send() {
+    fn confirmed_text_only_models_replace_codex_input_image_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
             "model": "deepseek-v4-flash",
@@ -504,9 +377,9 @@ mod tests {
     fn longcat_models_are_classified_text_only() {
         // LongCat-2.0 (like the retired Flash Chat) is a text-only model; the
         // preset ships it in mixed case, so the classifier must normalize first.
-        assert!(known_text_only_model("LongCat-2.0"));
-        assert!(known_text_only_model("longcat/LongCat-2.0"));
-        assert!(known_text_only_model("LongCat-Flash-Chat"));
+        assert!(confirmed_text_only_model("LongCat-2.0"));
+        assert!(confirmed_text_only_model("longcat/LongCat-2.0"));
+        assert!(confirmed_text_only_model("LongCat-Flash-Chat"));
     }
 
     #[test]
@@ -662,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn known_text_only_prefixes_replace_images_before_send() {
+    fn confirmed_text_only_variant_replaces_images_before_send() {
         let provider = provider(json!({}));
         let mut body = json!({
             "model": "therouter/qwen/qwen3-coder-480b",
@@ -761,11 +634,11 @@ mod tests {
     fn glm_52_is_classified_text_only() {
         // issue #5025：火山 Coding Plan 的 GLM 5.2 是纯文本端点，
         // 映射链 glm-5.2[1M] 归一化后尾部为 glm-5.2。
-        assert!(known_text_only_model("glm-5.2"));
-        assert!(known_text_only_model("GLM-5.2[1M]"));
-        assert!(known_text_only_model("zai-org/GLM-5.2"));
+        assert!(confirmed_text_only_model("glm-5.2"));
+        assert!(confirmed_text_only_model("GLM-5.2[1M]"));
+        assert!(confirmed_text_only_model("zai-org/GLM-5.2"));
         // 未来视觉版（智谱 4v/5v 命名惯例）不能被误判为纯文本。
-        assert!(!known_text_only_model("glm-5.2v"));
+        assert!(!confirmed_text_only_model("glm-5.2v"));
     }
 
     #[test]

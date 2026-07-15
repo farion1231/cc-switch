@@ -20,6 +20,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -55,6 +56,7 @@ pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
+    provider::reapply_current_codex_official_live,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -1198,6 +1200,7 @@ pub fn run() {
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
+            commands::ensure_codex_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -1214,6 +1217,7 @@ pub fn run() {
             commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
+            commands::update_toml_common_config_snippet,
             commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,

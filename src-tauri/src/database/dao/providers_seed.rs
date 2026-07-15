@@ -11,6 +11,7 @@
 use crate::app_config::AppType;
 
 pub(crate) const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "claude-desktop-official";
+pub(crate) const CODEX_OFFICIAL_PROVIDER_ID: &str = "codex-official";
 
 /// 单条官方供应商种子定义。
 pub(crate) struct OfficialProviderSeed {
@@ -49,7 +50,7 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         settings_config_json: r#"{"env":{}}"#,
     },
     OfficialProviderSeed {
-        id: "codex-official",
+        id: CODEX_OFFICIAL_PROVIDER_ID,
         app_type: AppType::Codex,
         name: "OpenAI Official",
         website_url: "https://chatgpt.com/codex",

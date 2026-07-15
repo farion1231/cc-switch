@@ -673,8 +673,12 @@ pub fn create_tray_menu(
 
             for (id, provider) in sort_providers(&providers) {
                 let is_current = current_id == *id;
-                let is_official_blocked =
-                    is_app_taken_over && provider.category.as_deref() == Some("official");
+                let is_official_blocked = is_app_taken_over
+                    && provider.category.as_deref() == Some("official")
+                    && !crate::services::provider::official_provider_supports_proxy_takeover(
+                        &section.app_type,
+                        provider,
+                    );
                 let label = if is_official_blocked {
                     format!("{} \u{26D4}", &provider.name) // ⛔ emoji
                 } else {
