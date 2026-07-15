@@ -814,71 +814,133 @@ fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provide
     }
 }
 
+/// 若 `live` 的 `parent.key` 缺失或为空字符串，而 `db_settings` 的对应值是
+/// 非空字符串，则用 DB 值回填。
+fn preserve_credential_from_db(live: &mut Value, db_settings: &Value, parent: &str, key: &str) {
+    let Some(db_value) = db_settings
+        .get(parent)
+        .and_then(|v| v.get(key))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+    else {
+        return;
+    };
+
+    let live_has_value = live
+        .get(parent)
+        .and_then(|v| v.get(key))
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.trim().is_empty());
+    if live_has_value {
+        return;
+    }
+
+    let db_value = db_value.to_string();
+    let Some(obj) = live.as_object_mut() else {
+        return;
+    };
+    let parent_entry = obj
+        .entry(parent.to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if let Some(parent_map) = parent_entry.as_object_mut() {
+        parent_map.insert(key.to_string(), Value::String(db_value));
+    }
+}
+
+/// 切换回填时需要防止被残缺 live 覆盖的凭据字段：`(父对象键, 字段键)`。
+/// 这些字段的 SSOT 是数据库；live 只是投影，会被 CLI 清洗。
+fn credential_fields_for_backfill(app_type: &AppType) -> &'static [(&'static str, &'static str)] {
+    match app_type {
+        AppType::Claude | AppType::ClaudeDesktop => &[
+            ("env", "ANTHROPIC_AUTH_TOKEN"),
+            ("env", "ANTHROPIC_API_KEY"),
+            ("env", "ANTHROPIC_BASE_URL"),
+        ],
+        AppType::Gemini => &[("env", "GEMINI_API_KEY"), ("env", "GOOGLE_GEMINI_BASE_URL")],
+        AppType::Codex => &[("auth", "OPENAI_API_KEY")],
+        _ => &[],
+    }
+}
+
 fn restore_live_settings_for_provider_backfill(
     app_type: &AppType,
     provider: &Provider,
     live_settings: Value,
 ) -> Value {
+    let mut settings = live_settings;
+
     if matches!(app_type, AppType::Claude) {
-        let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
-        return settings;
-    }
-    if !matches!(app_type, AppType::Codex) {
-        return live_settings;
-    }
-
-    let mut settings = live_settings;
-    let restore_provider_token =
-        crate::codex_config::should_restore_codex_provider_token_for_backfill(
-            provider.category.as_deref(),
+    } else if matches!(app_type, AppType::Codex) {
+        let restore_provider_token =
+            crate::codex_config::should_restore_codex_provider_token_for_backfill(
+                provider.category.as_deref(),
+                &provider.settings_config,
+            );
+        if let Err(err) = crate::codex_config::restore_codex_settings_for_backfill(
+            &mut settings,
             &provider.settings_config,
-        );
-    if let Err(err) = crate::codex_config::restore_codex_settings_for_backfill(
-        &mut settings,
-        &provider.settings_config,
-        restore_provider_token,
-    ) {
-        log::warn!(
-            "Failed to restore Codex settings while backfilling '{}': {err}",
-            provider.id
-        );
-    }
-
-    // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
-    // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
-    if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings) {
-        log::warn!(
-            "Failed to strip mcp_servers while backfilling '{}': {err}",
-            provider.id
-        );
-    }
-
-    // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
-    // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
-    if provider.category.as_deref() == Some("official") {
-        if let Err(err) =
-            crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
-        {
+            restore_provider_token,
+        ) {
             log::warn!(
-                "Failed to strip unified session bucket while backfilling '{}': {err}",
+                "Failed to restore Codex settings while backfilling '{}': {err}",
                 provider.id
             );
         }
+
+        // MCP 服务器归 DB mcp_servers 表所有，live 里的 [mcp_servers] 是同步投影；
+        // 回填时剥掉，否则已删除的服务器会随供应商快照复活（逐条 reconcile 清不掉孤儿）。
+        if let Err(err) = crate::codex_config::strip_codex_mcp_servers_from_settings(&mut settings)
+        {
+            log::warn!(
+                "Failed to strip mcp_servers while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+
+        // 统一会话开关注入的共享 `custom` 路由只属于 live 配置；切换回填时
+        // 必须剥掉，否则官方供应商的存储配置被污染，关闭开关后无法还原。
+        if provider.category.as_deref() == Some("official") {
+            if let Err(err) =
+                crate::codex_config::strip_codex_unified_session_bucket_from_settings(&mut settings)
+            {
+                log::warn!(
+                    "Failed to strip unified session bucket while backfilling '{}': {err}",
+                    provider.id
+                );
+            }
+        }
+
+        // `modelCatalog` is a cc-switch-private field whose SSOT is the DB.
+        if let Some(stored_catalog) = provider.settings_config.get("modelCatalog") {
+            if let Some(obj) = settings.as_object_mut() {
+                obj.insert("modelCatalog".to_string(), stored_catalog.clone());
+            }
+        }
+
+        // config.toml 是整段文本，无法像 JSON 那样字段级合并。若 live 丢失了
+        // 整个 config（被清洗/接管残留为空）而 DB 仍有，保留 DB 版本。
+        if let Some(db_config) = provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            let live_config_empty = settings
+                .get("config")
+                .and_then(Value::as_str)
+                .map_or(true, |s| s.trim().is_empty());
+            if live_config_empty {
+                if let Some(obj) = settings.as_object_mut() {
+                    obj.insert("config".to_string(), Value::String(db_config.to_string()));
+                }
+            }
+        }
     }
 
-    // `modelCatalog` is a cc-switch–private field whose SSOT is the DB. Live's
-    // `config.toml` only carries a lossy projection (`model_catalog_json` →
-    // generated catalog file) that proxy takeover/restore cycles and Codex.app
-    // config rewrites can drop, so `read_live_settings` may reconstruct it as
-    // absent. Never let a switch-away backfill from Live erase the stored
-    // mapping: prefer the DB provider's `modelCatalog`, falling back to whatever
-    // Live reconstructed only when the DB has none.
-    if let Some(stored_catalog) = provider.settings_config.get("modelCatalog") {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("modelCatalog".to_string(), stored_catalog.clone());
-        }
+    for &(parent, key) in credential_fields_for_backfill(app_type) {
+        preserve_credential_from_db(&mut settings, &provider.settings_config, parent, key);
     }
 
     settings
@@ -2534,6 +2596,93 @@ base_url = "https://a.example/v1"
         assert!(
             config_text.contains("model = \"gpt-5.5\""),
             "non-MCP content must survive the strip"
+        );
+    }
+
+    #[test]
+    fn claude_switch_backfill_preserves_credentials_when_live_lost_them() {
+        let provider = Provider::with_id(
+            "aggregator".to_string(),
+            "Aggregator".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-db-token",
+                    "ANTHROPIC_BASE_URL": "https://api.db.example"
+                }
+            }),
+            None,
+        );
+        let live_settings = json!({
+            "env": { "ANTHROPIC_MODEL": "claude-sonnet-4-5" }
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Claude, &provider, live_settings);
+
+        let env = result
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("env object present");
+        assert_eq!(
+            env.get("ANTHROPIC_AUTH_TOKEN").and_then(Value::as_str),
+            Some("sk-db-token")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").and_then(Value::as_str),
+            Some("https://api.db.example")
+        );
+    }
+
+    #[test]
+    fn claude_switch_backfill_adopts_live_credentials_when_present() {
+        let provider = Provider::with_id(
+            "aggregator".to_string(),
+            "Aggregator".to_string(),
+            json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "sk-db-token" } }),
+            None,
+        );
+        let live_settings = json!({
+            "env": { "ANTHROPIC_AUTH_TOKEN": "sk-live-updated" }
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Claude, &provider, live_settings);
+
+        assert_eq!(
+            result
+                .get("env")
+                .and_then(|e| e.get("ANTHROPIC_AUTH_TOKEN"))
+                .and_then(Value::as_str),
+            Some("sk-live-updated")
+        );
+    }
+
+    #[test]
+    fn codex_switch_backfill_preserves_api_key_when_live_auth_lost_it() {
+        let mut provider = Provider::with_id(
+            "deepseek".to_string(),
+            "DeepSeek".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-db-key" },
+                "config": "model_provider = \"deepseek\"\n[model_providers.deepseek]\nbase_url = \"https://api.db.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider.category = Some("cn_official".to_string());
+        let live_settings = json!({
+            "auth": {},
+            "config": "model_provider = \"deepseek\"\n[model_providers.deepseek]\nbase_url = \"https://api.db.example/v1\"\nwire_api = \"responses\"\n"
+        });
+
+        let result =
+            restore_live_settings_for_provider_backfill(&AppType::Codex, &provider, live_settings);
+
+        assert_eq!(
+            result
+                .get("auth")
+                .and_then(|a| a.get("OPENAI_API_KEY"))
+                .and_then(Value::as_str),
+            Some("sk-db-key")
         );
     }
 }

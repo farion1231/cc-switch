@@ -6,6 +6,7 @@ use crate::services::ProviderService;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tauri::AppHandle;
@@ -2654,10 +2655,16 @@ fn extract_env_vars_from_config(
         }
     }
 
-    // Codex 使用 auth 字段转换为 OPENAI_API_KEY
+    // Codex 的 auth 是对象 { "OPENAI_API_KEY": "..." }，提取其中的 key。
+    // 旧代码把 auth 当字符串读（v.as_str()），对象永远匹配不到，导致启动的
+    // Codex 终端拿不到 OPENAI_API_KEY。
     if *app_type == AppType::Codex {
-        if let Some(auth) = obj.get("auth").and_then(|v| v.as_str()) {
-            env_vars.push(("OPENAI_API_KEY".to_string(), auth.to_string()));
+        if let Some(api_key) = obj
+            .get("auth")
+            .and_then(|v| v.get("OPENAI_API_KEY"))
+            .and_then(|v| v.as_str())
+        {
+            env_vars.push(("OPENAI_API_KEY".to_string(), api_key.to_string()));
         }
     }
 
@@ -2712,18 +2719,21 @@ fn resolve_launch_cwd(cwd: Option<String>) -> Result<Option<PathBuf>, String> {
 /// 使用 --settings 参数传入提供商特定的 API 配置
 fn launch_terminal_with_env(
     env_vars: Vec<(String, String)>,
-    provider_id: &str,
+    _provider_id: &str,
     cwd: Option<&Path>,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir();
-    let config_file = temp_dir.join(format!(
-        "claude_{}_{}.json",
-        provider_id,
-        std::process::id()
-    ));
-
-    // 创建并写入配置文件
-    write_claude_config(&config_file, &env_vars)?;
+    // 随机 ASCII 文件名既避免中文 provider_id 的 cmd.exe 编码问题，也避免
+    // 由 hash + PID 组成的可预测路径遭受抢占或符号链接攻击。
+    let mut config_file = tempfile::Builder::new()
+        .prefix("claude_")
+        .suffix(".json")
+        .tempfile_in(&temp_dir)
+        .map_err(|e| format!("创建临时配置文件失败: {e}"))?;
+    write_claude_config(config_file.as_file_mut(), &env_vars)?;
+    let (_, config_file) = config_file
+        .keep()
+        .map_err(|e| format!("保留临时配置文件失败: {}", e.error))?;
 
     #[cfg(target_os = "macos")]
     {
@@ -2749,7 +2759,7 @@ fn launch_terminal_with_env(
 
 /// 写入 claude 配置文件
 fn write_claude_config(
-    config_file: &std::path::Path,
+    config_file: &mut std::fs::File,
     env_vars: &[(String, String)],
 ) -> Result<(), String> {
     let mut config_obj = serde_json::Map::new();
@@ -2764,7 +2774,9 @@ fn write_claude_config(
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
 
-    std::fs::write(config_file, config_json).map_err(|e| format!("写入配置文件失败: {e}"))
+    config_file
+        .write_all(config_json.as_bytes())
+        .map_err(|e| format!("写入配置文件失败: {e}"))
 }
 
 /// macOS: 根据用户首选终端启动
@@ -3218,15 +3230,18 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    // 写入 UTF-8 批处理文件，先用 `chcp 65001` 切换到 UTF-8 代码页，
+    // 避免 cmd.exe 用系统代码页（如 GBK）误读文件内容，导致中文路径等非
+    // ASCII 字符被错当成命令分隔符。
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
+        "@echo off\r\n\
+chcp 65001 >nul\r\n\
+{cwd_command}\r\n\
+echo Using provider-specific claude config:\r\n\
+echo {}\r\n\
+claude --settings \"{}\"\r\n\
+del \"{}\" >nul 2>&1\r\n\
+del \"%~f0\" >nul 2>&1\r\n",
         config_path_for_batch,
         config_path_for_batch,
         config_path_for_batch,
@@ -3236,7 +3251,9 @@ del \"%~f0\" >nul 2>&1
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
 
     let bat_path = bat_file.to_string_lossy();
-    let ps_cmd = format!("& '{}'", bat_path);
+    // 用双引号包裹批处理文件路径，防止路径含空格时被 wt/cmd 拆成多个参数。
+    let bat_path_quoted = format!("\"{}\"", bat_path);
+    let ps_cmd = format!("& {}", bat_path_quoted);
 
     // Try the preferred terminal first
     let result = match terminal {
@@ -3244,8 +3261,14 @@ del \"%~f0\" >nul 2>&1
             &["powershell", "-NoExit", "-Command", &ps_cmd],
             "PowerShell",
         ),
-        "wt" => run_windows_start_command(&["wt", "cmd", "/K", &bat_path], "Windows Terminal"),
-        _ => run_windows_start_command(&["cmd", "/K", &bat_path], "cmd"), // "cmd" or default
+        "wt" => run_windows_start_command(
+            &["wt", "cmd", "/K", &bat_path_quoted],
+            "Windows Terminal",
+        ),
+        _ => run_windows_start_command(
+            &["cmd", "/K", &bat_path_quoted],
+            "cmd",
+        ),
     };
 
     // If preferred terminal fails and it's not the default, try cmd as fallback
@@ -3255,7 +3278,7 @@ del \"%~f0\" >nul 2>&1
             terminal,
             result.as_ref().err()
         );
-        return run_windows_start_command(&["cmd", "/K", &bat_path], "cmd");
+        return run_windows_start_command(&["cmd", "/K", &bat_path_quoted], "cmd");
     }
 
     result
@@ -3532,6 +3555,18 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn extract_env_vars_reads_codex_api_key_from_auth_object() {
+        let config = serde_json::json!({
+            "auth": { "OPENAI_API_KEY": "sk-test" }
+        });
+
+        assert_eq!(
+            extract_env_vars_from_config(&config, &AppType::Codex),
+            vec![("OPENAI_API_KEY".to_string(), "sk-test".to_string())]
+        );
+    }
 
     #[cfg(unix)]
     fn set_test_executable(path: &Path, executable: bool) {
