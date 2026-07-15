@@ -95,7 +95,7 @@ export function ProxyPanel({
       toast.error(
         t("proxy.takeover.failed", {
           detail,
-          defaultValue: "切换接管状态失败",
+          defaultValue: `切换接管状态失败: ${detail}`,
         }),
       );
     }
