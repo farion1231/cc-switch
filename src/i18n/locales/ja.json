@@ -256,6 +256,7 @@
     "proxyReasonCopilot": "GitHub Copilot を Claude プロバイダーとして使用しており",
     "proxyReasonOpenAIChat": "OpenAI Chat API フォーマットを使用しており",
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
+    "proxyReasonAnthropicMessages": "Anthropic Messages API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
     "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
     "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルルーティングが常に必要です。ルーティングは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",

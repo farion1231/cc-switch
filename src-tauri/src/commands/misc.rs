@@ -1069,7 +1069,8 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
-#[allow(dead_code)]
+// 以下 shell 解析辅助函数仅被 macOS/Linux 的终端启动逻辑使用；Windows 非 test 编译下为死代码。
+#[cfg_attr(windows, allow(dead_code))]
 fn fallback_user_shell() -> &'static str {
     if cfg!(target_os = "macos") {
         "/bin/zsh"
@@ -1078,7 +1079,7 @@ fn fallback_user_shell() -> &'static str {
     }
 }
 
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn valid_user_shell_path(shell: &str) -> bool {
     if shell.is_empty()
         || !shell.starts_with('/')
@@ -1103,13 +1104,13 @@ fn is_executable_file(path: &std::path::Path) -> bool {
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn is_executable_file(path: &std::path::Path) -> bool {
     path.is_file()
 }
 
 /// 获取用户默认 shell 的完整路径；异常或被污染的 SHELL 回退到平台默认值。
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn get_user_shell() -> String {
     std::env::var("SHELL")
         .ok()
@@ -1118,7 +1119,7 @@ fn get_user_shell() -> String {
 }
 
 /// 构建 exec 行：引号保护 shell 路径，交还用户 shell 让其按默认规则加载 rc 配置。
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
     let quoted_shell = shell_single_quote(shell);
 
@@ -1138,7 +1139,7 @@ fn build_exec_line(shell: &str, cwd: Option<&Path>) -> String {
 }
 
 /// 构建 provider 命令行：通过用户 shell 的交互模式执行，确保 GUI 启动的终端也加载用户 PATH。
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn build_claude_command_line(shell: &str, claude_command: &str, cwd: Option<&Path>) -> String {
     let command = cwd
         .map(|dir| {
@@ -1158,13 +1159,13 @@ fn build_claude_command_line(shell: &str, claude_command: &str, cwd: Option<&Pat
     )
 }
 
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn build_provider_command_line(shell: &str, config_path: &str, cwd: Option<&Path>) -> String {
     let claude_command = format!("claude --settings {}", shell_single_quote(config_path));
     build_claude_command_line(shell, &claude_command, cwd)
 }
 
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
@@ -1173,7 +1174,7 @@ fn provider_command_flag_for_shell(shell: &str) -> &'static str {
     }
 }
 
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn build_final_shell_cd_command(shell: &str, cwd: Option<&Path>) -> String {
     if matches!(shell.rsplit('/').next().unwrap_or(shell), "zsh") {
         return String::new();
@@ -3494,7 +3495,7 @@ del \"%~f0\" >nul 2>&1
     )
 }
 
-#[allow(dead_code)]
+#[cfg_attr(windows, allow(dead_code))]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -4292,6 +4293,7 @@ mod tests {
             let (_dir, sub, bin_path) = setup_sibling("Volta", "codex.cmd", &["volta.exe"]);
             let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
             let volta_full = format!("{}\\volta.exe", sub.to_string_lossy());
+            // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
             let expected = format!("{} install @openai/codex", expect_quoted_path(&volta_full));
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
@@ -4304,6 +4306,7 @@ mod tests {
             let (_dir, sub, bin_path) = setup_sibling("pnpm", "codex.cmd", &["pnpm.cmd"]);
             let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
             let pnpm_full = format!("{}\\pnpm.cmd", sub.to_string_lossy());
+            // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
             let expected = format!(
                 "{} add -g @openai/codex@latest",
                 expect_quoted_path(&pnpm_full)
@@ -4337,6 +4340,7 @@ mod tests {
             let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "codex.cmd", &["npm.cmd"]);
             let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
             let expected = format!(
                 "{} i -g @openai/codex@latest",
                 expect_quoted_path(&npm_full)
@@ -4351,6 +4355,15 @@ mod tests {
             let (_dir, _sub, bin_path) = setup_sibling("", "codex.cmd", &[]);
             let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
             assert_eq!(cmd, None);
+        }
+
+        #[test]
+        fn windows_no_sibling_uses_cli_update_without_package_fallback() {
+            // sibling 包管理器不存在时，仍可锚定到支持 self-update 的 CLI。
+            let (_dir, _sub, bin_path) = setup_sibling("", "claude.cmd", &[]);
+            let cmd = anchored_command_from_paths("claude", &bin_path, &bin_path);
+            let expected = format!("{} update", expect_quoted_path(&bin_path));
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
         }
 
         #[test]
@@ -4424,6 +4437,7 @@ mod tests {
             let (_dir, sub, bin_path) = setup_sibling("Program Files", "codex.cmd", &["npm.cmd"]);
             let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            // codex 走 npm 锚定(5092fe51),含空格的 npm 全路径仍必须被双引号包裹。
             let expected = format!(
                 "{} i -g @openai/codex@latest",
                 expect_quoted_path(&npm_full)
@@ -4447,6 +4461,8 @@ mod tests {
             // 含空格的环境**(否则 sub 本身含空格 + 子目录 `path%foo%` 触发 4 倍 `%` 转义
             // 会让 expected 漏引号、假失败)。
             let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            // codex 走 npm 锚定(5092fe51)：batch 行 = `call <npm 全路径> i -g ...`，
+            // 含字面 `%` 的 npm 路径仍须 4 倍转义。
             let expected = format!(
                 "call {} i -g @openai/codex@latest",
                 expect_quoted_path(&npm_full)

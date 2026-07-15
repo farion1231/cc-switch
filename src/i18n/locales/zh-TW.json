@@ -256,6 +256,7 @@
     "proxyReasonCopilot": "使用 GitHub Copilot 作為 Claude 供應商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat API 格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses API 格式",
+    "proxyReasonAnthropicMessages": "使用 Anthropic Messages API 格式",
     "proxyReasonFullUrl": "開啟了完整 URL 連線模式",
     "openAIFormatHint": "此供應商使用 OpenAI 相容格式，需要開啟路由服務才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作為 Claude 供應商時始終需要本地路由；路由會根據目前模型自動選擇 Chat Completions 或 Responses。",
