@@ -231,6 +231,8 @@
     "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
     "codexRestartRequired": "切換成功，請重新啟動客戶端以套用",
+    "seamlessSwitchActivated": "無感切換已啟用。請重新啟動一次 {{app}} 以載入本機代理，之後切換無需重新啟動",
+    "seamlessSwitchSuccess": "切換成功，下一次請求將使用新供應商，無需重新啟動",
     "claudeDesktopRestartRequired": "切換成功，重新啟動 Claude Desktop 後生效",
     "claudeDesktopProxyRestartRequired": "切換成功，請保持 CC Switch 執行，並重新啟動 Claude Desktop 後生效",
     "addToConfigSuccess": "已新增至設定",

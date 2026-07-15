@@ -231,6 +231,8 @@
     "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
+    "seamlessSwitchActivated": "Seamless switching is enabled. Restart {{app}} once to load the local proxy; later switches will not require a restart.",
+    "seamlessSwitchSuccess": "Switched successfully. The next request will use the new provider without a restart.",
     "claudeDesktopRestartRequired": "Switched successfully. Restart Claude Desktop to apply changes.",
     "claudeDesktopProxyRestartRequired": "Switched successfully. Keep CC Switch running and restart Claude Desktop to apply changes.",
     "addToConfigSuccess": "Added to config",

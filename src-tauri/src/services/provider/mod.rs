@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::app_config::AppType;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
-use crate::provider::{Provider, UsageResult};
+use crate::provider::{ClaudeDesktopMode, Provider, UsageResult};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -113,6 +113,8 @@ pub struct ProviderService;
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
     pub warnings: Vec<String>,
+    pub seamless: bool,
+    pub restart_required: bool,
 }
 
 #[cfg(test)]
@@ -214,6 +216,40 @@ mod tests {
             .join("Claude-3p")
             .join("configLibrary")
             .join(format!("{PROFILE_ID}.json"))
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    fn claude_desktop_provider(id: &str, base_url: &str, mode: ClaudeDesktopMode) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            format!("Desktop {id}"),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": format!("token-{id}"),
+                    "ANTHROPIC_BASE_URL": base_url
+                }
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+        provider.meta = Some(ProviderMeta {
+            api_format: Some("anthropic".to_string()),
+            claude_desktop_mode: Some(mode.clone()),
+            claude_desktop_model_routes: if matches!(mode, ClaudeDesktopMode::Proxy) {
+                std::collections::HashMap::from([(
+                    "claude-sonnet-4-6".to_string(),
+                    ClaudeDesktopModelRoute {
+                        model: format!("model-{id}"),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )])
+            } else {
+                std::collections::HashMap::new()
+            },
+            ..Default::default()
+        });
+        provider
     }
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -1351,6 +1387,115 @@ requires_openai_auth = true
             json!([{ "name": "claude-sonnet-4-6", "labelOverride": "DeepSeek V4 Flash Updated", "supports1m": true }]),
             "provider edits should propagate into the Claude Desktop 3P profile during takeover"
         );
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_seamless_switch_hot_switches_when_profile_already_uses_proxy() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("use ephemeral proxy port");
+        let state = AppState::new(db.clone());
+        let provider_a =
+            claude_desktop_provider("proxy-a", "https://a.example.com", ClaudeDesktopMode::Proxy);
+        let provider_b =
+            claude_desktop_provider("proxy-b", "https://b.example.com", ClaudeDesktopMode::Proxy);
+        db.save_provider("claude-desktop", &provider_a)
+            .expect("save provider A");
+        db.save_provider("claude-desktop", &provider_b)
+            .expect("save provider B");
+        db.set_current_provider("claude-desktop", "proxy-a")
+            .expect("set DB current provider A");
+        crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("proxy-a"))
+            .expect("set local current provider A");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+        crate::claude_desktop_config::apply_provider(&db, &provider_a)
+            .expect("write stable proxy profile");
+        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile_before = fs::read(&profile_path).expect("read proxy profile before switch");
+
+        let result = ProviderService::switch_seamless(&state, AppType::ClaudeDesktop, "proxy-b")
+            .await
+            .expect("hot-switch Claude Desktop provider");
+
+        assert!(result.seamless);
+        assert!(!result.restart_required);
+        assert_eq!(
+            fs::read(&profile_path).expect("read proxy profile after switch"),
+            profile_before,
+            "proxy-to-proxy hot switching must not rewrite Desktop's cached profile"
+        );
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_seamless_switch_requires_one_restart_when_entering_proxy() {
+        let home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_port = 0;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("use ephemeral proxy port");
+        let state = AppState::new(db.clone());
+        let direct = claude_desktop_provider(
+            "direct-a",
+            "https://direct.example.com",
+            ClaudeDesktopMode::Direct,
+        );
+        let proxy = claude_desktop_provider(
+            "proxy-b",
+            "https://proxy.example.com",
+            ClaudeDesktopMode::Proxy,
+        );
+        db.save_provider("claude-desktop", &direct)
+            .expect("save direct provider");
+        db.save_provider("claude-desktop", &proxy)
+            .expect("save proxy provider");
+        db.set_current_provider("claude-desktop", "direct-a")
+            .expect("set DB current direct provider");
+        crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("direct-a"))
+            .expect("set local current direct provider");
+        crate::claude_desktop_config::apply_provider(&db, &direct).expect("write direct profile");
+
+        let result = ProviderService::switch_seamless(&state, AppType::ClaudeDesktop, "proxy-b")
+            .await
+            .expect("enter Claude Desktop proxy mode");
+
+        assert!(result.seamless);
+        assert!(result.restart_required);
+        let profile: Value =
+            read_json_file(&claude_desktop_profile_path(home.dir.path())).expect("read profile");
+        assert!(profile["inferenceGatewayBaseUrl"]
+            .as_str()
+            .is_some_and(|url| url.contains("/claude-desktop")));
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[test]
@@ -2587,6 +2732,127 @@ impl ProviderService {
 
         // Normal mode: full switch with Live config write
         Self::switch_normal(state, app_type, id, &providers)
+    }
+
+    /// Switch a third-party Claude/Codex/Claude Desktop provider through a stable local proxy.
+    ///
+    /// The first activation writes a usable target configuration before enabling takeover.
+    /// Later switches only change the proxy target, so a running client uses the new provider
+    /// on its next request. Claude Desktop only takes this path for providers already configured
+    /// in local-routing mode.
+    pub async fn switch_seamless(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<SwitchResult, AppError> {
+        if !matches!(
+            app_type,
+            AppType::Claude | AppType::Codex | AppType::ClaudeDesktop
+        ) {
+            return Self::switch(state, app_type, id);
+        }
+
+        let provider = state
+            .db
+            .get_provider_by_id(id, app_type.as_str())?
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        if matches!(app_type, AppType::ClaudeDesktop) {
+            if provider.category.as_deref() == Some("official")
+                || !matches!(
+                    crate::claude_desktop_config::provider_mode(&provider),
+                    ClaudeDesktopMode::Proxy
+                )
+            {
+                return Self::switch(state, app_type, id);
+            }
+
+            if !state.proxy_service.is_running().await {
+                state.proxy_service.start().await.map_err(|e| {
+                    AppError::Message(format!("启动 Claude Desktop 本地路由失败: {e}"))
+                })?;
+            }
+
+            let expected_proxy_url =
+                crate::claude_desktop_config::proxy_gateway_base_url_from_db(&state.db)?;
+            let profile_already_uses_proxy =
+                crate::claude_desktop_config::get_status(&state.db, true)
+                    .ok()
+                    .and_then(|status| status.actual_base_url)
+                    .is_some_and(|actual| actual == expected_proxy_url);
+
+            if profile_already_uses_proxy {
+                state
+                    .proxy_service
+                    .hot_switch_provider(app_type.as_str(), id)
+                    .await
+                    .map_err(|e| AppError::Message(format!("Claude Desktop 无感切换失败: {e}")))?;
+
+                return Ok(SwitchResult {
+                    seamless: true,
+                    restart_required: false,
+                    ..Default::default()
+                });
+            }
+
+            let mut result = Self::switch(state, app_type, id)?;
+            result.seamless = true;
+            result.restart_required = true;
+            return Ok(result);
+        }
+
+        if provider.category.as_deref() == Some("official") {
+            return Err(AppError::localized(
+                "switch.seamless.third_party_only",
+                "无感切换仅支持第三方供应商",
+                "Seamless switching only supports third-party providers",
+            ));
+        }
+
+        let proxy_config = state
+            .db
+            .get_proxy_config_for_app(app_type.as_str())
+            .await
+            .map_err(|e| AppError::Message(format!("读取代理接管状态失败: {e}")))?;
+        let has_backup = state
+            .db
+            .get_live_backup(app_type.as_str())
+            .await
+            .map_err(|e| AppError::Message(format!("读取 Live 备份失败: {e}")))?
+            .is_some();
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type);
+        let has_takeover_signal = proxy_config.enabled || has_backup || live_taken_over;
+
+        if has_takeover_signal {
+            state
+                .proxy_service
+                .set_takeover_for_app(app_type.as_str(), true)
+                .await
+                .map_err(|e| AppError::Message(format!("恢复无感切换接管失败: {e}")))?;
+            state
+                .proxy_service
+                .hot_switch_provider(app_type.as_str(), id)
+                .await
+                .map_err(|e| AppError::Message(format!("无感切换失败: {e}")))?;
+
+            return Ok(SwitchResult {
+                seamless: true,
+                restart_required: !live_taken_over,
+                ..Default::default()
+            });
+        }
+
+        let mut result = Self::switch(state, app_type.clone(), id)?;
+        state
+            .proxy_service
+            .set_takeover_for_app(app_type.as_str(), true)
+            .await
+            .map_err(|e| AppError::Message(format!("启用无感切换接管失败: {e}")))?;
+        result.seamless = true;
+        result.restart_required = true;
+        Ok(result)
     }
 
     /// Normal switch flow (non-proxy mode)

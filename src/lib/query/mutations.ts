@@ -265,11 +265,26 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (providerId: string): Promise<SwitchResult> => {
-      return await providersApi.switch(providerId, appId);
+    mutationFn: async ({
+      providerId,
+      seamless = false,
+    }: {
+      providerId: string;
+      seamless?: boolean;
+    }): Promise<SwitchResult> => {
+      return await providersApi.switch(providerId, appId, seamless);
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (result.seamless) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["proxyStatus"] }),
+          queryClient.invalidateQueries({ queryKey: ["proxyRunning"] }),
+          queryClient.invalidateQueries({
+            queryKey: ["proxyTakeoverStatus"],
+          }),
+        ]);
+      }
       if (appId === "claude-desktop") {
         await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
         await queryClient.invalidateQueries({
