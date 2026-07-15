@@ -308,12 +308,19 @@ impl StreamCheckService {
     async fn fetch_model_from_api(
         client: &Client,
         app_type: &AppType,
+        provider: &Provider,
         base_url: &str,
         api_key: &str,
         timeout: std::time::Duration,
     ) -> Option<String> {
-        let is_openai_compat = (base_url.contains("/v1") && !base_url.contains("/anthropic"))
-            || base_url.contains("openrouter.ai");
+        let is_openai_compat = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+            Some("openai_chat") | Some("openai_responses") => true,
+            Some("anthropic") => false,
+            _ => {
+                (base_url.contains("/v1") && !base_url.contains("/anthropic"))
+                    || base_url.contains("openrouter.ai")
+            }
+        };
 
         if *app_type == AppType::Gemini {
             let url = if base_url.contains("googleapis.com") {
@@ -449,7 +456,7 @@ impl StreamCheckService {
         
         // 如果 testModel 为 "auto" 或者未配置，尝试通过 API 动态探测
         if model.as_deref() == Some("auto") || model.is_none() {
-            if let Some(api_model) = Self::fetch_model_from_api(client, app_type, base_url, &api_key, timeout).await {
+            if let Some(api_model) = Self::fetch_model_from_api(client, app_type, provider, base_url, &api_key, timeout).await {
                 model = Some(api_model);
             }
         }
@@ -470,8 +477,14 @@ impl StreamCheckService {
         let prompt = prompt.unwrap_or_else(|| "hi".to_string());
 
         // 4. 根据接口格式进行探测
-        let is_openai_compat = (base_url.contains("/v1") && !base_url.contains("/anthropic"))
-            || base_url.contains("openrouter.ai");
+        let is_openai_compat = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+            Some("openai_chat") | Some("openai_responses") => true,
+            Some("anthropic") => false,
+            _ => {
+                (base_url.contains("/v1") && !base_url.contains("/anthropic"))
+                    || base_url.contains("openrouter.ai")
+            }
+        };
 
         if *app_type == AppType::Gemini {
             Self::probe_gemini_api(client, base_url, &api_key, &model, &prompt, timeout).await
