@@ -2566,7 +2566,9 @@ impl ProviderService {
         if should_hot_switch {
             let mut result = SwitchResult::default();
             if !app_type.is_additive_mode() {
-                if let Some(current_id) = crate::settings::get_effective_current_provider(&state.db, &app_type)? {
+                if let Some(current_id) =
+                    crate::settings::get_effective_current_provider(&state.db, &app_type)?
+                {
                     if current_id != id {
                         if let Some(current_provider) = providers.get(&current_id) {
                             Self::sync_common_config_snippet_for_hot_switch(
@@ -2993,38 +2995,48 @@ impl ProviderService {
     ) {
         let source_settings = match read_live_settings(app_type.clone()) {
             Ok(settings) => settings,
-            Err(live_err) => match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
-                Ok(Some(backup)) => match serde_json::from_str::<Value>(&backup.original_config) {
-                    Ok(settings) => settings,
-                    Err(backup_err) => {
-                        log::warn!(
+            Err(live_err) => {
+                match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
+                    Ok(Some(backup)) => {
+                        match serde_json::from_str::<Value>(&backup.original_config) {
+                            Ok(settings) => settings,
+                            Err(backup_err) => {
+                                log::warn!(
                             "Failed to parse takeover backup for {} provider '{}' after live read failed ({live_err}): {backup_err}",
                             app_type.as_str(),
                             provider.id
                         );
-                        return;
+                                return;
+                            }
+                        }
                     }
-                },
-                Ok(None) => {
-                    log::warn!(
+                    Ok(None) => {
+                        log::warn!(
                         "Failed to read live config for {} provider '{}' during hot-switch common config sync: {live_err}",
                         app_type.as_str(),
                         provider.id
                     );
-                    return;
-                }
-                Err(backup_err) => {
-                    log::warn!(
+                        return;
+                    }
+                    Err(backup_err) => {
+                        log::warn!(
                         "Failed to read live config for {} provider '{}' during hot-switch common config sync: {live_err}; backup read also failed: {backup_err}",
                         app_type.as_str(),
                         provider.id
                     );
-                    return;
+                        return;
+                    }
                 }
-            },
+            }
         };
 
-        Self::sync_common_config_snippet_from_live(state, app_type, provider, &source_settings, result);
+        Self::sync_common_config_snippet_from_live(
+            state,
+            app_type,
+            provider,
+            &source_settings,
+            result,
+        );
     }
 
     /// Extract common config snippet from current provider
