@@ -58,6 +58,10 @@ const projectInstalledClaudePlugin = {
   app: "claude" as const,
   scope: "project" as const,
   projectPath: "/tmp/the_old_days",
+  supportedActions: {
+    ...installedPlugin.supportedActions,
+    update: true,
+  },
 };
 
 const scopedClaudePlugins = [
@@ -147,7 +151,7 @@ describe("PluginsPage", () => {
     render(<PluginsPage />);
 
     expect(screen.getByText(/user/)).toBeInTheDocument();
-    expect(screen.getByText(/\/tmp\/the_old_days/)).toBeInTheDocument();
+    expect(screen.getAllByText(/\/tmp\/the_old_days/)).toHaveLength(2);
     expect(screen.getByText(/\/tmp\/the_futures/)).toBeInTheDocument();
     expect(screen.getAllByRole("switch")).toHaveLength(4);
     expect(
