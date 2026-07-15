@@ -263,7 +263,7 @@ pub fn apply_classifier_override(
 pub fn apply_classifier_override_from_provider(body: &mut Value, provider: &Provider) {
     let env = provider.settings_config.get("env");
     let classifier_model = env.and_then(get_classifier_model_from_env);
-    let disable_thinking = env.map_or(false, get_classifier_disable_thinking_from_env);
+    let disable_thinking = env.is_some_and(get_classifier_disable_thinking_from_env);
     apply_classifier_override(body, classifier_model, disable_thinking);
 }
 
