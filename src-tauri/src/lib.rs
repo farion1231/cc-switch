@@ -1431,6 +1431,7 @@ pub fn run() {
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,
+            commands::export_session_markdown,
             commands::create_db_backup,
             commands::list_db_backups,
             commands::restore_db_backup,
