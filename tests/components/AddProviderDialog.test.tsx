@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import type { ProviderFormValues } from "@/components/providers/forms/ProviderForm";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
@@ -124,5 +125,56 @@ describe("AddProviderDialog", () => {
         lastUsed: undefined,
       },
     });
+  });
+
+  it("preserves Bailian Codex native Responses /v1 base_url when submitting a preset", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    const bailianIndex = codexProviderPresets.findIndex(
+      (preset) => preset.name === "Bailian",
+    );
+    const bailianPreset = codexProviderPresets[bailianIndex];
+
+    expect(bailianPreset).toBeDefined();
+
+    mockFormValues = {
+      name: "Bailian",
+      websiteUrl: bailianPreset.websiteUrl,
+      settingsConfig: JSON.stringify({
+        auth: bailianPreset.auth,
+        config: bailianPreset.config,
+        modelCatalog: { models: bailianPreset.modelCatalog },
+      }),
+      presetId: `codex-${bailianIndex}`,
+      presetCategory: bailianPreset.category,
+      meta: {
+        apiFormat: bailianPreset.apiFormat,
+      },
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="codex"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "common.add",
+      }),
+    );
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted.settingsConfig.config).toContain(
+      'base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"',
+    );
+    expect(submitted.meta?.apiFormat).toBe("openai_responses");
+    expect(submitted.meta?.custom_endpoints).toHaveProperty(
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    );
   });
 });

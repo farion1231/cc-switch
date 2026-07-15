@@ -164,19 +164,47 @@ describe("Codex Chat provider presets", () => {
   it("uses native Responses API for migrated CN providers without local route mapping", () => {
     const nativeResponsesPresets = new Map<
       string,
-      { contextWindows: Record<string, number> }
+      { baseUrl: string; contextWindows: Record<string, number> }
     >([
       [
         "DouBaoSeed",
-        { contextWindows: { "doubao-seed-2-1-pro-260628": 262144 } },
+        {
+          baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+          contextWindows: { "doubao-seed-2-1-pro-260628": 262144 },
+        },
       ],
-      ["Bailian", { contextWindows: { "qwen3-coder-plus": 1048576 } }],
-      ["Longcat", { contextWindows: { "LongCat-2.0": 1048576 } }],
-      ["MiniMax", { contextWindows: { "MiniMax-M3": 1000000 } }],
-      ["MiniMax en", { contextWindows: { "MiniMax-M3": 1000000 } }],
+      [
+        "Bailian",
+        {
+          baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          contextWindows: { "qwen3-coder-plus": 1048576 },
+        },
+      ],
+      [
+        "Longcat",
+        {
+          baseUrl: "https://api.longcat.chat/openai/v1",
+          contextWindows: { "LongCat-2.0": 1048576 },
+        },
+      ],
+      [
+        "MiniMax",
+        {
+          baseUrl: "https://api.minimaxi.com/v1",
+          contextWindows: { "MiniMax-M3": 1000000 },
+        },
+      ],
+      [
+        "MiniMax en",
+        {
+          baseUrl: "https://api.minimax.io/v1",
+          contextWindows: { "MiniMax-M3": 1000000 },
+        },
+      ],
       [
         "Xiaomi MiMo",
         {
+          baseUrl: "https://api.xiaomimimo.com/v1",
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
             "mimo-v2.5": 1048576,
@@ -186,6 +214,7 @@ describe("Codex Chat provider presets", () => {
       [
         "Xiaomi MiMo Token Plan (China)",
         {
+          baseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
           contextWindows: {
             "mimo-v2.5-pro": 1048576,
             "mimo-v2.5": 1048576,
@@ -199,6 +228,8 @@ describe("Codex Chat provider presets", () => {
 
       expect(preset, `${name} preset`).toBeDefined();
       expect(preset?.apiFormat).toBe("openai_responses");
+      expect(extractCodexBaseUrl(preset?.config)).toBe(expected.baseUrl);
+      expect(preset?.endpointCandidates).toContain(expected.baseUrl);
       // 原生 Responses 预设现在带 modelCatalog：cc-switch 直连时据此生成
       // ~/.codex 的 model-catalogs.json（shell_command 编辑、不发 freeform
       // apply_patch）。带 catalog 不再强制开“本地路由映射”——前端已按
