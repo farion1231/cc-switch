@@ -45,6 +45,7 @@ export const settingsSchema = z.object({
       baseUrl: z.string().trim().optional().or(z.literal("")),
       username: z.string().trim().optional().or(z.literal("")),
       password: z.string().optional(),
+      passwordConfigured: z.boolean().optional(),
       remoteRoot: z.string().trim().optional().or(z.literal("")),
       profile: z.string().trim().optional().or(z.literal("")),
       status: z
