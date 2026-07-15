@@ -474,27 +474,40 @@ type CodexCredentials = (
     Option<String>,
 );
 
-/// 读取 Codex OAuth 凭据
+/// A Codex credential source plus the refresh timestamp used to select the
+/// freshest copy when macOS Keychain and ~/.codex/auth.json diverge.
+struct CodexCredentialSource {
+    credentials: CodexCredentials,
+    last_refresh: Option<String>,
+}
+
+/// 读取 Codex OAuth 凭据。
 ///
-/// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Codex Auth")
-/// 2. 凭据文件 ~/.codex/auth.json
+/// macOS 上 Codex 可能同时留下 Keychain 和 `~/.codex/auth.json` 两份
+/// 凭据。Keychain 不是永远较新的副本（例如 CLI 重新登录后只更新文件），
+/// 因此不能固定优先它；在两份凭据都存在时，优先凭据状态更好的一份，
+/// 状态相同则优先 `last_refresh` 更新的一份。
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
 fn read_codex_credentials() -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
-        if let Some(result) = read_codex_credentials_from_keychain() {
-            return result;
-        }
+        let keychain = read_codex_credentials_from_keychain();
+        let file = read_codex_credentials_from_file_source();
+        return choose_codex_credentials(file, keychain);
     }
 
-    read_codex_credentials_from_file()
+    #[cfg(not(target_os = "macos"))]
+    {
+        read_codex_credentials_from_file_source()
+            .map(|source| source.credentials)
+            .unwrap_or((None, None, CredentialStatus::NotFound, None))
+    }
 }
 
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
-fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
+fn read_codex_credentials_from_keychain() -> Option<CodexCredentialSource> {
     let output = std::process::Command::new("security")
         .args(["find-generic-password", "-s", "Codex Auth", "-w"])
         .output()
@@ -510,30 +523,101 @@ fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
         return None;
     }
 
-    Some(parse_codex_credentials_json(json_str))
+    Some(codex_credential_source_from_content(json_str))
 }
 
 /// 从文件读取 Codex 凭据
-fn read_codex_credentials_from_file() -> CodexCredentials {
+fn read_codex_credentials_from_file_source() -> Option<CodexCredentialSource> {
     let auth_path = crate::codex_config::get_codex_auth_path();
 
     if !auth_path.exists() {
-        return (None, None, CredentialStatus::NotFound, None);
+        return None;
     }
 
     let content = match std::fs::read_to_string(&auth_path) {
         Ok(c) => c,
         Err(e) => {
-            return (
-                None,
-                None,
-                CredentialStatus::ParseError,
-                Some(format!("Failed to read Codex auth file: {e}")),
-            );
+            return Some(CodexCredentialSource {
+                credentials: (
+                    None,
+                    None,
+                    CredentialStatus::ParseError,
+                    Some(format!("Failed to read Codex auth file: {e}")),
+                ),
+                last_refresh: None,
+            });
         }
     };
 
-    parse_codex_credentials_json(&content)
+    Some(codex_credential_source_from_content(&content))
+}
+
+fn codex_credential_source_from_content(content: &str) -> CodexCredentialSource {
+    let last_refresh = serde_json::from_str::<CodexAuthJson>(content)
+        .ok()
+        .and_then(|auth| auth.last_refresh);
+
+    CodexCredentialSource {
+        credentials: parse_codex_credentials_json(content),
+        last_refresh,
+    }
+}
+
+fn credential_quality(status: &CredentialStatus) -> u8 {
+    match status {
+        CredentialStatus::Valid => 3,
+        CredentialStatus::Expired => 2,
+        CredentialStatus::ParseError => 1,
+        CredentialStatus::NotFound => 0,
+    }
+}
+
+fn refresh_timestamp(source: &CodexCredentialSource) -> Option<i64> {
+    source
+        .last_refresh
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp())
+}
+
+/// Select the most useful credential copy without exposing or merging tokens.
+///
+/// A fresh file copy must win over an old Keychain copy, while still allowing
+/// a newer Keychain copy to win when the file is stale or missing.
+fn choose_codex_credentials(
+    file: Option<CodexCredentialSource>,
+    keychain: Option<CodexCredentialSource>,
+) -> CodexCredentials {
+    match (file, keychain) {
+        (Some(file), Some(keychain)) => {
+            let file_quality = credential_quality(&file.credentials.2);
+            let keychain_quality = credential_quality(&keychain.credentials.2);
+
+            if file_quality != keychain_quality {
+                return if file_quality > keychain_quality {
+                    file.credentials
+                } else {
+                    keychain.credentials
+                };
+            }
+
+            match (refresh_timestamp(&file), refresh_timestamp(&keychain)) {
+                (Some(file_ts), Some(keychain_ts)) if file_ts != keychain_ts => {
+                    if file_ts > keychain_ts {
+                        file.credentials
+                    } else {
+                        keychain.credentials
+                    }
+                }
+                (Some(_), None) => file.credentials,
+                (None, Some(_)) => keychain.credentials,
+                _ => keychain.credentials,
+            }
+        }
+        (Some(file), None) => file.credentials,
+        (None, Some(keychain)) => keychain.credentials,
+        (None, None) => (None, None, CredentialStatus::NotFound, None),
+    }
 }
 
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
@@ -1273,18 +1357,17 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
                 CredentialStatus::Expired => {
-                    // 即使可能过期也尝试调用 API
+                    // last_refresh 只是本地启发式提示，最终状态由官方 API 决定。
+                    // 无论 API 返回成功还是确定性错误，都把真实结果交给前端；
+                    // 不能把 401、响应解析失败等再次折叠成 stale 提示。
                     if let Some(token) = token {
-                        let result = query_codex_quota(
+                        return query_codex_quota(
                             &token,
                             account_id.as_deref(),
                             "codex",
                             "Authentication failed. Please re-login with Codex CLI.",
                         )
-                        .await?;
-                        if result.success {
-                            return Ok(result);
-                        }
+                        .await;
                     }
                     Ok(SubscriptionQuota::error(
                         "codex",
@@ -1357,6 +1440,22 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
+    fn test_source(
+        token: &str,
+        status: CredentialStatus,
+        last_refresh: Option<&str>,
+    ) -> CodexCredentialSource {
+        CodexCredentialSource {
+            credentials: (
+                Some(token.to_string()),
+                Some("test-account".to_string()),
+                status,
+                None,
+            ),
+            last_refresh: last_refresh.map(str::to_string),
+        }
+    }
+
     #[test]
     fn window_seconds_map_to_expected_tier_names() {
         // 官方特例窗口
@@ -1368,5 +1467,43 @@ mod tests {
         // 其他窗口按小时/天回退命名
         assert_eq!(window_seconds_to_tier_name(3600), "1_hour");
         assert_eq!(window_seconds_to_tier_name(86400), "1_day");
+    }
+
+    #[test]
+    fn newer_valid_file_wins_over_stale_keychain() {
+        let selected = choose_codex_credentials(
+            Some(test_source(
+                "file-token",
+                CredentialStatus::Valid,
+                Some("2026-07-10T03:02:51Z"),
+            )),
+            Some(test_source(
+                "keychain-token",
+                CredentialStatus::Expired,
+                Some("2026-02-27T07:04:28Z"),
+            )),
+        );
+
+        assert!(matches!(selected.2, CredentialStatus::Valid));
+        assert_eq!(selected.0.as_deref(), Some("file-token"));
+    }
+
+    #[test]
+    fn newest_source_wins_when_both_credentials_are_valid() {
+        let selected = choose_codex_credentials(
+            Some(test_source(
+                "file-token",
+                CredentialStatus::Valid,
+                Some("2026-07-10T03:02:51Z"),
+            )),
+            Some(test_source(
+                "keychain-token",
+                CredentialStatus::Valid,
+                Some("2026-07-11T03:02:51Z"),
+            )),
+        );
+
+        assert!(matches!(selected.2, CredentialStatus::Valid));
+        assert_eq!(selected.0.as_deref(), Some("keychain-token"));
     }
 }
