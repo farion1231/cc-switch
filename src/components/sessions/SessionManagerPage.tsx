@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
+  Download,
 } from "lucide-react";
 import {
   useDeleteSessionMutation,
@@ -61,6 +62,7 @@ import { SessionMessageItem } from "./SessionMessageItem";
 import { SessionTocDialog, SessionTocSidebar } from "./SessionToc";
 import {
   extractCodexPromptPreview,
+  formatSessionMarkdown,
   formatSessionMessagePreview,
   formatSessionTitle,
   formatTimestamp,
@@ -69,6 +71,7 @@ import {
   getProviderLabel,
   getSessionDirectoryGroupKey,
   getSessionKey,
+  getSessionMarkdownFileName,
   groupSessionsByProviderAndDirectory,
   type SessionDirectoryGroup,
   type SessionProviderGroup,
@@ -205,6 +208,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     () => new Set(),
   );
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -325,6 +329,17 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       selectedSession?.providerId,
       selectedSession?.sourcePath,
     );
+  const hasExportableMessages = useMemo(
+    () =>
+      messages.some((message) => {
+        const role = message.role.toLowerCase();
+        return (
+          (role === "user" || role === "assistant") &&
+          message.content.trim().length > 0
+        );
+      }),
+    [messages],
+  );
   const deleteSessionMutation = useDeleteSessionMutation();
   const isDeleting = deleteSessionMutation.isPending || isBatchDeleting;
 
@@ -436,6 +451,45 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       const fallback = selectedSession.resumeCommand;
       await handleCopy(fallback, t("sessionManager.resumeFallbackCopied"));
       toast.error(extractErrorMessage(error) || t("sessionManager.openFailed"));
+    }
+  };
+
+  const handleExportMarkdown = async () => {
+    if (!selectedSession || isExporting) return;
+
+    const markdown = formatSessionMarkdown(messages);
+    if (!markdown) {
+      toast.error(
+        t("sessionManager.exportEmpty", {
+          defaultValue: "该会话没有可导出的对话内容",
+        }),
+      );
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const destination = await sessionsApi.exportMarkdown(
+        getSessionMarkdownFileName(selectedSession),
+        markdown,
+      );
+      if (destination) {
+        toast.success(
+          t("sessionManager.exportSuccess", {
+            defaultValue: "会话已导出",
+          }),
+          { description: destination },
+        );
+      }
+    } catch (error) {
+      toast.error(
+        t("sessionManager.exportFailed", {
+          defaultValue: "导出会话失败: {{error}}",
+          error: extractErrorMessage(error),
+        }),
+      );
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -1518,17 +1572,54 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                       {/* 右侧：操作按钮组 */}
                       <div className="flex items-center gap-2 shrink-0">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1.5"
+                              aria-label={t("sessionManager.export", {
+                                defaultValue: "导出会话",
+                              })}
+                              onClick={() => void handleExportMarkdown()}
+                              disabled={
+                                isLoadingMessages ||
+                                !hasExportableMessages ||
+                                isExporting
+                              }
+                            >
+                              <Download className="size-3.5" />
+                              <span className="hidden lg:inline">
+                                {isExporting
+                                  ? t("sessionManager.exporting", {
+                                      defaultValue: "导出中...",
+                                    })
+                                  : t("sessionManager.export", {
+                                      defaultValue: "导出会话",
+                                    })}
+                              </span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t("sessionManager.exportTooltip", {
+                              defaultValue: "将对话记录导出为 Markdown 文件",
+                            })}
+                          </TooltipContent>
+                        </Tooltip>
                         {isMac() && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
                                 size="sm"
                                 className="gap-1.5"
+                                aria-label={t("sessionManager.resume", {
+                                  defaultValue: "恢复会话",
+                                })}
                                 onClick={() => void handleResume()}
                                 disabled={!selectedSession.resumeCommand}
                               >
                                 <Play className="size-3.5" />
-                                <span className="hidden sm:inline">
+                                <span className="hidden lg:inline">
                                   {t("sessionManager.resume", {
                                     defaultValue: "恢复会话",
                                   })}
@@ -1552,6 +1643,9 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               size="sm"
                               variant="destructive"
                               className="gap-1.5"
+                              aria-label={t("sessionManager.delete", {
+                                defaultValue: "删除会话",
+                              })}
                               onClick={() =>
                                 setDeleteTargets([selectedSession])
                               }
@@ -1560,7 +1654,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                               }
                             >
                               <Trash2 className="size-3.5" />
-                              <span className="hidden sm:inline">
+                              <span className="hidden lg:inline">
                                 {isDeleting
                                   ? t("sessionManager.deleting", {
                                       defaultValue: "删除中...",
