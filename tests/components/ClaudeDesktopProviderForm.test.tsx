@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import { ClaudeDesktopProviderForm } from "@/components/providers/forms/ClaudeDesktopProviderForm";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
+vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
+  CodexOAuthSection: () => <div data-testid="codex-oauth-section" />,
+}));
+
 vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopDefaultRoutes: () => Promise.resolve([]),
@@ -263,5 +267,85 @@ describe("ClaudeDesktopProviderForm", () => {
         model: "claude-sonnet-5",
       },
     });
+  });
+
+  it("通过 ChatGPT Codex base URL 识别 OAuth 并保留账号绑定", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Codex OAuth",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://chatgpt.com/backend-api/codex",
+          },
+        },
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "codex-account-1",
+          },
+          codexFastMode: true,
+          claudeDesktopMode: "direct",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-4-6": { model: "claude-sonnet-4-6" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    expect(screen.getByTestId("codex-oauth-section")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.meta.providerType).toBe("codex_oauth");
+    expect(submitted.meta.authBinding).toMatchObject({
+      source: "managed_account",
+      authProvider: "codex_oauth",
+      accountId: "codex-account-1",
+    });
+    expect(submitted.meta.codexFastMode).toBe(true);
+  });
+
+  it("通过 Claude Desktop settingsConfig fallback endpoint 识别 Codex OAuth", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Imported Codex OAuth",
+        settingsConfig: {
+          baseURL: "https://chatgpt.com/backend-api/codex",
+        },
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "codex-account-1",
+          },
+          codexFastMode: true,
+          claudeDesktopMode: "direct",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-4-6": { model: "claude-sonnet-4-6" },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    expect(screen.getByTestId("codex-oauth-section")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.meta.providerType).toBe("codex_oauth");
+    expect(submitted.meta.authBinding).toMatchObject({
+      source: "managed_account",
+      authProvider: "codex_oauth",
+      accountId: "codex-account-1",
+    });
+    expect(submitted.meta.codexFastMode).toBe(true);
   });
 });

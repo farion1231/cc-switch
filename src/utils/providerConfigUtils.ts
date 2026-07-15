@@ -711,6 +711,60 @@ export const isCodexChatWireApi = (
 ): boolean =>
   CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
 
+export const firstNonEmptyString = (
+  ...values: Array<unknown>
+): string | undefined => {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
+};
+
+export const resolveClaudeBaseUrlFromSettingsConfig = (
+  settingsConfig?: string | null,
+): string | undefined => {
+  if (!settingsConfig?.trim()) return undefined;
+
+  try {
+    const parsed = JSON.parse(settingsConfig) as Record<string, unknown>;
+    const env =
+      parsed.env && typeof parsed.env === "object"
+        ? (parsed.env as Record<string, unknown>)
+        : undefined;
+    const apiEndpoint =
+      parsed.apiEndpoint && typeof parsed.apiEndpoint === "object"
+        ? (parsed.apiEndpoint as Record<string, unknown>)
+        : undefined;
+
+    return firstNonEmptyString(
+      env?.ANTHROPIC_BASE_URL,
+      parsed.base_url,
+      parsed.baseURL,
+      parsed.apiEndpoint,
+      apiEndpoint?.url,
+    );
+  } catch {
+    return undefined;
+  }
+};
+
+export const isChatGptCodexOAuthBaseUrl = (
+  baseUrl: string | undefined | null,
+): boolean => {
+  try {
+    const url = new URL((baseUrl ?? "").trim());
+    return (
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === "chatgpt.com" &&
+      url.pathname.replace(/\/+$/, "") === "/backend-api/codex"
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const isCodexAnthropicWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>

@@ -4,6 +4,7 @@ import {
   extractCodexExperimentalBearerToken,
   extractCodexModelName,
   extractCodexTopLevelInt,
+  isChatGptCodexOAuthBaseUrl,
   isCodexGoalModeEnabled,
   removeCodexTopLevelField,
   setCodexBaseUrl,
@@ -14,6 +15,25 @@ import {
 } from "@/utils/providerConfigUtils";
 
 describe("Codex TOML utils", () => {
+  it("matches only the ChatGPT Codex OAuth endpoint", () => {
+    expect(
+      isChatGptCodexOAuthBaseUrl(" https://chatgpt.com/backend-api/codex/ "),
+    ).toBe(true);
+    expect(
+      isChatGptCodexOAuthBaseUrl(
+        "https://relay.example/v1?upstream=https://chatgpt.com/backend-api/codex",
+      ),
+    ).toBe(false);
+    expect(
+      isChatGptCodexOAuthBaseUrl(
+        "https://relay.example/chatgpt.com/backend-api/codex",
+      ),
+    ).toBe(false);
+    expect(
+      isChatGptCodexOAuthBaseUrl("http://chatgpt.com/backend-api/codex"),
+    ).toBe(false);
+  });
+
   it("removes base_url line when set to empty", () => {
     const input = [
       'model_provider = "openai"',
@@ -70,9 +90,9 @@ describe("Codex TOML utils", () => {
       "",
       "[model_providers.custom]",
       'name = "custom"',
-      "base_url = \"https://su'us.codes/v1\"",
+      'base_url = "https://su\'us.codes/v1"',
       'wire_api = "responses"',
-      'requires_openai_auth = true',
+      "requires_openai_auth = true",
       "",
     ].join("\n");
 
@@ -93,7 +113,7 @@ describe("Codex TOML utils", () => {
       'base_url = "https://old.example/v1"',
       'base_url = "https://older.example/v1"',
       'wire_api = "responses"',
-      'requires_openai_auth = true',
+      "requires_openai_auth = true",
       "",
     ].join("\n");
 

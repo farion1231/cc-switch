@@ -3,6 +3,7 @@
 //! Handles reading and writing live configuration files for Claude, Codex, and Gemini.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -12,7 +13,7 @@ use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
-use crate::provider::Provider;
+use crate::provider::{ClaudeActivationMode, Provider};
 use crate::services::mcp::McpService;
 use crate::store::AppState;
 
@@ -164,8 +165,59 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
 }
 
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
+    let base_url = [
+        settings
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(Value::as_str),
+        settings.get("base_url").and_then(Value::as_str),
+        settings.get("baseURL").and_then(Value::as_str),
+        settings.get("apiEndpoint").and_then(Value::as_str),
+        settings.pointer("/apiEndpoint/url").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty())
+    .map(str::to_string);
+    let fallback_api_key = settings
+        .get("apiKey")
+        .or_else(|| settings.get("api_key"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
     let mut v = settings.clone();
     if let Some(obj) = v.as_object_mut() {
+        let env = obj.entry("env".to_string()).or_insert_with(|| json!({}));
+        if !env.is_object() {
+            *env = json!({});
+        }
+        if let Some(env) = env.as_object_mut() {
+            let has_base_url = env
+                .get("ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            if !has_base_url {
+                if let Some(base_url) = base_url {
+                    env.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(base_url));
+                }
+            }
+
+            let has_anthropic_key = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+                .into_iter()
+                .any(|key| {
+                    env.get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                });
+            if !has_anthropic_key {
+                if let Some(api_key) = fallback_api_key {
+                    env.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key));
+                }
+            }
+        }
+
         // Internal-only fields - never write to Claude Code settings.json
         obj.remove("api_format");
         obj.remove("apiFormat");
@@ -692,6 +744,23 @@ pub(crate) fn write_live_with_common_config(
     app_type: &AppType,
     provider: &Provider,
 ) -> Result<(), AppError> {
+    write_live_with_common_config_inner(db, app_type, provider, true)
+}
+
+pub(crate) fn write_live_with_common_config_for_provider_switch(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+) -> Result<(), AppError> {
+    write_live_with_common_config_inner(db, app_type, provider, false)
+}
+
+fn write_live_with_common_config_inner(
+    db: &Database,
+    app_type: &AppType,
+    provider: &Provider,
+    use_current_live_codex_model_provider_anchor: bool,
+) -> Result<(), AppError> {
     let mut effective_provider = provider.clone();
     effective_provider.settings_config =
         build_effective_settings_with_common_config(db, app_type, provider)?;
@@ -706,7 +775,39 @@ pub(crate) fn write_live_with_common_config(
         return Ok(());
     }
 
-    write_live_snapshot(app_type, &effective_provider)
+    if use_current_live_codex_model_provider_anchor {
+        write_live_snapshot(app_type, &effective_provider)
+    } else {
+        write_live_snapshot_with_codex_model_provider_anchor(app_type, &effective_provider, None)
+    }
+}
+
+fn claude_settings_path_for_dir(dir: &Path) -> PathBuf {
+    let settings = dir.join("settings.json");
+    if settings.exists() {
+        return settings;
+    }
+
+    let legacy = dir.join("claude.json");
+    if legacy.exists() {
+        return legacy;
+    }
+
+    settings
+}
+
+pub(crate) fn write_claude_profile_with_common_config(
+    db: &Database,
+    provider: &Provider,
+    profile_dir: &Path,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, &AppType::Claude, provider)?;
+
+    let path = claude_settings_path_for_dir(profile_dir);
+    let settings = sanitize_claude_settings_for_live(&effective_provider.settings_config);
+    write_json_file(&path, &settings)
 }
 
 pub(crate) fn strip_common_config_from_live_settings(
@@ -996,6 +1097,23 @@ impl LiveSnapshot {
 
 /// Write live configuration snapshot for a provider
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+    let model_provider_anchor_config = if matches!(app_type, AppType::Codex) {
+        crate::codex_config::read_codex_config_text().ok()
+    } else {
+        None
+    };
+    write_live_snapshot_with_codex_model_provider_anchor(
+        app_type,
+        provider,
+        model_provider_anchor_config.as_deref(),
+    )
+}
+
+fn write_live_snapshot_with_codex_model_provider_anchor(
+    app_type: &AppType,
+    provider: &Provider,
+    codex_model_provider_anchor_config: Option<&str>,
+) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
             let path = get_claude_settings_path();
@@ -1030,6 +1148,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 provider.category.as_deref(),
                 auth,
                 config_str,
+                codex_model_provider_anchor_config,
                 profile,
             )?;
         }
@@ -1182,6 +1301,8 @@ pub(crate) fn sync_current_provider_for_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
+    let mut preserve_claude_profile_mcp = false;
+
     if app_type.is_additive_mode() {
         sync_all_providers_to_live(state, app_type)?;
     } else {
@@ -1193,14 +1314,19 @@ pub(crate) fn sync_current_provider_for_app_to_live(
 
         let providers = state.db.get_all_providers(app_type.as_str())?;
         if let Some(provider) = providers.get(&current_id) {
-            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            preserve_claude_profile_mcp = is_claude_profile_only(app_type, provider);
+            if !preserve_claude_profile_mcp {
+                write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            }
         }
     }
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
     // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
+    if !preserve_claude_profile_mcp {
+        McpService::sync_enabled_for_app(state, app_type)?;
+    }
 
     Ok(())
 }
@@ -1233,7 +1359,7 @@ fn sync_current_provider_for_app_respecting_takeover(
     if has_live_backup || live_taken_over {
         if matches!(app_type, AppType::ClaudeDesktop) {
             write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
-        } else {
+        } else if !is_claude_profile_only(app_type, provider) {
             futures::executor::block_on(
                 state
                     .proxy_service
@@ -1244,7 +1370,11 @@ fn sync_current_provider_for_app_respecting_takeover(
         return Ok(());
     }
 
-    write_live_with_common_config(state.db.as_ref(), app_type, provider)
+    if !is_claude_profile_only(app_type, provider) {
+        write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+    }
+
+    Ok(())
 }
 
 /// Sync current provider to live configuration
@@ -1271,7 +1401,10 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
     // MCP sync（best-effort 逐应用投影，内部已聚合失败）。错误暂存到
     // Skill 同步之后再返回：MCP 的失败不该跳过 Skill 同步，但调用方
     //（配置导入 / 云同步恢复）需要知道结果不完整。
-    let mcp_result = McpService::sync_all_enabled(state);
+    let mcp_result = sync_mcp_preserving_claude_profile_only(
+        state,
+        current_claude_provider_is_profile_only(state)?,
+    );
 
     // Skill sync
     for app_type in AppType::all() {
@@ -1281,7 +1414,71 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         }
     }
 
-    mcp_result
+    let claude_profile_assets_result = sync_current_claude_profile_assets(state);
+
+    mcp_result?;
+    claude_profile_assets_result
+}
+
+fn sync_current_claude_profile_assets(state: &AppState) -> Result<(), AppError> {
+    let Some(current_id) =
+        crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+    else {
+        return Ok(());
+    };
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    let Some(provider) = providers.get(&current_id) else {
+        return Ok(());
+    };
+    let plan = super::ProviderService::claude_switch_plan(provider);
+    if !matches!(plan.activation_mode, ClaudeActivationMode::ProfileAndConfig) {
+        return Ok(());
+    }
+    let profile_dir = plan.override_dir.as_deref().ok_or_else(|| {
+        AppError::Message("Claude profile-and-config sync requires a profile directory".to_string())
+    })?;
+
+    super::ProviderService::sync_claude_profile_assets_for_terminal_launch(
+        state,
+        Path::new(profile_dir),
+    )
+}
+
+fn sync_mcp_preserving_claude_profile_only(
+    state: &AppState,
+    preserve_claude_profile_mcp: bool,
+) -> Result<(), AppError> {
+    if preserve_claude_profile_mcp {
+        McpService::sync_all_enabled_without_claude(state)
+    } else {
+        McpService::sync_all_enabled(state)
+    }
+}
+
+fn current_claude_provider_is_profile_only(state: &AppState) -> Result<bool, AppError> {
+    let Some(current_id) =
+        crate::settings::get_effective_current_provider(&state.db, &AppType::Claude)?
+    else {
+        return Ok(false);
+    };
+
+    let providers = state.db.get_all_providers(AppType::Claude.as_str())?;
+    Ok(providers
+        .get(&current_id)
+        .is_some_and(|provider| is_claude_profile_only(&AppType::Claude, provider)))
+}
+
+fn is_claude_profile_only(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(
+        (
+            app_type,
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.claude_activation_mode.as_ref())
+        ),
+        (AppType::Claude, Some(ClaudeActivationMode::ProfileOnly))
+    )
 }
 
 /// Read current live settings for an app type
@@ -1926,6 +2123,72 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
+    use tempfile::TempDir;
+
+    struct TestHomeGuard {
+        _dir: TempDir,
+        old_home: Option<std::ffi::OsString>,
+        old_test_home: Option<std::ffi::OsString>,
+    }
+
+    impl TestHomeGuard {
+        fn new() -> Self {
+            let dir = TempDir::new().expect("failed to create temp home");
+            let old_home = std::env::var_os("HOME");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+
+            std::env::set_var("HOME", dir.path());
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+            Self {
+                _dir: dir,
+                old_home,
+                old_test_home,
+            }
+        }
+    }
+
+    impl Drop for TestHomeGuard {
+        fn drop(&mut self) {
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn sanitize_claude_settings_normalizes_fallback_credentials_for_live_profile() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": ""
+            },
+            "apiEndpoint": {
+                "url": " https://fallback.example.com/anthropic/ "
+            },
+            "apiKey": " fallback-key ",
+            "api_format": "anthropic"
+        });
+
+        let live = sanitize_claude_settings_for_live(&settings);
+        assert_eq!(
+            live.pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://fallback.example.com/anthropic/")
+        );
+        assert_eq!(
+            live.pointer("/env/ANTHROPIC_API_KEY")
+                .and_then(Value::as_str),
+            Some("fallback-key")
+        );
+        assert!(live.get("api_format").is_none());
+    }
 
     #[test]
     fn kimi_for_coding_effective_settings_backfill_256k_context() {
@@ -2346,6 +2609,56 @@ base_url = "https://a.example/v1"
         let stripped =
             remove_common_config_from_settings(&AppType::Codex, &applied, snippet).unwrap();
         assert_eq!(stripped, settings);
+    }
+
+    #[test]
+    #[serial]
+    fn codex_live_snapshot_normalizes_openai_custom_provider_to_stable_key() {
+        let _home = TestHomeGuard::new();
+        let config_path = crate::codex_config::get_codex_config_path();
+        std::fs::create_dir_all(
+            config_path
+                .parent()
+                .expect("config path should have parent"),
+        )
+        .expect("create codex config dir");
+        crate::config::write_text_file(
+            &config_path,
+            r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://relay.example/v1"
+"#,
+        )
+        .expect("write existing codex config");
+
+        let mut provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "auth": {},
+                "config": r#"model_provider = "OpenAI"
+model = "gpt-5"
+
+[model_providers.OpenAI]
+name = "OpenAI"
+base_url = "https://relay.example/v1"
+"#
+            }),
+            None,
+        );
+        provider.category = Some("custom".to_string());
+
+        write_live_snapshot(&AppType::Codex, &provider).expect("write codex live snapshot");
+
+        let written = std::fs::read_to_string(config_path).expect("read codex config");
+        assert_eq!(
+            crate::codex_config::extract_codex_model_provider(&written).as_deref(),
+            Some(crate::codex_config::CC_SWITCH_CODEX_MODEL_PROVIDER_ID)
+        );
+        assert!(written.contains("[model_providers.custom]"));
+        assert!(!written.contains("[model_providers.OpenAI]"));
     }
 
     #[test]

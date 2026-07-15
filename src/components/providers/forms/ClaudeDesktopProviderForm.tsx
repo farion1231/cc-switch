@@ -68,6 +68,10 @@ import {
   type ClaudeDesktopDefaultRoute,
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  isChatGptCodexOAuthBaseUrl,
+  resolveClaudeBaseUrlFromSettingsConfig,
+} from "@/utils/providerConfigUtils";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   presetId?: string;
@@ -129,6 +133,16 @@ function envString(
   if (!env || typeof env !== "object") return "";
   const value = (env as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
+}
+
+function resolveClaudeBaseUrlFromSettingsRecord(
+  settingsConfig: Record<string, unknown> | undefined,
+) {
+  return (
+    resolveClaudeBaseUrlFromSettingsConfig(
+      JSON.stringify(settingsConfig ?? {}),
+    ) ?? ""
+  );
 }
 
 function clonePlainRecord(value: unknown): Record<string, unknown> {
@@ -263,7 +277,7 @@ export function ClaudeDesktopProviderForm({
     initialData?.meta?.apiFormat ?? "anthropic",
   );
   const [baseUrl, setBaseUrl] = useState(
-    envString(initialData?.settingsConfig, "ANTHROPIC_BASE_URL"),
+    resolveClaudeBaseUrlFromSettingsRecord(initialData?.settingsConfig),
   );
   const [apiKey, setApiKey] = useState(
     envString(initialData?.settingsConfig, "ANTHROPIC_AUTH_TOKEN") ||
@@ -375,8 +389,18 @@ export function ClaudeDesktopProviderForm({
     }),
     [t],
   );
+  const effectiveBaseUrl =
+    baseUrl.trim() ||
+    resolveClaudeBaseUrlFromSettingsConfig(form.watch("settingsConfig")) ||
+    "";
   const activeProviderType =
-    activePreset?.providerType ?? initialData?.meta?.providerType;
+    activePreset?.providerType ??
+    initialData?.meta?.providerType ??
+    (effectiveBaseUrl.includes("githubcopilot.com")
+      ? "github_copilot"
+      : isChatGptCodexOAuthBaseUrl(effectiveBaseUrl)
+        ? "codex_oauth"
+        : undefined);
   const isOfficial =
     initialData?.category === "official" ||
     activePreset?.category === "official";

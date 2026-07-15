@@ -6,3 +6,6 @@ onlyBuiltDependencies:
 
 ignoredBuiltDependencies:
   - msw
+
+allowBuilds:
+  esbuild: true
