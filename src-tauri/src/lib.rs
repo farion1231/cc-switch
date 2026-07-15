@@ -24,6 +24,8 @@ mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
+mod portable;
+mod portable_window_state;
 mod prompt;
 mod prompt_files;
 mod provider;
@@ -223,8 +225,17 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
-    panic_hook::setup_panic_hook();
+    match portable::initialize() {
+        Ok(()) => {
+            if let Some(paths) = portable::paths() {
+                panic_hook::init_app_config_dir(paths.app_dir().to_path_buf());
+            }
+
+            // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
+            panic_hook::setup_panic_hook();
+        }
+        Err(error) => panic!("{error}"),
+    }
 
     let mut builder = tauri::Builder::default();
 
@@ -269,7 +280,7 @@ pub fn run() {
         }));
     }
 
-    let builder = builder
+    builder = builder
         // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
@@ -306,14 +317,28 @@ pub fn run() {
         })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_state_flags(window_state_flags())
-                .build(),
-        )
-        .setup(|app| {
+        .plugin(tauri_plugin_opener::init());
+
+    if !portable::is_portable() {
+        builder = builder
+            .plugin(tauri_plugin_store::Builder::new().build())
+            .plugin(
+                tauri_plugin_window_state::Builder::default()
+                    .with_state_flags(window_state_flags())
+                    .build(),
+            );
+    }
+
+    builder = builder.setup(|app| {
+            if portable::is_portable() {
+                #[cfg(target_os = "windows")]
+                lightweight::create_main_window(app.handle())?;
+
+                if let Err(error) = portable_window_state::restore(app.handle()) {
+                    log::warn!("恢复便携窗口状态失败: {error}");
+                }
+            }
+
             let _ = rustls::crypto::ring::default_provider().install_default();
 
             // 预先刷新 Store 覆盖配置，确保后续路径读取正确（日志/数据库等）
@@ -862,7 +887,11 @@ pub fn run() {
 
                 #[cfg(all(debug_assertions, windows))]
                 {
-                    if let Err(e) = app.deep_link().register_all() {
+                    if portable::is_portable() {
+                        log::info!(
+                            "Skipping Windows debug deep-link registration in portable mode"
+                        );
+                    } else if let Err(e) = app.deep_link().register_all() {
                         log::error!("✗ Failed to register deep link schemes: {}", e);
                     } else {
                         log::info!("✓ Deep link schemes registered (Windows debug)");
@@ -1513,8 +1542,25 @@ pub fn run() {
             commands::is_lightweight_mode,
         ]);
 
+    let context = tauri::generate_context!();
+    #[cfg(target_os = "windows")]
+    let context = {
+        let mut context = context;
+        if portable::is_portable() {
+            let main_window = context
+                .config_mut()
+                .app
+                .windows
+                .iter_mut()
+                .find(|window| window.label == "main")
+                .unwrap_or_else(|| panic!("main window configuration not found"));
+            main_window.create = false;
+        }
+        context
+    };
+
     let app = builder
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while running tauri application");
 
     app.run(|app_handle, event| {
@@ -1539,12 +1585,16 @@ pub fn run() {
                 // 互等造成进程永久卡死（更新已安装但应用冻结、不再重启，见 #3998）。
                 //
                 // 重启路径交还 Tauri 默认流程即可：
-                //   - 窗口状态：插件 Exit 钩子在主线程保存（同线程读取窗口几何，无死锁）
+                //   - 窗口状态：普通模式由插件 Exit 钩子在主线程保存；便携模式未注册
+                //     插件，因此在下面返回前同步保存（同线程读取窗口几何，无死锁）
                 //   - 托盘图标：Tauri 内部 cleanup_before_exit 清理，正常走 Drop
                 //   - 代理/Live 配置：无需恢复，重启后新实例立即接管并恢复代理状态
                 //   - 100ms 落盘等待：重启前的 DB 写入均为命令驱动、此刻已完成，
                 //     与所有 Tauri 应用默认重启路径的行为一致，无需额外等待
                 ExitRequestAction::DeferToTauriRestart => {
+                    if portable::is_portable() {
+                        save_window_state_before_exit(app_handle);
+                    }
                     log::info!("收到重启请求 (code={code:?})，交由 Tauri 默认重启流程 re-exec");
                     return;
                 }
@@ -2032,6 +2082,15 @@ fn window_state_flags() -> StateFlags {
 /// 当前应用的退出路径会拦截 `ExitRequested` 并最终直接 `std::process::exit(0)`，
 /// 这里需要在真正结束进程前手动落盘，避免 window-state 插件的默认退出钩子被绕过。
 pub fn save_window_state_before_exit(app_handle: &tauri::AppHandle) {
+    if portable::is_portable() {
+        if let Err(err) = portable_window_state::save(app_handle) {
+            log::error!("退出前保存便携窗口状态失败: {err}");
+        } else {
+            log::info!("已在退出前保存便携窗口状态");
+        }
+        return;
+    }
+
     if let Err(err) = app_handle.save_window_state(window_state_flags()) {
         log::error!("退出前保存窗口状态失败: {err}");
     } else {

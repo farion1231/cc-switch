@@ -2,7 +2,7 @@ use super::env_checker::EnvConflict;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
@@ -67,8 +67,11 @@ fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
 
 /// Get backup directory path
 fn get_backup_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    Ok(home.join(".cc-switch").join("backups"))
+    Ok(backup_dir_for_app_dir(&crate::config::get_app_config_dir()))
+}
+
+fn backup_dir_for_app_dir(app_dir: &Path) -> PathBuf {
+    app_dir.join("backups")
 }
 
 /// Delete a single environment variable
@@ -233,8 +236,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_backup_dir_creation() {
-        let backup_dir = get_backup_dir();
-        assert!(backup_dir.is_ok());
+    fn backup_dir_is_derived_from_app_config_dir() {
+        let app_dir = PathBuf::from("portable/data/app");
+
+        assert_eq!(backup_dir_for_app_dir(&app_dir), app_dir.join("backups"));
     }
 }

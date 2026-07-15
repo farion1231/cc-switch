@@ -9,6 +9,7 @@ import type { ResolvedDirectories } from "@/hooks/useSettings";
 type DirectoryAppId = Exclude<AppId, "claude-desktop">;
 
 interface DirectorySettingsProps {
+  isPortable: boolean;
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
   onAppConfigChange: (value?: string) => void;
@@ -26,6 +27,7 @@ interface DirectorySettingsProps {
 }
 
 export function DirectorySettings({
+  isPortable,
   appConfigDir,
   resolvedDirs,
   onAppConfigChange,
@@ -59,12 +61,14 @@ export function DirectorySettings({
             value={appConfigDir ?? resolvedDirs.appConfig ?? ""}
             placeholder={t("settings.browsePlaceholderApp")}
             className="text-xs"
+            disabled={isPortable}
             onChange={(event) => onAppConfigChange(event.target.value)}
           />
           <Button
             type="button"
             variant="outline"
             size="icon"
+            disabled={isPortable}
             onClick={onBrowseAppConfig}
             title={t("settings.browseDirectory")}
           >
@@ -74,6 +78,7 @@ export function DirectorySettings({
             type="button"
             variant="outline"
             size="icon"
+            disabled={isPortable}
             onClick={onResetAppConfig}
             title={t("settings.resetDefault")}
           >

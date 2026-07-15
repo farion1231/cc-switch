@@ -6,11 +6,16 @@ import { AnimatePresence, motion } from "framer-motion";
 import { isLinux } from "@/lib/platform";
 
 interface WindowSettingsProps {
+  isPortable: boolean;
   settings: SettingsFormState;
   onChange: (updates: Partial<SettingsFormState>) => void;
 }
 
-export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
+export function WindowSettings({
+  isPortable,
+  settings,
+  onChange,
+}: WindowSettingsProps) {
   const { t } = useTranslation();
 
   return (
@@ -21,33 +26,39 @@ export function WindowSettings({ settings, onChange }: WindowSettingsProps) {
       </div>
 
       <div className="space-y-3">
-        <ToggleRow
-          icon={<Power className="h-4 w-4 text-orange-500" />}
-          title={t("settings.launchOnStartup")}
-          description={t("settings.launchOnStartupDescription")}
-          checked={!!settings.launchOnStartup}
-          onCheckedChange={(value) => onChange({ launchOnStartup: value })}
-        />
+        {!isPortable && (
+          <>
+            <ToggleRow
+              icon={<Power className="h-4 w-4 text-orange-500" />}
+              title={t("settings.launchOnStartup")}
+              description={t("settings.launchOnStartupDescription")}
+              checked={!!settings.launchOnStartup}
+              onCheckedChange={(value) => onChange({ launchOnStartup: value })}
+            />
 
-        <AnimatePresence initial={false}>
-          {settings.launchOnStartup && (
-            <motion.div
-              key="silent-startup"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={{ duration: 0.3 }}
-            >
-              <ToggleRow
-                icon={<EyeOff className="h-4 w-4 text-green-500" />}
-                title={t("settings.silentStartup")}
-                description={t("settings.silentStartupDescription")}
-                checked={!!settings.silentStartup}
-                onCheckedChange={(value) => onChange({ silentStartup: value })}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
+            <AnimatePresence initial={false}>
+              {settings.launchOnStartup && (
+                <motion.div
+                  key="silent-startup"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <ToggleRow
+                    icon={<EyeOff className="h-4 w-4 text-green-500" />}
+                    title={t("settings.silentStartup")}
+                    description={t("settings.silentStartupDescription")}
+                    checked={!!settings.silentStartup}
+                    onCheckedChange={(value) =>
+                      onChange({ silentStartup: value })
+                    }
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
 
         <ToggleRow
           icon={<MonitorUp className="h-4 w-4 text-purple-500" />}

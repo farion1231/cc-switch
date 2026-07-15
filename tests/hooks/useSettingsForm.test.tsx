@@ -36,6 +36,7 @@ describe("useSettingsForm Hook", () => {
         enableClaudePluginIntegration: undefined,
         claudeConfigDir: "  /Users/demo  ",
         codexConfigDir: "   ",
+        hermesConfigDir: "  /Users/demo/.hermes  ",
         language: "en",
       },
       isLoading: false,
@@ -53,6 +54,7 @@ describe("useSettingsForm Hook", () => {
     expect(settings.enableClaudePluginIntegration).toBe(false);
     expect(settings.claudeConfigDir).toBe("/Users/demo");
     expect(settings.codexConfigDir).toBeUndefined();
+    expect(settings.hermesConfigDir).toBe("/Users/demo/.hermes");
     expect(settings.language).toBe("en");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
@@ -170,6 +172,7 @@ describe("useSettingsForm Hook", () => {
         enableClaudePluginIntegration: true,
         claudeConfigDir: "  /reset  ",
         codexConfigDir: "   ",
+        hermesConfigDir: "   ",
         language: "zh",
       });
     });
@@ -180,6 +183,7 @@ describe("useSettingsForm Hook", () => {
     expect(settings.enableClaudePluginIntegration).toBe(true);
     expect(settings.claudeConfigDir).toBe("/reset");
     expect(settings.codexConfigDir).toBeUndefined();
+    expect(settings.hermesConfigDir).toBeUndefined();
     expect(settings.language).toBe("zh");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");

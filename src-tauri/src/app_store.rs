@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use tauri_plugin_store::StoreExt;
 
@@ -26,7 +26,26 @@ pub fn get_app_config_dir_override() -> Option<PathBuf> {
     override_cache().read().ok()?.clone()
 }
 
+fn override_from_sources<StoreReader>(
+    portable_app_dir: Option<&Path>,
+    store_reader: StoreReader,
+) -> Option<PathBuf>
+where
+    StoreReader: FnOnce() -> Option<PathBuf>,
+{
+    portable_app_dir
+        .map(Path::to_path_buf)
+        .or_else(store_reader)
+}
+
 fn read_override_from_store(app: &tauri::AppHandle) -> Option<PathBuf> {
+    override_from_sources(
+        crate::portable::paths().map(|paths| paths.app_dir()),
+        || read_override_from_tauri_store(app),
+    )
+}
+
+fn read_override_from_tauri_store(app: &tauri::AppHandle) -> Option<PathBuf> {
     let store = match app.store_builder("app_paths.json").build() {
         Ok(store) => store,
         Err(e) => {
@@ -75,6 +94,9 @@ pub fn set_app_config_dir_to_store(
     app: &tauri::AppHandle,
     path: Option<&str>,
 ) -> Result<(), AppError> {
+    crate::portable::require_external_write("update app config directory Store override")
+        .map_err(AppError::Message)?;
+
     let store = app
         .store_builder("app_paths.json")
         .build()
@@ -126,10 +148,42 @@ fn resolve_path(raw: &str) -> PathBuf {
 
 /// 从旧的 settings.json 迁移 app_config_dir 到 Store
 pub fn migrate_app_config_dir_from_settings(app: &tauri::AppHandle) -> Result<(), AppError> {
+    if let Some(portable_app_dir) =
+        crate::portable::paths().map(|paths| paths.app_dir().to_path_buf())
+    {
+        update_cached_override(Some(portable_app_dir));
+        return Ok(());
+    }
+
     // app_config_dir 已从 settings.json 移除，此函数保留但不再执行迁移
     // 如果用户在旧版本设置过 app_config_dir，需要在 Store 中手动配置
     log::info!("app_config_dir 迁移功能已移除，请在设置中重新配置");
 
     let _ = refresh_app_config_dir_override(app);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portable_override_skips_store_reader() {
+        let portable_dir = PathBuf::from("portable/data/app");
+
+        let value = override_from_sources(Some(&portable_dir), || {
+            panic!("portable mode must not construct or read a Tauri Store")
+        });
+
+        assert_eq!(value, Some(portable_dir));
+    }
+
+    #[test]
+    fn normal_override_comes_from_store_reader() {
+        let store_dir = PathBuf::from("custom/app");
+
+        let value = override_from_sources(None, || Some(store_dir.clone()));
+
+        assert_eq!(value, Some(store_dir));
+    }
 }

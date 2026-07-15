@@ -196,6 +196,8 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
+    crate::portable::require_external_write("install application update")?;
+
     let updater = app
         .updater_builder()
         .build()
@@ -304,6 +306,8 @@ pub async fn set_app_config_dir_override(
 /// 设置开机自启
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
+    crate::portable::require_external_write("change auto-launch registration")?;
+
     if enabled {
         crate::auto_launch::enable_auto_launch().map_err(|e| format!("启用开机自启失败: {e}"))?;
     } else {
@@ -314,7 +318,7 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_settings_for_save;
+    use super::{auto_launch_status_for_mode, merge_settings_for_save};
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
         CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
@@ -618,12 +622,47 @@ mod tests {
 
         assert!(merged.local_migrations.is_none());
     }
+
+    #[test]
+    fn portable_auto_launch_status_skips_system_reader() {
+        let status = auto_launch_status_for_mode(true, || {
+            panic!("portable mode must not read the system auto-launch registration")
+        })
+        .expect("portable status should be available without a system read");
+
+        assert!(!status);
+    }
+
+    #[test]
+    fn normal_auto_launch_status_uses_system_reader() {
+        let status = auto_launch_status_for_mode(false, || Ok(true))
+            .expect("normal mode should return the system status");
+
+        assert!(status);
+    }
+}
+
+fn auto_launch_status_for_mode<StatusReader>(
+    portable: bool,
+    status_reader: StatusReader,
+) -> Result<bool, String>
+where
+    StatusReader: FnOnce() -> Result<bool, String>,
+{
+    if portable {
+        Ok(false)
+    } else {
+        status_reader()
+    }
 }
 
 /// 获取开机自启状态
 #[tauri::command]
 pub async fn get_auto_launch_status() -> Result<bool, String> {
-    crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
+    auto_launch_status_for_mode(crate::portable::is_portable(), || {
+        crate::auto_launch::is_auto_launch_enabled()
+            .map_err(|e| format!("获取开机自启状态失败: {e}"))
+    })
 }
 
 /// 获取整流器配置

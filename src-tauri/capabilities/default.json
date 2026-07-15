@@ -8,7 +8,7 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "updater:default",
+    "updater:allow-check",
     "core:window:allow-set-skip-taskbar",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",

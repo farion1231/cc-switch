@@ -23,6 +23,7 @@ export interface UseSettingsResult {
   isLoading: boolean;
   isSaving: boolean;
   isPortable: boolean;
+  isPortableLoading: boolean;
   appConfigDir?: string;
   resolvedDirs: ResolvedDirectories;
   requiresRestart: boolean;
@@ -193,6 +194,7 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -206,6 +208,7 @@ export function useSettings(): UseSettingsResult {
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           language: mergedSettings.language,
         };
 
@@ -220,6 +223,7 @@ export function useSettings(): UseSettingsResult {
 
         // 如果开机自启状态改变，调用系统 API
         if (
+          !isPortable &&
           payload.launchOnStartup !== undefined &&
           payload.launchOnStartup !== data?.launchOnStartup
         ) {
@@ -301,7 +305,15 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
+    [
+      data,
+      isPortable,
+      queryClient,
+      saveMutation,
+      settings,
+      syncClaudePluginIfChanged,
+      t,
+    ],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -324,12 +336,14 @@ export function useSettings(): UseSettingsResult {
         const sanitizedOpenclawDir = sanitizeDir(
           mergedSettings.openclawConfigDir,
         );
+        const sanitizedHermesDir = sanitizeDir(mergedSettings.hermesConfigDir);
         const previousAppDir = initialAppConfigDir;
         const previousClaudeDir = sanitizeDir(data?.claudeConfigDir);
         const previousCodexDir = sanitizeDir(data?.codexConfigDir);
         const previousGeminiDir = sanitizeDir(data?.geminiConfigDir);
         const previousOpencodeDir = sanitizeDir(data?.opencodeConfigDir);
         const previousOpenclawDir = sanitizeDir(data?.openclawConfigDir);
+        const previousHermesDir = sanitizeDir(data?.hermesConfigDir);
         const {
           webdavSync: _ignoredWebdavSync,
           s3Sync: _ignoredS3Sync,
@@ -343,6 +357,7 @@ export function useSettings(): UseSettingsResult {
           geminiConfigDir: sanitizedGeminiDir,
           opencodeConfigDir: sanitizedOpencodeDir,
           openclawConfigDir: sanitizedOpenclawDir,
+          hermesConfigDir: sanitizedHermesDir,
           language: mergedSettings.language,
         };
 
@@ -354,10 +369,13 @@ export function useSettings(): UseSettingsResult {
 
         await saveMutation.mutateAsync(payload);
 
-        await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        if (!isPortable) {
+          await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        }
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
+          !isPortable &&
           payload.launchOnStartup !== undefined &&
           payload.launchOnStartup !== data?.launchOnStartup
         ) {
@@ -422,20 +440,22 @@ export function useSettings(): UseSettingsResult {
           console.warn("[useSettings] Failed to refresh tray menu", error);
         }
 
-        // 如果 Claude/Codex/Gemini/OpenCode/OpenClaw 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
+        // 如果工具配置目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
         // 如果插件同步已经执行过 syncCurrentProvidersLiveSafe，则跳过避免重复
         const claudeDirChanged = sanitizedClaudeDir !== previousClaudeDir;
         const codexDirChanged = sanitizedCodexDir !== previousCodexDir;
         const geminiDirChanged = sanitizedGeminiDir !== previousGeminiDir;
         const opencodeDirChanged = sanitizedOpencodeDir !== previousOpencodeDir;
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
+        const hermesDirChanged = sanitizedHermesDir !== previousHermesDir;
         if (
           !pluginSynced &&
           (claudeDirChanged ||
             codexDirChanged ||
             geminiDirChanged ||
             opencodeDirChanged ||
-            openclawDirChanged)
+            openclawDirChanged ||
+            hermesDirChanged)
         ) {
           const syncResult = await syncCurrentProvidersLiveSafe();
           if (!syncResult.ok) {
@@ -446,7 +466,8 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);
+        const appDirChanged =
+          !isPortable && sanitizedAppDir !== (previousAppDir ?? undefined);
         setRequiresRestart(appDirChanged);
 
         if (!options?.silent) {
@@ -474,6 +495,7 @@ export function useSettings(): UseSettingsResult {
       appConfigDir,
       data,
       initialAppConfigDir,
+      isPortable,
       queryClient,
       saveMutation,
       settings,
@@ -493,6 +515,7 @@ export function useSettings(): UseSettingsResult {
     isLoading,
     isSaving: saveMutation.isPending,
     isPortable,
+    isPortableLoading: isMetadataLoading,
     appConfigDir,
     resolvedDirs,
     requiresRestart,

@@ -77,6 +77,7 @@ export function SettingsPage({
     isLoading,
     isSaving,
     isPortable,
+    isPortableLoading,
     appConfigDir,
     resolvedDirs,
     updateSettings,
@@ -210,7 +211,10 @@ export function SettingsPage({
     [autoSaveSettings, settings, t, updateSettings],
   );
 
-  const isBusy = useMemo(() => isLoading && !settings, [isLoading, settings]);
+  const isBusy = useMemo(
+    () => isPortableLoading || (isLoading && !settings),
+    [isLoading, isPortableLoading, settings],
+  );
 
   return (
     <div className="flex flex-col h-full overflow-hidden px-6">
@@ -279,6 +283,7 @@ export function SettingsPage({
                       onChange={handleAutoSave}
                     />
                     <WindowSettings
+                      isPortable={isPortable}
                       settings={settings}
                       onChange={handleAutoSave}
                     />
@@ -344,6 +349,7 @@ export function SettingsPage({
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
                           <DirectorySettings
+                            isPortable={isPortable}
                             appConfigDir={appConfigDir}
                             resolvedDirs={resolvedDirs}
                             onAppConfigChange={updateAppConfigDir}

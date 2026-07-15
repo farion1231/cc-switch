@@ -12,11 +12,15 @@ pub fn check_env_conflicts(app: String) -> Result<Vec<EnvConflict>, String> {
 /// Delete environment variables with backup
 #[tauri::command]
 pub fn delete_env_vars(conflicts: Vec<EnvConflict>) -> Result<BackupInfo, String> {
+    crate::portable::require_external_write("delete environment variables")?;
+
     delete_vars(conflicts)
 }
 
 /// Restore environment variables from backup file
 #[tauri::command]
 pub fn restore_env_backup(backup_path: String) -> Result<(), String> {
+    crate::portable::require_external_write("restore environment variables")?;
+
     restore_from_backup(backup_path)
 }
