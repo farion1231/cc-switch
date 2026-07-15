@@ -312,11 +312,8 @@ impl StreamCheckService {
         api_key: &str,
         timeout: std::time::Duration,
     ) -> Option<String> {
-        let is_openai_compat = base_url.contains("/v1") 
-            || base_url.contains("openai") 
-            || base_url.contains("deepseek") 
-            || base_url.contains("dashscope")
-            || base_url.contains("openrouter");
+        let is_openai_compat = (base_url.contains("/v1") && !base_url.contains("/anthropic"))
+            || base_url.contains("openrouter.ai");
 
         if *app_type == AppType::Gemini {
             let url = if base_url.contains("googleapis.com") {
@@ -390,6 +387,41 @@ impl StreamCheckService {
         None
     }
 
+    /// 解决测速模型检测时模型名称的兜底逻辑
+    fn extract_model_fallback(provider: &Provider, app_type: &AppType) -> String {
+        let env_keys = match app_type {
+            AppType::Claude | AppType::ClaudeDesktop => vec!["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            AppType::Gemini => vec!["GEMINI_MODEL"],
+            _ => vec!["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"],
+        };
+        if let Some(m) = Self::extract_env_value(provider, &env_keys) {
+            return m;
+        }
+
+        let settings = &provider.settings_config;
+        if let Some(m) = settings.get("model").and_then(|v| v.as_str()) {
+            if !m.trim().is_empty() {
+                return m.trim().to_string();
+            }
+        }
+        if let Some(m) = settings.get("modelName").and_then(|v| v.as_str()) {
+            if !m.trim().is_empty() {
+                return m.trim().to_string();
+            }
+        }
+        if let Some(m) = settings.get("options").and_then(|o| o.get("model")).and_then(|v| v.as_str()) {
+            if !m.trim().is_empty() {
+                return m.trim().to_string();
+            }
+        }
+
+        match app_type {
+            AppType::Claude | AppType::ClaudeDesktop => "claude-3-5-sonnet-20241022".to_string(),
+            AppType::Gemini => "gemini-2.5-flash".to_string(),
+            _ => "gpt-4o-mini".to_string(),
+        }
+    }
+
     /// 执行真实大模型可用性握手检测
     async fn probe_model_availability(
         client: &Client,
@@ -399,23 +431,12 @@ impl StreamCheckService {
         timeout: std::time::Duration,
         config: &StreamCheckConfig,
     ) -> Result<u16, AppError> {
-        // 1. 提取 API Key
-        let api_key = match app_type {
-            AppType::ClaudeDesktop | AppType::Claude => {
-                Self::extract_env_value(provider, &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"])
-            }
-            AppType::Gemini => {
-                Self::extract_env_value(provider, &["GEMINI_API_KEY", "GOOGLE_API_KEY"])
-            }
-            _ => {
-                Self::extract_env_value(provider, &["OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENCODE_API_KEY", "API_KEY"])
-            }
-        };
-
-        let api_key = match api_key {
-            Some(k) => k,
-            None => return Err(AppError::Message("Missing API Key configuration".to_string())),
-        };
+        // 1. 调用 Provider 自身的凭证解析方案提取 API Key
+        let (_, api_key) = provider.resolve_usage_credentials(app_type);
+        let api_key = api_key.trim().to_string();
+        if api_key.is_empty() {
+            return Err(AppError::Message("Missing API Key configuration".to_string()));
+        }
 
         // 2. 提取 Model：优先提取当前 Provider meta 的 testModel，若为空再使用全局配置
         let mut model = provider.meta.as_ref()
@@ -435,22 +456,7 @@ impl StreamCheckService {
 
         let model = match model {
             Some(m) => m,
-            None => {
-                match app_type {
-                    AppType::ClaudeDesktop | AppType::Claude => {
-                        Self::extract_env_value(provider, &["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"])
-                            .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string())
-                    }
-                    AppType::Gemini => {
-                        Self::extract_env_value(provider, &["GEMINI_MODEL"])
-                            .unwrap_or_else(|| "gemini-2.5-flash".to_string())
-                    }
-                    _ => {
-                        Self::extract_env_value(provider, &["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"])
-                            .unwrap_or_else(|| "gpt-4o-mini".to_string())
-                    }
-                }
-            }
+            None => Self::extract_model_fallback(provider, app_type),
         };
 
         // 3. 提取 Prompt：优先提取当前 Provider meta 的 testPrompt，若为空再使用全局配置，最后兜底为 "hi"
@@ -464,11 +470,8 @@ impl StreamCheckService {
         let prompt = prompt.unwrap_or_else(|| "hi".to_string());
 
         // 4. 根据接口格式进行探测
-        let is_openai_compat = base_url.contains("/v1") 
-            || base_url.contains("openai") 
-            || base_url.contains("deepseek") 
-            || base_url.contains("dashscope")
-            || base_url.contains("openrouter");
+        let is_openai_compat = (base_url.contains("/v1") && !base_url.contains("/anthropic"))
+            || base_url.contains("openrouter.ai");
 
         if *app_type == AppType::Gemini {
             Self::probe_gemini_api(client, base_url, &api_key, &model, &prompt, timeout).await
