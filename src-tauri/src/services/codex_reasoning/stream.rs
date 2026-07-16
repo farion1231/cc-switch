@@ -6,6 +6,11 @@
 use bytes::Bytes;
 use serde_json::Value;
 
+use crate::error::AppError;
+use crate::proxy::usage::parser::TokenUsage;
+
+use super::usage::{ContinuationRoundResult, RoundUsage};
+
 /// Extract terminal `output` array from a Responses API completed payload.
 pub fn extract_terminal_output(terminal: &Value) -> Vec<Value> {
     terminal
@@ -14,6 +19,135 @@ pub fn extract_terminal_output(terminal: &Value) -> Vec<Value> {
         .cloned()
         .unwrap_or_default()
 }
+
+
+/// Parse a full Responses-API SSE buffer into a ContinuationRoundResult.
+///
+/// Scans events for the last `response.completed` (or any event carrying
+/// `response.usage` / top-level `usage`) and extracts output + usage.
+pub fn parse_sse_to_round(
+    sse: Bytes,
+    round_index: u8,
+    duration_ms: u64,
+) -> Result<ContinuationRoundResult, AppError> {
+    let text = std::str::from_utf8(&sse).map_err(|e| {
+        AppError::InvalidInput(format!("SSE is not valid UTF-8: {e}"))
+    })?;
+
+    let mut events: Vec<Value> = Vec::new();
+    let mut data_lines: Vec<String> = Vec::new();
+
+    let flush = |data_lines: &mut Vec<String>, events: &mut Vec<Value>| {
+        if data_lines.is_empty() {
+            return;
+        }
+        let payload = data_lines.join("\n");
+        data_lines.clear();
+        if payload.is_empty() || payload == "[DONE]" {
+            return;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(&payload) {
+            events.push(v);
+        }
+    };
+
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() {
+            flush(&mut data_lines, &mut events);
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("data:") {
+            data_lines.push(rest.trim_start().to_string());
+        }
+        // ignore event:/id:/retry: lines
+    }
+    flush(&mut data_lines, &mut events);
+
+    // Prefer last response.completed; else last event with usage; else last event with output.
+    let mut terminal: Option<Value> = None;
+    for ev in events.iter().rev() {
+        let ty = ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if ty == "response.completed" {
+            // payload may be nested under "response"
+            if let Some(resp) = ev.get("response") {
+                terminal = Some(resp.clone());
+            } else {
+                terminal = Some(ev.clone());
+            }
+            break;
+        }
+    }
+    if terminal.is_none() {
+        for ev in events.iter().rev() {
+            if ev.get("usage").is_some()
+                || ev.pointer("/response/usage").is_some()
+                || ev.get("output").is_some()
+                || ev.pointer("/response/output").is_some()
+            {
+                if let Some(resp) = ev.get("response") {
+                    terminal = Some(resp.clone());
+                } else {
+                    terminal = Some(ev.clone());
+                }
+                break;
+            }
+        }
+    }
+    let terminal = terminal.unwrap_or_else(|| serde_json::json!({ "output": [] }));
+
+    let terminal_output = extract_terminal_output(&terminal);
+
+    let reasoning_tokens = terminal
+        .pointer("/usage/output_tokens_details/reasoning_tokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            terminal
+                .pointer("/usage/completion_tokens_details/reasoning_tokens")
+                .and_then(|v| v.as_u64())
+        })
+        .or_else(|| terminal.pointer("/usage/reasoning_tokens").and_then(|v| v.as_u64()))
+        .map(|n| n as u32);
+
+    let usage = if let Some(tu) = TokenUsage::from_codex_response(&terminal) {
+        RoundUsage {
+            input_tokens: tu.input_tokens,
+            output_tokens: tu.output_tokens,
+            cache_read_tokens: tu.cache_read_tokens,
+            cache_creation_tokens: tu.cache_creation_tokens,
+        }
+    } else {
+        let u = terminal.get("usage");
+        RoundUsage {
+            input_tokens: u
+                .and_then(|x| x.get("input_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            output_tokens: u
+                .and_then(|x| x.get("output_tokens"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            cache_read_tokens: u
+                .and_then(|x| {
+                    x.pointer("/input_tokens_details/cached_tokens")
+                        .or_else(|| x.get("cache_read_input_tokens"))
+                })
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            cache_creation_tokens: 0,
+        }
+    };
+
+    Ok(ContinuationRoundResult {
+        round_index,
+        sse,
+        usage,
+        reasoning_tokens,
+        duration_ms,
+        terminal_output,
+    })
+}
+
 
 /// Concatenate multiple SSE byte buffers into a single client-facing stream.
 ///
@@ -130,5 +264,23 @@ mod tests {
         assert!(!s.contains("response.completed"));
         let kept = strip_intermediate_completed(&sse, true);
         assert!(std::str::from_utf8(&kept).unwrap().contains("response.completed"));
+    }
+
+    #[test]
+    fn parse_sse_to_round_extracts_completed() {
+        let raw = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"id\":\"m1\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":20,\"output_tokens_details\":{\"reasoning_tokens\":516}}}}\n\n",
+        );
+        let sse = Bytes::from(raw);
+        let r = parse_sse_to_round(sse, 0, 42).unwrap();
+        assert_eq!(r.round_index, 0);
+        assert_eq!(r.duration_ms, 42);
+        assert_eq!(r.reasoning_tokens, Some(516));
+        assert_eq!(r.usage.input_tokens, 10);
+        assert_eq!(r.usage.output_tokens, 20);
+        assert_eq!(r.terminal_output.len(), 1);
     }
 }

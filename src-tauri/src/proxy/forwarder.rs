@@ -31,6 +31,12 @@ use crate::{
     provider::{LocalProxyRequestOverrides, Provider},
 };
 use bytes::Bytes;
+use crate::services::codex_reasoning::{
+    parse_sse_to_round, run_pinned_continuation_loop, ContinuationEligibility, NoCost,
+    PinnedResponsesSender, PromptMeta,
+};
+use crate::error::AppError;
+use futures_util::future::BoxFuture;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
@@ -148,6 +154,81 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+}
+
+
+/// Marker stored in `http::Extensions` so continuation rounds do not re-enter
+/// the multi-round loop (each pinned round is a single upstream call).
+#[derive(Clone, Copy, Debug)]
+struct CodexContinuationReentry;
+
+/// Pinned-provider sender used by the T14 continuation orchestrator.
+struct PinnedForwarderSender<'a> {
+    forwarder: &'a RequestForwarder,
+    app_type: &'a AppType,
+    method: &'a http::Method,
+    endpoint: &'a str,
+    headers: &'a axum::http::HeaderMap,
+    adapter: &'a dyn ProviderAdapter,
+}
+
+impl PinnedResponsesSender for PinnedForwarderSender<'_> {
+    fn send_round<'a>(
+        &'a self,
+        provider: &'a Provider,
+        body: Value,
+        round_index: u8,
+    ) -> BoxFuture<'a, Result<crate::services::codex_reasoning::ContinuationRoundResult, AppError>> {
+        Box::pin(async move {
+            let start = std::time::Instant::now();
+            let mut ext = Extensions::new();
+            ext.insert(CodexContinuationReentry);
+            let (response, _fmt, _model, _meta) = self
+                .forwarder
+                .forward(
+                    self.app_type,
+                    self.method,
+                    provider,
+                    self.endpoint,
+                    &body,
+                    self.headers,
+                    &ext,
+                    self.adapter,
+                )
+                .await
+                .map_err(|e| AppError::Config(format!("continuation round {round_index} failed: {e}")))?;
+
+            if !response.status().is_success() {
+                // Drain body for error context (best-effort).
+                let status = response.status().as_u16();
+                let body_bytes = response.bytes().await.unwrap_or_default();
+                let snippet = String::from_utf8_lossy(&body_bytes);
+                let snippet = snippet.chars().take(300).collect::<String>();
+                return Err(AppError::Config(format!(
+                    "continuation round {round_index} upstream status {status}: {snippet}"
+                )));
+            }
+
+            // For streaming Responses, optionally validate start then buffer full SSE.
+            let response = self
+                .forwarder
+                .validate_responses_stream_start(response)
+                .await
+                .map_err(|e| {
+                    AppError::Config(format!(
+                        "continuation round {round_index} stream validate failed: {e}"
+                    ))
+                })?;
+
+            let sse = response.bytes().await.map_err(|e| {
+                AppError::Config(format!(
+                    "continuation round {round_index} body read failed: {e}"
+                ))
+            })?;
+            let duration_ms = start.elapsed().as_millis() as u64;
+            parse_sse_to_round(sse, round_index, duration_ms)
+        })
+    }
 }
 
 impl RequestForwarder {
@@ -1605,6 +1686,16 @@ impl RequestForwarder {
             &filtered_body,
             self.session_client_provided,
         );
+        // Snapshot Responses-shaped body for T14 multi-round continuation (native only).
+        let continuation_request_body = if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+        {
+            Some(filtered_body.clone())
+        } else {
+            None
+        };
+
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
         let force_identity_encoding = needs_transform
@@ -2255,6 +2346,248 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
+            // T14 multi-round reasoning continuation (native Responses only).
+            // Buffer round-0 SSE, pin provider, optionally continue; never re-enter
+            // when CodexContinuationReentry is present (pinned later rounds).
+            if matches!(app_type, AppType::Codex)
+                && !codex_responses_to_chat
+                && !codex_responses_to_anthropic
+                && extensions.get::<CodexContinuationReentry>().is_none()
+            {
+                let cont_cfg = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.codex_reasoning_continuation.clone())
+                    .unwrap_or_default()
+                    .clamped();
+                if cont_cfg.enabled && cont_cfg.max_rounds > 0 {
+                    let cont_status = response.status();
+                    let cont_headers = response.headers().clone();
+                    match response.bytes().await {
+                        Ok(sse_bytes) => {
+                            match parse_sse_to_round(sse_bytes.clone(), 0, 0) {
+                                Ok(round0) => {
+                                    let eligibility = ContinuationEligibility {
+                                        enabled: cont_cfg.enabled,
+                                        model: outbound_model
+                                            .clone()
+                                            .or_else(|| body.get("model").and_then(|m| m.as_str()).map(|s| s.to_string()))
+                                            .or_else(|| {
+                                                continuation_request_body
+                                                    .as_ref()
+                                                    .and_then(|b| b.get("model"))
+                                                    .and_then(|m| m.as_str())
+                                                    .map(|s| s.to_string())
+                                            })
+                                            .unwrap_or_default(),
+                                        native_responses: true,
+                                        completed_rounds: 0,
+                                        max_rounds: cont_cfg.max_rounds,
+                                    };
+                                    let prompt_meta = PromptMeta {
+                                        prompt_replaced: codex_reasoning_meta
+                                            .as_ref()
+                                            .map(|m| m.prompt_replaced)
+                                            .unwrap_or(false),
+                                        identity_corrected: codex_reasoning_meta
+                                            .as_ref()
+                                            .map(|m| m.identity_corrected)
+                                            .unwrap_or(false),
+                                        prompt_fingerprint: codex_reasoning_meta
+                                            .as_ref()
+                                            .and_then(|m| m.prompt_fingerprint.clone()),
+                                    };
+                                    let sender = PinnedForwarderSender {
+                                        forwarder: self,
+                                        app_type,
+                                        method,
+                                        endpoint,
+                                        headers,
+                                        adapter,
+                                    };
+                                    let original_body = continuation_request_body
+                                        .as_ref()
+                                        .unwrap_or(body);
+                                    match run_pinned_continuation_loop(
+                                        &sender,
+                                        &NoCost,
+                                        provider,
+                                        original_body,
+                                        eligibility,
+                                        Some(round0),
+                                        prompt_meta,
+                                    )
+                                    .await
+                                    {
+                                        Ok(logical) => {
+                                            log::info!(
+                                                "[Codex] multi-round continuation done: status={} rounds={} provider={}",
+                                                logical.reasoning.continuation_status,
+                                                logical.reasoning.continuation_rounds,
+                                                logical.pinned_provider_id
+                                            );
+                                            codex_reasoning_meta = Some(logical.reasoning);
+                                            response = ProxyResponse::buffered(
+                                                cont_status,
+                                                cont_headers,
+                                                logical.client_sse,
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[Codex] multi-round continuation failed, returning round0: {e}"
+                                            );
+                                            response = ProxyResponse::buffered(
+                                                cont_status,
+                                                cont_headers,
+                                                sse_bytes,
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[Codex] parse_sse_to_round failed, passthrough buffered body: {e}"
+                                    );
+                                    response = ProxyResponse::buffered(
+                                        cont_status,
+                                        cont_headers,
+                                        sse_bytes,
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[Codex] failed to buffer body for multi-round continuation: {e}"
+                            );
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+
+            // T14 multi-round reasoning continuation (native Responses only).
+            // Buffer round-0 SSE, pin provider, optionally continue; never re-enter
+            // when CodexContinuationReentry is present (pinned later rounds).
+            if matches!(app_type, AppType::Codex)
+                && !codex_responses_to_chat
+                && !codex_responses_to_anthropic
+                && extensions.get::<CodexContinuationReentry>().is_none()
+            {
+                let cont_cfg = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.codex_reasoning_continuation.clone())
+                    .unwrap_or_default()
+                    .clamped();
+                if cont_cfg.enabled && cont_cfg.max_rounds > 0 {
+                    let cont_status = response.status();
+                    let cont_headers = response.headers().clone();
+                    match response.bytes().await {
+                        Ok(sse_bytes) => {
+                            match parse_sse_to_round(sse_bytes.clone(), 0, 0) {
+                                Ok(round0) => {
+                                    let eligibility = ContinuationEligibility {
+                                        enabled: cont_cfg.enabled,
+                                        model: outbound_model
+                                            .clone()
+                                            .or_else(|| body.get("model").and_then(|m| m.as_str()).map(|s| s.to_string()))
+                                            .or_else(|| {
+                                                continuation_request_body
+                                                    .as_ref()
+                                                    .and_then(|b| b.get("model"))
+                                                    .and_then(|m| m.as_str())
+                                                    .map(|s| s.to_string())
+                                            })
+                                            .unwrap_or_default(),
+                                        native_responses: true,
+                                        completed_rounds: 0,
+                                        max_rounds: cont_cfg.max_rounds,
+                                    };
+                                    let prompt_meta = PromptMeta {
+                                        prompt_replaced: codex_reasoning_meta
+                                            .as_ref()
+                                            .map(|m| m.prompt_replaced)
+                                            .unwrap_or(false),
+                                        identity_corrected: codex_reasoning_meta
+                                            .as_ref()
+                                            .map(|m| m.identity_corrected)
+                                            .unwrap_or(false),
+                                        prompt_fingerprint: codex_reasoning_meta
+                                            .as_ref()
+                                            .and_then(|m| m.prompt_fingerprint.clone()),
+                                    };
+                                    let sender = PinnedForwarderSender {
+                                        forwarder: self,
+                                        app_type,
+                                        method,
+                                        endpoint,
+                                        headers,
+                                        adapter,
+                                    };
+                                    let original_body = continuation_request_body
+                                        .as_ref()
+                                        .unwrap_or(body);
+                                    match run_pinned_continuation_loop(
+                                        &sender,
+                                        &NoCost,
+                                        provider,
+                                        original_body,
+                                        eligibility,
+                                        Some(round0),
+                                        prompt_meta,
+                                    )
+                                    .await
+                                    {
+                                        Ok(logical) => {
+                                            log::info!(
+                                                "[Codex] multi-round continuation done: status={} rounds={} provider={}",
+                                                logical.reasoning.continuation_status,
+                                                logical.reasoning.continuation_rounds,
+                                                logical.pinned_provider_id
+                                            );
+                                            codex_reasoning_meta = Some(logical.reasoning);
+                                            response = ProxyResponse::buffered(
+                                                cont_status,
+                                                cont_headers,
+                                                logical.client_sse,
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "[Codex] multi-round continuation failed, returning round0: {e}"
+                                            );
+                                            response = ProxyResponse::buffered(
+                                                cont_status,
+                                                cont_headers,
+                                                sse_bytes,
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[Codex] parse_sse_to_round failed, passthrough buffered body: {e}"
+                                    );
+                                    response = ProxyResponse::buffered(
+                                        cont_status,
+                                        cont_headers,
+                                        sse_bytes,
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[Codex] failed to buffer body for multi-round continuation: {e}"
+                            );
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+
             Ok((response, resolved_claude_api_format, outbound_model, codex_reasoning_meta))
         } else {
             let status_code = status.as_u16();
