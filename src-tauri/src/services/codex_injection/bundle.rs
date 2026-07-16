@@ -78,6 +78,13 @@ pub fn build_bootstrap_bundle(
     );
 
     // Order: features first, then inject runtime, then bootstrap call.
+    // Optional user scripts only when userScriptRuntime is enabled.
+    let user_scripts = if e.user_script_runtime {
+        crate::services::codex_scripts::build_user_scripts_snippet().unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     // Idempotent: runtime configure() if same instanceId.
     format!(
         r#"(function(){{
@@ -86,10 +93,12 @@ pub fn build_bootstrap_bundle(
 if (typeof window !== "undefined" && typeof window.__ccSwitchCodexBootstrap === "function") {{
   window.__ccSwitchCodexBootstrap({config});
 }}
+{user_scripts}
 }})();"#,
         features = RENDERER_FEATURES,
         inject = RENDERER_INJECT,
-        config = config
+        config = config,
+        user_scripts = user_scripts
     )
 }
 

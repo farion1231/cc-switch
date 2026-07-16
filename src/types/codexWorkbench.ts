@@ -34,6 +34,38 @@ export interface CodexWorkbenchStatus {
   lastError: string | null;
 }
 
+/** 本地/市场用户脚本 */
+export interface UserScriptInfo {
+  key: string;
+  name: string;
+  source: string; // user | market | builtin
+  enabled: boolean;
+  version: string | null;
+  sha256: string;
+  runtimeState: string; // idle | loaded | failed | disabled
+  runtimeError: string | null;
+  verification: string | null;
+}
+
+export interface MarketScriptEntry {
+  id: string;
+  name: string;
+  version: string;
+  url: string;
+  sha256: string;
+  description?: string | null;
+}
+
+export interface MarketIndex {
+  scripts: MarketScriptEntry[];
+  fetchedAt?: string | null;
+}
+
+export interface ScriptInstallRequest {
+  id: string;
+  expectedSha256?: string;
+}
+
 export const DEFAULT_CODEX_ENHANCEMENTS: CodexEnhancementSettings = {
   pluginUnlock: true,
   autoExpand: true,

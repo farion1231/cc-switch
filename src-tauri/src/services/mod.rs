@@ -2,6 +2,7 @@ pub mod balance;
 pub mod codex_injection;
 pub mod codex_oauth_models;
 pub mod codex_runtime;
+pub mod codex_scripts;
 pub mod codex_workbench;
 pub mod coding_plan;
 pub mod config;

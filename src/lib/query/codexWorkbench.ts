@@ -1,19 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { codexWorkbenchApi } from "@/lib/api/codexWorkbench";
-import type { CodexWorkbenchSettings } from "@/types/codexWorkbench";
+import type {
+  CodexWorkbenchSettings,
+  ScriptInstallRequest,
+} from "@/types/codexWorkbench";
 
 export const codexWorkbenchKeys = {
   all: ["codexWorkbench"] as const,
   status: () => [...codexWorkbenchKeys.all, "status"] as const,
   settings: () => [...codexWorkbenchKeys.all, "settings"] as const,
+  scripts: () => [...codexWorkbenchKeys.all, "scripts"] as const,
+  market: () => [...codexWorkbenchKeys.all, "market"] as const,
 };
 
 export function useCodexWorkbenchStatusQuery(enabled = true) {
   return useQuery({
     queryKey: codexWorkbenchKeys.status(),
     queryFn: () => codexWorkbenchApi.getStatus(),
-    enabled,
     refetchInterval: 3000,
+    enabled,
   });
 }
 
@@ -32,7 +37,6 @@ export function useUpdateCodexWorkbenchSettings() {
       codexWorkbenchApi.updateSettings(settings),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.settings() });
-      void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.status() });
     },
   });
 }
@@ -54,5 +58,96 @@ export function useReinjectCodexEnhancements() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.status() });
     },
+  });
+}
+
+async function afterScriptMutation(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.scripts() });
+  try {
+    await codexWorkbenchApi.reinjectAfterScriptChange();
+    void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.status() });
+  } catch {
+    // reinject is best-effort when enhanced Codex is not running
+  }
+}
+
+export function useCodexUserScriptsQuery(enabled = true) {
+  return useQuery({
+    queryKey: codexWorkbenchKeys.scripts(),
+    queryFn: () => codexWorkbenchApi.listScripts(),
+    enabled,
+  });
+}
+
+export function useCodexScriptMarketQuery(enabled = true) {
+  return useQuery({
+    queryKey: codexWorkbenchKeys.market(),
+    queryFn: () => codexWorkbenchApi.getMarketCache(),
+    // cache only — never auto-refresh market
+    enabled,
+  });
+}
+
+export function useRefreshCodexScriptMarket() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => codexWorkbenchApi.refreshMarket(),
+    onSuccess: (data) => {
+      qc.setQueryData(codexWorkbenchKeys.market(), data);
+    },
+  });
+}
+
+export function useInstallCodexMarketScript() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (request: ScriptInstallRequest) =>
+      codexWorkbenchApi.installMarketScript(request),
+    onSuccess: async () => {
+      await afterScriptMutation(qc);
+    },
+  });
+}
+
+export function useSetCodexUserScriptEnabled() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, enabled }: { key: string; enabled: boolean }) =>
+      codexWorkbenchApi.setScriptEnabled(key, enabled),
+    onSuccess: async () => {
+      await afterScriptMutation(qc);
+    },
+  });
+}
+
+export function useDeleteCodexUserScript() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) => codexWorkbenchApi.deleteScript(key),
+    onSuccess: async () => {
+      await afterScriptMutation(qc);
+    },
+  });
+}
+
+export function useImportCodexUserScript() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      sourcePath,
+      key,
+    }: {
+      sourcePath: string;
+      key?: string;
+    }) => codexWorkbenchApi.importScript(sourcePath, key),
+    onSuccess: async () => {
+      await afterScriptMutation(qc);
+    },
+  });
+}
+
+export function useGetCodexScriptsDir() {
+  return useMutation({
+    mutationFn: () => codexWorkbenchApi.getScriptsDir(),
   });
 }

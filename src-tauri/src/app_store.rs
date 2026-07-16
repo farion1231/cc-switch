@@ -133,3 +133,9 @@ pub fn migrate_app_config_dir_from_settings(app: &tauri::AppHandle) -> Result<()
     let _ = refresh_app_config_dir_override(app);
     Ok(())
 }
+
+/// Test-only: force app_config_dir override cache without Tauri Store.
+#[cfg(test)]
+pub fn set_app_config_dir_override_for_test(path: Option<PathBuf>) {
+    update_cached_override(path);
+}
