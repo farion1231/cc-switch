@@ -33,6 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { settingsApi } from "@/lib/api";
+import type { RestorePreview } from "@/lib/api/settings";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
@@ -183,7 +184,7 @@ type ActionState =
 
 type SyncType = "webdav" | "s3";
 
-type DialogType = "upload" | "download" | "mutual_exclusion" | null;
+type DialogType = "upload" | "download" | "download_credential_confirm" | "mutual_exclusion" | null;
 
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
@@ -313,15 +314,19 @@ export function WebdavSyncSection({
   // Confirmation dialog state
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const [remoteInfo, setRemoteInfo] = useState<RemoteSnapshotInfo | null>(null);
+  const [pendingRestorePreview, setPendingRestorePreview] =
+    useState<RestorePreview | null>(null);
   const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
 
-  const closeDialog = useCallback(() => {
+    const closeDialog = useCallback(() => {
     setDialogType(null);
     setRemoteInfo(null);
+    setPendingRestorePreview(null);
   }, []);
 
   const closeS3Dialog = useCallback(() => {
     setS3DialogType(null);
+    setPendingRestorePreview(null);
     setS3RemoteInfo(null);
   }, []);
 
@@ -627,6 +632,29 @@ export function WebdavSyncSection({
   }, [dirty, t]);
 
   /** Actually perform the download after user confirms. */
+  const applyWebdavRestore = useCallback(
+    async (preview: RestorePreview) => {
+      setActionState("downloading");
+      try {
+        // Empty selections = keep all local provider credentials (default policy).
+        await settingsApi.webdavSyncApplyDownload(preview.previewId, []);
+        toast.success(t("settings.webdavSync.downloadSuccess"));
+        await queryClient.invalidateQueries();
+      } catch (error) {
+        toast.error(
+          t("settings.webdavSync.downloadFailed", {
+            error: (error as Error)?.message ?? String(error),
+          }),
+        );
+      } finally {
+        setActionState("idle");
+        setPendingRestorePreview(null);
+      }
+    },
+    [queryClient, t],
+  );
+
+  /** First confirm: stage remote snapshot and preview credential impact. */
   const handleDownloadConfirm = useCallback(async () => {
     if (dirty) {
       toast.error(t("settings.webdavSync.unsavedChanges"));
@@ -635,19 +663,38 @@ export function WebdavSyncSection({
     closeDialog();
     setActionState("downloading");
     try {
-      await settingsApi.webdavSyncDownload();
-      toast.success(t("settings.webdavSync.downloadSuccess"));
-      await queryClient.invalidateQueries();
+      const preview = await settingsApi.webdavSyncPrepareDownload();
+      setPendingRestorePreview(preview);
+      const impact =
+        (preview.exactRestoreCredentialFieldCount ?? 0) > 0 ||
+        (preview.credentialConflicts?.length ?? 0) > 0;
+      if (impact) {
+        setActionState("idle");
+        setDialogType("download_credential_confirm");
+        return;
+      }
+      await applyWebdavRestore(preview);
     } catch (error) {
       toast.error(
         t("settings.webdavSync.downloadFailed", {
           error: (error as Error)?.message ?? String(error),
         }),
       );
-    } finally {
       setActionState("idle");
+      setPendingRestorePreview(null);
     }
-  }, [closeDialog, dirty, queryClient, t]);
+  }, [applyWebdavRestore, closeDialog, dirty, t]);
+
+  /** Second confirm: apply staged restore keeping local credentials. */
+  const handleDownloadCredentialConfirm = useCallback(async () => {
+    if (!pendingRestorePreview) {
+      closeDialog();
+      return;
+    }
+    const preview = pendingRestorePreview;
+    closeDialog();
+    await applyWebdavRestore(preview);
+  }, [applyWebdavRestore, closeDialog, pendingRestorePreview]);
 
   // ─── S3 helpers ────────────────────────────────────────────
 
@@ -838,6 +885,27 @@ export function WebdavSyncSection({
     }
   }, [s3Dirty, t]);
 
+  const applyS3Restore = useCallback(
+    async (preview: RestorePreview) => {
+      setS3ActionState("downloading");
+      try {
+        await settingsApi.s3SyncApplyDownload(preview.previewId, []);
+        toast.success(t("settings.s3Sync.downloadSuccess"));
+        await queryClient.invalidateQueries();
+      } catch (error) {
+        toast.error(
+          t("settings.s3Sync.downloadFailed", {
+            error: (error as Error)?.message ?? String(error),
+          }),
+        );
+      } finally {
+        setS3ActionState("idle");
+        setPendingRestorePreview(null);
+      }
+    },
+    [queryClient, t],
+  );
+
   const handleS3DownloadConfirm = useCallback(async () => {
     if (s3Dirty) {
       toast.error(t("settings.s3Sync.unsavedChanges"));
@@ -846,19 +914,37 @@ export function WebdavSyncSection({
     closeS3Dialog();
     setS3ActionState("downloading");
     try {
-      await settingsApi.s3SyncDownload();
-      toast.success(t("settings.s3Sync.downloadSuccess"));
-      await queryClient.invalidateQueries();
+      const preview = await settingsApi.s3SyncPrepareDownload();
+      setPendingRestorePreview(preview);
+      const impact =
+        (preview.exactRestoreCredentialFieldCount ?? 0) > 0 ||
+        (preview.credentialConflicts?.length ?? 0) > 0;
+      if (impact) {
+        setS3ActionState("idle");
+        setS3DialogType("download_credential_confirm");
+        return;
+      }
+      await applyS3Restore(preview);
     } catch (error) {
       toast.error(
         t("settings.s3Sync.downloadFailed", {
           error: (error as Error)?.message ?? String(error),
         }),
       );
-    } finally {
       setS3ActionState("idle");
+      setPendingRestorePreview(null);
     }
-  }, [closeS3Dialog, s3Dirty, queryClient, t]);
+  }, [applyS3Restore, closeS3Dialog, s3Dirty, t]);
+
+  const handleS3DownloadCredentialConfirm = useCallback(async () => {
+    if (!pendingRestorePreview) {
+      closeS3Dialog();
+      return;
+    }
+    const preview = pendingRestorePreview;
+    closeS3Dialog();
+    await applyS3Restore(preview);
+  }, [applyS3Restore, closeS3Dialog, pendingRestorePreview]);
 
   // ─── Sync type switching with mutual exclusion ─────────────
 
@@ -1700,6 +1786,75 @@ export function WebdavSyncSection({
         </DialogContent>
       </Dialog>
 
+      {/* Credential impact second confirmation (keep-local apply) */}
+      <Dialog
+        open={dialogType === "download_credential_confirm"}
+        onOpenChange={(open) => {
+          if (!open) closeDialog();
+        }}
+      >
+        <DialogContent className="max-w-sm" zIndex="alert">
+          <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
+            <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              {t("settings.webdavSync.confirmCredentialImpact.title", {
+                defaultValue: "Confirm credential impact",
+              })}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm leading-relaxed">
+                <p>
+                  {t("settings.webdavSync.confirmCredentialImpact.description", {
+                    defaultValue:
+                      "Default restore keeps your local provider credentials. New providers from the cloud will be imported. Exact remote credential overwrite is not applied unless you opt in later.",
+                  })}
+                </p>
+                {pendingRestorePreview && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
+                    <dt className="font-medium text-foreground">
+                      {t("settings.webdavSync.confirmCredentialImpact.newProviders", {
+                        defaultValue: "New providers",
+                      })}
+                    </dt>
+                    <dd>{pendingRestorePreview.newProviderCount}</dd>
+                    <dt className="font-medium text-foreground">
+                      {t(
+                        "settings.webdavSync.confirmCredentialImpact.existingProviders",
+                        { defaultValue: "Existing providers" },
+                      )}
+                    </dt>
+                    <dd>{pendingRestorePreview.existingProviderCount}</dd>
+                    <dt className="font-medium text-foreground">
+                      {t(
+                        "settings.webdavSync.confirmCredentialImpact.credentialFields",
+                        { defaultValue: "Credential fields differing" },
+                      )}
+                    </dt>
+                    <dd>
+                      {pendingRestorePreview.exactRestoreCredentialFieldCount}
+                    </dd>
+                  </dl>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={closeDialog}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDownloadCredentialConfirm}
+            >
+              {t("settings.webdavSync.confirmCredentialImpact.confirm", {
+                defaultValue: "Continue (keep local credentials)",
+              })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+
       {/* ─── S3 Upload confirmation dialog ───────────────── */}
       <Dialog
         open={s3DialogType === "upload"}
@@ -1818,6 +1973,75 @@ export function WebdavSyncSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* S3 credential impact second confirmation */}
+      <Dialog
+        open={s3DialogType === "download_credential_confirm"}
+        onOpenChange={(open) => {
+          if (!open) closeS3Dialog();
+        }}
+      >
+        <DialogContent className="max-w-sm" zIndex="alert">
+          <DialogHeader className="space-y-3 border-b-0 bg-transparent pb-0">
+            <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              {t("settings.s3Sync.confirmCredentialImpact.title", {
+                defaultValue: "Confirm credential impact",
+              })}
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm leading-relaxed">
+                <p>
+                  {t("settings.s3Sync.confirmCredentialImpact.description", {
+                    defaultValue:
+                      "Default restore keeps your local provider credentials. New providers from the cloud will be imported.",
+                  })}
+                </p>
+                {pendingRestorePreview && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
+                    <dt className="font-medium text-foreground">
+                      {t("settings.s3Sync.confirmCredentialImpact.newProviders", {
+                        defaultValue: "New providers",
+                      })}
+                    </dt>
+                    <dd>{pendingRestorePreview.newProviderCount}</dd>
+                    <dt className="font-medium text-foreground">
+                      {t(
+                        "settings.s3Sync.confirmCredentialImpact.existingProviders",
+                        { defaultValue: "Existing providers" },
+                      )}
+                    </dt>
+                    <dd>{pendingRestorePreview.existingProviderCount}</dd>
+                    <dt className="font-medium text-foreground">
+                      {t(
+                        "settings.s3Sync.confirmCredentialImpact.credentialFields",
+                        { defaultValue: "Credential fields differing" },
+                      )}
+                    </dt>
+                    <dd>
+                      {pendingRestorePreview.exactRestoreCredentialFieldCount}
+                    </dd>
+                  </dl>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={closeS3Dialog}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleS3DownloadCredentialConfirm}
+            >
+              {t("settings.s3Sync.confirmCredentialImpact.confirm", {
+                defaultValue: "Continue (keep local credentials)",
+              })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
 
       {/* ─── Mutual exclusion confirmation dialog ────────── */}
       <Dialog

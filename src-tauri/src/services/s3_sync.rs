@@ -15,11 +15,13 @@ use crate::services::s3::{self, S3Credentials};
 use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 
 use super::sync_protocol::{
-    apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
+    apply_snapshot, apply_staged_restore, build_local_snapshot, localized,
+    persist_sync_success_best_effort, prepare_restore_preview, sha256_hex,
     validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
     RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
     PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
+use crate::database::backup::RemoteCredentialSelection;
 
 // ─── Sync lock ───────────────────────────────────────────────
 
@@ -128,6 +130,72 @@ pub async fn download(
     let _persisted =
         persist_sync_success_best_effort(settings, manifest_hash, etag, persist_sync_success);
     Ok(serde_json::json!({ "status": "downloaded" }))
+}
+
+/// Download remote snapshot into staging and return a non-destructive restore preview.
+pub async fn prepare_download(
+    db: &crate::database::Database,
+    settings: &S3SyncSettings,
+) -> Result<Value, AppError> {
+    settings.validate()?;
+    let creds = creds_for(settings);
+
+    let manifest_key = s3_key(settings, REMOTE_MANIFEST);
+    let (manifest_bytes, _etag) = s3::get_object(&creds, &manifest_key, MAX_MANIFEST_BYTES)
+        .await?
+        .ok_or_else(|| {
+            localized(
+                "s3.sync.remote_empty",
+                "远端没有可下载的同步数据",
+                "No downloadable sync data found on the remote.",
+            )
+        })?;
+
+    let manifest: SyncManifest = serde_json::from_slice(&manifest_bytes).map_err(|e| {
+        AppError::Json {
+            path: REMOTE_MANIFEST.to_string(),
+            source: e,
+        }
+    })?;
+    validate_manifest_compat(&manifest, RemoteLayout::Current)?;
+
+    let db_sql =
+        download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
+    let skills_zip =
+        download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
+
+    let preview = prepare_restore_preview(db, &db_sql, &skills_zip)?;
+    Ok(serde_json::json!({
+        "status": "prepared",
+        "preview": preview,
+        "snapshotId": manifest.snapshot_id,
+        "manifestHash": sha256_hex(&manifest_bytes),
+    }))
+}
+
+/// Apply a previously staged restore (from [`prepare_download`]).
+pub async fn apply_download(
+    db: &crate::database::Database,
+    settings: &mut S3SyncSettings,
+    preview_id: &str,
+    selections: &[RemoteCredentialSelection],
+) -> Result<Value, AppError> {
+    settings.validate()?;
+    apply_staged_restore(db, preview_id, selections)?;
+    let status = WebDavSyncStatus {
+        last_sync_at: Some(Utc::now().timestamp()),
+        last_error: None,
+        last_error_source: None,
+        last_local_manifest_hash: settings.status.last_local_manifest_hash.clone(),
+        last_remote_manifest_hash: settings.status.last_remote_manifest_hash.clone(),
+        last_remote_etag: settings.status.last_remote_etag.clone(),
+    };
+    settings.status = status.clone();
+    let _ = update_s3_sync_status(status);
+    Ok(serde_json::json!({
+        "status": "applied",
+        "previewId": preview_id,
+    }))
 }
 
 /// Fetch remote manifest info without downloading artifacts.

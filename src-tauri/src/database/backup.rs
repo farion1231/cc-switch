@@ -22,6 +22,11 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "provider_health",
     "proxy_live_backup",
     "usage_daily_rollups",
+    // Device-local security / workbench state — never leave this machine via cloud sync.
+    "codex_reasoning_rounds",
+    "provider_credential_audit",
+    "provider_rollback_snapshots",
+    "app_configuration_state",
 ];
 
 /// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
@@ -31,6 +36,11 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "stream_check_logs",
     "proxy_live_backup",
     "usage_daily_rollups",
+    // Keep local security / recovery history across cloud restore.
+    "codex_reasoning_rounds",
+    "provider_credential_audit",
+    "provider_rollback_snapshots",
+    "app_configuration_state",
 ];
 
 /// A database backup entry for the UI
@@ -40,6 +50,28 @@ pub struct BackupEntry {
     pub filename: String,
     pub size_bytes: u64,
     pub created_at: String, // ISO 8601
+}
+
+/// Per-provider opt-in to take remote credential fields during cloud apply.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCredentialSelection {
+    pub app_type: String,
+    pub provider_id: String,
+    pub use_remote_api_key: bool,
+    pub use_remote_base_url: bool,
+}
+
+/// Non-destructive restore impact summary. Preview never mutates the live DB.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePreview {
+    pub preview_id: String,
+    pub new_provider_count: u32,
+    pub existing_provider_count: u32,
+    pub credential_conflicts: Vec<crate::services::provider_security::CredentialDiff>,
+    /// Number of credential fields (apiKey/baseUrl) that would change under exact restore.
+    pub exact_restore_credential_field_count: u32,
 }
 
 impl Database {
@@ -87,8 +119,201 @@ impl Database {
 
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current device snapshot before replacing the main database.
+    ///
+    /// Default cloud-restore policy: keep local `api_key`/`base_url` for providers
+    /// that already exist on this device, while accepting remote non-credential fields.
+    /// Cloud restore with default policy: keep local credentials on existing providers.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
+        self.import_sql_string_for_sync_with_selections(sql_raw, &[])
+    }
+
+    /// Cloud restore with optional per-provider remote credential opt-ins.
+    ///
+    /// By default, local `apiKey`/`baseUrl` win for providers that already exist.
+    /// Entries in `remote_selections` can opt into remote values for specific fields.
+    pub(crate) fn import_sql_string_for_sync_with_selections(
+        &self,
+        sql_raw: &str,
+        remote_selections: &[RemoteCredentialSelection],
+    ) -> Result<String, AppError> {
+        let local_credentials = self.snapshot_local_provider_credentials()?;
+        let backup_id = self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)?;
+        self.merge_local_provider_credentials(&local_credentials, remote_selections)?;
+        Ok(backup_id)
+    }
+
+    /// Capture per-provider settings so credential fields can be reapplied after a
+    /// whole-table cloud import. Keyed by `(app_type, provider_id)`.
+    fn snapshot_local_provider_credentials(
+        &self,
+    ) -> Result<Vec<(String, String, serde_json::Value)>, AppError> {
+        use crate::app_config::AppType;
+
+        let mut snapshots = Vec::new();
+        for app_type in AppType::all() {
+            let providers = self.get_all_providers(app_type.as_str())?;
+            for (id, provider) in providers {
+                snapshots.push((
+                    app_type.as_str().to_string(),
+                    id,
+                    provider.settings_config,
+                ));
+            }
+        }
+        Ok(snapshots)
+    }
+
+    /// Re-apply local credential fields onto providers that still exist after a
+    /// cloud restore. Non-credential remote fields (name, notes, etc.) stay.
+    fn merge_local_provider_credentials(
+        &self,
+        local_credentials: &[(String, String, serde_json::Value)],
+        remote_selections: &[RemoteCredentialSelection],
+    ) -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::{
+            apply_selected_credentials, extract_provider_credentials,
+        };
+        use std::collections::BTreeSet;
+        use std::str::FromStr;
+
+        for (app_type_str, provider_id, local_settings) in local_credentials {
+            let Ok(app_type) = AppType::from_str(app_type_str) else {
+                continue;
+            };
+            let Some(mut remote_provider) = self.get_provider_by_id(provider_id, app_type_str)?
+            else {
+                // Provider only existed locally; whole-table import dropped it.
+                continue;
+            };
+
+            let selection = remote_selections.iter().find(|s| {
+                s.app_type == *app_type_str && s.provider_id == *provider_id
+            });
+            let use_remote_api_key = selection.map(|s| s.use_remote_api_key).unwrap_or(false);
+            let use_remote_base_url = selection.map(|s| s.use_remote_base_url).unwrap_or(false);
+
+            let mut local_provider = remote_provider.clone();
+            local_provider.settings_config = local_settings.clone();
+            let local_creds = extract_provider_credentials(&local_provider, &app_type);
+
+            // Default: re-apply local credential fields. Opt-in remote fields are left
+            // as imported (remote) by simply not including them in the confirmed set.
+            let mut confirmed = BTreeSet::new();
+            if local_creds.api_key.is_some() && !use_remote_api_key {
+                confirmed.insert("apiKey".to_string());
+            }
+            if local_creds.base_url.is_some() && !use_remote_base_url {
+                confirmed.insert("baseUrl".to_string());
+            }
+            if confirmed.is_empty() {
+                continue;
+            }
+
+            apply_selected_credentials(
+                &mut remote_provider,
+                local_settings,
+                &app_type,
+                &confirmed,
+            )?;
+            self.save_provider(app_type_str, &remote_provider)?;
+        }
+        Ok(())
+    }
+
+
+    /// Build a non-destructive preview of an exact SQL restore.
+    ///
+    /// The live database is never mutated. Credential field counts describe
+    /// how many `apiKey`/`baseUrl` values would change if the remote SQL were
+    /// applied verbatim (exact restore).
+    pub fn preview_exact_restore(&self, sql_raw: &str) -> Result<RestorePreview, AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::{
+            credential_fingerprint, extract_provider_credentials, mask_credential, CredentialDiff,
+        };
+
+        // Import into a throwaway in-memory DB so the live connection is untouched.
+        let remote_db = Database::memory()?;
+        remote_db.import_sql_string(sql_raw)?;
+
+        let mut new_provider_count = 0u32;
+        let mut existing_provider_count = 0u32;
+        let mut exact_restore_credential_field_count = 0u32;
+        let mut credential_conflicts: Vec<CredentialDiff> = Vec::new();
+
+        for app_type in AppType::all() {
+            let app_type_str = app_type.as_str();
+            let remote_providers = remote_db.get_all_providers(app_type_str)?;
+            for (provider_id, remote_provider) in remote_providers {
+                match self.get_provider_by_id(&provider_id, app_type_str)? {
+                    None => {
+                        new_provider_count = new_provider_count.saturating_add(1);
+                    }
+                    Some(local_provider) => {
+                        existing_provider_count = existing_provider_count.saturating_add(1);
+                        let local_creds = extract_provider_credentials(&local_provider, &app_type);
+                        let remote_creds =
+                            extract_provider_credentials(&remote_provider, &app_type);
+
+                        if local_creds.api_key != remote_creds.api_key {
+                            exact_restore_credential_field_count =
+                                exact_restore_credential_field_count.saturating_add(1);
+                            credential_conflicts.push(CredentialDiff {
+                                field: "apiKey".to_string(),
+                                stored_masked: local_creds
+                                    .api_key
+                                    .as_deref()
+                                    .map(mask_credential),
+                                live_masked: remote_creds
+                                    .api_key
+                                    .as_deref()
+                                    .map(mask_credential),
+                                stored_fingerprint: local_creds
+                                    .api_key
+                                    .as_deref()
+                                    .map(|v| credential_fingerprint("apiKey", v)),
+                                live_fingerprint: remote_creds
+                                    .api_key
+                                    .as_deref()
+                                    .map(|v| credential_fingerprint("apiKey", v)),
+                            });
+                        }
+                        if local_creds.base_url != remote_creds.base_url {
+                            exact_restore_credential_field_count =
+                                exact_restore_credential_field_count.saturating_add(1);
+                            credential_conflicts.push(CredentialDiff {
+                                field: "baseUrl".to_string(),
+                                stored_masked: local_creds
+                                    .base_url
+                                    .as_deref()
+                                    .map(mask_credential),
+                                live_masked: remote_creds
+                                    .base_url
+                                    .as_deref()
+                                    .map(mask_credential),
+                                stored_fingerprint: local_creds
+                                    .base_url
+                                    .as_deref()
+                                    .map(|v| credential_fingerprint("baseUrl", v)),
+                                live_fingerprint: remote_creds
+                                    .base_url
+                                    .as_deref()
+                                    .map(|v| credential_fingerprint("baseUrl", v)),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(RestorePreview {
+            preview_id: uuid::Uuid::new_v4().to_string(),
+            new_provider_count,
+            existing_provider_count,
+            credential_conflicts,
+            exact_restore_credential_field_count,
+        })
     }
 
     fn import_sql_string_inner(
@@ -689,7 +914,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::Database;
+    use super::{Database, RemoteCredentialSelection};
     use crate::error::AppError;
     use crate::settings::{update_settings, AppSettings};
     use serial_test::serial;
@@ -778,6 +1003,215 @@ mod tests {
             "local stream check logs should be preserved"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_restore_preserves_existing_local_credentials_by_default() -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::extract_provider_credentials;
+
+        let remote_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-remote",
+                "ANTHROPIC_BASE_URL": "https://remote.example"
+            }
+        });
+        let local_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-local",
+                "ANTHROPIC_BASE_URL": "https://local.example"
+            }
+        });
+
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Remote Renamed Provider', ?1, '{}')",
+                rusqlite::params![remote_settings.to_string()],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync()?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Local Provider', ?1, '{}')",
+                rusqlite::params![local_settings.to_string()],
+            )?;
+        }
+
+        local_db.import_sql_string_for_sync(&remote_sql)?;
+
+        let provider = local_db
+            .get_provider_by_id("p1", "claude")?
+            .expect("provider should exist after cloud restore");
+        assert_eq!(
+            provider.name, "Remote Renamed Provider",
+            "non-credential remote fields should be accepted"
+        );
+        let creds = extract_provider_credentials(&provider, &AppType::Claude);
+        assert_eq!(
+            creds.api_key.as_deref(),
+            Some("sk-local"),
+            "local api key must be preserved by default"
+        );
+        assert_eq!(
+            creds.base_url.as_deref(),
+            Some("https://local.example"),
+            "local base url must be preserved by default"
+        );
+        Ok(())
+    }
+
+
+    
+    #[test]
+    #[serial]
+    fn cloud_restore_uses_remote_credentials_when_explicitly_selected() -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::extract_provider_credentials;
+
+        let local_db = Database::memory()?;
+        let local_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-local",
+                "ANTHROPIC_BASE_URL": "https://local.example"
+            }
+        });
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Local Provider', ?1, '{}')",
+                rusqlite::params![local_settings.to_string()],
+            )?;
+        }
+
+        let remote_db = Database::memory()?;
+        let remote_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-remote",
+                "ANTHROPIC_BASE_URL": "https://remote.example"
+            }
+        });
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Remote Renamed Provider', ?1, '{}')",
+                rusqlite::params![remote_settings.to_string()],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync()?;
+
+        local_db.import_sql_string_for_sync_with_selections(
+            &remote_sql,
+            &[RemoteCredentialSelection {
+                app_type: "claude".to_string(),
+                provider_id: "p1".to_string(),
+                use_remote_api_key: true,
+                use_remote_base_url: false,
+            }],
+        )?;
+
+        let provider = local_db
+            .get_provider_by_id("p1", "claude")?
+            .expect("provider should exist after cloud restore");
+        assert_eq!(provider.name, "Remote Renamed Provider");
+        let creds = extract_provider_credentials(&provider, &AppType::Claude);
+        assert_eq!(
+            creds.api_key.as_deref(),
+            Some("sk-remote"),
+            "explicit remote api key selection must win"
+        );
+        assert_eq!(
+            creds.base_url.as_deref(),
+            Some("https://local.example"),
+            "unselected base url must stay local"
+        );
+        Ok(())
+    }
+
+#[test]
+    #[serial]
+    fn exact_restore_preview_counts_credential_changes_without_applying() -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::extract_provider_credentials;
+
+        let local_db = Database::memory()?;
+        let local_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-local",
+                "ANTHROPIC_BASE_URL": "https://local.example"
+            }
+        });
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Local Provider', ?1, '{}')",
+                rusqlite::params![local_settings.to_string()],
+            )?;
+        }
+
+        let remote_db = Database::memory()?;
+        let remote_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-remote",
+                "ANTHROPIC_BASE_URL": "https://remote.example"
+            }
+        });
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Remote Renamed Provider', ?1, '{}')",
+                rusqlite::params![remote_settings.to_string()],
+            )?;
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-only', 'claude', 'Remote Only', '{}', '{}')",
+                [],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string()?;
+
+        let preview = local_db.preview_exact_restore(&remote_sql)?;
+        assert_eq!(preview.new_provider_count, 1, "remote-only should count as new");
+        assert_eq!(
+            preview.existing_provider_count, 1,
+            "p1 should count as existing"
+        );
+        assert_eq!(
+            preview.exact_restore_credential_field_count, 2,
+            "apiKey + baseUrl should both count as changes"
+        );
+        assert!(
+            !preview.preview_id.is_empty(),
+            "preview must carry a non-empty id"
+        );
+
+        // Preview must not mutate local credentials.
+        let provider = local_db
+            .get_provider_by_id("p1", "claude")?
+            .expect("local provider must still exist");
+        assert_eq!(provider.name, "Local Provider");
+        let creds = extract_provider_credentials(&provider, &AppType::Claude);
+        assert_eq!(creds.api_key.as_deref(), Some("sk-local"));
+        assert_eq!(creds.base_url.as_deref(), Some("https://local.example"));
+
+        // And remote-only must not have been imported by preview.
+        assert!(
+            local_db
+                .get_provider_by_id("remote-only", "claude")?
+                .is_none(),
+            "preview must not apply remote providers"
+        );
         Ok(())
     }
 

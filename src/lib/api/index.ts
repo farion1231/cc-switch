@@ -2,6 +2,12 @@ export type { AppId } from "./types";
 export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
 export { backupsApi } from "./settings";
+export type {
+  RestorePreview,
+  CredentialDiff,
+  RemoteCredentialSelection,
+  WebDavSyncResult,
+} from "./settings";
 export { mcpApi } from "./mcp";
 export { profilesApi } from "./profiles";
 export { promptsApi } from "./prompts";

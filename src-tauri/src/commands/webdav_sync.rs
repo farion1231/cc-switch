@@ -139,6 +139,54 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
 }
 
 #[tauri::command]
+pub async fn webdav_sync_prepare_download(state: State<'_, AppState>) -> Result<Value, String> {
+    let db = state.db.clone();
+    let mut settings = require_enabled_webdav_settings()?;
+    let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();
+
+    let sync_result =
+        run_with_webdav_lock(webdav_sync_service::prepare_download(&db, &mut settings)).await;
+    map_sync_result(sync_result, |error| {
+        persist_sync_error(&mut settings, error, "manual")
+    })
+}
+
+#[tauri::command]
+pub async fn webdav_sync_apply_download(
+    state: State<'_, AppState>,
+    preview_id: String,
+    selections: Option<Vec<crate::database::backup::RemoteCredentialSelection>>,
+) -> Result<Value, String> {
+    let db = state.db.clone();
+    let db_for_sync = db.clone();
+    let mut settings = require_enabled_webdav_settings()?;
+    let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();
+    let selections = selections.unwrap_or_default();
+
+    let sync_result = run_with_webdav_lock(webdav_sync_service::apply_download(
+        &db,
+        &mut settings,
+        &preview_id,
+        &selections,
+    ))
+    .await;
+    let mut result = map_sync_result(sync_result, |error| {
+        persist_sync_error(&mut settings, error, "manual")
+    })?;
+
+    let warning = post_sync_warning_from_result(
+        tauri::async_runtime::spawn_blocking(move || run_post_import_sync(db_for_sync))
+            .await
+            .map_err(|e| e.to_string()),
+    );
+    if let Some(msg) = warning.as_ref() {
+        log::warn!("[WebDAV] post-apply sync warning: {msg}");
+    }
+    result = attach_warning(result, warning);
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn webdav_sync_save_settings(
     settings: WebDavSyncSettings,
     #[allow(non_snake_case)] passwordTouched: Option<bool>,

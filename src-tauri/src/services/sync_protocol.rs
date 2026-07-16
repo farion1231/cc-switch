@@ -24,7 +24,7 @@ pub(crate) use super::webdav_sync::archive::{
 /// Retains historic "webdav" naming for backward compatibility with existing remotes.
 pub(crate) const PROTOCOL_FORMAT: &str = "cc-switch-webdav-sync";
 pub(crate) const PROTOCOL_VERSION: u32 = 2;
-pub(crate) const DB_COMPAT_VERSION: u32 = 6;
+pub(crate) const DB_COMPAT_VERSION: u32 = 7;
 pub(crate) const LEGACY_DB_COMPAT_VERSION: u32 = 5;
 pub(crate) const REMOTE_DB_SQL: &str = "db.sql";
 pub(crate) const REMOTE_SKILLS_ZIP: &str = "skills.zip";
@@ -311,6 +311,15 @@ pub(crate) fn apply_snapshot(
     db_sql: &[u8],
     skills_zip: &[u8],
 ) -> Result<(), AppError> {
+    apply_snapshot_with_selections(db, db_sql, skills_zip, &[])
+}
+
+pub(crate) fn apply_snapshot_with_selections(
+    db: &crate::database::Database,
+    db_sql: &[u8],
+    skills_zip: &[u8],
+    selections: &[crate::database::backup::RemoteCredentialSelection],
+) -> Result<(), AppError> {
     let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
         localized(
             "sync.sql_not_utf8",
@@ -323,7 +332,7 @@ pub(crate) fn apply_snapshot(
     // Replace skills first, then import database; roll back skills on DB failure.
     restore_skills_zip(skills_zip)?;
 
-    if let Err(db_err) = db.import_sql_string_for_sync(sql_str) {
+    if let Err(db_err) = db.import_sql_string_for_sync_with_selections(sql_str, selections) {
         if let Err(rollback_err) = restore_skills_from_backup(&skills_backup) {
             return Err(localized(
                 "sync.db_import_and_rollback_failed",
@@ -336,6 +345,189 @@ pub(crate) fn apply_snapshot(
         return Err(db_err);
     }
 
+    Ok(())
+}
+
+// ─── Staging prepare / apply ─────────────────────────────────
+
+const STAGING_ROOT_DIR: &str = "sync-staging";
+const STAGING_META_FILE: &str = "meta.json";
+const STAGING_DB_SQL: &str = "db.sql";
+const STAGING_SKILLS_ZIP: &str = "skills.zip";
+const STAGING_MAX_AGE_SECS: i64 = 24 * 60 * 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StagingMeta {
+    preview_id: String,
+    created_at: i64,
+    db_sql_sha256: String,
+    skills_zip_sha256: String,
+}
+
+fn staging_root() -> std::path::PathBuf {
+    crate::config::get_app_config_dir().join(STAGING_ROOT_DIR)
+}
+
+fn staging_dir_for(preview_id: &str) -> std::path::PathBuf {
+    staging_root().join(preview_id)
+}
+
+/// Remove staging directories older than 24 hours. Best-effort; errors are logged only.
+pub(crate) fn cleanup_expired_staging() {
+    let root = staging_root();
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+    let now = Utc::now().timestamp();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let meta_path = path.join(STAGING_META_FILE);
+        let expired = match fs::read_to_string(&meta_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<StagingMeta>(&s).ok())
+        {
+            Some(meta) => now.saturating_sub(meta.created_at) > STAGING_MAX_AGE_SECS,
+            None => {
+                // No meta: fall back to directory mtime if available.
+                entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| now.saturating_sub(d.as_secs() as i64) > STAGING_MAX_AGE_SECS)
+                    .unwrap_or(false)
+            }
+        };
+        if expired {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// Stage verified artifacts and return a non-destructive restore preview.
+///
+/// Files land under `~/.cc-switch/sync-staging/<preview_id>/`. The live DB is not mutated.
+pub(crate) fn prepare_restore_preview(
+    db: &crate::database::Database,
+    db_sql: &[u8],
+    skills_zip: &[u8],
+) -> Result<crate::database::backup::RestorePreview, AppError> {
+    cleanup_expired_staging();
+
+    let sql_str = std::str::from_utf8(db_sql).map_err(|e| {
+        localized(
+            "sync.sql_not_utf8",
+            format!("SQL 非 UTF-8: {e}"),
+            format!("SQL is not valid UTF-8: {e}"),
+        )
+    })?;
+
+    let mut preview = db.preview_exact_restore(sql_str)?;
+    // Re-key preview_id as staging nonce (overwrite uuid from pure preview).
+    let preview_id = uuid::Uuid::new_v4().to_string();
+    preview.preview_id = preview_id.clone();
+
+    let dir = staging_dir_for(&preview_id);
+    fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
+
+    let db_path = dir.join(STAGING_DB_SQL);
+    let skills_path = dir.join(STAGING_SKILLS_ZIP);
+    let meta_path = dir.join(STAGING_META_FILE);
+
+    fs::write(&db_path, db_sql).map_err(|e| AppError::io(&db_path, e))?;
+    fs::write(&skills_path, skills_zip).map_err(|e| AppError::io(&skills_path, e))?;
+
+    let meta = StagingMeta {
+        preview_id: preview_id.clone(),
+        created_at: Utc::now().timestamp(),
+        db_sql_sha256: sha256_hex(db_sql),
+        skills_zip_sha256: sha256_hex(skills_zip),
+    };
+    let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| {
+        AppError::Config(format!("Failed to serialize staging meta: {e}"))
+    })?;
+    fs::write(&meta_path, meta_json).map_err(|e| AppError::io(&meta_path, e))?;
+
+    Ok(preview)
+}
+
+/// Apply a previously staged restore, re-validating hashes and optional remote credential selections.
+pub(crate) fn apply_staged_restore(
+    db: &crate::database::Database,
+    preview_id: &str,
+    selections: &[crate::database::backup::RemoteCredentialSelection],
+) -> Result<(), AppError> {
+    if preview_id.trim().is_empty()
+        || preview_id.contains("..")
+        || preview_id.chars().any(std::path::is_separator)
+    {
+        return Err(localized(
+            "sync.invalid_preview_id",
+            "无效的 restore preview id",
+            "Invalid restore preview id",
+        ));
+    }
+
+    let dir = staging_dir_for(preview_id);
+    if !dir.is_dir() {
+        return Err(localized(
+            "sync.staging_not_found",
+            format!("找不到 restore staging: {preview_id}"),
+            format!("Restore staging not found: {preview_id}"),
+        ));
+    }
+
+    let meta_path = dir.join(STAGING_META_FILE);
+    let meta_raw = fs::read_to_string(&meta_path).map_err(|e| AppError::io(&meta_path, e))?;
+    let meta: StagingMeta = serde_json::from_str(&meta_raw).map_err(|e| {
+        AppError::Config(format!("Invalid staging meta for {preview_id}: {e}"))
+    })?;
+    if meta.preview_id != preview_id {
+        return Err(localized(
+            "sync.staging_id_mismatch",
+            "staging meta 与 preview id 不一致",
+            "Staging meta preview id mismatch",
+        ));
+    }
+
+    let now = Utc::now().timestamp();
+    if now.saturating_sub(meta.created_at) > STAGING_MAX_AGE_SECS {
+        let _ = fs::remove_dir_all(&dir);
+        return Err(localized(
+            "sync.staging_expired",
+            "restore staging 已过期，请重新下载预览",
+            "Restore staging expired; please re-download preview",
+        ));
+    }
+
+    let db_path = dir.join(STAGING_DB_SQL);
+    let skills_path = dir.join(STAGING_SKILLS_ZIP);
+    let db_sql = fs::read(&db_path).map_err(|e| AppError::io(&db_path, e))?;
+    let skills_zip = fs::read(&skills_path).map_err(|e| AppError::io(&skills_path, e))?;
+
+    if sha256_hex(&db_sql) != meta.db_sql_sha256 {
+        return Err(localized(
+            "sync.staging_hash_mismatch",
+            "staging db.sql 哈希校验失败",
+            "Staged db.sql hash verification failed",
+        ));
+    }
+    if sha256_hex(&skills_zip) != meta.skills_zip_sha256 {
+        return Err(localized(
+            "sync.staging_hash_mismatch",
+            "staging skills.zip 哈希校验失败",
+            "Staged skills.zip hash verification failed",
+        ));
+    }
+
+    apply_snapshot_with_selections(db, &db_sql, &skills_zip, selections)?;
+
+    // Success: drop staging so the nonce cannot be reused.
+    let _ = fs::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -645,4 +837,96 @@ mod tests {
         };
         assert!(verify_artifact(data, "test.bin", &meta).is_ok());
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn prepare_restore_preview_stages_files_without_mutating_db() -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::database::Database;
+        use crate::services::provider_security::extract_provider_credentials;
+
+        let old_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let test_home = std::env::temp_dir().join(format!(
+            "cc-switch-staging-prepare-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&test_home);
+        fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        let result = (|| -> Result<(), AppError> {
+            let local_db = Database::memory()?;
+            let local_settings = serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-local",
+                    "ANTHROPIC_BASE_URL": "https://local.example"
+                }
+            });
+            {
+                let conn = crate::database::lock_conn!(local_db.conn);
+                conn.execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                     VALUES ('p1', 'claude', 'Local Provider', ?1, '{}')",
+                    rusqlite::params![local_settings.to_string()],
+                )?;
+            }
+
+            let remote_db = Database::memory()?;
+            let remote_settings = serde_json::json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-remote",
+                    "ANTHROPIC_BASE_URL": "https://remote.example"
+                }
+            });
+            {
+                let conn = crate::database::lock_conn!(remote_db.conn);
+                conn.execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                     VALUES ('p1', 'claude', 'Remote Provider', ?1, '{}')",
+                    rusqlite::params![remote_settings.to_string()],
+                )?;
+            }
+            let remote_sql = remote_db.export_sql_string_for_sync()?;
+            let db_sql = remote_sql.as_bytes();
+            let skills_zip = b"PK\x03\x04fake-skills-zip";
+
+            let preview = prepare_restore_preview(&local_db, db_sql, skills_zip)?;
+            assert!(!preview.preview_id.is_empty());
+            assert!(preview.exact_restore_credential_field_count >= 1);
+
+            let stage = staging_dir_for(&preview.preview_id);
+            assert!(stage.join(STAGING_DB_SQL).is_file());
+            assert!(stage.join(STAGING_SKILLS_ZIP).is_file());
+            assert!(stage.join(STAGING_META_FILE).is_file());
+
+            let provider = local_db
+                .get_provider_by_id("p1", "claude")?
+                .expect("local provider must remain");
+            let creds = extract_provider_credentials(&provider, &AppType::Claude);
+            assert_eq!(creds.api_key.as_deref(), Some("sk-local"));
+            Ok(())
+        })();
+
+        let _ = fs::remove_dir_all(&test_home);
+        match old_home {
+            Some(v) => std::env::set_var("CC_SWITCH_TEST_HOME", v),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        result
+    }
+
+    #[test]
+    fn apply_staged_restore_rejects_unknown_preview_id() {
+        use crate::database::Database;
+        let db = Database::memory().expect("memory db");
+        let err = apply_staged_restore(&db, "does-not-exist", &[])
+            .expect_err("missing staging should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not found") || msg.contains("找不到"),
+            "unexpected error: {msg}"
+        );
+    }
+
+
 }

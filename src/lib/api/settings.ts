@@ -28,6 +28,33 @@ export interface CodexUnifyHistoryRestoreResult {
 
 export interface WebDavSyncResult {
   status: string;
+  previewId?: string;
+  warning?: string;
+}
+
+/** Credential field-level diff returned by restore preview (camelCase). */
+export interface CredentialDiff {
+  field: string;
+  storedMasked?: string | null;
+  liveMasked?: string | null;
+  storedFingerprint?: string | null;
+  liveFingerprint?: string | null;
+}
+
+export interface RestorePreview {
+  previewId: string;
+  newProviderCount: number;
+  existingProviderCount: number;
+  credentialConflicts: CredentialDiff[];
+  exactRestoreCredentialFieldCount: number;
+}
+
+/** Per-provider opt-in to take remote credentials during cloud apply (default empty = keep local). */
+export interface RemoteCredentialSelection {
+  appType: string;
+  providerId: string;
+  useRemoteApiKey: boolean;
+  useRemoteBaseUrl: boolean;
 }
 
 export const settingsApi = {
@@ -152,6 +179,22 @@ export const settingsApi = {
     return await invoke("webdav_sync_download");
   },
 
+  /** Stage remote snapshot and return credential/provider preview (does not mutate DB). */
+  async webdavSyncPrepareDownload(): Promise<RestorePreview> {
+    return await invoke("webdav_sync_prepare_download");
+  },
+
+  /** Apply staged restore. Empty selections = keep all local credentials. */
+  async webdavSyncApplyDownload(
+    previewId: string,
+    selections: RemoteCredentialSelection[] = [],
+  ): Promise<WebDavSyncResult> {
+    return await invoke("webdav_sync_apply_download", {
+      previewId,
+      selections,
+    });
+  },
+
   async webdavSyncSaveSettings(
     settings: WebDavSyncSettings,
     passwordTouched = false,
@@ -186,6 +229,20 @@ export const settingsApi = {
 
   async s3SyncDownload(): Promise<WebDavSyncResult> {
     return await invoke("s3_sync_download");
+  },
+
+  async s3SyncPrepareDownload(): Promise<RestorePreview> {
+    return await invoke("s3_sync_prepare_download");
+  },
+
+  async s3SyncApplyDownload(
+    previewId: string,
+    selections: RemoteCredentialSelection[] = [],
+  ): Promise<WebDavSyncResult> {
+    return await invoke("s3_sync_apply_download", {
+      previewId,
+      selections,
+    });
   },
 
   async s3SyncSaveSettings(

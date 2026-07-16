@@ -18,12 +18,13 @@ use crate::services::webdav::{
 use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncStatus};
 
 use super::sync_protocol::{
-    apply_snapshot, build_local_snapshot, effective_db_compat_version, localized,
-    persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
-    validate_manifest_compat, verify_artifact, ArtifactMeta, RemoteLayout, SyncManifest,
-    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES, PROTOCOL_VERSION,
-    REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    apply_snapshot, apply_staged_restore, build_local_snapshot, effective_db_compat_version,
+    localized, persist_sync_success_best_effort, prepare_restore_preview, sha256_hex,
+    validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
+    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
+    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
+use crate::database::backup::RemoteCredentialSelection;
 
 pub(crate) mod archive;
 
@@ -157,6 +158,85 @@ pub async fn download(
         "status": "downloaded",
         "sourceLayout": snapshot.layout.as_str(),
         "sourcePath": remote_dir_display(settings, snapshot.layout),
+    }))
+}
+
+/// Download remote snapshot into staging and return a non-destructive restore preview.
+///
+/// Does not apply the SQL or skills zip. Call [`apply_download`] with the returned
+/// `previewId` (and optional remote credential selections) to commit.
+pub async fn prepare_download(
+    db: &crate::database::Database,
+    settings: &WebDavSyncSettings,
+) -> Result<Value, AppError> {
+    settings.validate()?;
+    let auth = auth_for(settings);
+    let snapshot = find_remote_snapshot(settings, &auth)
+        .await?
+        .ok_or_else(|| {
+            localized(
+                "webdav.sync.remote_empty",
+                "远端没有可下载的同步数据",
+                "No downloadable sync data found on the remote.",
+            )
+        })?;
+
+    validate_manifest_compat(&snapshot.manifest, snapshot.layout)?;
+
+    let db_sql = download_and_verify(
+        settings,
+        &auth,
+        snapshot.layout,
+        REMOTE_DB_SQL,
+        &snapshot.manifest.artifacts,
+    )
+    .await?;
+    let skills_zip = download_and_verify(
+        settings,
+        &auth,
+        snapshot.layout,
+        REMOTE_SKILLS_ZIP,
+        &snapshot.manifest.artifacts,
+    )
+    .await?;
+
+    let preview = prepare_restore_preview(db, &db_sql, &skills_zip)?;
+    Ok(serde_json::json!({
+        "status": "prepared",
+        "preview": preview,
+        "sourceLayout": snapshot.layout.as_str(),
+        "sourcePath": remote_dir_display(settings, snapshot.layout),
+        "snapshotId": snapshot.manifest.snapshot_id,
+        "manifestHash": sha256_hex(&snapshot.manifest_bytes),
+    }))
+}
+
+/// Apply a previously staged restore (from [`prepare_download`]).
+///
+/// Default policy keeps local credentials unless `selections` opts into remote fields.
+pub async fn apply_download(
+    db: &crate::database::Database,
+    settings: &mut WebDavSyncSettings,
+    preview_id: &str,
+    selections: &[RemoteCredentialSelection],
+) -> Result<Value, AppError> {
+    settings.validate()?;
+    apply_staged_restore(db, preview_id, selections)?;
+    // Best-effort: we do not re-fetch the remote manifest here; status timestamps
+    // still advance so the UI knows an apply completed.
+    let status = WebDavSyncStatus {
+        last_sync_at: Some(Utc::now().timestamp()),
+        last_error: None,
+        last_error_source: None,
+        last_local_manifest_hash: settings.status.last_local_manifest_hash.clone(),
+        last_remote_manifest_hash: settings.status.last_remote_manifest_hash.clone(),
+        last_remote_etag: settings.status.last_remote_etag.clone(),
+    };
+    settings.status = status.clone();
+    let _ = update_webdav_sync_status(status);
+    Ok(serde_json::json!({
+        "status": "applied",
+        "previewId": preview_id,
     }))
 }
 
