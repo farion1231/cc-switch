@@ -575,4 +575,62 @@ mod tests {
             }
         );
     }
+
+    /// Live path closest to attach_and_inject without Tauri UI / settings DB:
+    /// start_bridge → build_bootstrap_bundle → inject_script → probe_csp_marker → bridge /health.
+    ///
+    /// Run:
+    /// `cargo test --manifest-path src-tauri/Cargo.toml --lib services::codex_runtime::launcher::tests::live_bridge_bootstrap_inject_store_codex -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "requires live Store Codex with --remote-debugging-port=9229"]
+    async fn live_bridge_bootstrap_inject_store_codex() {
+        let port: u16 = std::env::var("CC_SWITCH_LIVE_CDP_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(9229);
+
+        assert!(
+            discovery::probe_cdp_port(port).await,
+            "CDP not reachable on {port}; start Store Codex with remote debugging"
+        );
+
+        let instance_id = uuid::Uuid::new_v4().to_string();
+        let bridge = codex_injection::start_bridge(&instance_id)
+            .await
+            .expect("start_bridge");
+        let bridge_port = bridge.port;
+        let nonce = bridge.nonce.clone();
+        let settings = crate::settings::CodexWorkbenchSettings::default();
+        let bundle =
+            codex_injection::build_bootstrap_bundle(&settings, &instance_id, bridge_port, &nonce);
+
+        cdp::inject_script(port, &bundle)
+            .await
+            .unwrap_or_else(|e| panic!("inject bootstrap failed on port {port}: {e}"));
+
+        let marked = cdp::probe_csp_marker(port)
+            .await
+            .unwrap_or_else(|e| panic!("probe_csp_marker failed: {e}"));
+        assert!(marked, "CSP marker should be true after bootstrap inject");
+
+        // Bridge health with bearer nonce (same contract page runtime uses).
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .expect("reqwest client");
+        let health_url = format!("http://127.0.0.1:{bridge_port}/health");
+        let resp = client
+            .get(&health_url)
+            .header("Authorization", format!("Bearer {nonce}"))
+            .send()
+            .await
+            .expect("bridge health request");
+        assert!(
+            resp.status().is_success(),
+            "bridge /health expected 200, got {}",
+            resp.status()
+        );
+
+        bridge.shutdown().await;
+    }
 }
