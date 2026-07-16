@@ -14,11 +14,11 @@ import { EnhancementsTab } from "./EnhancementsTab";
 import { ScriptsTab } from "./ScriptsTab";
 import { PluginsTab } from "./PluginsTab";
 import { RadarTab } from "./RadarTab";
+import { OverviewTab } from "./OverviewTab";
 
 /**
  * Codex 工作台壳层页面。
- * 四个分区：enhancements / scripts / plugins / radar。
- * 后续任务填充后三个分区，不改导航结构。
+ * 分区：overview / enhancements / scripts / plugins / radar。
  */
 export function CodexWorkbenchPage() {
   const { t } = useTranslation();
@@ -108,10 +108,11 @@ export function CodexWorkbenchPage() {
       )}
 
       <Tabs
-        defaultValue="enhancements"
+        defaultValue="overview"
         className="flex min-h-0 flex-1 flex-col"
       >
         <TabsList className="w-fit">
+          <TabsTrigger value="overview">{t("codexWorkbench.tabs.overview", { defaultValue: "总览" })}</TabsTrigger>
           <TabsTrigger value="enhancements">
             {t("codexWorkbench.tabs.enhancements", {
               defaultValue: "增强",
@@ -127,6 +128,9 @@ export function CodexWorkbenchPage() {
             {t("codexWorkbench.tabs.radar", { defaultValue: "降智雷达" })}
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="overview" className="flex-1 overflow-auto">
+          <OverviewTab />
+        </TabsContent>
 
         <TabsContent value="enhancements" className="flex-1 overflow-auto">
           <EnhancementsTab

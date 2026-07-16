@@ -1578,7 +1578,14 @@
     "modelsDevTruncated": "仅显示前 {{shown}} 条，共 {{total}} 条结果，请缩小搜索范围",
     "modelsDevDefaultHint": "默认展示最新发布的 {{shown}} 个模型（共 {{total}} 个），输入关键字可全量搜索",
     "cacheReadCostPerMillion": "缓存读取成本 (每百万 tokens, USD)",
-    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)"
+    "cacheCreationCostPerMillion": "缓存写入成本 (每百万 tokens, USD)",
+    "reasoning": "推理",
+    "reasoningSource": "推理来源",
+    "continuationStatus": "续写状态",
+    "continuationRounds": "{{count}} 个续接轮次",
+    "sessionEnriched": "会话已补全",
+    "promptReplaced": "Prompt 已替换",
+    "identityCorrected": "Identity 已校正"
   },
   "usageScript": {
     "title": "配置用量查询",
@@ -2971,7 +2978,28 @@
       "enhancements": "增强",
       "scripts": "脚本",
       "plugins": "插件",
-      "radar": "降智雷达"
+      "radar": "降智雷达",
+      "overview": "总览"
+    },
+    "overview": {
+      "runtime": "运行时",
+      "providerTitle": "当前 Provider 提示词 / 续接",
+      "editProvider": "编辑 Provider",
+      "provider": "Provider",
+      "promptReplace": "提示词替换",
+      "continuation": "推理续接",
+      "enabled": "开",
+      "disabled": "关",
+      "on": "已连接",
+      "off": "未连接",
+      "noProvider": "未选择 Provider",
+      "noPromptText": "状态卡不读取、不展示任何提示词正文。",
+      "enhancements": "页面增强摘要",
+      "enhancementsHint": "详细开关见「增强」页签；此处仅作总览。"
+    },
+    "radar": {
+      "cache": "缓存",
+      "stale": "已过期"
     }
   }
 }

@@ -1578,7 +1578,14 @@
     "modelsDevTruncated": "Showing first {{shown}} of {{total}} results — refine your search",
     "modelsDevDefaultHint": "Showing the {{shown}} most recently released models (of {{total}}) — type to search all",
     "cacheReadCostPerMillion": "Cache Read Cost (per million tokens, USD)",
-    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)"
+    "cacheCreationCostPerMillion": "Cache Write Cost (per million tokens, USD)",
+    "reasoning": "Reasoning",
+    "reasoningSource": "Reasoning source",
+    "continuationStatus": "Continuation status",
+    "continuationRounds": "{{count}} continuation rounds",
+    "sessionEnriched": "Session enriched",
+    "promptReplaced": "Prompt replaced",
+    "identityCorrected": "Identity corrected"
   },
   "usageScript": {
     "title": "Configure Usage Query",
@@ -2971,7 +2978,28 @@
       "enhancements": "Enhancements",
       "scripts": "Scripts",
       "plugins": "Plugins",
-      "radar": "Radar"
+      "radar": "Radar",
+      "overview": "Overview"
+    },
+    "overview": {
+      "runtime": "Runtime",
+      "providerTitle": "Active provider prompt / continuation",
+      "editProvider": "Edit provider",
+      "provider": "Provider",
+      "promptReplace": "Prompt replace",
+      "continuation": "Reasoning continuation",
+      "enabled": "On",
+      "disabled": "Off",
+      "on": "Connected",
+      "off": "Disconnected",
+      "noProvider": "No provider selected",
+      "noPromptText": "This card never loads or shows prompt text.",
+      "enhancements": "Enhancement summary",
+      "enhancementsHint": "See the Enhancements tab for full toggles."
+    },
+    "radar": {
+      "cache": "Cached",
+      "stale": "Stale"
     }
   }
 }

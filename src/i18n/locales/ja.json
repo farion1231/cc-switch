@@ -1578,7 +1578,14 @@
     "modelsDevTruncated": "{{total}} 件中、先頭 {{shown}} 件のみ表示しています。検索条件を絞り込んでください",
     "modelsDevDefaultHint": "最新リリース順に {{shown}} 件を表示しています（全 {{total}} 件）。キーワード入力で全件検索できます",
     "cacheReadCostPerMillion": "キャッシュ読み取りコスト（100万トークンあたり、USD）",
-    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）"
+    "cacheCreationCostPerMillion": "キャッシュ書き込みコスト（100万トークンあたり、USD）",
+    "reasoning": "推論",
+    "reasoningSource": "推論ソース",
+    "continuationStatus": "継続ステータス",
+    "continuationRounds": "{{count}} 回の継続",
+    "sessionEnriched": "セッション補完済み",
+    "promptReplaced": "プロンプト置換済み",
+    "identityCorrected": "Identity 補正済み"
   },
   "usageScript": {
     "title": "利用状況を設定",
@@ -2971,7 +2978,28 @@
       "enhancements": "拡張",
       "scripts": "スクリプト",
       "plugins": "プラグイン",
-      "radar": "レーダー"
+      "radar": "レーダー",
+      "overview": "概要"
+    },
+    "overview": {
+      "runtime": "ランタイム",
+      "providerTitle": "現在の Provider プロンプト / 継続",
+      "editProvider": "Provider を編集",
+      "provider": "Provider",
+      "promptReplace": "プロンプト置換",
+      "continuation": "推論継続",
+      "enabled": "オン",
+      "disabled": "オフ",
+      "on": "接続済み",
+      "off": "未接続",
+      "noProvider": "Provider 未選択",
+      "noPromptText": "このカードはプロンプト本文を読み取り・表示しません。",
+      "enhancements": "ページ強化サマリー",
+      "enhancementsHint": "詳細は「強化」タブを参照。"
+    },
+    "radar": {
+      "cache": "キャッシュ",
+      "stale": "期限切れ"
     }
   }
 }

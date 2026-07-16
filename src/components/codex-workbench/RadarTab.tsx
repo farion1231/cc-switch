@@ -19,7 +19,7 @@ export function RadarTab() {
         <h3 className="text-sm font-medium">
           {t("codexWorkbench.radar.title", { defaultValue: "降智雷达" })}
         </h3>
-        {result?.from_cache && (
+        {result?.fromCache && (
           <Badge variant="secondary">
             {t("codexWorkbench.radar.cache", { defaultValue: "缓存" })}
           </Badge>

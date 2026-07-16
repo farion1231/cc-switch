@@ -208,12 +208,23 @@ export function RequestDetailPanel({
                         {t("usage.continuationStatus", "续写状态")}:{" "}
                         <span className="font-mono">
                           {request.continuationStatus}
-                          {request.continuationRounds
-                            ? ` (R${request.continuationRounds})`
-                            : ""}
                         </span>
                       </div>
                     )}
+                  {typeof request.continuationRounds === "number" &&
+                    request.continuationRounds > 0 && (
+                      <div data-testid="continuation-rounds">
+                        {t("usage.continuationRounds", {
+                          count: request.continuationRounds,
+                          defaultValue: "{{count}} 个续接轮次",
+                        })}
+                      </div>
+                    )}
+                  {request.sessionEnriched && (
+                    <div data-testid="session-enriched">
+                      {t("usage.sessionEnriched", "会话已补全")}
+                    </div>
+                  )}
                   {request.turnId && (
                     <div>
                       turn_id: <span className="font-mono">{request.turnId}</span>
