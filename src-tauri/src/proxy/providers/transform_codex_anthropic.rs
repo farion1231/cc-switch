@@ -23,6 +23,23 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
+
+
+/// Truncate a string to at most `max_bytes` bytes, splitting only on valid
+/// UTF-8 character boundaries so the returned slice can never panic when
+/// formatted with `{}`.
+pub(crate) fn utf8_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Walk back from the byte boundary until we land on a char boundary.
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
@@ -548,7 +565,7 @@ fn convert_input_to_messages(
                             log::warn!(
                                 "[Codex/Anthropic] Degrading invalid function_call arguments \
                                  for '{name}' (call_id={call_id}): {error}; raw: {}",
-                                &args_str[..args_str.len().min(200)]
+                                utf8_truncate(&args_str, 200)
                             );
                             json!({})
                         }
