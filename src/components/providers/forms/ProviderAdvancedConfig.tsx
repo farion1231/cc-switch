@@ -268,7 +268,8 @@ export function ProviderAdvancedConfig({
                 />
                 <p className="text-xs text-muted-foreground">
                   {t("providerAdvanced.testModelHint", {
-                    defaultValue: "支持输入特定模型（如 deepseek-chat 或 qwen-max）。设为 auto 或留空将尝试自适应探测。",
+                    defaultValue:
+                      "支持输入特定模型（如 deepseek-chat 或 qwen-max）。设为 auto 或留空将尝试自适应探测。",
                   })}
                 </p>
               </div>
@@ -288,7 +289,8 @@ export function ProviderAdvancedConfig({
                 />
                 <p className="text-xs text-muted-foreground">
                   {t("providerAdvanced.testPromptHint", {
-                    defaultValue: "测试时发给该提供商的握手请求文本（如 hi 或 ping）。",
+                    defaultValue:
+                      "测试时发给该提供商的握手请求文本（如 hi 或 ping）。",
                   })}
                 </p>
               </div>

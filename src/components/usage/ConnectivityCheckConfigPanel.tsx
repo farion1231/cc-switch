@@ -99,17 +99,15 @@ export function ConnectivityCheckConfigPanel() {
       <Alert>
         <Info className="h-4 w-4" />
         <AlertDescription>
-          {config.enableModelCheck ? (
-            t("streamCheck.modelCheckNote", {
-              defaultValue:
-                "真实可用性检测会向供应商发送极小的数据包，以验证 API 密钥与模型本身的有效性。这可能会消耗 1~2 个 Token 额度。",
-            })
-          ) : (
-            t("streamCheck.connectivityNote", {
-              defaultValue:
-                "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
-            })
-          )}
+          {config.enableModelCheck
+            ? t("streamCheck.modelCheckNote", {
+                defaultValue:
+                  "真实可用性检测会向供应商发送极小的数据包，以验证 API 密钥与模型本身的有效性。这可能会消耗 1~2 个 Token 额度。",
+              })
+            : t("streamCheck.connectivityNote", {
+                defaultValue:
+                  "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
+              })}
         </AlertDescription>
       </Alert>
 
@@ -118,11 +116,14 @@ export function ConnectivityCheckConfigPanel() {
         <div className="flex items-center justify-between">
           <div className="space-y-0.5">
             <Label htmlFor="enableModelCheck" className="text-base font-medium">
-              {t("streamCheck.enableModelCheck", { defaultValue: "启用大模型可用性真实调用检测" })}
+              {t("streamCheck.enableModelCheck", {
+                defaultValue: "启用大模型可用性真实调用检测",
+              })}
             </Label>
             <p className="text-sm text-muted-foreground">
               {t("streamCheck.enableModelCheckHint", {
-                defaultValue: "开启后，系统在测速时会发起极轻量的 API 真实调用，自动验证 API 密钥与模型权限（仅推荐中转或自定义 API 开启）。",
+                defaultValue:
+                  "开启后，系统在测速时会发起极轻量的 API 真实调用，自动验证 API 密钥与模型权限（仅推荐中转或自定义 API 开启）。",
               })}
             </p>
           </div>
@@ -154,14 +155,17 @@ export function ConnectivityCheckConfigPanel() {
             />
             <p className="text-[11px] text-muted-foreground">
               {t("streamCheck.testModelHint", {
-                defaultValue: "留空或填入 auto 时，测试程序会向供应商请求并解析 /models 可用列表（仅限支持模型查询的渠道），自适应测试可用模型名称。",
+                defaultValue:
+                  "留空或填入 auto 时，测试程序会向供应商请求并解析 /models 可用列表（仅限支持模型查询的渠道），自适应测试可用模型名称。",
               })}
             </p>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="testPrompt">
-              {t("streamCheck.testPrompt", { defaultValue: "测试提示词 (Prompt)" })}
+              {t("streamCheck.testPrompt", {
+                defaultValue: "测试提示词 (Prompt)",
+              })}
             </Label>
             <Input
               id="testPrompt"
@@ -174,7 +178,8 @@ export function ConnectivityCheckConfigPanel() {
             />
             <p className="text-[11px] text-muted-foreground">
               {t("streamCheck.testPromptHint", {
-                defaultValue: "发送给模型的真实测试输入文本。建议填入极简词汇，以尽量减少测试所消耗的 Token 额度（1~2 个 Token）。",
+                defaultValue:
+                  "发送给模型的真实测试输入文本。建议填入极简词汇，以尽量减少测试所消耗的 Token 额度（1~2 个 Token）。",
               })}
             </p>
           </div>
