@@ -3,6 +3,7 @@
 use crate::error::AppError;
 use crate::services::codex_runtime::LaunchEnhancedCodexResult;
 use crate::services::codex_plugins::{self, MarketplaceResult, PluginCacheInfo};
+use crate::services::codex_radar::{self, RadarResult};
 use crate::services::codex_scripts::{
     self, MarketIndex, ScriptInstallRequest, UserScriptInfo,
 };
@@ -141,4 +142,11 @@ pub fn list_codex_plugin_caches() -> Result<Vec<PluginCacheInfo>, AppError> {
 pub fn refresh_codex_plugin_cache(plugin_id: String) -> Result<PluginCacheInfo, AppError> {
     let home = codex_plugins::effective_codex_home();
     codex_plugins::refresh_plugin_cache(&home, &plugin_id)
+}
+
+// --- Codex radar (T11) ---
+
+#[tauri::command]
+pub async fn get_codex_radar(refresh: Option<bool>) -> Result<RadarResult, AppError> {
+    Ok(codex_radar::get_radar(refresh.unwrap_or(false)).await)
 }

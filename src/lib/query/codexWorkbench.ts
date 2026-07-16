@@ -9,6 +9,7 @@ export const codexWorkbenchKeys = {
   all: ["codexWorkbench"] as const,
   status: () => [...codexWorkbenchKeys.all, "status"] as const,
   settings: () => [...codexWorkbenchKeys.all, "settings"] as const,
+  radar: () => [...codexWorkbenchKeys.all, "radar"] as const,
   scripts: () => [...codexWorkbenchKeys.all, "scripts"] as const,
   market: () => [...codexWorkbenchKeys.all, "market"] as const,
   pluginHome: () => [...codexWorkbenchKeys.all, "pluginHome"] as const,
@@ -201,3 +202,23 @@ export function useRefreshCodexPluginCache() {
     },
   });
 }
+
+export function useCodexRadarQuery(enabled = true) {
+  return useQuery({
+    queryKey: codexWorkbenchKeys.radar(),
+    queryFn: () => codexWorkbenchApi.getRadar(false),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useRefreshCodexRadar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => codexWorkbenchApi.getRadar(true),
+    onSuccess: (data) => {
+      qc.setQueryData(codexWorkbenchKeys.radar(), data);
+    },
+  });
+}
+

@@ -7,6 +7,7 @@ import type {
   UserScriptInfo,
   MarketplaceResult,
   PluginCacheInfo,
+  RadarResult,
 } from "@/types/codexWorkbench";
 
 export interface LaunchEnhancedCodexResult {
@@ -59,7 +60,7 @@ export const codexWorkbenchApi = {
     invoke<UserScriptInfo>("install_codex_market_script", { request }),
 
   reinjectAfterScriptChange: () =>
-    invoke<CodexWorkbenchStatus>("reinject_after_script_change"),,
+    invoke<CodexWorkbenchStatus>("reinject_after_script_change"),
 
   getEffectiveHome: () => invoke<string>("get_codex_effective_home"),
 
@@ -74,4 +75,7 @@ export const codexWorkbenchApi = {
 
   refreshPluginCache: (pluginId: string) =>
     invoke<PluginCacheInfo>("refresh_codex_plugin_cache", { pluginId }),
+
+  getRadar: (refresh?: boolean) =>
+    invoke<RadarResult>("get_codex_radar", { refresh: refresh ?? false }),
 };

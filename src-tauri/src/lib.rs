@@ -1245,6 +1245,7 @@ pub fn run() {
             commands::initialize_codex_plugin_marketplace,
             commands::list_codex_plugin_caches,
             commands::refresh_codex_plugin_cache,
+            commands::get_codex_radar,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,

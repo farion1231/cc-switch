@@ -104,3 +104,29 @@ export interface PluginCacheInfo {
   refreshReason: string;
 }
 
+export interface CodexRadarModelIq {
+  model: string;
+  score: number;
+  label: string;
+}
+
+export interface CodexRadarIqComparison {
+  leftModel: string;
+  rightModel: string;
+  delta: number;
+}
+
+export interface CodexRadarSnapshot {
+  fetchedAt: number;
+  sourceUrl: string;
+  models: CodexRadarModelIq[];
+  comparisons: CodexRadarIqComparison[];
+}
+
+export interface RadarResult {
+  snapshot: CodexRadarSnapshot | null;
+  stale: boolean;
+  fromCache: boolean;
+  error?: string | null;
+}
+

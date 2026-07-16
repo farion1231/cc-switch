@@ -13,6 +13,7 @@ import type { CodexWorkbenchSettings } from "@/types/codexWorkbench";
 import { EnhancementsTab } from "./EnhancementsTab";
 import { ScriptsTab } from "./ScriptsTab";
 import { PluginsTab } from "./PluginsTab";
+import { RadarTab } from "./RadarTab";
 
 /**
  * Codex 工作台壳层页面。
@@ -145,11 +146,7 @@ export function CodexWorkbenchPage() {
         </TabsContent>
 
         <TabsContent value="radar" className="flex-1 overflow-auto">
-          <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-            {t("codexWorkbench.radarPlaceholder", {
-              defaultValue: "降智雷达将在后续任务接入。",
-            })}
-          </div>
+          <RadarTab />
         </TabsContent>
       </Tabs>
     </div>
