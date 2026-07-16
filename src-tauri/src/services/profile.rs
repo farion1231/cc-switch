@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::app_config::AppType;
-use crate::database::Profile;
+use crate::database::{Profile, PromptSortUpdate};
 use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
 use crate::store::AppState;
@@ -214,6 +214,23 @@ fn plan_toggles(
         .collect();
 
     (toggles, dangling)
+}
+
+/// 将目标提示词按快照顺序放回它们当前占用的列表槽位，其余提示词位置不变。
+fn restore_selected_prompt_order(current_order: &[String], target_order: &[String]) -> Vec<String> {
+    let target: HashSet<&str> = target_order.iter().map(String::as_str).collect();
+    let mut replacements = target_order.iter();
+
+    current_order
+        .iter()
+        .map(|id| {
+            if target.contains(id.as_str()) {
+                replacements.next().cloned().unwrap_or_else(|| id.clone())
+            } else {
+                id.clone()
+            }
+        })
+        .collect()
 }
 
 pub struct ProfileService;
@@ -466,22 +483,47 @@ impl ProfileService {
             if let Some(Some(target_prompts)) = payload.prompts.get(app) {
                 let prompts = state.db.get_prompts(app_str)?;
                 let mut valid_ids = Vec::new();
+                let mut seen_ids = HashSet::new();
                 for id in &target_prompts.0 {
-                    if prompts.contains_key(id) {
+                    if prompts.contains_key(id) && seen_ids.insert(id.as_str()) {
                         valid_ids.push(id.clone());
-                    } else {
+                    } else if !prompts.contains_key(id) {
                         warnings.push(format!(
                             "[{app_str}] prompt '{id}' no longer exists, skipped"
                         ));
                     }
                 }
 
-                let current: HashSet<&str> = prompts
+                let current_enabled: Vec<String> = prompts
                     .values()
                     .filter(|prompt| prompt.enabled)
-                    .map(|prompt| prompt.id.as_str())
+                    .map(|prompt| prompt.id.clone())
                     .collect();
                 let target: HashSet<&str> = valid_ids.iter().map(String::as_str).collect();
+                let current_target_order: Vec<&str> = prompts
+                    .keys()
+                    .filter(|id| target.contains(id.as_str()))
+                    .map(String::as_str)
+                    .collect();
+                let target_order: Vec<&str> = valid_ids.iter().map(String::as_str).collect();
+
+                if current_target_order != target_order {
+                    let current_order: Vec<String> = prompts.keys().cloned().collect();
+                    let restored_order = restore_selected_prompt_order(&current_order, &valid_ids);
+                    let updates: Vec<PromptSortUpdate> = restored_order
+                        .iter()
+                        .enumerate()
+                        .map(|(sort_index, id)| PromptSortUpdate {
+                            id: id.clone(),
+                            sort_index: sort_index as i64,
+                        })
+                        .collect();
+                    if let Err(e) = PromptService::update_sort_order(state, app.clone(), &updates) {
+                        warnings.push(format!("[{app_str}] restore prompt order failed: {e}"));
+                    }
+                }
+
+                let current: HashSet<&str> = current_enabled.iter().map(String::as_str).collect();
                 if current != target {
                     if let Err(e) =
                         PromptService::set_enabled_prompts(state, app.clone(), &valid_ids)
@@ -705,5 +747,16 @@ mod tests {
         let (toggles, dangling) = plan_toggles(&current, &[]);
         assert_eq!(toggles, vec![("a".to_string(), false)]);
         assert!(dangling.is_empty());
+    }
+
+    #[test]
+    fn test_restore_selected_prompt_order_preserves_other_slots() {
+        assert_eq!(
+            restore_selected_prompt_order(
+                &ids(&["disabled-1", "b", "disabled-2", "a"]),
+                &ids(&["a", "b"]),
+            ),
+            ids(&["disabled-1", "a", "disabled-2", "b"])
+        );
     }
 }

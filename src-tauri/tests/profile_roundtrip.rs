@@ -284,6 +284,80 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
 }
 
 #[test]
+fn profile_apply_restores_prompt_order_when_enabled_set_is_unchanged() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    let mut prompt_a = prompt("a", true);
+    prompt_a.created_at = Some(1_000);
+    let mut prompt_b = prompt("b", true);
+    prompt_b.created_at = Some(2_000);
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_a)
+        .expect("save prompt a");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_b)
+        .expect("save prompt b");
+
+    let profile = ProfileService::create(&state, "Ordered Prompts", ProfileScope::Claude)
+        .expect("create ordered prompt profile");
+
+    // 保持启用集合 {a, b} 不变，只把当前列表顺序改成 b, a。
+    prompt_a.created_at = Some(3_000);
+    prompt_b.created_at = Some(1_000);
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_a)
+        .expect("move prompt a after b");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_b)
+        .expect("move prompt b before a");
+    assert_eq!(
+        state
+            .db
+            .get_prompts(AppType::Claude.as_str())
+            .expect("get reordered prompts")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["b", "a"]
+    );
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).expect("create .claude dir");
+    fs::write(
+        claude_dir.join("CLAUDE.md"),
+        format!("{}\n\n{}", prompt_b.content, prompt_a.content),
+    )
+    .expect("seed reordered CLAUDE.md");
+
+    let (warnings, _) = ProfileService::apply(&state, &profile.id, ProfileScope::Claude)
+        .expect("apply ordered prompt profile");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    let prompts = state
+        .db
+        .get_prompts(AppType::Claude.as_str())
+        .expect("get restored prompts");
+    assert_eq!(
+        prompts.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert!(prompts["a"].enabled && prompts["b"].enabled);
+
+    let live_prompt =
+        fs::read_to_string(claude_dir.join("CLAUDE.md")).expect("read merged CLAUDE.md");
+    assert_eq!(
+        live_prompt,
+        format!("{}\n\n{}", prompt_a.content, prompt_b.content)
+    );
+}
+
+#[test]
 fn shared_profile_sides_are_isolated_and_mergeable() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
