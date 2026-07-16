@@ -25,6 +25,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
       category: "official",
       sortIndex: 0,
       createdAt: Date.now(),
+      revision: 1,
     },
     "claude-2": {
       id: "claude-2",
@@ -33,6 +34,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
       category: "custom",
       sortIndex: 1,
       createdAt: Date.now() + 1,
+      revision: 1,
     },
   },
   "claude-desktop": {},
@@ -44,6 +46,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
       category: "official",
       sortIndex: 0,
       createdAt: Date.now(),
+      revision: 1,
     },
     "codex-2": {
       id: "codex-2",
@@ -52,6 +55,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
       category: "custom",
       sortIndex: 1,
       createdAt: Date.now() + 1,
+      revision: 1,
     },
   },
   gemini: {
@@ -67,6 +71,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
       category: "official",
       sortIndex: 0,
       createdAt: Date.now(),
+      revision: 1,
     },
   },
   opencode: {},

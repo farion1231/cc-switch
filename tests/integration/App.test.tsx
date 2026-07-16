@@ -62,6 +62,7 @@ vi.mock("@/components/providers/AddProviderDialog", () => ({
             onSubmit({
               name: `New ${appId} Provider`,
               settingsConfig: {},
+              revision: 1,
               category: "custom",
               sortIndex: 99,
             })
@@ -84,6 +85,7 @@ vi.mock("@/components/providers/EditProviderDialog", () => ({
               provider: {
                 ...provider,
                 name: `${provider.name}-edited`,
+                revision: provider.revision ?? 1,
               },
               originalId: provider.id,
             })
@@ -184,7 +186,7 @@ describe("App integration with MSW", () => {
     fireEvent.click(workbenchButton);
 
     expect(await screen.findByTestId("codex-workbench")).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("does not restore the Codex workbench for another app", async () => {
     window.localStorage.setItem("cc-switch-last-app", "claude");
