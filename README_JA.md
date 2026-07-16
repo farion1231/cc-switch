@@ -441,7 +441,7 @@ paru -S cc-switch-bin
 
 - Node.js 18+
 - pnpm 8+
-- Rust 1.85+
+- Rust 1.95（rustfmt と clippy コンポーネントが必要）
 - Tauri CLI 2.8+
 
 ### 開発コマンド
