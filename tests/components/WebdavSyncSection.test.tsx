@@ -78,7 +78,8 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncSaveSettings: vi.fn(),
     webdavSyncFetchRemoteInfo: vi.fn(),
     webdavSyncUpload: vi.fn(),
-    webdavSyncDownload: vi.fn(),
+    webdavSyncPrepareDownload: vi.fn(),
+    webdavSyncApplyDownload: vi.fn(),
   },
 }));
 
@@ -122,7 +123,8 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncSaveSettings.mockReset();
     settingsApiMock.webdavSyncFetchRemoteInfo.mockReset();
     settingsApiMock.webdavSyncUpload.mockReset();
-    settingsApiMock.webdavSyncDownload.mockReset();
+    settingsApiMock.webdavSyncPrepareDownload.mockReset();
+    settingsApiMock.webdavSyncApplyDownload.mockReset();
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
@@ -138,7 +140,14 @@ describe("WebdavSyncSection", () => {
       artifacts: ["db.sql", "skills.zip"],
     });
     settingsApiMock.webdavSyncUpload.mockResolvedValue({ status: "uploaded" });
-    settingsApiMock.webdavSyncDownload.mockResolvedValue({ status: "downloaded" });
+    settingsApiMock.webdavSyncPrepareDownload.mockResolvedValue({
+      previewId: "preview-1",
+      newProviderCount: 0,
+      existingProviderCount: 1,
+      credentialConflicts: [],
+      exactRestoreCredentialFieldCount: 0,
+    });
+    settingsApiMock.webdavSyncApplyDownload.mockResolvedValue({ status: "downloaded" });
   });
 
   it("shows auto sync error callout when last auto sync failed", () => {
@@ -456,7 +465,11 @@ describe("WebdavSyncSection", () => {
     );
 
     await waitFor(() => {
-      expect(settingsApiMock.webdavSyncDownload).toHaveBeenCalledTimes(1);
+      expect(settingsApiMock.webdavSyncPrepareDownload).toHaveBeenCalledTimes(1);
+      expect(settingsApiMock.webdavSyncApplyDownload).toHaveBeenCalledWith(
+        "preview-1",
+        [],
+      );
     });
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "settings.webdavSync.downloadSuccess",
@@ -487,7 +500,8 @@ describe("WebdavSyncSection", () => {
         "settings.webdavSync.unsavedChanges",
       );
     });
-    expect(settingsApiMock.webdavSyncDownload).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncPrepareDownload).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncApplyDownload).not.toHaveBeenCalled();
   });
 
   it("shows info when no remote snapshot is found for download", async () => {
@@ -501,7 +515,8 @@ describe("WebdavSyncSection", () => {
     await waitFor(() => {
       expect(toastInfoMock).toHaveBeenCalledWith("settings.webdavSync.noRemoteData");
     });
-    expect(settingsApiMock.webdavSyncDownload).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncPrepareDownload).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncApplyDownload).not.toHaveBeenCalled();
   });
 
   it("blocks download when remote snapshot is incompatible", async () => {
@@ -524,7 +539,8 @@ describe("WebdavSyncSection", () => {
         "settings.webdavSync.incompatibleVersion",
       );
     });
-    expect(settingsApiMock.webdavSyncDownload).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncPrepareDownload).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncApplyDownload).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", {
         name: "settings.webdavSync.confirmDownload.confirm",
@@ -533,7 +549,7 @@ describe("WebdavSyncSection", () => {
   });
 
   it("shows error when download fails after confirmation", async () => {
-    settingsApiMock.webdavSyncDownload.mockRejectedValueOnce(new Error("boom"));
+    settingsApiMock.webdavSyncPrepareDownload.mockRejectedValueOnce(new Error("boom"));
     renderSection(baseConfig);
 
     fireEvent.click(
@@ -555,4 +571,61 @@ describe("WebdavSyncSection", () => {
       );
     });
   });
+
+  it("shows credential confirm when restore preview has credential impact", async () => {
+    settingsApiMock.webdavSyncPrepareDownload.mockResolvedValueOnce({
+      previewId: "preview-impact",
+      newProviderCount: 0,
+      existingProviderCount: 2,
+      credentialConflicts: [
+        {
+          field: "apiKey",
+          storedMasked: "sk-local***",
+          liveMasked: "sk-remote***",
+        },
+      ],
+      exactRestoreCredentialFieldCount: 1,
+    });
+    renderSection(baseConfig);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.webdavSync.download" }),
+    );
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncFetchRemoteInfo).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.webdavSync.confirmDownload.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncPrepareDownload).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByRole("button", {
+          name: "settings.webdavSync.confirmCredentialImpact.confirm",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(settingsApiMock.webdavSyncApplyDownload).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.webdavSync.confirmCredentialImpact.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncApplyDownload).toHaveBeenCalledWith(
+        "preview-impact",
+        [],
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "settings.webdavSync.downloadSuccess",
+    );
+  });
+
 });
