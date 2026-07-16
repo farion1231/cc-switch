@@ -42,6 +42,8 @@ import type {
   WebDavSyncSettings,
 } from "@/types";
 
+const CURRENT_SYNC_DB_COMPAT_VERSION = 7;
+
 // ─── WebDAV service presets ─────────────────────────────────
 
 interface WebDavPreset {
@@ -184,7 +186,12 @@ type ActionState =
 
 type SyncType = "webdav" | "s3";
 
-type DialogType = "upload" | "download" | "download_credential_confirm" | "mutual_exclusion" | null;
+type DialogType =
+  | "upload"
+  | "download"
+  | "download_credential_confirm"
+  | "mutual_exclusion"
+  | null;
 
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
@@ -318,7 +325,7 @@ export function WebdavSyncSection({
     useState<RestorePreview | null>(null);
   const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
 
-    const closeDialog = useCallback(() => {
+  const closeDialog = useCallback(() => {
     setDialogType(null);
     setRemoteInfo(null);
     setPendingRestorePreview(null);
@@ -1027,8 +1034,8 @@ export function WebdavSyncSection({
   const lastError = config?.status?.lastError?.trim();
   const showAutoSyncError =
     !!lastError && config?.status?.lastErrorSource === "auto";
-  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${form.profile.trim() || "default"}`;
-  const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v6/${s3Profile.trim() || "default"}`;
+  const currentRemotePath = `/${form.remoteRoot.trim() || "cc-switch-sync"}/v2/db-v${CURRENT_SYNC_DB_COMPAT_VERSION}/${form.profile.trim() || "default"}`;
+  const currentS3RemotePath = `${s3Bucket.trim() || "bucket"}/${s3RemoteRoot.trim() || "cc-switch-sync"}/v2/db-v${CURRENT_SYNC_DB_COMPAT_VERSION}/${s3Profile.trim() || "default"}`;
   const remoteDbCompatDisplay = formatDbCompatVersion(
     remoteInfo?.dbCompatVersion,
   );
@@ -1804,17 +1811,23 @@ export function WebdavSyncSection({
             <DialogDescription asChild>
               <div className="space-y-3 text-sm leading-relaxed">
                 <p>
-                  {t("settings.webdavSync.confirmCredentialImpact.description", {
-                    defaultValue:
-                      "Default restore keeps your local provider credentials. New providers from the cloud will be imported. Exact remote credential overwrite is not applied unless you opt in later.",
-                  })}
+                  {t(
+                    "settings.webdavSync.confirmCredentialImpact.description",
+                    {
+                      defaultValue:
+                        "Default restore keeps your local provider credentials. New providers from the cloud will be imported. Exact remote credential overwrite is not applied unless you opt in later.",
+                    },
+                  )}
                 </p>
                 {pendingRestorePreview && (
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
                     <dt className="font-medium text-foreground">
-                      {t("settings.webdavSync.confirmCredentialImpact.newProviders", {
-                        defaultValue: "New providers",
-                      })}
+                      {t(
+                        "settings.webdavSync.confirmCredentialImpact.newProviders",
+                        {
+                          defaultValue: "New providers",
+                        },
+                      )}
                     </dt>
                     <dd>{pendingRestorePreview.newProviderCount}</dd>
                     <dt className="font-medium text-foreground">
@@ -1853,7 +1866,6 @@ export function WebdavSyncSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
 
       {/* ─── S3 Upload confirmation dialog ───────────────── */}
       <Dialog
@@ -2000,9 +2012,12 @@ export function WebdavSyncSection({
                 {pendingRestorePreview && (
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-muted-foreground">
                     <dt className="font-medium text-foreground">
-                      {t("settings.s3Sync.confirmCredentialImpact.newProviders", {
-                        defaultValue: "New providers",
-                      })}
+                      {t(
+                        "settings.s3Sync.confirmCredentialImpact.newProviders",
+                        {
+                          defaultValue: "New providers",
+                        },
+                      )}
                     </dt>
                     <dd>{pendingRestorePreview.newProviderCount}</dd>
                     <dt className="font-medium text-foreground">
@@ -2041,7 +2056,6 @@ export function WebdavSyncSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
 
       {/* ─── Mutual exclusion confirmation dialog ────────── */}
       <Dialog

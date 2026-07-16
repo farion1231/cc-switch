@@ -447,9 +447,8 @@ pub(crate) fn prepare_restore_preview(
         db_sql_sha256: sha256_hex(db_sql),
         skills_zip_sha256: sha256_hex(skills_zip),
     };
-    let meta_json = serde_json::to_string_pretty(&meta).map_err(|e| {
-        AppError::Config(format!("Failed to serialize staging meta: {e}"))
-    })?;
+    let meta_json = serde_json::to_string_pretty(&meta)
+        .map_err(|e| AppError::Config(format!("Failed to serialize staging meta: {e}")))?;
     fs::write(&meta_path, meta_json).map_err(|e| AppError::io(&meta_path, e))?;
 
     Ok(preview)
@@ -483,9 +482,8 @@ pub(crate) fn apply_staged_restore(
 
     let meta_path = dir.join(STAGING_META_FILE);
     let meta_raw = fs::read_to_string(&meta_path).map_err(|e| AppError::io(&meta_path, e))?;
-    let meta: StagingMeta = serde_json::from_str(&meta_raw).map_err(|e| {
-        AppError::Config(format!("Invalid staging meta for {preview_id}: {e}"))
-    })?;
+    let meta: StagingMeta = serde_json::from_str(&meta_raw)
+        .map_err(|e| AppError::Config(format!("Invalid staging meta for {preview_id}: {e}")))?;
     if meta.preview_id != preview_id {
         return Err(localized(
             "sync.staging_id_mismatch",
@@ -846,10 +844,8 @@ mod tests {
         use crate::services::provider_security::extract_provider_credentials;
 
         let old_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let test_home = std::env::temp_dir().join(format!(
-            "cc-switch-staging-prepare-{}",
-            std::process::id()
-        ));
+        let test_home =
+            std::env::temp_dir().join(format!("cc-switch-staging-prepare-{}", std::process::id()));
         let _ = fs::remove_dir_all(&test_home);
         fs::create_dir_all(&test_home).expect("create test home");
         std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
@@ -927,6 +923,4 @@ mod tests {
             "unexpected error: {msg}"
         );
     }
-
-
 }

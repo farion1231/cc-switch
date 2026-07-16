@@ -6,6 +6,7 @@ use tauri::State;
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
 };
+use crate::database::backup::RestorePreview;
 use crate::error::AppError;
 use crate::services::s3_sync as s3_sync_service;
 use crate::settings::{self, S3SyncSettings};
@@ -131,7 +132,9 @@ pub async fn s3_sync_download(state: State<'_, AppState>) -> Result<Value, Strin
 }
 
 #[tauri::command]
-pub async fn s3_sync_prepare_download(state: State<'_, AppState>) -> Result<Value, String> {
+pub async fn s3_sync_prepare_download(
+    state: State<'_, AppState>,
+) -> Result<RestorePreview, String> {
     let db = state.db.clone();
     let mut settings = require_enabled_s3_settings()?;
     let _auto_sync_suppression = crate::services::s3_auto_sync::AutoSyncSuppressionGuard::new();

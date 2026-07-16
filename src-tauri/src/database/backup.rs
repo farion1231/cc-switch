@@ -114,7 +114,7 @@ impl Database {
 
     /// 从 SQL 字符串导入，返回生成的备份 ID（若无备份则为空字符串）
     pub fn import_sql_string(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, &[])
+        self.import_sql_string_inner(sql_raw, &[], |_| Ok(()))
     }
 
     /// Import SQL generated for sync, then restore local-only tables from the
@@ -137,9 +137,9 @@ impl Database {
         remote_selections: &[RemoteCredentialSelection],
     ) -> Result<String, AppError> {
         let local_credentials = self.snapshot_local_provider_credentials()?;
-        let backup_id = self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)?;
-        self.merge_local_provider_credentials(&local_credentials, remote_selections)?;
-        Ok(backup_id)
+        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES, |imported_db| {
+            imported_db.merge_local_provider_credentials(&local_credentials, remote_selections)
+        })
     }
 
     /// Capture per-provider settings so credential fields can be reapplied after a
@@ -153,11 +153,7 @@ impl Database {
         for app_type in AppType::all() {
             let providers = self.get_all_providers(app_type.as_str())?;
             for (id, provider) in providers {
-                snapshots.push((
-                    app_type.as_str().to_string(),
-                    id,
-                    provider.settings_config,
-                ));
+                snapshots.push((app_type.as_str().to_string(), id, provider.settings_config));
             }
         }
         Ok(snapshots)
@@ -187,9 +183,9 @@ impl Database {
                 continue;
             };
 
-            let selection = remote_selections.iter().find(|s| {
-                s.app_type == *app_type_str && s.provider_id == *provider_id
-            });
+            let selection = remote_selections
+                .iter()
+                .find(|s| s.app_type == *app_type_str && s.provider_id == *provider_id);
             let use_remote_api_key = selection.map(|s| s.use_remote_api_key).unwrap_or(false);
             let use_remote_base_url = selection.map(|s| s.use_remote_base_url).unwrap_or(false);
 
@@ -221,7 +217,6 @@ impl Database {
         Ok(())
     }
 
-
     /// Build a non-destructive preview of an exact SQL restore.
     ///
     /// The live database is never mutated. Credential field counts describe
@@ -230,7 +225,8 @@ impl Database {
     pub fn preview_exact_restore(&self, sql_raw: &str) -> Result<RestorePreview, AppError> {
         use crate::app_config::AppType;
         use crate::services::provider_security::{
-            credential_fingerprint, extract_provider_credentials, mask_credential, CredentialDiff,
+            base_urls_equivalent, credential_fingerprint, extract_provider_credentials,
+            mask_credential, CredentialDiff,
         };
 
         // Import into a throwaway in-memory DB so the live connection is untouched.
@@ -261,14 +257,8 @@ impl Database {
                                 exact_restore_credential_field_count.saturating_add(1);
                             credential_conflicts.push(CredentialDiff {
                                 field: "apiKey".to_string(),
-                                stored_masked: local_creds
-                                    .api_key
-                                    .as_deref()
-                                    .map(mask_credential),
-                                live_masked: remote_creds
-                                    .api_key
-                                    .as_deref()
-                                    .map(mask_credential),
+                                stored_masked: local_creds.api_key.as_deref().map(mask_credential),
+                                live_masked: remote_creds.api_key.as_deref().map(mask_credential),
                                 stored_fingerprint: local_creds
                                     .api_key
                                     .as_deref()
@@ -279,19 +269,16 @@ impl Database {
                                     .map(|v| credential_fingerprint("apiKey", v)),
                             });
                         }
-                        if local_creds.base_url != remote_creds.base_url {
+                        if !base_urls_equivalent(
+                            local_creds.base_url.as_deref(),
+                            remote_creds.base_url.as_deref(),
+                        )? {
                             exact_restore_credential_field_count =
                                 exact_restore_credential_field_count.saturating_add(1);
                             credential_conflicts.push(CredentialDiff {
                                 field: "baseUrl".to_string(),
-                                stored_masked: local_creds
-                                    .base_url
-                                    .as_deref()
-                                    .map(mask_credential),
-                                live_masked: remote_creds
-                                    .base_url
-                                    .as_deref()
-                                    .map(mask_credential),
+                                stored_masked: local_creds.base_url.as_deref().map(mask_credential),
+                                live_masked: remote_creds.base_url.as_deref().map(mask_credential),
                                 stored_fingerprint: local_creds
                                     .base_url
                                     .as_deref()
@@ -316,11 +303,15 @@ impl Database {
         })
     }
 
-    fn import_sql_string_inner(
+    fn import_sql_string_inner<F>(
         &self,
         sql_raw: &str,
         preserve_tables: &[&str],
-    ) -> Result<String, AppError> {
+        finalize_import: F,
+    ) -> Result<String, AppError>
+    where
+        F: FnOnce(&Database) -> Result<(), AppError>,
+    {
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         Self::validate_cc_switch_sql_export(sql_content)?;
 
@@ -339,23 +330,33 @@ impl Database {
             source: e,
         })?;
         let temp_path = temp_file.path().to_path_buf();
-        let temp_conn =
-            Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
+        let temp_db = Database {
+            conn: std::sync::Mutex::new(
+                Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?,
+            ),
+        };
 
-        temp_conn
-            .execute_batch(sql_content)
-            .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+        {
+            let temp_conn = lock_conn!(temp_db.conn);
+            temp_conn
+                .execute_batch(sql_content)
+                .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
 
-        // 补齐缺失表/索引并进行基础校验
-        Self::create_tables_on_conn(&temp_conn)?;
-        Self::apply_schema_migrations_on_conn(&temp_conn)?;
-        Self::validate_basic_state(&temp_conn)?;
-        if let Some(local_snapshot) = local_snapshot.as_ref() {
-            Self::restore_tables(local_snapshot, &temp_conn, preserve_tables)?;
+            // 补齐缺失表/索引并恢复本机数据，全部在临时库中完成。
+            Self::create_tables_on_conn(&temp_conn)?;
+            Self::apply_schema_migrations_on_conn(&temp_conn)?;
+            if let Some(local_snapshot) = local_snapshot.as_ref() {
+                Self::restore_tables(local_snapshot, &temp_conn, preserve_tables)?;
+            }
         }
+
+        // Sync-specific credential merge must also succeed before the main DB changes.
+        finalize_import(&temp_db)?;
 
         // 使用 Backup 将临时库原子写回主库
         {
+            let temp_conn = lock_conn!(temp_db.conn);
+            Self::validate_basic_state(&temp_conn)?;
             let mut main_conn = lock_conn!(self.conn);
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
@@ -1068,8 +1069,68 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn failed_credential_merge_does_not_replace_local_database() -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::extract_provider_credentials;
 
-    
+        let remote_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-remote",
+                "ANTHROPIC_BASE_URL": "https://remote.example"
+            }
+        });
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Remote Provider', ?1, '{}')",
+                rusqlite::params![remote_settings.to_string()],
+            )?;
+            conn.execute_batch(
+                "CREATE TRIGGER reject_provider_merge
+                 BEFORE UPDATE ON providers
+                 BEGIN
+                     SELECT RAISE(ABORT, 'reject provider merge');
+                 END;",
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync()?;
+
+        let local_settings = serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-local",
+                "ANTHROPIC_BASE_URL": "https://local.example"
+            }
+        });
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Local Provider', ?1, '{}')",
+                rusqlite::params![local_settings.to_string()],
+            )?;
+        }
+
+        local_db
+            .import_sql_string_for_sync(&remote_sql)
+            .expect_err("credential merge should fail");
+
+        let provider = local_db
+            .get_provider_by_id("p1", "claude")?
+            .expect("local provider must remain after failed import");
+        assert_eq!(provider.name, "Local Provider");
+        let credentials = extract_provider_credentials(&provider, &AppType::Claude);
+        assert_eq!(credentials.api_key.as_deref(), Some("sk-local"));
+        assert_eq!(
+            credentials.base_url.as_deref(),
+            Some("https://local.example")
+        );
+        Ok(())
+    }
+
     #[test]
     #[serial]
     fn cloud_restore_uses_remote_credentials_when_explicitly_selected() -> Result<(), AppError> {
@@ -1137,7 +1198,7 @@ mod tests {
         Ok(())
     }
 
-#[test]
+    #[test]
     #[serial]
     fn exact_restore_preview_counts_credential_changes_without_applying() -> Result<(), AppError> {
         use crate::app_config::AppType;
@@ -1182,7 +1243,10 @@ mod tests {
         let remote_sql = remote_db.export_sql_string()?;
 
         let preview = local_db.preview_exact_restore(&remote_sql)?;
-        assert_eq!(preview.new_provider_count, 1, "remote-only should count as new");
+        assert_eq!(
+            preview.new_provider_count, 1,
+            "remote-only should count as new"
+        );
         assert_eq!(
             preview.existing_provider_count, 1,
             "p1 should count as existing"

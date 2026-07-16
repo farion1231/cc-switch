@@ -1053,6 +1053,8 @@ pub fn run() {
 
                 initialize_common_config_snippets(&state);
 
+                crate::services::sync_protocol::cleanup_expired_staging();
+
                 // 检查 settings 表中的代理状态，自动恢复代理服务
                 restore_proxy_state_on_startup(&state).await;
 

@@ -24,7 +24,7 @@ use super::sync_protocol::{
     RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
     PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
-use crate::database::backup::RemoteCredentialSelection;
+use crate::database::backup::{RemoteCredentialSelection, RestorePreview};
 
 pub(crate) mod archive;
 
@@ -168,7 +168,7 @@ pub async fn download(
 pub async fn prepare_download(
     db: &crate::database::Database,
     settings: &WebDavSyncSettings,
-) -> Result<Value, AppError> {
+) -> Result<RestorePreview, AppError> {
     settings.validate()?;
     let auth = auth_for(settings);
     let snapshot = find_remote_snapshot(settings, &auth)
@@ -200,15 +200,7 @@ pub async fn prepare_download(
     )
     .await?;
 
-    let preview = prepare_restore_preview(db, &db_sql, &skills_zip)?;
-    Ok(serde_json::json!({
-        "status": "prepared",
-        "preview": preview,
-        "sourceLayout": snapshot.layout.as_str(),
-        "sourcePath": remote_dir_display(settings, snapshot.layout),
-        "snapshotId": snapshot.manifest.snapshot_id,
-        "manifestHash": sha256_hex(&snapshot.manifest_bytes),
-    }))
+    prepare_restore_preview(db, &db_sql, &skills_zip)
 }
 
 /// Apply a previously staged restore (from [`prepare_download`]).
@@ -399,7 +391,7 @@ mod tests {
             ..WebDavSyncSettings::default()
         };
         let segs = remote_dir_segments(&settings, RemoteLayout::Current);
-        assert_eq!(segs, vec!["cc-switch-sync", "v2", "db-v6", "default"]);
+        assert_eq!(segs, vec!["cc-switch-sync", "v2", "db-v7", "default"]);
     }
 
     #[test]

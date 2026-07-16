@@ -522,7 +522,7 @@
       "saveAndTestSuccess": "設定已儲存，連線正常",
       "saveAndTestFailed": "設定已儲存，但連線測試失敗：{{error}}",
       "noRemoteData": "雲端沒有找到同步資料",
-      "incompatibleVersion": "遠端資料版本不相容（協定 v{{protocolVersion}}，資料庫 {{dbCompatVersion}}），目前支援協定 v2 / db-v6",
+      "incompatibleVersion": "遠端資料版本不相容（協定 v{{protocolVersion}}，資料庫 {{dbCompatVersion}}），目前支援協定 v2 / db-v7",
       "unsaved": "未儲存",
       "saved": "已儲存",
       "unsavedChanges": "請先儲存設定",
@@ -536,7 +536,7 @@
         "path": "遠端路徑",
         "dbCompat": "資料庫相容層",
         "artifacts": "包含內容",
-        "legacyNotice": "檢測到舊版雲端路徑。還原完成後，下次上傳將寫入新路徑 v2/db-v6。",
+        "legacyNotice": "檢測到舊版雲端路徑。還原完成後，下次上傳將寫入新路徑 v2/db-v7。",
         "warning": "還原將覆寫本地所有資料和技能設定",
         "confirm": "確認還原"
       },
@@ -552,7 +552,7 @@
         "path": "遠端路徑",
         "dbCompat": "資料庫相容層",
         "warning": "將覆寫雲端已有的同步資料",
-        "legacyNotice": "檢測到舊版雲端路徑資料。本次上傳將寫入新路徑 v2/db-v6，不會覆寫舊路徑。",
+        "legacyNotice": "檢測到舊版雲端路徑資料。本次上傳將寫入新路徑 v2/db-v7，不會覆寫舊路徑。",
         "confirm": "確認上傳"
       }
     },
@@ -627,7 +627,7 @@
       "autoSyncLastErrorHint": "請檢查網路或 S3 設定，系統會在後續變更時繼續自動重試。",
       "missingBucket": "請填寫 S3 儲存桶",
       "noRemoteData": "S3 儲存桶中沒有找到同步資料",
-      "incompatibleVersion": "遠端資料版本不相容（版本 {{version}}），目前支援協議 v2 / db-v6",
+      "incompatibleVersion": "遠端資料版本不相容（版本 {{version}}），目前支援協議 v2 / db-v7",
       "unsaved": "未儲存",
       "saved": "已儲存",
       "unsavedChanges": "請先儲存設定",

@@ -6,6 +6,7 @@ use tauri::State;
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
 };
+use crate::database::backup::RestorePreview;
 use crate::error::AppError;
 use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
@@ -139,7 +140,9 @@ pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, S
 }
 
 #[tauri::command]
-pub async fn webdav_sync_prepare_download(state: State<'_, AppState>) -> Result<Value, String> {
+pub async fn webdav_sync_prepare_download(
+    state: State<'_, AppState>,
+) -> Result<RestorePreview, String> {
     let db = state.db.clone();
     let mut settings = require_enabled_webdav_settings()?;
     let _auto_sync_suppression = crate::services::webdav_auto_sync::AutoSyncSuppressionGuard::new();

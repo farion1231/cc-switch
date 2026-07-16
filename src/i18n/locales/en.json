@@ -522,7 +522,7 @@
       "saveAndTestSuccess": "Config saved, connection OK",
       "saveAndTestFailed": "Config saved, but connection test failed: {{error}}",
       "noRemoteData": "No sync data found on the remote server",
-      "incompatibleVersion": "Remote data is incompatible (protocol v{{protocolVersion}}, database {{dbCompatVersion}}). This client supports protocol v2 / db-v6.",
+      "incompatibleVersion": "Remote data is incompatible (protocol v{{protocolVersion}}, database {{dbCompatVersion}}). This client supports protocol v2 / db-v7.",
       "unsaved": "Unsaved",
       "saved": "Saved",
       "unsavedChanges": "Please save config first",
@@ -536,7 +536,7 @@
         "path": "Remote path",
         "dbCompat": "DB compatibility",
         "artifacts": "Contents",
-        "legacyNotice": "A legacy remote path was detected. After restoring, the next upload will write to the new v2/db-v6 path.",
+        "legacyNotice": "A legacy remote path was detected. After restoring, the next upload will write to the new v2/db-v7 path.",
         "warning": "This will overwrite all local data and skill configurations",
         "confirm": "Confirm Restore"
       },
@@ -552,7 +552,7 @@
         "path": "Remote path",
         "dbCompat": "DB compatibility",
         "warning": "This will overwrite existing sync data on the remote server",
-        "legacyNotice": "Legacy remote data was detected. This upload will write to the new v2/db-v6 path and will not overwrite the legacy path.",
+        "legacyNotice": "Legacy remote data was detected. This upload will write to the new v2/db-v7 path and will not overwrite the legacy path.",
         "confirm": "Confirm Upload"
       }
     },
@@ -627,7 +627,7 @@
       "autoSyncLastErrorHint": "Please check network or S3 settings. Auto sync will retry on future changes.",
       "missingBucket": "Please enter the S3 bucket",
       "noRemoteData": "No sync data found in the S3 bucket",
-      "incompatibleVersion": "Remote data is incompatible (version {{version}}). This client supports protocol v2 / db-v6.",
+      "incompatibleVersion": "Remote data is incompatible (version {{version}}). This client supports protocol v2 / db-v7.",
       "unsaved": "Unsaved",
       "saved": "Saved",
       "unsavedChanges": "Please save config first",

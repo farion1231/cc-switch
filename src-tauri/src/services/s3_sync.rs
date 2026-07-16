@@ -21,7 +21,7 @@ use super::sync_protocol::{
     RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
     PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
-use crate::database::backup::RemoteCredentialSelection;
+use crate::database::backup::{RemoteCredentialSelection, RestorePreview};
 
 // ─── Sync lock ───────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ pub async fn download(
 pub async fn prepare_download(
     db: &crate::database::Database,
     settings: &S3SyncSettings,
-) -> Result<Value, AppError> {
+) -> Result<RestorePreview, AppError> {
     settings.validate()?;
     let creds = creds_for(settings);
 
@@ -151,26 +151,18 @@ pub async fn prepare_download(
             )
         })?;
 
-    let manifest: SyncManifest = serde_json::from_slice(&manifest_bytes).map_err(|e| {
-        AppError::Json {
+    let manifest: SyncManifest =
+        serde_json::from_slice(&manifest_bytes).map_err(|e| AppError::Json {
             path: REMOTE_MANIFEST.to_string(),
             source: e,
-        }
-    })?;
+        })?;
     validate_manifest_compat(&manifest, RemoteLayout::Current)?;
 
-    let db_sql =
-        download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
+    let db_sql = download_and_verify(settings, &creds, REMOTE_DB_SQL, &manifest.artifacts).await?;
     let skills_zip =
         download_and_verify(settings, &creds, REMOTE_SKILLS_ZIP, &manifest.artifacts).await?;
 
-    let preview = prepare_restore_preview(db, &db_sql, &skills_zip)?;
-    Ok(serde_json::json!({
-        "status": "prepared",
-        "preview": preview,
-        "snapshotId": manifest.snapshot_id,
-        "manifestHash": sha256_hex(&manifest_bytes),
-    }))
+    prepare_restore_preview(db, &db_sql, &skills_zip)
 }
 
 /// Apply a previously staged restore (from [`prepare_download`]).
@@ -287,7 +279,7 @@ async fn download_and_verify(
 /// Build the S3 object key for a given artifact.
 ///
 /// Format: `{remote_root}/v{PROTOCOL_VERSION}/db-v{DB_COMPAT_VERSION}/{profile}/{artifact}`
-/// Example: `cc-switch-sync/v2/db-v6/default/manifest.json`
+/// Example: `cc-switch-sync/v2/db-v7/default/manifest.json`
 fn s3_key(settings: &S3SyncSettings, artifact: &str) -> String {
     format!(
         "{}/v{}/db-v{}/{}/{}",
@@ -330,7 +322,7 @@ mod tests {
     fn s3_key_uses_v2_and_correct_format() {
         let settings = test_settings();
         let key = s3_key(&settings, "manifest.json");
-        assert_eq!(key, "cc-switch-sync/v2/db-v6/default/manifest.json");
+        assert_eq!(key, "cc-switch-sync/v2/db-v7/default/manifest.json");
     }
 
     #[test]
@@ -340,7 +332,7 @@ mod tests {
             profile: "work".to_string(),
             ..S3SyncSettings::default()
         };
-        assert_eq!(s3_key(&settings, "db.sql"), "my-root/v2/db-v6/work/db.sql");
+        assert_eq!(s3_key(&settings, "db.sql"), "my-root/v2/db-v7/work/db.sql");
     }
 
     #[test]
@@ -352,7 +344,7 @@ mod tests {
         assert_eq!(parts.len(), 5);
         assert_eq!(parts[0], "cc-switch-sync");
         assert_eq!(parts[1], "v2");
-        assert_eq!(parts[2], "db-v6");
+        assert_eq!(parts[2], "db-v7");
         assert_eq!(parts[3], "default");
         assert_eq!(parts[4], "skills.zip");
     }
