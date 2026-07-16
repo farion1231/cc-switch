@@ -3,7 +3,6 @@ use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use hkdf::Hkdf;
 use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
@@ -22,15 +21,16 @@ use crate::store::AppState;
 
 const CLAUDE_SCIENCE_BIN_ENV: &str = "CLAUDE_SCIENCE_BIN";
 const MANAGED_PROFILE_DIR: &str = "claude-science-proxy";
-const SCIENCE_PROXY_USER_ID: &str = "local-dev";
-const SCIENCE_PROXY_EMAIL: &str = "cc-switch-proxy@local.invalid";
+const SCIENCE_PROXY_USER_ID: &str = "00000000-0000-4000-8000-000000157210";
+const SCIENCE_PROXY_ORG_ID: &str = "00000000-0000-4000-8000-000000157211";
+const SCIENCE_PROXY_EMAIL: &str = "cc-switch-proxy@localhost.invalid";
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
 const OAUTH_TOKEN_DIR: &str = ".oauth-tokens";
-const OAUTH_TOKEN_FILENAME: &str = "local-dev.enc";
+const ACTIVE_ORG_FILENAME: &str = "active-org.json";
 const OAUTH_HKDF_INFO: &[u8] = b"operon:aes-256-gcm:oauth";
 const OAUTH_AAD: &[u8] = b"v2:oauth";
 const OAUTH_TOKEN_PREFIX: &str = "v2:";
-const OAUTH_TOKEN_TTL_DAYS: i64 = 30;
+const OAUTH_TOKEN_EXPIRY: &str = "2099-01-01T00:00:00.000Z";
 const REQUIRED_OAUTH_KEY: &str = "OAUTH_ENCRYPTION_KEY";
 const ENCRYPTION_KEY_FILENAME: &str = "encryption.key";
 const LAUNCH_POLL_ATTEMPTS: usize = 50;
@@ -122,6 +122,11 @@ struct ScienceOAuthToken<'a> {
     has_extra_usage_enabled: Option<bool>,
     tier_unmappable: bool,
     billing_resolved: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ScienceActiveOrg<'a> {
+    org_uuid: &'a str,
 }
 
 #[tauri::command]
@@ -434,6 +439,7 @@ fn prepare_profile_at(profile: &ScienceProfilePaths) -> Result<(), String> {
     write_science_config(profile)?;
     let oauth_key = ensure_encryption_key(&profile.auth_dir)?;
     write_proxy_managed_oauth_token(&profile.auth_dir, &oauth_key)?;
+    write_active_org(&profile.auth_dir)?;
 
     Ok(())
 }
@@ -559,35 +565,68 @@ fn write_proxy_managed_oauth_token(auth_dir: &Path, oauth_key: &str) -> Result<(
         )
     })?;
 
+    let token_path = token_dir.join(format!("{SCIENCE_PROXY_USER_ID}.enc"));
+    remove_stale_oauth_tokens(&token_dir, &token_path)?;
+
     let token = ScienceOAuthToken {
         access_token: PROXY_TOKEN_PLACEHOLDER,
-        refresh_token: None,
+        refresh_token: Some(String::new()),
         api_key: None,
-        token_expires_at: proxy_token_expiry(),
+        token_expires_at: OAUTH_TOKEN_EXPIRY.to_string(),
         provider: "claude_ai",
-        scopes: "openid profile email user:inference user:file_upload user:profile user:mcp_servers user:plugins",
+        scopes: "user:inference user:file_upload user:profile user:mcp_servers user:plugins",
         email: SCIENCE_PROXY_EMAIL,
         account_uuid: SCIENCE_PROXY_USER_ID,
-        org_uuid: None,
+        org_uuid: Some(SCIENCE_PROXY_ORG_ID.to_string()),
         org_name: None,
-        subscription_type: "pro",
+        subscription_type: "max",
         rate_limit_tier: None,
         seat_tier: None,
         allow_safety_feedback: false,
         billing_type: None,
-        has_extra_usage_enabled: None,
+        has_extra_usage_enabled: Some(false),
         tier_unmappable: false,
         billing_resolved: true,
     };
     let plaintext = serde_json::to_vec(&token)
         .map_err(|e| format!("Failed to serialize Claude Science OAuth token: {e}"))?;
     let encrypted = encrypt_oauth_payload(oauth_key, &plaintext)?;
-    write_private_file(&token_dir.join(OAUTH_TOKEN_FILENAME), encrypted.as_bytes())
+    write_private_file(&token_path, encrypted.as_bytes())
 }
 
-fn proxy_token_expiry() -> String {
-    (Utc::now() + ChronoDuration::days(OAUTH_TOKEN_TTL_DAYS))
-        .to_rfc3339_opts(SecondsFormat::Millis, true)
+fn remove_stale_oauth_tokens(token_dir: &Path, keep: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(token_dir).map_err(|e| {
+        format!(
+            "Failed to inspect Claude Science OAuth token dir {}: {e}",
+            token_dir.display()
+        )
+    })?;
+
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("Failed to inspect Claude Science OAuth token entry: {e}"))?
+            .path();
+        if path == keep || path.extension().and_then(|ext| ext.to_str()) != Some("enc") {
+            continue;
+        }
+        fs::remove_file(&path).map_err(|e| {
+            format!(
+                "Failed to remove stale Claude Science OAuth token {}: {e}",
+                path.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn write_active_org(auth_dir: &Path) -> Result<(), String> {
+    let active_org = ScienceActiveOrg {
+        org_uuid: SCIENCE_PROXY_ORG_ID,
+    };
+    let content = serde_json::to_vec_pretty(&active_org)
+        .map_err(|e| format!("Failed to serialize Claude Science active organization: {e}"))?;
+    write_private_file(&auth_dir.join(ACTIVE_ORG_FILENAME), &content)
 }
 
 fn encrypt_oauth_payload(oauth_key: &str, plaintext: &[u8]) -> Result<String, String> {
@@ -906,7 +945,7 @@ mod tests {
             profile
                 .auth_dir
                 .join(OAUTH_TOKEN_DIR)
-                .join(OAUTH_TOKEN_FILENAME),
+                .join(format!("{SCIENCE_PROXY_USER_ID}.enc")),
         )
         .expect("encrypted oauth token");
         let plaintext = decrypt_oauth_payload_for_test(oauth_key, encrypted.trim());
@@ -915,12 +954,39 @@ mod tests {
         assert_eq!(token["access_token"], PROXY_TOKEN_PLACEHOLDER);
         assert_eq!(token["email"], SCIENCE_PROXY_EMAIL);
         assert_eq!(token["account_uuid"], SCIENCE_PROXY_USER_ID);
+        assert_eq!(token["org_uuid"], SCIENCE_PROXY_ORG_ID);
         assert_eq!(token["provider"], "claude_ai");
+        assert_eq!(token["subscription_type"], "max");
+        assert_eq!(token["token_expires_at"], OAUTH_TOKEN_EXPIRY);
         let scopes = token["scopes"].as_str().expect("scopes");
         assert!(scopes.contains("user:inference"));
         assert!(scopes.contains("user:file_upload"));
         assert!(scopes.contains("user:mcp_servers"));
         assert!(scopes.contains("user:plugins"));
+
+        let active_org: Value = serde_json::from_slice(
+            &fs::read(profile.auth_dir.join(ACTIVE_ORG_FILENAME)).expect("active org file"),
+        )
+        .expect("active org json");
+        assert_eq!(active_org["org_uuid"], SCIENCE_PROXY_ORG_ID);
+    }
+
+    #[test]
+    fn prepare_profile_removes_stale_oauth_tokens() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let profile = managed_profile_paths_for_app_config_dir(tmp.path());
+        let token_dir = profile.auth_dir.join(OAUTH_TOKEN_DIR);
+        fs::create_dir_all(&token_dir).expect("token dir");
+        fs::write(token_dir.join("stale.enc"), "stale").expect("stale token");
+        fs::write(token_dir.join("keep.txt"), "keep").expect("non-token file");
+
+        prepare_profile_at(&profile).expect("prepare profile");
+
+        assert!(!token_dir.join("stale.enc").exists());
+        assert!(token_dir.join("keep.txt").exists());
+        assert!(token_dir
+            .join(format!("{SCIENCE_PROXY_USER_ID}.enc"))
+            .exists());
     }
 
     #[test]
