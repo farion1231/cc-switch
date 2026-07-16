@@ -78,3 +78,25 @@ describe("mergeProviderMeta", () => {
     expect(mergeProviderMeta(initial, null)).toBeUndefined();
   });
 });
+
+  it("preserves codex system prompt meta when merging endpoints", () => {
+    const initial: ProviderMeta = {
+      codexSystemPrompt: {
+        enabled: true,
+        replacement: "secret prompt",
+        correctModelIdentity: true,
+      },
+      codexReasoningContinuation: {
+        enabled: true,
+        maxRounds: 2,
+      },
+    };
+    const result = mergeProviderMeta(initial, {
+      "https://example.com": buildEndpoint("https://example.com"),
+    });
+    expect(result?.codexSystemPrompt?.enabled).toBe(true);
+    expect(result?.codexSystemPrompt?.replacement).toBe("secret prompt");
+    expect(result?.codexReasoningContinuation?.maxRounds).toBe(2);
+    expect(result?.custom_endpoints?.["https://example.com"]).toBeDefined();
+  });
+

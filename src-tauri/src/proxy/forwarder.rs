@@ -1400,6 +1400,38 @@ impl RequestForwarder {
             .filter(|m| !m.is_empty())
             .map(str::to_string);
 
+        // T12: Codex system-prompt rewrite BEFORE protocol conversion.
+        // Order: prompt rewrite → (later T13 continuation) → Chat/Anthropic transform.
+        let mut mapped_body = mapped_body;
+        if matches!(app_type, AppType::Codex) {
+            let selected_model = outbound_model.as_deref().unwrap_or("");
+            let prompt_cfg = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.codex_system_prompt.as_ref());
+            // Prefer Responses shape (instructions / input); Chat only after conversion.
+            let protocol = crate::services::codex_reasoning::CodexRequestProtocol::Responses;
+            match crate::services::codex_reasoning::rewrite_codex_system_prompt(
+                &mut mapped_body,
+                selected_model,
+                prompt_cfg,
+                protocol,
+            ) {
+                Ok(meta) if meta.replaced || meta.identity_corrected => {
+                    log::debug!(
+                        "[Codex] system prompt rewrite replaced={} identity={} fingerprint={:?}",
+                        meta.replaced,
+                        meta.identity_corrected,
+                        meta.fingerprint
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("[Codex] system prompt rewrite failed: {e}");
+                }
+            }
+        }
+
         // Codex→Anthropic: when the model name carries the [1m] marker, strip the
         // suffix and add the context-1m beta header.
         let mut codex_anthropic_one_m = false;

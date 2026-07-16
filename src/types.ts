@@ -171,6 +171,22 @@ export interface LocalProxyRequestOverrides {
 }
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
+
+// Codex system prompt replacement (T12)
+export interface CodexSystemPromptConfig {
+  enabled: boolean;
+  replacement: string;
+  /** default true on backend */
+  correctModelIdentity?: boolean;
+}
+
+// Codex reasoning continuation (T12/T13)
+export interface CodexReasoningContinuationConfig {
+  enabled: boolean;
+  /** clamped 1..=3 on backend, default 3 */
+  maxRounds?: number;
+}
+
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
@@ -217,6 +233,10 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Codex system prompt replacement (full replace of system layers)
+  codexSystemPrompt?: CodexSystemPromptConfig;
+  // Codex reasoning continuation across truncated turns
+  codexReasoningContinuation?: CodexReasoningContinuationConfig;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).

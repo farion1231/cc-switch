@@ -385,6 +385,11 @@ impl LocalProxyRequestOverrides {
     }
 }
 
+// Re-export Codex prompt/continuation configs (owned by codex_reasoning).
+pub use crate::services::codex_reasoning::{
+    CodexReasoningContinuationConfig, CodexSystemPromptConfig,
+};
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -467,6 +472,16 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Codex system prompt replacement (full replace of system layers).
+    #[serde(rename = "codexSystemPrompt", skip_serializing_if = "Option::is_none")]
+    pub codex_system_prompt: Option<CodexSystemPromptConfig>,
+    /// Codex reasoning continuation across truncated turns.
+    #[serde(
+        rename = "codexReasoningContinuation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_reasoning_continuation: Option<CodexReasoningContinuationConfig>,
+
     /// Codex → Anthropic path: whether to emulate the Claude Code client
     /// (User-Agent / anthropic-beta / x-app + injecting the Claude Code system
     /// prompt first line). Disabled by default; only an explicit `true` enables it.

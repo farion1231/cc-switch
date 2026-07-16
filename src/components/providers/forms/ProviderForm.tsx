@@ -21,6 +21,8 @@ import type {
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexSystemPromptConfig,
+  CodexReasoningContinuationConfig,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
 } from "@/types";
@@ -359,6 +361,16 @@ function ProviderFormFull({
     });
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
+    setCodexSystemPrompt({
+      enabled: initialData?.meta?.codexSystemPrompt?.enabled ?? false,
+      replacement: initialData?.meta?.codexSystemPrompt?.replacement ?? "",
+      correctModelIdentity:
+        initialData?.meta?.codexSystemPrompt?.correctModelIdentity !== false,
+    });
+    setCodexReasoningContinuation({
+      enabled: initialData?.meta?.codexReasoningContinuation?.enabled ?? false,
+      maxRounds: initialData?.meta?.codexReasoningContinuation?.maxRounds ?? 3,
+    });
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
@@ -535,6 +547,18 @@ function ProviderFormFull({
     useState<PromptCacheRoutingMode>(
       () => initialData?.meta?.promptCacheRouting ?? "auto",
     );
+  const [codexSystemPrompt, setCodexSystemPrompt] =
+    useState<CodexSystemPromptConfig>(() => ({
+      enabled: initialData?.meta?.codexSystemPrompt?.enabled ?? false,
+      replacement: initialData?.meta?.codexSystemPrompt?.replacement ?? "",
+      correctModelIdentity:
+        initialData?.meta?.codexSystemPrompt?.correctModelIdentity !== false,
+    }));
+  const [codexReasoningContinuation, setCodexReasoningContinuation] =
+    useState<CodexReasoningContinuationConfig>(() => ({
+      enabled: initialData?.meta?.codexReasoningContinuation?.enabled ?? false,
+      maxRounds: initialData?.meta?.codexReasoningContinuation?.maxRounds ?? 3,
+    }));
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
@@ -1530,6 +1554,29 @@ function ProviderFormFull({
               localCodexAnthropicAuthField !== "ANTHROPIC_AUTH_TOKEN"
             ? localCodexAnthropicAuthField
             : undefined,
+      codexSystemPrompt:
+        appId === "codex" &&
+        category !== "official" &&
+        codexSystemPrompt.enabled
+          ? {
+              enabled: true,
+              replacement: codexSystemPrompt.replacement,
+              correctModelIdentity:
+                codexSystemPrompt.correctModelIdentity !== false,
+            }
+          : undefined,
+      codexReasoningContinuation:
+        appId === "codex" &&
+        category !== "official" &&
+        codexReasoningContinuation.enabled
+          ? {
+              enabled: true,
+              maxRounds: Math.min(
+                3,
+                Math.max(1, codexReasoningContinuation.maxRounds ?? 3),
+              ),
+            }
+          : undefined,
       // Off by default; persist true only for codex+anthropic when the user explicitly enables it
       impersonateClaudeCode:
         appId === "codex" &&
@@ -2200,6 +2247,10 @@ function ProviderFormFull({
               onCodexChatReasoningChange={setCodexChatReasoning}
               promptCacheRouting={promptCacheRouting}
               onPromptCacheRoutingChange={setPromptCacheRouting}
+              codexSystemPrompt={codexSystemPrompt}
+              onCodexSystemPromptChange={setCodexSystemPrompt}
+              codexReasoningContinuation={codexReasoningContinuation}
+              onCodexReasoningContinuationChange={setCodexReasoningContinuation}
               catalogModels={codexCatalogModels}
               onCatalogModelsChange={setCodexCatalogModels}
               speedTestEndpoints={speedTestEndpoints}

@@ -34,12 +34,15 @@ import {
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { CodexReasoningSettings } from "./CodexReasoningSettings";
 import { cn } from "@/lib/utils";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  CodexSystemPromptConfig,
+  CodexReasoningContinuationConfig,
   PromptCacheRoutingMode,
   ProviderCategory,
 } from "@/types";
@@ -92,6 +95,12 @@ interface CodexFormFieldsProps {
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
   promptCacheRouting: PromptCacheRoutingMode;
   onPromptCacheRoutingChange: (value: PromptCacheRoutingMode) => void;
+  codexSystemPrompt?: CodexSystemPromptConfig;
+  onCodexSystemPromptChange?: (value: CodexSystemPromptConfig) => void;
+  codexReasoningContinuation?: CodexReasoningContinuationConfig;
+  onCodexReasoningContinuationChange?: (
+    value: CodexReasoningContinuationConfig,
+  ) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -187,6 +196,10 @@ export function CodexFormFields({
   onCodexChatReasoningChange,
   promptCacheRouting,
   onPromptCacheRoutingChange,
+  codexSystemPrompt,
+  onCodexSystemPromptChange,
+  codexReasoningContinuation,
+  onCodexReasoningContinuationChange,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -998,7 +1011,20 @@ export function CodexFormFields({
                   onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
                   onBodyJsonChange={onLocalProxyBodyOverrideChange}
                 />
-              </div>
+              
+
+          {onCodexSystemPromptChange &&
+            onCodexReasoningContinuationChange &&
+            codexSystemPrompt &&
+            codexReasoningContinuation && (
+              <CodexReasoningSettings
+                systemPrompt={codexSystemPrompt}
+                onSystemPromptChange={onCodexSystemPromptChange}
+                continuation={codexReasoningContinuation}
+                onContinuationChange={onCodexReasoningContinuationChange}
+              />
+            )}
+</div>
             </div>
           </CollapsibleContent>
         </Collapsible>
