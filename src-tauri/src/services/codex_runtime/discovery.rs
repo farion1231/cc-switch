@@ -161,8 +161,26 @@ fn which_codex_on_path() -> Result<PathBuf, AppError> {
     Err(AppError::Config("codex not on PATH".into()))
 }
 
+/// True when cmdline looks like the Chromium/Electron *browser* main process.
+/// Child processes (`--type=renderer|gpu-process|utility|...`) inherit
+/// `--remote-debugging-port` on their command line but do **not** own the CDP
+/// HTTP listener. Live Store Codex: main ChatGPT.exe has the flag alone;
+/// renderer also shows `--remote-debugging-port=9229` plus `--type=renderer`.
+pub fn is_browser_main_process(cmdline: &str) -> bool {
+    let lower = cmdline.to_ascii_lowercase();
+    // Any `--type=` is a helper process (renderer, gpu, utility, crashpad, etc.).
+    if lower.contains("--type=") {
+        return false;
+    }
+    true
+}
+
 /// Parse `--remote-debugging-port=NNNN` or `--remote-debugging-port NNNN` from a cmdline.
+/// Returns `None` for Electron/Chromium child processes even if they inherit the flag.
 pub fn parse_cdp_port_from_cmdline(cmdline: &str) -> Option<u16> {
+    if !is_browser_main_process(cmdline) {
+        return None;
+    }
     let lower = cmdline.to_ascii_lowercase();
     const KEY: &str = "--remote-debugging-port";
     let idx = lower.find(KEY)?;
@@ -393,5 +411,20 @@ mod tests {
         procs.sort_by_key(|p| if p.has_cdp { 0u8 } else { 1u8 });
         assert_eq!(procs[0].pid, 2);
         assert_eq!(procs[0].cdp_port, Some(9229));
+    }
+
+    #[test]
+    fn parse_cdp_port_ignores_renderer_that_inherits_flag() {
+        // Live Store Codex renderer cmdline includes both --type=renderer and the port.
+        let renderer = r#""C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe" --type=renderer --remote-debugging-port=9229 --lang=zh-CN"#;
+        assert_eq!(parse_cdp_port_from_cmdline(renderer), None);
+        assert!(!is_browser_main_process(renderer));
+    }
+
+    #[test]
+    fn parse_cdp_port_accepts_store_main_process() {
+        let main = r#""C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe" --remote-debugging-port=9229 --remote-allow-origins=http://127.0.0.1:9229 "#;
+        assert_eq!(parse_cdp_port_from_cmdline(main), Some(9229));
+        assert!(is_browser_main_process(main));
     }
 }
