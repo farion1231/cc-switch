@@ -483,6 +483,65 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_tokens_preserve_null_and_zero() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+        let mut log = RequestLog {
+            request_id: "reasoning-null".to_string(),
+            provider_id: "provider-1".to_string(),
+            app_type: "codex".to_string(),
+            model: "gpt-5".to_string(),
+            request_model: "gpt-5".to_string(),
+            pricing_model: "gpt-5".to_string(),
+            usage: TokenUsage {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                model: None,
+                message_id: None,
+            },
+            cost: None,
+            latency_ms: 1,
+            first_token_ms: None,
+            status_code: 200,
+            error_message: None,
+            session_id: None,
+            provider_type: None,
+            is_streaming: false,
+            cost_multiplier: "1".to_string(),
+            reasoning_tokens: None,
+            reasoning_source: None,
+            continuation_status: "not_attempted".to_string(),
+            continuation_rounds: 0,
+            turn_id: None,
+            prompt_replaced: false,
+            identity_corrected: false,
+            prompt_fingerprint: None,
+        };
+        logger.log_request(&log)?;
+
+        log.request_id = "reasoning-zero".to_string();
+        log.reasoning_tokens = Some(0);
+        logger.log_request(&log)?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let null_value: Option<i64> = conn.query_row(
+            "SELECT reasoning_tokens FROM proxy_request_logs WHERE request_id = 'reasoning-null'",
+            [],
+            |row| row.get(0),
+        )?;
+        let zero_value: Option<i64> = conn.query_row(
+            "SELECT reasoning_tokens FROM proxy_request_logs WHERE request_id = 'reasoning-zero'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(null_value, None);
+        assert_eq!(zero_value, Some(0));
+        Ok(())
+    }
+
+    #[test]
     fn test_log_error() -> Result<(), AppError> {
         let db = Database::memory()?;
         let logger = UsageLogger::new(&db);

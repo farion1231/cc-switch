@@ -163,6 +163,7 @@ pub struct RequestLogDetail {
     pub reasoning_source: Option<String>,
     pub continuation_status: String,
     pub continuation_rounds: u32,
+    pub session_enriched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
     pub prompt_replaced: bool,
@@ -181,7 +182,7 @@ pub struct RequestLogDetail {
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
 ///  data_source, pricing_model, input_token_semantics,
 ///  reasoning_tokens, reasoning_source, continuation_status, continuation_rounds,
-///  turn_id, prompt_replaced, identity_corrected, prompt_fingerprint`
+///  session_enriched, turn_id, prompt_replaced, identity_corrected, prompt_fingerprint`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -220,10 +221,11 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
             .get::<_, Option<String>>(28)?
             .unwrap_or_else(|| "not_attempted".to_string()),
         continuation_rounds: row.get::<_, Option<i64>>(29)?.unwrap_or(0) as u32,
-        turn_id: row.get(30)?,
-        prompt_replaced: row.get::<_, Option<i64>>(31)?.unwrap_or(0) != 0,
-        identity_corrected: row.get::<_, Option<i64>>(32)?.unwrap_or(0) != 0,
-        prompt_fingerprint: row.get(33)?,
+        session_enriched: row.get::<_, Option<i64>>(30)?.unwrap_or(0) != 0,
+        turn_id: row.get(31)?,
+        prompt_replaced: row.get::<_, Option<i64>>(32)?.unwrap_or(0) != 0,
+        identity_corrected: row.get::<_, Option<i64>>(33)?.unwrap_or(0) != 0,
+        prompt_fingerprint: row.get(34)?,
     })
 }
 
@@ -1559,7 +1561,7 @@ impl Database {
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
                     l.input_token_semantics,
                     l.reasoning_tokens, l.reasoning_source, l.continuation_status, l.continuation_rounds,
-                    l.turn_id, l.prompt_replaced, l.identity_corrected, l.prompt_fingerprint
+                    l.session_enriched, l.turn_id, l.prompt_replaced, l.identity_corrected, l.prompt_fingerprint
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -1602,10 +1604,10 @@ impl Database {
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                     is_streaming, latency_ms, first_token_ms, duration_ms,
-                    status_code, error_message, created_at, l.data_source, l.pricing_model,
+                    l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
                     l.input_token_semantics,
                     l.reasoning_tokens, l.reasoning_source, l.continuation_status, l.continuation_rounds,
-                    l.turn_id, l.prompt_replaced, l.identity_corrected, l.prompt_fingerprint
+                    l.session_enriched, l.turn_id, l.prompt_replaced, l.identity_corrected, l.prompt_fingerprint
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -1763,7 +1765,7 @@ impl Database {
                         first_token_ms, duration_ms, status_code, error_message, created_at,
                         data_source, pricing_model, input_token_semantics,
                         reasoning_tokens, reasoning_source, continuation_status, continuation_rounds,
-                        turn_id, prompt_replaced, identity_corrected, prompt_fingerprint
+                        session_enriched, turn_id, prompt_replaced, identity_corrected, prompt_fingerprint
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -2372,6 +2374,52 @@ mod tests {
             )",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn request_log_reasoning_metadata_round_trips() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "reasoning-metadata",
+                "codex",
+                "provider-1",
+                "gpt-5",
+                "proxy",
+                1_000,
+                10,
+                20,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET
+                    reasoning_tokens = 0, reasoning_source = 'proxy_response',
+                    continuation_status = 'continued', continuation_rounds = 2,
+                    session_enriched = 1, turn_id = 'turn-1', prompt_replaced = 1,
+                    identity_corrected = 1, prompt_fingerprint = 'sha256:test'
+                 WHERE request_id = 'reasoning-metadata'",
+                [],
+            )?;
+        }
+
+        let detail = db
+            .get_request_detail("reasoning-metadata")?
+            .expect("request log detail");
+        assert_eq!(detail.reasoning_tokens, Some(0));
+        assert_eq!(detail.reasoning_source.as_deref(), Some("proxy_response"));
+        assert_eq!(detail.continuation_status, "continued");
+        assert_eq!(detail.continuation_rounds, 2);
+        assert!(detail.session_enriched);
+        assert_eq!(detail.turn_id.as_deref(), Some("turn-1"));
+        assert!(detail.prompt_replaced);
+        assert!(detail.identity_corrected);
+        assert_eq!(detail.prompt_fingerprint.as_deref(), Some("sha256:test"));
         Ok(())
     }
 
