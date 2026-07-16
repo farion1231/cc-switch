@@ -397,10 +397,10 @@
         "cacheInjectionDescription": "Automatically inject standard 5-minute cache breakpoints at key positions to reduce duplicate token billing"
       },
       "logConfig": {
-        "title": "Log Management",
-        "description": "Control log output level",
-        "enabled": "Enable Logging",
-        "enabledDescription": "Master switch, all logging will be disabled when turned off",
+        "title": "Application Diagnostic Logs",
+        "description": "Control the output level for application diagnostic logs",
+        "enabled": "Enable Diagnostic Logs",
+        "enabledDescription": "Controls cc-switch.log; request usage records and crash.log are unaffected",
         "level": "Log Level",
         "levelDescription": "Set the minimum log level to output",
         "levels": {
@@ -1701,7 +1701,10 @@
   "errors": {
     "usage_query_failed": "Usage query failed",
     "configLoadFailedTitle": "Configuration Load Failed",
-    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this."
+    "configLoadFailedMessage": "Unable to read configuration file:\n{{path}}\n\nError details:\n{{detail}}\n\nPlease check if the JSON is valid, or restore from a backup file (e.g., config.json.bak) in the same directory.\n\nThe app will exit so you can fix this.",
+    "frontendCrashTitle": "Something went wrong in the interface",
+    "frontendCrashMessage": "An attempt was made to write the error to the application diagnostic log. Reload the interface, and attach the log when opening an issue if the problem continues.",
+    "reloadInterface": "Reload interface"
   },
   "presetSelector": {
     "title": "Select Configuration Type",
@@ -2533,8 +2536,8 @@
           "description": "Maximum wait time for a single request (0 = unlimited, or 10 ~ 600 seconds)"
         },
         "enableLogging": {
-          "label": "Enable Logging",
-          "description": "Log all routing requests for troubleshooting"
+          "label": "Record Request Usage",
+          "description": "Write routing request usage and status to the local statistics database"
         },
         "streamingFirstByteTimeout": {
           "label": "Streaming First Byte Timeout (sec)",

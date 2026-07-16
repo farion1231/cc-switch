@@ -397,10 +397,10 @@
         "cacheInjectionDescription": "自動在請求關鍵位置注入標準 5 分鐘 Cache 斷點，減少重複 token 計費"
       },
       "logConfig": {
-        "title": "日誌管理",
-        "description": "控制日誌輸出層級",
-        "enabled": "啟用日誌",
-        "enabledDescription": "總開關，關閉後所有日誌將被停用",
+        "title": "應用程式診斷日誌",
+        "description": "控制應用程式診斷日誌的輸出層級",
+        "enabled": "啟用應用程式診斷日誌",
+        "enabledDescription": "控制 cc-switch.log；不影響請求用量記錄和 crash.log",
         "level": "日誌層級",
         "levelDescription": "設定輸出的最低日誌層級",
         "levels": {
@@ -1673,7 +1673,10 @@
   "errors": {
     "usage_query_failed": "用量查詢失敗",
     "configLoadFailedTitle": "設定載入失敗",
-    "configLoadFailedMessage": "無法讀取設定檔：\n{{path}}\n\n錯誤詳情：\n{{detail}}\n\n請手動檢查 JSON 是否有效，或從同目錄的備份檔案（如 config.json.bak）還原。\n\n應用程式將退出以便您進行修復。"
+    "configLoadFailedMessage": "無法讀取設定檔：\n{{path}}\n\n錯誤詳情：\n{{detail}}\n\n請手動檢查 JSON 是否有效，或從同目錄的備份檔案（如 config.json.bak）還原。\n\n應用程式將退出以便您進行修復。",
+    "frontendCrashTitle": "介面遇到了問題",
+    "frontendCrashMessage": "已嘗試將錯誤資訊寫入應用程式診斷日誌。請重新載入介面；如果問題持續，請在提交 Issue 時附上日誌。",
+    "reloadInterface": "重新載入介面"
   },
   "presetSelector": {
     "title": "選擇設定類型",
@@ -2505,8 +2508,8 @@
           "description": "單個請求的最大等待時間（0 表示不限制，或設定 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "啟用日誌紀錄",
-          "description": "紀錄所有路由請求，便於排查問題"
+          "label": "記錄請求用量",
+          "description": "將路由請求的用量與狀態寫入本機統計資料庫"
         },
         "streamingFirstByteTimeout": {
           "label": "串流首位元組逾時（秒）",
