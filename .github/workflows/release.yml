@@ -135,22 +135,9 @@ jobs:
         run: |
           # 调试：检查 Secret 是否存在
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在，跳过签名配置，进行普通无签名构建。"
-            # 动态删除 tauri.conf.json 里的 plugins.updater 字段并关闭 createUpdaterArtifacts，以避免 tauri-cli 强制校验签名私钥
-            node -e '
-              const fs = require("fs");
-              const path = "src-tauri/tauri.conf.json";
-              const config = JSON.parse(fs.readFileSync(path, "utf8"));
-              if (config.plugins && config.plugins.updater) {
-                delete config.plugins.updater;
-              }
-              if (config.bundle) {
-                config.bundle.createUpdaterArtifacts = false;
-              }
-              fs.writeFileSync(path, JSON.stringify(config, null, 2), "utf8");
-              console.log("✅ 已从 tauri.conf.json 中移除 updater 相关配置，绕过签名限制。");
-            '
-            exit 0
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
+            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
+            exit 1
           fi
           
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
@@ -203,10 +190,6 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          if [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
-            echo "⚠️ APPLE_CERTIFICATE is empty, skipping Apple signing certificate setup."
-            exit 0
-          fi
           set -euo pipefail
           # Decode .p12 certificate from base64
           CERT_PATH="$RUNNER_TEMP/certificate.p12"
@@ -255,13 +238,6 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] || [ "${APPLE_SIGNING_IDENTITY}" = "-" ]; then
-            export APPLE_SIGNING_IDENTITY="-"
-            unset APPLE_ID
-            unset APPLE_PASSWORD
-            unset APPLE_TEAM_ID
-            echo "⚠️ Using Ad-Hoc signing and unsetting notary env vars to skip notarization."
-          fi
           set -euo pipefail
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
@@ -320,7 +296,8 @@ jobs:
           done
 
           if [ -z "$TAR_GZ" ]; then
-            echo "⚠️ No macOS .tar.gz updater artifact found, skipping updater collection"
+            echo "❌ No macOS .tar.gz updater artifact found" >&2
+            exit 1
           fi
           if [ -z "$APP_PATH" ]; then
             echo "❌ No .app found" >&2
@@ -328,18 +305,14 @@ jobs:
           fi
 
           # Staple notarization ticket to .app (Tauri already notarized it)
-          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            xcrun stapler staple "$APP_PATH"
-            echo "✅ .app stapled"
-          fi
+          xcrun stapler staple "$APP_PATH"
+          echo "✅ .app stapled"
 
           # 1) Collect .tar.gz (updater artifact)
-          if [ -n "$TAR_GZ" ]; then
-            NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
-            cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
-            [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
-            echo "macOS updater artifact copied: $NEW_TAR_GZ"
-          fi
+          NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
+          cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
+          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
+          echo "macOS updater artifact copied: $NEW_TAR_GZ"
 
           # 2) Collect .app as zip
           NEW_ZIP="CC-Switch-${VERSION}-macOS.zip"
@@ -347,11 +320,9 @@ jobs:
           echo "macOS zip ready: $NEW_ZIP"
 
           # 3) Create styled DMG with create-dmg (Tauri's built-in DMG styling doesn't work on CI)
-          CODESIGN_ARG=()
-          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            CODESIGN_ARG=(--codesign "$APPLE_SIGNING_IDENTITY")
-          else
-            echo "⚠️ APPLE_SIGNING_IDENTITY is missing, creating unsigned DMG."
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "❌ APPLE_SIGNING_IDENTITY is missing before DMG creation" >&2
+            exit 1
           fi
 
           HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
@@ -361,7 +332,6 @@ jobs:
           mkdir -p "$DMG_STAGE_DIR"
           ditto "$APP_PATH" "$DMG_STAGE_DIR/CC Switch.app"
 
-          set +u
           create-dmg \
             --volname "CC Switch" \
             --background "src-tauri/icons/dmg-background.png" \
@@ -371,11 +341,10 @@ jobs:
             --icon "CC Switch.app" 180 220 \
             --hide-extension "CC Switch.app" \
             --app-drop-link 480 220 \
-            "${CODESIGN_ARG[@]}" \
+            --codesign "$APPLE_SIGNING_IDENTITY" \
             --no-internet-enable \
             "release-assets/$NEW_DMG" \
             "$DMG_STAGE_DIR"
-          set -u
 
           rm -rf "$DMG_STAGE_DIR"
           echo "✅ Styled DMG created: $NEW_DMG"
@@ -389,10 +358,6 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -z "${APPLE_ID:-}" ]; then
-            echo "⚠️ APPLE_ID is empty, skipping notarization."
-            exit 0
-          fi
           set -euo pipefail
 
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
@@ -430,10 +395,6 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            echo "⚠️ APPLE_SIGNING_IDENTITY is empty, skipping verification."
-            exit 0
-          fi
           set -euo pipefail
 
           # Verify .app (from Tauri bundle)
@@ -502,6 +463,8 @@ jobs:
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
+            } elseif ($isArm64) {
+              throw "Signature not found for $($msi.Name)"
             } else {
               Write-Warning "Signature not found for $($msi.Name)"
             }
