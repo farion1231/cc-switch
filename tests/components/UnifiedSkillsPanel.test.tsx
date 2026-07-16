@@ -1,12 +1,20 @@
 import { createRef } from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { InstalledSkill } from "@/lib/api/skills";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
 } from "@/components/skills/UnifiedSkillsPanel";
 
 const scanUnmanagedMock = vi.fn();
+const installedSkillsMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
 const uninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
@@ -23,10 +31,7 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/hooks/useSkills", () => ({
-  useInstalledSkills: () => ({
-    data: [],
-    isLoading: false,
-  }),
+  useInstalledSkills: () => installedSkillsMock(),
   useSkillBackups: () => ({
     data: [],
     refetch: vi.fn(),
@@ -77,6 +82,10 @@ vi.mock("@/hooks/useSkills", () => ({
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    installedSkillsMock.mockReturnValue({
+      data: [],
+      isLoading: false,
+    });
     scanUnmanagedMock.mockResolvedValue({
       data: [
         {
@@ -94,6 +103,51 @@ describe("UnifiedSkillsPanel", () => {
     installFromZipMock.mockReset();
     deleteSkillBackupMock.mockReset();
     restoreSkillBackupMock.mockReset();
+  });
+
+  it("filters installed skills by the selected app and restores the all view", async () => {
+    installedSkillsMock.mockReturnValue({
+      data: [
+        createInstalledSkill("claude-skill", { claude: true }),
+        createInstalledSkill("codex-skill", { codex: true }),
+        createInstalledSkill("shared-skill", { claude: true, codex: true }),
+      ],
+      isLoading: false,
+    });
+
+    render(
+      <UnifiedSkillsPanel onOpenDiscovery={() => {}} currentApp="claude" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("claude-skill")).toBeInTheDocument();
+      expect(screen.getByText("codex-skill")).toBeInTheDocument();
+      expect(screen.getByText("shared-skill")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter by Claude" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("claude-skill")).toBeInTheDocument();
+      expect(screen.getByText("shared-skill")).toBeInTheDocument();
+      expect(screen.queryByText("codex-skill")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter by Codex" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("codex-skill")).toBeInTheDocument();
+      expect(screen.getByText("shared-skill")).toBeInTheDocument();
+      expect(screen.queryByText("claude-skill")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "skills.all" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("claude-skill")).toBeInTheDocument();
+      expect(screen.getByText("codex-skill")).toBeInTheDocument();
+      expect(screen.getByText("shared-skill")).toBeInTheDocument();
+    });
   });
 
   it("opens the import dialog without crashing when app toggles render", async () => {
@@ -118,3 +172,25 @@ describe("UnifiedSkillsPanel", () => {
     });
   });
 });
+
+function createInstalledSkill(
+  id: string,
+  apps: Partial<InstalledSkill["apps"]> = {},
+): InstalledSkill {
+  return {
+    id,
+    name: id,
+    directory: id,
+    apps: {
+      claude: false,
+      codex: false,
+      gemini: false,
+      opencode: false,
+      openclaw: false,
+      hermes: false,
+      ...apps,
+    },
+    installedAt: 0,
+    updatedAt: 0,
+  };
+}
