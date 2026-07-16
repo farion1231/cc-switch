@@ -129,6 +129,14 @@ const expectedChatPresets = new Map<
 ]);
 
 describe("Codex Chat provider presets", () => {
+  it("enables session-based prompt cache routing for Kimi Coding", () => {
+    const preset = codexProviderPresets.find(
+      (item) => item.name === "Kimi For Coding",
+    );
+
+    expect(preset?.promptCacheRouting).toBe("enabled");
+  });
+
   it("marks migrated Chat Completions presets for local routing", () => {
     for (const [name, expected] of expectedChatPresets) {
       const preset = codexProviderPresets.find((item) => item.name === name);
