@@ -3,6 +3,7 @@
 //! Low-level HTTP primitives for WebDAV operations (PUT, GET, HEAD, MKCOL, PROPFIND).
 //! The sync protocol logic lives in [`super::webdav_sync`].
 
+use reqwest::header::USER_AGENT;
 use reqwest::{Method, RequestBuilder, StatusCode, Url};
 use std::time::Duration;
 
@@ -13,6 +14,12 @@ use futures::StreamExt;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// Timeout for large file transfers (PUT/GET of db.sql, skills.zip).
 const TRANSFER_TIMEOUT_SECS: u64 = 300;
+
+/// Default User-Agent for WebDAV requests.
+///
+/// Cloudflare and some reverse proxies reject requests without a User-Agent
+/// (HTTP 403 "Missing required headers"). reqwest does not send one by default.
+const WEBDAV_USER_AGENT: &str = concat!("cc-switch/", env!("CARGO_PKG_VERSION"), " WebDAV");
 
 /// Auth pair: `(username, Some(password))`.
 pub type WebDavAuth = Option<(String, Option<String>)>;
@@ -93,8 +100,12 @@ pub fn auth_from_credentials(username: &str, password: &str) -> WebDavAuth {
     Some((user.to_string(), Some(password.to_string())))
 }
 
-/// Apply Basic-Auth to a request builder if auth is present.
+/// Apply shared WebDAV request headers and Basic-Auth if present.
+///
+/// Always sets a User-Agent so reverse proxies (e.g. Cloudflare) that require
+/// it do not reject the request with 403.
 fn apply_auth(builder: RequestBuilder, auth: &WebDavAuth) -> RequestBuilder {
+    let builder = builder.header(USER_AGENT, WEBDAV_USER_AGENT);
     match auth {
         Some((user, pass)) => builder.basic_auth(user, pass.as_deref()),
         None => builder,
@@ -516,6 +527,13 @@ mod tests {
         assert!(auth_from_credentials("  ", "pass").is_none());
         let auth = auth_from_credentials(" user ", "pass");
         assert_eq!(auth, Some(("user".to_string(), Some("pass".to_string()))));
+    }
+
+    #[test]
+    fn webdav_user_agent_is_nonempty_product_token() {
+        assert!(WEBDAV_USER_AGENT.starts_with("cc-switch/"));
+        assert!(WEBDAV_USER_AGENT.contains(" WebDAV"));
+        assert!(!WEBDAV_USER_AGENT.chars().any(|c| c.is_control()));
     }
 
     #[test]
