@@ -11,6 +11,9 @@ export const codexWorkbenchKeys = {
   settings: () => [...codexWorkbenchKeys.all, "settings"] as const,
   scripts: () => [...codexWorkbenchKeys.all, "scripts"] as const,
   market: () => [...codexWorkbenchKeys.all, "market"] as const,
+  pluginHome: () => [...codexWorkbenchKeys.all, "pluginHome"] as const,
+  pluginMarket: () => [...codexWorkbenchKeys.all, "pluginMarket"] as const,
+  pluginCaches: () => [...codexWorkbenchKeys.all, "pluginCaches"] as const,
 };
 
 export function useCodexWorkbenchStatusQuery(enabled = true) {
@@ -149,5 +152,52 @@ export function useImportCodexUserScript() {
 export function useGetCodexScriptsDir() {
   return useMutation({
     mutationFn: () => codexWorkbenchApi.getScriptsDir(),
+  });
+}
+
+export function useCodexEffectiveHome(enabled = true) {
+  return useQuery({
+    queryKey: codexWorkbenchKeys.pluginHome(),
+    queryFn: () => codexWorkbenchApi.getEffectiveHome(),
+    enabled,
+  });
+}
+
+export function useCodexPluginMarketplaceStatus(enabled = true) {
+  return useQuery({
+    queryKey: codexWorkbenchKeys.pluginMarket(),
+    queryFn: () => codexWorkbenchApi.getPluginMarketplaceStatus(),
+    enabled,
+  });
+}
+
+export function useCodexPluginCaches(enabled = true) {
+  return useQuery({
+    queryKey: codexWorkbenchKeys.pluginCaches(),
+    queryFn: () => codexWorkbenchApi.listPluginCaches(),
+    enabled,
+  });
+}
+
+export function useInitializeCodexPluginMarketplace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => codexWorkbenchApi.initializePluginMarketplace(),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginMarket() });
+      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginCaches() });
+      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginHome() });
+    },
+  });
+}
+
+export function useRefreshCodexPluginCache() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (pluginId: string) =>
+      codexWorkbenchApi.refreshPluginCache(pluginId),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginCaches() });
+    },
   });
 }

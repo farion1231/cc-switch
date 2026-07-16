@@ -88,3 +88,19 @@ export const DEFAULT_CODEX_WORKBENCH_SETTINGS: CodexWorkbenchSettings = {
     "https://raw.githubusercontent.com/BigPizzaV3/CodexPlusPlusScriptMarket/main/index.json",
   radarTtlMinutes: 30,
 };
+
+export interface MarketplaceResult {
+  initialized: boolean;
+  configured: boolean;
+  marketplaceRoot?: string | null;
+  message?: string | null;
+}
+
+export interface PluginCacheInfo {
+  id: string;
+  sourceVersion?: string | null;
+  currentVersion?: string | null;
+  canRefresh: boolean;
+  refreshReason: string;
+}
+

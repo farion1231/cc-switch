@@ -5,6 +5,8 @@ import type {
   MarketIndex,
   ScriptInstallRequest,
   UserScriptInfo,
+  MarketplaceResult,
+  PluginCacheInfo,
 } from "@/types/codexWorkbench";
 
 export interface LaunchEnhancedCodexResult {
@@ -57,5 +59,19 @@ export const codexWorkbenchApi = {
     invoke<UserScriptInfo>("install_codex_market_script", { request }),
 
   reinjectAfterScriptChange: () =>
-    invoke<CodexWorkbenchStatus>("reinject_after_script_change"),
+    invoke<CodexWorkbenchStatus>("reinject_after_script_change"),,
+
+  getEffectiveHome: () => invoke<string>("get_codex_effective_home"),
+
+  getPluginMarketplaceStatus: () =>
+    invoke<MarketplaceResult>("get_codex_plugin_marketplace_status"),
+
+  initializePluginMarketplace: () =>
+    invoke<MarketplaceResult>("initialize_codex_plugin_marketplace"),
+
+  listPluginCaches: () =>
+    invoke<PluginCacheInfo[]>("list_codex_plugin_caches"),
+
+  refreshPluginCache: (pluginId: string) =>
+    invoke<PluginCacheInfo>("refresh_codex_plugin_cache", { pluginId }),
 };

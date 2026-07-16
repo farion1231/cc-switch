@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use crate::services::codex_runtime::LaunchEnhancedCodexResult;
+use crate::services::codex_plugins::{self, MarketplaceResult, PluginCacheInfo};
 use crate::services::codex_scripts::{
     self, MarketIndex, ScriptInstallRequest, UserScriptInfo,
 };
@@ -108,4 +109,36 @@ pub async fn reinject_after_script_change(
         let _ = codex_workbench::reinject(state.codex_runtime.as_ref()).await;
     }
     codex_workbench::get_status(&state).await
+}
+
+
+// --- Codex plugins (T10) ---
+
+#[tauri::command]
+pub fn get_codex_effective_home() -> Result<String, AppError> {
+    Ok(codex_plugins::effective_codex_home().display().to_string())
+}
+
+#[tauri::command]
+pub fn get_codex_plugin_marketplace_status() -> Result<MarketplaceResult, AppError> {
+    let home = codex_plugins::effective_codex_home();
+    Ok(codex_plugins::marketplace_status(&home))
+}
+
+#[tauri::command]
+pub async fn initialize_codex_plugin_marketplace() -> Result<MarketplaceResult, AppError> {
+    let home = codex_plugins::effective_codex_home();
+    codex_plugins::initialize_curated_marketplace(&home).await
+}
+
+#[tauri::command]
+pub fn list_codex_plugin_caches() -> Result<Vec<PluginCacheInfo>, AppError> {
+    let home = codex_plugins::effective_codex_home();
+    codex_plugins::list_plugin_caches(&home)
+}
+
+#[tauri::command]
+pub fn refresh_codex_plugin_cache(plugin_id: String) -> Result<PluginCacheInfo, AppError> {
+    let home = codex_plugins::effective_codex_home();
+    codex_plugins::refresh_plugin_cache(&home, &plugin_id)
 }

@@ -155,12 +155,18 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
 ];
 
 /// 获取 Codex 配置目录路径
+/// 优先级：显式 override > CODEX_HOME 环境变量 > ~/.codex
 pub fn get_codex_config_dir() -> PathBuf {
     if let Some(custom) = crate::settings::get_codex_override_dir() {
         return custom;
     }
-
-    get_home_dir().join(".codex")
+    if let Some(env_home) = std::env::var_os("CODEX_HOME") {
+        let p = PathBuf::from(env_home);
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+    crate::config::get_home_dir().join(".codex")
 }
 
 /// 获取 Codex auth.json 路径
