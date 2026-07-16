@@ -297,6 +297,13 @@ async fn attach_and_inject(
     let settings = get_settings().codex_workbench;
     let instance_id = uuid::Uuid::new_v4().to_string();
 
+    // Reinject/re-attach: drop previous bridge first so we never run two
+    // localhost listeners and so Drop shutdown fires before the new bind.
+    {
+        let mut guard = handle.inner.lock().await;
+        guard.bridge = None;
+    }
+
     let bridge = codex_injection::start_bridge(&instance_id).await?;
     let bridge_port = bridge.port;
     let nonce = bridge.nonce.clone();
