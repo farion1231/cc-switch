@@ -1684,6 +1684,8 @@
       "deleteServer": "刪除伺服器",
       "deleteConfirm": "確定要刪除伺服器 \"{{id}}\" 嗎？此操作無法復原。",
       "noServers": "暫無伺服器",
+      "noMatchingServers": "目前應用程式沒有已設定的 MCP 伺服器",
+      "noMatchingServersDescription": "切換應用程式或點擊頂部總數按鈕查看全部 MCP 伺服器",
       "enabledApps": "啟用的應用程式",
       "noImportFound": "未發現需要匯入的 MCP 伺服器。所有伺服器已在 CC Switch 統一管理中。",
       "importSuccess": "成功匯入 {{count}} 個 MCP 伺服器",

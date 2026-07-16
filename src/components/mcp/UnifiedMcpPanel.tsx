@@ -18,9 +18,13 @@ import { settingsApi } from "@/lib/api";
 import { mcpPresets } from "@/config/mcpPresets";
 import { toast } from "sonner";
 import { MCP_APP_IDS } from "@/config/appConfig";
-import { AppCountBar } from "@/components/common/AppCountBar";
+import {
+  AppCountBar,
+  type AppCountBarFilter,
+} from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
+import { filterMcpServers } from "./mcpFilter";
 
 interface UnifiedMcpPanelProps {
   onOpenChange: (open: boolean) => void;
@@ -38,6 +42,7 @@ const UnifiedMcpPanel = React.forwardRef<
   const { t } = useTranslation();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedApp, setSelectedApp] = useState<AppCountBarFilter>("all");
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -54,6 +59,11 @@ const UnifiedMcpPanel = React.forwardRef<
     if (!serversMap) return [];
     return Object.entries(serversMap);
   }, [serversMap]);
+
+  const filteredServerEntries = useMemo(
+    () => filterMcpServers(serverEntries, selectedApp),
+    [serverEntries, selectedApp],
+  );
 
   const enabledCounts = useMemo(() => {
     const counts = {
@@ -145,6 +155,8 @@ const UnifiedMcpPanel = React.forwardRef<
         totalLabel={t("mcp.serverCount", { count: serverEntries.length })}
         counts={enabledCounts}
         appIds={MCP_APP_IDS}
+        selectedApp={selectedApp}
+        onAppSelect={setSelectedApp}
       />
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
@@ -164,10 +176,22 @@ const UnifiedMcpPanel = React.forwardRef<
               {t("mcp.emptyDescription")}
             </p>
           </div>
+        ) : filteredServerEntries.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Server size={24} className="text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              {t("mcp.unifiedPanel.noMatchingServers")}
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {t("mcp.unifiedPanel.noMatchingServersDescription")}
+            </p>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {serverEntries.map(([id, server], index) => (
+              {filteredServerEntries.map(([id, server], index) => (
                 <UnifiedMcpListItem
                   key={id}
                   id={id}
@@ -175,7 +199,7 @@ const UnifiedMcpPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
-                  isLast={index === serverEntries.length - 1}
+                  isLast={index === filteredServerEntries.length - 1}
                 />
               ))}
             </div>
