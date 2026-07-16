@@ -401,6 +401,17 @@ impl Database {
 
         Self::create_v14_security_tables(conn)?;
 
+        
+        // T15: accelerate session enrichment matching
+        if Self::has_column(conn, "proxy_request_logs", "turn_id")? {
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_turn_id_app
+                    ON proxy_request_logs(turn_id, app_type);
+                 CREATE INDEX IF NOT EXISTS idx_request_logs_session_app_created
+                    ON proxy_request_logs(session_id, app_type, created_at);",
+            )?;
+        }
+
         Ok(())
     }
 

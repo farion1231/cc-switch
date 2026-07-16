@@ -36,6 +36,7 @@ struct CumulativeTokens {
     input: u64,
     cached_input: u64,
     output: u64,
+    reasoning: u64,
 }
 
 /// 单次 API 调用的 token 增量
@@ -44,11 +45,15 @@ struct DeltaTokens {
     input: u32,
     cached_input: u32,
     output: u32,
+    reasoning: u32,
 }
 
 impl DeltaTokens {
     fn is_zero(&self) -> bool {
-        self.input == 0 && self.cached_input == 0 && self.output == 0
+        self.input == 0
+            && self.cached_input == 0
+            && self.output == 0
+            && self.reasoning == 0
     }
 }
 
@@ -56,6 +61,7 @@ impl DeltaTokens {
 struct FileParseState {
     thread_id: Option<String>,
     current_model: String,
+    current_turn_id: Option<String>,
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
     history_replay_boundary: Option<i64>,
@@ -265,11 +271,13 @@ fn compute_delta(prev: &Option<CumulativeTokens>, current: &CumulativeTokens) ->
             input: current.input as u32,
             cached_input: current.cached_input as u32,
             output: current.output as u32,
+            reasoning: current.reasoning as u32,
         },
         Some(p) => DeltaTokens {
             input: current.input.saturating_sub(p.input) as u32,
             cached_input: current.cached_input.saturating_sub(p.cached_input) as u32,
             output: current.output.saturating_sub(p.output) as u32,
+            reasoning: current.reasoning.saturating_sub(p.reasoning) as u32,
         },
     }
 }
@@ -287,16 +295,23 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
         cached_input: total_usage
             .get("cached_input_tokens")
             .or_else(|| total_usage.get("cache_read_input_tokens"))
+            .or_else(|| total_usage.get("cache_read_tokens"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
         output: total_usage
             .get("output_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
+        // Codex reports reasoning as reasoning_output_tokens
+        reasoning: total_usage
+            .get("reasoning_output_tokens")
+            .or_else(|| total_usage.get("reasoning_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     })
 }
 
-/// 同步 Codex 使用数据（从 JSONL 会话日志）
+
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
 
@@ -340,6 +355,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
+
 fn collect_codex_session_files(codex_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
@@ -410,6 +426,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     let mut state = FileParseState {
         thread_id: identity.map(|identity| identity.thread_id),
         current_model: "unknown".to_string(),
+        current_turn_id: None,
         prev_total: None,
         event_index: 0,
         history_replay_boundary,
@@ -470,6 +487,15 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     {
                         state.current_model = normalize_codex_model(model);
                     }
+                    // turn_id: payload.turn_id | payload.id | payload.info.turn_id
+                    if let Some(tid) = payload
+                        .get("turn_id")
+                        .or_else(|| payload.get("id"))
+                        .or_else(|| payload.get("info").and_then(|info| info.get("turn_id")))
+                        .and_then(|v| v.as_str())
+                    {
+                        state.current_turn_id = Some(tid.to_string());
+                    }
                 }
             }
             "event_msg" => {
@@ -498,11 +524,12 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     state.current_model = normalize_codex_model(model);
                 }
 
-                // 优先用 total_token_usage（累计值），fallback 到 last_token_usage（增量值）
-                let (cumulative, is_total) = if let Some(total) = info.get("total_token_usage") {
-                    (parse_cumulative_tokens(total), true)
-                } else if let Some(last) = info.get("last_token_usage") {
+                // Prefer last_token_usage (per-turn delta, includes reasoning_output_tokens);
+                // fall back to total_token_usage (cumulative) when last is absent.
+                let (cumulative, is_total) = if let Some(last) = info.get("last_token_usage") {
                     (parse_cumulative_tokens(last), false)
+                } else if let Some(total) = info.get("total_token_usage") {
+                    (parse_cumulative_tokens(total), true)
                 } else {
                     continue;
                 };
@@ -523,6 +550,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                         input: cumulative.input as u32,
                         cached_input: cumulative.cached_input as u32,
                         output: cumulative.output as u32,
+                        reasoning: cumulative.reasoning as u32,
                     }
                 };
 
@@ -571,6 +599,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     &delta,
                     &state.current_model,
                     state.thread_id.as_deref(),
+                    state.current_turn_id.as_deref(),
                     timestamp.as_deref(),
                 ) {
                     Ok(true) => imported += 1,
@@ -598,6 +627,7 @@ fn insert_codex_session_entry(
     delta: &DeltaTokens,
     model: &str,
     session_id: Option<&str>,
+    turn_id: Option<&str>,
     timestamp: Option<&str>,
 ) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
@@ -614,6 +644,18 @@ fn insert_codex_session_entry(
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0)
         });
+
+    // Prefer enriching an existing proxy log over inserting a session-only row.
+    if try_enrich_proxy_log(
+        &conn,
+        session_id,
+        turn_id,
+        model,
+        delta,
+        created_at,
+    )? {
+        return Ok(true);
+    }
 
     let dedup_key = DedupKey {
         app_type: "codex",
@@ -661,6 +703,17 @@ fn insert_codex_session_entry(
         ),
     };
 
+    let reasoning_tokens = if delta.reasoning > 0 {
+        Some(delta.reasoning as i64)
+    } else {
+        None
+    };
+    let reasoning_source = if delta.reasoning > 0 {
+        Some("session")
+    } else {
+        None
+    };
+
     let inserted_rows = conn
         .execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
@@ -668,8 +721,9 @@ fn insert_codex_session_entry(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source,
+            reasoning_tokens, reasoning_source, session_enriched, turn_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
             rusqlite::params![
                 request_id,
                 "_codex_session",    // provider_id
@@ -695,6 +749,10 @@ fn insert_codex_session_entry(
                 "1.0",               // cost_multiplier
                 created_at,
                 "codex_session",     // data_source
+                reasoning_tokens,
+                reasoning_source,
+                0i64,                // session_enriched (session-only row)
+                turn_id.map(|s| s.to_string()),
             ],
         )
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
@@ -704,6 +762,120 @@ fn insert_codex_session_entry(
     }
 
     Ok(true)
+}
+
+/// Try to uniquely match a proxy_request_logs row and fill missing reasoning/turn_id.
+/// Matching order:
+///   1. exact turn_id
+///   2. session_id + model + token fingerprint within ±10 minutes (must be unique)
+/// Only NULL fields are filled; already-set values are preserved.
+fn try_enrich_proxy_log(
+    conn: &rusqlite::Connection,
+    session_id: Option<&str>,
+    turn_id: Option<&str>,
+    model: &str,
+    delta: &DeltaTokens,
+    created_at: i64,
+) -> Result<bool, AppError> {
+    // 1) exact turn_id match
+    if let Some(tid) = turn_id {
+        let id: Option<String> = conn
+            .query_row(
+                "SELECT request_id FROM proxy_request_logs
+                 WHERE turn_id = ?1 AND app_type = 'codex'
+                 LIMIT 1",
+                rusqlite::params![tid],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(row_id) = id {
+            return apply_enrich(conn, &row_id, delta, turn_id);
+        }
+    }
+
+    // 2) session + model + tokens ±10min, unique only
+    let Some(sid) = session_id else {
+        return Ok(false);
+    };
+    let window_start = created_at - 600;
+    let window_end = created_at + 600;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT request_id FROM proxy_request_logs
+             WHERE session_id = ?1
+               AND app_type = 'codex'
+               AND model = ?2
+               AND input_tokens = ?3
+               AND output_tokens = ?4
+               AND cache_read_tokens = ?5
+               AND created_at BETWEEN ?6 AND ?7
+             LIMIT 3",
+        )
+        .map_err(|e| AppError::Database(format!("enrich query prepare: {e}")))?;
+
+    let ids: Vec<String> = stmt
+        .query_map(
+            rusqlite::params![
+                sid,
+                model,
+                delta.input,
+                delta.output,
+                delta.cached_input,
+                window_start,
+                window_end,
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(format!("enrich query: {e}")))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if ids.len() == 1 {
+        return apply_enrich(conn, &ids[0], delta, turn_id);
+    }
+
+    Ok(false)
+}
+
+fn apply_enrich(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    delta: &DeltaTokens,
+    turn_id: Option<&str>,
+) -> Result<bool, AppError> {
+    // Only fill NULL reasoning_*/turn_id; always set session_enriched = 1.
+    let updated = conn
+        .execute(
+            "UPDATE proxy_request_logs SET
+                reasoning_tokens = COALESCE(reasoning_tokens, ?1),
+                reasoning_source = COALESCE(reasoning_source, ?2),
+                turn_id = COALESCE(turn_id, ?3),
+                session_enriched = 1
+             WHERE request_id = ?4",
+            rusqlite::params![
+                if delta.reasoning > 0 {
+                    Some(delta.reasoning as i64)
+                } else {
+                    None
+                },
+                if delta.reasoning > 0 {
+                    Some("session")
+                } else {
+                    None
+                },
+                turn_id,
+                request_id,
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("enrich update: {e}")))?;
+
+    if updated > 0 {
+        crate::usage_events::notify_log_recorded();
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// 查找 Codex 模型定价（带归一化）
@@ -772,7 +944,8 @@ mod tests {
             input: 17934,
             cached_input: 9600,
             output: 454,
-        };
+        
+            reasoning: 0,};
         let delta = compute_delta(&prev, &current);
         assert_eq!(delta.input, 17934);
         assert_eq!(delta.cached_input, 9600);
@@ -786,12 +959,14 @@ mod tests {
             input: 17934,
             cached_input: 9600,
             output: 454,
-        });
+        
+            reasoning: 0,});
         let current = CumulativeTokens {
             input: 36722,
             cached_input: 27904,
             output: 804,
-        };
+        
+            reasoning: 0,};
         let delta = compute_delta(&prev, &current);
         assert_eq!(delta.input, 36722 - 17934);
         assert_eq!(delta.cached_input, 27904 - 9600);
@@ -804,13 +979,15 @@ mod tests {
             input: 58346,
             cached_input: 46976,
             output: 1045,
-        });
+        
+            reasoning: 0,});
         // task 边界：相同的累计值
         let current = CumulativeTokens {
             input: 58346,
             cached_input: 46976,
             output: 1045,
-        };
+        
+            reasoning: 0,};
         let delta = compute_delta(&prev, &current);
         assert!(delta.is_zero());
     }
@@ -822,12 +999,14 @@ mod tests {
             input: 100,
             cached_input: 50,
             output: 30,
-        });
+        
+            reasoning: 0,});
         let current = CumulativeTokens {
             input: 80,
             cached_input: 40,
             output: 20,
-        };
+        
+            reasoning: 0,};
         let delta = compute_delta(&prev, &current);
         assert_eq!(delta.input, 0);
         assert_eq!(delta.cached_input, 0);
@@ -907,7 +1086,7 @@ mod tests {
 
         assert_eq!(sync_single_codex_file(&db, &child)?, (1, 2));
 
-        let conn = lock_conn!(db.conn);
+        let conn = db.conn.lock().unwrap();
         let usage: (i64, i64, i64) = conn.query_row(
             "SELECT input_tokens, cache_read_tokens, output_tokens
              FROM proxy_request_logs
@@ -946,7 +1125,7 @@ mod tests {
         assert_eq!(sync_single_codex_file(&db, &child_a)?, (1, 0));
         assert_eq!(sync_single_codex_file(&db, &child_b)?, (1, 0));
 
-        let conn = lock_conn!(db.conn);
+        let conn = db.conn.lock().unwrap();
         let request_ids = conn
             .prepare(
                 "SELECT request_id FROM proxy_request_logs
@@ -986,7 +1165,7 @@ mod tests {
         );
 
         {
-            let conn = lock_conn!(db.conn);
+            let conn = db.conn.lock().unwrap();
             conn.execute(
                 "INSERT INTO proxy_request_logs (
                     request_id, provider_id, app_type, model, request_model,
@@ -1005,7 +1184,7 @@ mod tests {
         assert_eq!(sync_single_codex_file(&db, &archived_file)?, (1, 0));
         assert_eq!(sync_single_codex_file(&db, &archived_file)?, (0, 0));
 
-        let conn = lock_conn!(db.conn);
+        let conn = db.conn.lock().unwrap();
         let old_row_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM proxy_request_logs
              WHERE request_id = 'codex_session:parent:2'",
@@ -1031,7 +1210,7 @@ mod tests {
     fn test_insert_codex_session_skips_matching_proxy_log() -> Result<(), AppError> {
         let db = Database::memory()?;
         {
-            let conn = lock_conn!(db.conn);
+            let conn = db.conn.lock().unwrap();
             conn.execute(
                 "INSERT INTO proxy_request_logs (
                     request_id, provider_id, app_type, model, request_model,
@@ -1061,18 +1240,20 @@ mod tests {
             input: 10,
             cached_input: 1,
             output: 2,
-        };
+        
+            reasoning: 0,};
         let inserted = insert_codex_session_entry(
             &db,
             "codex-session-dup",
             &delta,
             "gpt-5.4",
             Some("session-1"),
+            None,
             Some("1970-01-01T00:16:45Z"),
         )?;
         assert!(!inserted);
 
-        let conn = lock_conn!(db.conn);
+        let conn = db.conn.lock().unwrap();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
             row.get(0)
         })?;
@@ -1144,12 +1325,14 @@ mod tests {
             input: 100,
             cached_input: 0,
             output: 50,
-        });
+        
+            reasoning: 0,});
         let current = CumulativeTokens {
             input: 110,       // delta = 10
             cached_input: 80, // delta = 80（异常：大于 input delta）
             output: 60,
-        };
+        
+            reasoning: 0,};
         let delta = compute_delta(&prev, &current);
         // 钳制前：cached_input = 80, input = 10
         assert_eq!(delta.cached_input, 80);
@@ -1158,4 +1341,198 @@ mod tests {
         let clamped = delta.cached_input.min(delta.input);
         assert_eq!(clamped, 10);
     }
+
+    #[test]
+    fn parse_cumulative_tokens_reads_reasoning() {
+        let v = serde_json::json!({
+            "input_tokens": 100,
+            "cached_input_tokens": 20,
+            "output_tokens": 50,
+            "reasoning_output_tokens": 30
+        });
+        let c = parse_cumulative_tokens(&v).expect("parse");
+        assert_eq!(c.input, 100);
+        assert_eq!(c.cached_input, 20);
+        assert_eq!(c.output, 50);
+        assert_eq!(c.reasoning, 30);
+    }
+
+    #[test]
+    fn compute_delta_includes_reasoning() {
+        let prev = Some(CumulativeTokens {
+            input: 10,
+            cached_input: 0,
+            output: 5,
+            reasoning: 2,
+        });
+        let cur = CumulativeTokens {
+            input: 40,
+            cached_input: 5,
+            output: 20,
+            reasoning: 12,
+        };
+        let d = compute_delta(&prev, &cur);
+        assert_eq!(d.input, 30);
+        assert_eq!(d.output, 15);
+        assert_eq!(d.reasoning, 10);
+        assert_eq!(d.cached_input, 5);
+    }
+
+    #[test]
+    fn enrich_by_turn_id_fills_null_only() {
+        let db = Database::memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, status_code, session_id, provider_type, is_streaming,
+                    cost_multiplier, created_at, data_source, turn_id
+                ) VALUES (
+                    'r1', 'p1', 'codex', 'gpt-5', 'gpt-5',
+                    100, 50, 10, 0,
+                    '0','0','0','0','0',
+                    0, 200, 'sess-1', 'proxy', 1,
+                    '1.0', 1720000000, 'proxy', 'turn-abc'
+                )",
+                [],
+            )
+            .unwrap();
+        }
+        let delta = DeltaTokens {
+            input: 100,
+            cached_input: 10,
+            output: 50,
+            reasoning: 42,
+        };
+        {
+            let conn = db.conn.lock().unwrap();
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-1"),
+                Some("turn-abc"),
+                "gpt-5",
+                &delta,
+                1720000000,
+            )
+            .unwrap();
+            assert!(ok);
+            let (rt, rs, se, tid): (Option<i64>, Option<String>, i64, Option<String>) = conn
+                .query_row(
+                    "SELECT reasoning_tokens, reasoning_source, session_enriched, turn_id
+                     FROM proxy_request_logs WHERE request_id = 'r1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+            assert_eq!(rt, Some(42));
+            assert_eq!(rs.as_deref(), Some("session"));
+            assert_eq!(se, 1);
+            assert_eq!(tid.as_deref(), Some("turn-abc"));
+        }
+        // second enrich must not overwrite existing reasoning
+        let delta2 = DeltaTokens {
+            input: 100,
+            cached_input: 10,
+            output: 50,
+            reasoning: 99,
+        };
+        {
+            let conn = db.conn.lock().unwrap();
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-1"),
+                Some("turn-abc"),
+                "gpt-5",
+                &delta2,
+                1720000000,
+            )
+            .unwrap();
+            assert!(ok);
+            let rt: Option<i64> = conn
+                .query_row(
+                    "SELECT reasoning_tokens FROM proxy_request_logs WHERE request_id = 'r1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(rt, Some(42), "must not overwrite existing reasoning");
+        }
+    }
+
+    #[test]
+    fn enrich_by_session_fingerprint_requires_unique() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("t2.db");
+        let db = Database::memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            for rid in ["r1", "r2"] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                        latency_ms, status_code, session_id, provider_type, is_streaming,
+                        cost_multiplier, created_at, data_source
+                    ) VALUES (
+                        ?1, 'p1', 'codex', 'gpt-5', 'gpt-5',
+                        100, 50, 10, 0,
+                        '0','0','0','0','0',
+                        0, 200, 'sess-x', 'proxy', 1,
+                        '1.0', 1720000000, 'proxy'
+                    )",
+                    rusqlite::params![rid],
+                )
+                .unwrap();
+            }
+        }
+        let delta = DeltaTokens {
+            input: 100,
+            cached_input: 10,
+            output: 50,
+            reasoning: 7,
+        };
+        {
+            let conn = db.conn.lock().unwrap();
+            // ambiguous: two rows match → no enrich
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-x"),
+                None,
+                "gpt-5",
+                &delta,
+                1720000000,
+            )
+            .unwrap();
+            assert!(!ok, "ambiguous match must not enrich");
+        }
+        // leave only one matching row
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("DELETE FROM proxy_request_logs WHERE request_id = 'r2'", [])
+                .unwrap();
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-x"),
+                None,
+                "gpt-5",
+                &delta,
+                1720000000,
+            )
+            .unwrap();
+            assert!(ok);
+            let rt: Option<i64> = conn
+                .query_row(
+                    "SELECT reasoning_tokens FROM proxy_request_logs WHERE request_id = 'r1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(rt, Some(7));
+        }
+    }
+
 }
