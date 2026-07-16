@@ -2476,7 +2476,7 @@ impl RequestForwarder {
                             log::warn!(
                                 "[Codex] failed to buffer body for multi-round continuation: {e}"
                             );
-                            return Err(e.into());
+                            return Err(e);
                         }
                     }
                 }
@@ -2595,7 +2595,7 @@ impl RequestForwarder {
                             log::warn!(
                                 "[Codex] failed to buffer body for multi-round continuation: {e}"
                             );
-                            return Err(e.into());
+                            return Err(e);
                         }
                     }
                 }

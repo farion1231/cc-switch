@@ -19,9 +19,7 @@ use super::continuation::{
     ContinuationStopReason, MAX_CONTINUE_ROUNDS,
 };
 use super::stream::{concat_sse_rounds, strip_intermediate_completed};
-use super::usage::{
-    ContinuationRoundRecord, ContinuationRoundResult, RoundUsage, RoundUsageAccumulator,
-};
+use super::usage::{ContinuationRoundRecord, ContinuationRoundResult, RoundUsageAccumulator};
 
 /// Aggregated result of a logical (possibly multi-round) Codex request.
 #[derive(Debug, Clone)]
@@ -102,9 +100,11 @@ where
         sender.send_round(provider, current_body.clone(), 0).await?
     };
 
-    first_token_ms = Some(round0.duration_ms.max(1));
     let cost0 = cost_estimator.estimate(&round0);
     accumulator.add_round(&round0, cost0.as_ref())?;
+    if first_token_ms.is_none() {
+        first_token_ms = Some(round0.duration_ms.max(1));
+    }
     let mut last_success_sse: Option<Bytes> = Some(round0.sse.clone());
     let mut last_terminal_output: Vec<Value> = round0.terminal_output.clone();
     sse_chunks.push(strip_intermediate_completed(&round0.sse, false));
@@ -303,6 +303,7 @@ fn terminal_from_round(round: &ContinuationRoundResult) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use super::super::usage::RoundUsage;
     use super::*;
     use serde_json::json;
     use std::sync::Mutex;

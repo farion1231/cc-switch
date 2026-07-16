@@ -5,19 +5,17 @@ mod recovery;
 
 use serde::{Deserialize, Serialize};
 
-pub use audit::{
-    prune_credential_audits, prune_snapshots, record_credential_audit, AUDIT_MAX_AGE_DAYS,
-};
+pub use audit::{prune_credential_audits, prune_snapshots, record_credential_audit};
 pub(crate) use credentials::restore_selected_credentials;
+#[allow(unused_imports)] // used by database tests / external callers
 pub use credentials::{
     apply_selected_credentials, base_urls_equivalent, credential_fingerprint,
     extract_provider_credentials, mask_credential, normalize_base_url, CredentialFields,
 };
 pub use mutation::{MutationOutcome, ProviderMutationCoordinator, ProviderMutationRequest};
-pub use recovery::{
-    get_security_status, ConfigurationState, ProviderSecurityStatus, RecoveryMode, RecoveryResult,
-};
+pub use recovery::{get_security_status, ProviderSecurityStatus, RecoveryMode, RecoveryResult};
 
+#[allow(dead_code)]
 pub const PROVIDER_REVISION_INITIAL: i64 = 1;
 pub const ROLLBACK_MAX_VERSIONS: usize = 10;
 pub const ROLLBACK_MAX_AGE_DAYS: i64 = 30;
@@ -58,6 +56,7 @@ impl CredentialSource {
 
 #[cfg(test)]
 mod tests {
+    use super::audit::AUDIT_MAX_AGE_DAYS;
     use super::*;
 
     #[test]

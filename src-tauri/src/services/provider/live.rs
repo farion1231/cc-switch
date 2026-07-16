@@ -709,6 +709,7 @@ pub(crate) fn write_live_with_common_config(
     write_live_snapshot(app_type, &effective_provider)
 }
 
+#[allow(dead_code)]
 pub(crate) fn strip_common_config_from_live_settings(
     db: &Database,
     app_type: &AppType,
@@ -756,6 +757,7 @@ pub(crate) fn strip_common_config_from_live_settings(
 /// 之后调整默认值或更换模型时旧值永远压住新默认。仅当"注入会发生且注入的
 /// 就是这个值、且存储配置本来没有显式值"时才剥；用户显式存储的值和手改
 /// live 成其他数字的值都保留。
+#[allow(dead_code)]
 fn strip_injected_codex_oauth_context_defaults(settings: &mut Value, provider: &Provider) {
     if !provider.is_codex_oauth() {
         return;
@@ -790,6 +792,7 @@ fn strip_injected_codex_oauth_context_defaults(settings: &mut Value, provider: &
     }
 }
 
+#[allow(dead_code)]
 fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provider) {
     if !is_kimi_for_coding_provider(provider) {
         return;
@@ -814,6 +817,7 @@ fn strip_injected_kimi_for_coding_context_defaults(settings: &mut Value, provide
     }
 }
 
+#[allow(dead_code)]
 fn restore_live_settings_for_provider_backfill(
     app_type: &AppType,
     provider: &Provider,

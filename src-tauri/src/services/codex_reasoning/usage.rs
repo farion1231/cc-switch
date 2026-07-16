@@ -122,6 +122,7 @@ impl RoundUsageAccumulator {
         Ok(())
     }
 
+    #[allow(dead_code)] // helper for external/record injection
     pub fn push_record(&mut self, record: ContinuationRoundRecord) {
         self.rounds.push(record);
     }

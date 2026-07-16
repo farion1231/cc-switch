@@ -6,7 +6,7 @@ use super::state::{CodexRuntimeSnapshot, CodexRuntimeState};
 use crate::error::AppError;
 use crate::services::codex_injection::{self, BridgeHandle};
 use crate::settings::get_settings;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::sync::Mutex;
 
@@ -60,19 +60,23 @@ impl CodexRuntimeHandle {
 /// Hook trait for tests.
 pub trait LaunchHooks: Send + Sync {
     fn find_running(&self) -> Vec<CodexProcessInfo>;
-    fn spawn_with_cdp(&self, exe: &PathBuf, cdp_port: u16) -> Result<u32, AppError>;
+    fn spawn_with_cdp(&self, exe: &Path, cdp_port: u16) -> Result<u32, AppError>;
+    #[allow(dead_code)]
     fn kill_calls(&self) -> u32;
+    #[allow(dead_code)]
     fn spawn_calls(&self) -> u32;
 }
 
 #[derive(Default)]
 pub struct FakeHooks {
     ordinary: bool,
+    #[allow(dead_code)]
     kill: AtomicU32,
     spawn: AtomicU32,
 }
 
 impl FakeHooks {
+    #[allow(dead_code)]
     pub fn ordinary_codex_without_cdp() -> Self {
         Self {
             ordinary: true,
@@ -95,7 +99,7 @@ impl LaunchHooks for FakeHooks {
         }
     }
 
-    fn spawn_with_cdp(&self, _exe: &PathBuf, _cdp_port: u16) -> Result<u32, AppError> {
+    fn spawn_with_cdp(&self, _exe: &Path, _cdp_port: u16) -> Result<u32, AppError> {
         self.spawn.fetch_add(1, Ordering::SeqCst);
         Ok(1001)
     }
@@ -110,6 +114,7 @@ impl LaunchHooks for FakeHooks {
 }
 
 /// Pure policy: if ordinary Codex is already running without CDP, never kill/relaunch.
+#[allow(dead_code)]
 pub fn launch_with_hooks(hooks: &dyn LaunchHooks) -> Result<LaunchEnhancedCodexResult, AppError> {
     let running = hooks.find_running();
     if let Some(proc) = running.first() {
@@ -347,7 +352,7 @@ pub async fn reinject_enhancements(
 }
 
 #[cfg(windows)]
-fn spawn_codex_with_cdp(exe: &PathBuf, cdp_port: u16) -> Result<std::process::Child, AppError> {
+fn spawn_codex_with_cdp(exe: &Path, cdp_port: u16) -> Result<std::process::Child, AppError> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;

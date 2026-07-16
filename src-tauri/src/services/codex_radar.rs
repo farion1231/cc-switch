@@ -251,6 +251,8 @@ fn extract_table_rows(body: &str) -> Vec<CodexRadarModelIq> {
             // try last numeric cell as score, first non-empty as model
             let mut score_opt = None;
             for c in cells.iter().rev() {
+                #[allow(clippy::collapsible_str_replace)]
+                #[allow(clippy::collapsible_str_replace)]
                 if let Ok(v) = c.replace(',', "").replace('%', "").parse::<f64>() {
                     score_opt = Some(v);
                     break;

@@ -1571,6 +1571,7 @@ pub fn inject_codex_unified_session_bucket(config_text: &str) -> Result<String, 
 /// 统一会话路由，保证切换回填不会把它带进数据库的存储配置（关闭开关后
 /// 切换即可完全还原）。仅当形态与注入产物完全一致时才剥离；第三方模板和
 /// 用户自定义的 `custom` 条目（带 base_url 等差异字段）原样保留。
+#[allow(dead_code)]
 pub fn strip_codex_unified_session_bucket(config_text: &str) -> Result<String, AppError> {
     if !config_text.contains("model_provider") {
         return Ok(config_text.to_string());
@@ -1637,6 +1638,7 @@ pub fn apply_codex_unified_session_bucket_to_settings(
 
 /// Backfill helper: strip the unified-session injection from a live
 /// `{ auth, config }` settings object before it is stored back to the DB.
+#[allow(dead_code)]
 pub fn strip_codex_unified_session_bucket_from_settings(
     settings: &mut Value,
 ) -> Result<(), AppError> {
@@ -1663,6 +1665,7 @@ pub fn strip_codex_unified_session_bucket_from_settings(
 /// `[mcp_servers]` 只是每次写 live 之后由 MCP 同步重新投影的产物。若回填时
 /// 烙进供应商存储配置，已在应用里删除的服务器会随下次激活该供应商被写回
 /// live，而逐条 reconcile 只认识 DB 现存条目、永远清不掉这种孤儿。
+#[allow(dead_code)]
 pub fn strip_codex_mcp_servers_from_settings(settings: &mut Value) -> Result<(), AppError> {
     let Some(config_text) = settings
         .get("config")

@@ -139,7 +139,7 @@ pub async fn s3_sync_prepare_download(
     let mut settings = require_enabled_s3_settings()?;
     let _auto_sync_suppression = crate::services::s3_auto_sync::AutoSyncSuppressionGuard::new();
 
-    let sync_result = run_with_s3_lock(s3_sync_service::prepare_download(&db, &mut settings)).await;
+    let sync_result = run_with_s3_lock(s3_sync_service::prepare_download(&db, &settings)).await;
     map_sync_result(sync_result, |error| {
         persist_sync_error(&mut settings, error, "manual")
     })

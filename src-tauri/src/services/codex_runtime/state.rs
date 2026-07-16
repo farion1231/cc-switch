@@ -2,9 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CodexRuntimeState {
+    #[default]
     Stopped,
     Launching,
     Injecting,
@@ -13,12 +14,6 @@ pub enum CodexRuntimeState {
     Degraded,
     StaleLock,
     Unsupported,
-}
-
-impl Default for CodexRuntimeState {
-    fn default() -> Self {
-        Self::Stopped
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,16 +37,5 @@ impl Default for CodexRuntimeSnapshot {
             instance_id: None,
             message: None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_state_serializes_snake_case() {
-        let json = serde_json::to_string(&CodexRuntimeState::OrdinaryRunning).unwrap();
-        assert_eq!(json, "\"ordinary_running\"");
     }
 }

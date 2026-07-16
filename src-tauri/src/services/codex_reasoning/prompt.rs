@@ -59,6 +59,7 @@ pub struct PromptRewriteMetadata {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // ChatCompletions reserved for non-Responses path
 pub enum CodexRequestProtocol {
     Responses,
     ChatCompletions,

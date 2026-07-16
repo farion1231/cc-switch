@@ -351,7 +351,6 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
-
 fn collect_codex_session_files(codex_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
@@ -757,6 +756,7 @@ fn insert_codex_session_entry(
 /// Matching order:
 ///   1. exact turn_id
 ///   2. session_id + model + token fingerprint within ±10 minutes (must be unique)
+///
 /// Only NULL fields are filled; already-set values are preserved.
 fn try_enrich_proxy_log(
     conn: &rusqlite::Connection,

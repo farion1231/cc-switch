@@ -123,6 +123,7 @@ impl Database {
     /// Default cloud-restore policy: keep local `api_key`/`base_url` for providers
     /// that already exist on this device, while accepting remote non-credential fields.
     /// Cloud restore with default policy: keep local credentials on existing providers.
+    #[allow(dead_code)] // reserved for sync import path
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
         self.import_sql_string_for_sync_with_selections(sql_raw, &[])
     }

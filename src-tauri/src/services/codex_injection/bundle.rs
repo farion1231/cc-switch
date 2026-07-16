@@ -102,6 +102,7 @@ if (typeof window !== "undefined" && typeof window.__ccSwitchCodexBootstrap === 
 }
 
 /// Alias used by plan wording.
+#[allow(dead_code)]
 pub fn build_injection_bundle(
     settings: &CodexWorkbenchSettings,
     instance_id: &str,
