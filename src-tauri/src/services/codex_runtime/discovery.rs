@@ -358,4 +358,40 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn parse_cdp_port_ignores_partial_flag() {
+        // Must not treat --remote-debugging-port-file as the CDP flag.
+        assert_eq!(
+            parse_cdp_port_from_cmdline("ChatGPT.exe --remote-debugging-port-file=x"),
+            None
+        );
+    }
+
+    #[test]
+    fn has_cdp_sort_puts_cdp_owner_first() {
+        let mut procs = vec![
+            CodexProcessInfo {
+                pid: 1,
+                has_cdp: false,
+                cdp_port: None,
+                exe_path: None,
+            },
+            CodexProcessInfo {
+                pid: 2,
+                has_cdp: true,
+                cdp_port: Some(9229),
+                exe_path: None,
+            },
+            CodexProcessInfo {
+                pid: 3,
+                has_cdp: false,
+                cdp_port: None,
+                exe_path: None,
+            },
+        ];
+        procs.sort_by_key(|p| if p.has_cdp { 0u8 } else { 1u8 });
+        assert_eq!(procs[0].pid, 2);
+        assert_eq!(procs[0].cdp_port, Some(9229));
+    }
 }
