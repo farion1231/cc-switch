@@ -9,7 +9,7 @@
 use super::codex_responses_sse as sse;
 use super::transform_codex_anthropic::{
     build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
-    responses_reasoning_item_from_anthropic_block,
+    responses_reasoning_item_from_anthropic_block, utf8_truncate,
 };
 #[cfg(test)]
 use super::transform_codex_anthropic::{
@@ -384,7 +384,7 @@ impl AnthropicToResponsesState {
                     log::warn!(
                         "[Codex/Anthropic] Tool call arguments for '{name}' (call_id={call_id}) \
                          failed JSON validation, marking incomplete: {}",
-                        &arguments[..arguments.len().min(200)]
+                        utf8_truncate(&arguments, 200)
                     );
                 }
                 let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&name);
