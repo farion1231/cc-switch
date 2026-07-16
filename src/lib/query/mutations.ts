@@ -21,12 +21,14 @@ export const useAddProviderMutation = (appId: AppId) => {
         providerKey?: string;
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
+        ensureCodexOfficialSeed?: boolean;
       },
     ) => {
       const {
         providerKey: _providerKey,
         addToLive,
         ensureClaudeDesktopOfficialSeed,
+        ensureCodexOfficialSeed,
         ...rest
       } = providerInput;
 
@@ -38,6 +40,12 @@ export const useAddProviderMutation = (appId: AppId) => {
           throw new Error("Claude Desktop official provider was not created");
         }
         return officialProvider;
+      }
+
+      // Preserve the fixed built-in route as a recovery target, but unlike the
+      // old flow, keep going so this submission is also saved as its own account.
+      if (appId === "codex" && ensureCodexOfficialSeed) {
+        await providersApi.ensureCodexOfficialProvider();
       }
 
       let id: string;

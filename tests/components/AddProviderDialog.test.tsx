@@ -156,8 +156,8 @@ describe("AddProviderDialog", () => {
         name: "OpenAI Account B",
         category: "official",
         settingsConfig: { auth: {}, config: "" },
+        ensureCodexOfficialSeed: true,
       }),
     );
-    expect(submitted).not.toHaveProperty("ensureCodexOfficialSeed");
   });
 });

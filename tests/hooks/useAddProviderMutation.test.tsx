@@ -8,6 +8,7 @@ import type { Provider } from "@/types";
 const apiMocks = vi.hoisted(() => ({
   add: vi.fn(),
   ensureClaudeDesktopOfficialProvider: vi.fn(),
+  ensureCodexOfficialProvider: vi.fn(),
   getAll: vi.fn(),
   updateTrayMenu: vi.fn(),
 }));
@@ -21,6 +22,8 @@ vi.mock("@/lib/api", () => ({
     add: (...args: unknown[]) => apiMocks.add(...args),
     ensureClaudeDesktopOfficialProvider: (...args: unknown[]) =>
       apiMocks.ensureClaudeDesktopOfficialProvider(...args),
+    ensureCodexOfficialProvider: (...args: unknown[]) =>
+      apiMocks.ensureCodexOfficialProvider(...args),
     getAll: (...args: unknown[]) => apiMocks.getAll(...args),
     updateTrayMenu: (...args: unknown[]) => apiMocks.updateTrayMenu(...args),
   },
@@ -59,6 +62,7 @@ beforeEach(() => {
   apiMocks.ensureClaudeDesktopOfficialProvider
     .mockReset()
     .mockResolvedValue(true);
+  apiMocks.ensureCodexOfficialProvider.mockReset().mockResolvedValue(true);
   apiMocks.getAll.mockReset().mockResolvedValue({});
   apiMocks.updateTrayMenu.mockReset().mockResolvedValue(true);
   uuidMocks.generateUUID.mockReset().mockReturnValue("generated-uuid");
@@ -134,7 +138,7 @@ describe("useAddProviderMutation", () => {
     expect(persistedProvider).toEqual(seedProvider);
   });
 
-  it("creates an independent Codex official provider", async () => {
+  it("reseeds the built-in Codex route and creates an independent provider", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useAddProviderMutation("codex"), {
       wrapper,
@@ -148,9 +152,11 @@ describe("useAddProviderMutation", () => {
           config: "",
         },
         category: "official",
+        ensureCodexOfficialSeed: true,
       }),
     );
 
+    expect(apiMocks.ensureCodexOfficialProvider).toHaveBeenCalledTimes(1);
     expect(apiMocks.add).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "generated-uuid",
@@ -164,6 +170,9 @@ describe("useAddProviderMutation", () => {
       "codex",
       undefined,
     );
+    expect(
+      apiMocks.ensureCodexOfficialProvider.mock.invocationCallOrder[0],
+    ).toBeLessThan(apiMocks.add.mock.invocationCallOrder[0]);
     expect(persistedProvider.id).toBe("generated-uuid");
     expect(persistedProvider.id).not.toBe("codex-official");
   });
