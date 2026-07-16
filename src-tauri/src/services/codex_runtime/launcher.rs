@@ -380,6 +380,51 @@ pub async fn reinject_enhancements(
 }
 
 
+
+/// Pure decision for one nav-watcher poll tick.
+/// Returns whether to attempt script-only reinject, plus next counters.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+struct NavWatcherTick {
+    reinject: bool,
+    consecutive_missing: u32,
+    cooldown: bool,
+}
+
+fn nav_watcher_tick(
+    consecutive_missing: u32,
+    cooldown: bool,
+    probe: Result<bool, ()>,
+) -> NavWatcherTick {
+    match probe {
+        Ok(true) => NavWatcherTick {
+            reinject: false,
+            consecutive_missing: 0,
+            cooldown: false,
+        },
+        Ok(false) => {
+            let consecutive_missing = consecutive_missing.saturating_add(1);
+            if consecutive_missing >= 2 && !cooldown {
+                NavWatcherTick {
+                    reinject: true,
+                    consecutive_missing: 0,
+                    cooldown: true,
+                }
+            } else {
+                NavWatcherTick {
+                    reinject: false,
+                    consecutive_missing,
+                    cooldown,
+                }
+            }
+        }
+        Err(()) => NavWatcherTick {
+            reinject: false,
+            consecutive_missing: 0,
+            cooldown,
+        },
+    }
+}
+
 /// Poll CSP marker every 2s. After navigation wipes the page (marker false for
 /// two consecutive polls), reinject `last_bundle` without rebuilding the bridge.
 fn start_nav_watcher(handle: &CodexRuntimeHandle, cdp_port: u16) {
@@ -412,29 +457,28 @@ fn start_nav_watcher(handle: &CodexRuntimeHandle, cdp_port: u16) {
             }
             let Some(bundle) = bundle else { continue };
 
-            match cdp::probe_csp_marker(cdp_port).await {
-                Ok(true) => {
-                    consecutive_missing = 0;
-                    cooldown = false;
-                }
-                Ok(false) => {
-                    consecutive_missing = consecutive_missing.saturating_add(1);
-                    if consecutive_missing >= 2 && !cooldown {
-                        log::info!("codex nav watcher: marker missing — reinjecting bundle");
-                        match cdp::inject_script(cdp_port, &bundle).await {
-                            Ok(()) => {
-                                cooldown = true;
-                                consecutive_missing = 0;
-                            }
-                            Err(e) => {
-                                log::warn!("codex nav watcher reinject failed: {e}");
-                            }
-                        }
+            let probe = cdp::probe_csp_marker(cdp_port)
+                .await
+                .map_err(|_| ());
+            // Decision without side effects first; only inject when tick.reinject.
+            // On inject failure keep previous counters so the next poll can retry.
+            let tentative = nav_watcher_tick(consecutive_missing, cooldown, probe);
+            if tentative.reinject {
+                log::info!("codex nav watcher: marker missing — reinjecting bundle");
+                match cdp::inject_script(cdp_port, &bundle).await {
+                    Ok(()) => {
+                        consecutive_missing = tentative.consecutive_missing;
+                        cooldown = tentative.cooldown;
+                    }
+                    Err(e) => {
+                        log::warn!("codex nav watcher reinject failed: {e}");
+                        // Keep missing count so we keep trying; do not enter cooldown.
+                        consecutive_missing = consecutive_missing.saturating_add(1);
                     }
                 }
-                Err(_) => {
-                    consecutive_missing = 0;
-                }
+            } else {
+                consecutive_missing = tentative.consecutive_missing;
+                cooldown = tentative.cooldown;
             }
         }
     });
@@ -465,5 +509,70 @@ mod tests {
         assert_eq!(result.state, CodexRuntimeState::OrdinaryRunning);
         assert_eq!(hooks.kill_calls(), 0);
         assert_eq!(hooks.spawn_calls(), 0);
+    }
+
+    #[test]
+    fn nav_tick_marker_present_clears_missing_and_cooldown() {
+        let t = nav_watcher_tick(3, true, Ok(true));
+        assert_eq!(
+            t,
+            NavWatcherTick {
+                reinject: false,
+                consecutive_missing: 0,
+                cooldown: false,
+            }
+        );
+    }
+
+    #[test]
+    fn nav_tick_single_missing_does_not_reinject() {
+        let t = nav_watcher_tick(0, false, Ok(false));
+        assert_eq!(
+            t,
+            NavWatcherTick {
+                reinject: false,
+                consecutive_missing: 1,
+                cooldown: false,
+            }
+        );
+    }
+
+    #[test]
+    fn nav_tick_two_missing_triggers_reinject_and_cooldown() {
+        let t = nav_watcher_tick(1, false, Ok(false));
+        assert_eq!(
+            t,
+            NavWatcherTick {
+                reinject: true,
+                consecutive_missing: 0,
+                cooldown: true,
+            }
+        );
+    }
+
+    #[test]
+    fn nav_tick_cooldown_suppresses_repeat_reinject() {
+        let t = nav_watcher_tick(5, true, Ok(false));
+        assert_eq!(
+            t,
+            NavWatcherTick {
+                reinject: false,
+                consecutive_missing: 6,
+                cooldown: true,
+            }
+        );
+    }
+
+    #[test]
+    fn nav_tick_probe_error_resets_missing_keeps_cooldown() {
+        let t = nav_watcher_tick(2, true, Err(()));
+        assert_eq!(
+            t,
+            NavWatcherTick {
+                reinject: false,
+                consecutive_missing: 0,
+                cooldown: true,
+            }
+        );
     }
 }
