@@ -183,8 +183,17 @@ pub async fn launch_enhanced_codex(
     {
         let running = discovery::find_running_codex();
         if let Some(proc) = running.first() {
-            if let Some(port) = discovery::discover_open_cdp_port(DEFAULT_CDP_PORT, 20).await {
-                return attach_and_inject(handle, Some(proc.pid), port).await;
+            // Prefer CDP port parsed from process cmdline (Store Codex uses 9229);
+            // fall back to scanning DEFAULT_CDP_PORT..+20.
+            if let Some(port) =
+                discovery::resolve_cdp_port(&running, DEFAULT_CDP_PORT, 20).await
+            {
+                let pid = running
+                    .iter()
+                    .find(|p| p.has_cdp)
+                    .map(|p| p.pid)
+                    .or(Some(proc.pid));
+                return attach_and_inject(handle, pid, port).await;
             }
             let result = LaunchEnhancedCodexResult {
                 state: CodexRuntimeState::OrdinaryRunning,
