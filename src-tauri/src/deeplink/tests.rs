@@ -88,6 +88,39 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn test_parse_grokbuild_provider() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=grokbuild&name=Grok%20Relay&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=secret&model=grok-4.5";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.app.as_deref(), Some("grokbuild"));
+    assert_eq!(request.name.as_deref(), Some("Grok Relay"));
+    assert_eq!(
+        request.endpoint.as_deref(),
+        Some("https://api.example.com/v1")
+    );
+    assert_eq!(request.api_key.as_deref(), Some("secret"));
+    assert_eq!(request.model.as_deref(), Some("grok-4.5"));
+
+    let provider = build_provider_from_request(&AppType::GrokBuild, &request).unwrap();
+    let config = provider.settings_config["config"].as_str().unwrap();
+    let document = config.parse::<toml::Value>().unwrap();
+    let model = &document["model"]["grok-4.5"];
+
+    assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
+    assert_eq!(
+        model["base_url"].as_str(),
+        Some("https://api.example.com/v1")
+    );
+    assert_eq!(model["name"].as_str(), Some("Grok Relay"));
+    assert_eq!(model["api_key"].as_str(), Some("secret"));
+    assert_eq!(model["api_backend"].as_str(), Some("responses"));
+    assert_eq!(model["context_window"].as_integer(), Some(500_000));
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 

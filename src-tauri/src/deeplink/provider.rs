@@ -145,6 +145,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Claude | AppType::ClaudeDesktop => build_claude_settings(request),
         AppType::Codex => build_codex_settings(request),
         AppType::Gemini => build_gemini_settings(request),
+        AppType::GrokBuild => build_grokbuild_settings(request),
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
@@ -442,6 +443,36 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     }
 
     json!({ "env": env })
+}
+
+fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let model = request
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(crate::grok_config::DEFAULT_MODEL)
+        .trim();
+    let name = request
+        .name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("custom")
+        .trim();
+    let endpoint = get_primary_endpoint(request).trim().to_string();
+    let api_key = request.api_key.as_deref().unwrap_or("").trim();
+
+    let model_value = toml_edit::Value::from(model).to_string();
+    let name_value = toml_edit::Value::from(name).to_string();
+    let endpoint_value = toml_edit::Value::from(endpoint.as_str()).to_string();
+    let api_key_value = toml_edit::Value::from(api_key).to_string();
+
+    json!({
+        "config": format!(
+            "[models]\ndefault = {model_value}\n\n[model.{model_value}]\nmodel = {model_value}\nbase_url = {endpoint_value}\nname = {name_value}\napi_key = {api_key_value}\napi_backend = \"{}\"\ncontext_window = {}\n",
+            crate::grok_config::DEFAULT_API_BACKEND,
+            crate::grok_config::DEFAULT_CONTEXT_WINDOW,
+        )
+    })
 }
 
 /// Build OpenCode settings configuration
