@@ -102,55 +102,88 @@ async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError
 
     // Store Codex CSP connect-src omits loopback. Live probe proved:
     // setBypassCSP alone does NOT unlock the current document; bypass + reload does.
-    let setup_cmds = [
-        json!({"id": 1, "method": "Page.enable", "params": {}}),
-        json!({"id": 2, "method": "Page.setBypassCSP", "params": {"enabled": true}}),
-        json!({"id": 3, "method": "Page.reload", "params": {"ignoreCache": false}}),
-    ];
+    // After first successful bypass+reload, reinjects must NOT reload (preserve UI).
+    // Marker: window.__ccSwitchCspBypassed stamped on successful inject.
 
-    for cmd in &setup_cmds {
-        let id = cmd["id"].as_i64().unwrap_or(0);
+    // Page.enable (soft — optional on some targets)
+    {
+        let cmd = json!({"id": 1, "method": "Page.enable", "params": {}});
         ws.send(Message::Text(cmd.to_string().into()))
             .await
-            .map_err(|e| AppError::Config(format!("cdp send id {id}: {e}")))?;
-        let soft = id == 1; // Page.enable may be optional
-        let res = wait_for_cdp_id(&mut ws, id, 5).await;
-        if let Err(e) = res {
-            if !soft {
-                return Err(e);
-            }
-        }
+            .map_err(|e| AppError::Config(format!("cdp send id 1: {e}")))?;
+        let _ = wait_for_cdp_id(&mut ws, 1, 5).await;
     }
 
-    // Poll document.readyState after reload before injecting.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let mut poll_id: i64 = 100;
-    while std::time::Instant::now() < deadline {
-        poll_id += 1;
+    // setBypassCSP (required)
+    {
+        let cmd = json!({"id": 2, "method": "Page.setBypassCSP", "params": {"enabled": true}});
+        ws.send(Message::Text(cmd.to_string().into()))
+            .await
+            .map_err(|e| AppError::Config(format!("cdp send id 2: {e}")))?;
+        wait_for_cdp_id(&mut ws, 2, 5).await?;
+    }
+
+    // Probe marker — Runtime.evaluate may return JSON bool; normalize to string compare.
+    let already_bypassed = {
         let probe = json!({
-            "id": poll_id,
+            "id": 3,
             "method": "Runtime.evaluate",
             "params": {
-                "expression": "document.readyState",
+                "expression": "String(!!(window.__ccSwitchCspBypassed))",
                 "returnByValue": true
             }
         });
         ws.send(Message::Text(probe.to_string().into()))
             .await
-            .map_err(|e| AppError::Config(format!("cdp ready send: {e}")))?;
-        if let Ok(state) = wait_for_cdp_string(&mut ws, poll_id, 2).await {
-            if state == "complete" || state == "interactive" {
-                break;
+            .map_err(|e| AppError::Config(format!("cdp marker probe: {e}")))?;
+        wait_for_cdp_string(&mut ws, 3, 3)
+            .await
+            .ok()
+            .map(|s| s == "true")
+            .unwrap_or(false)
+    };
+
+    if !already_bypassed {
+        let cmd = json!({"id": 4, "method": "Page.reload", "params": {"ignoreCache": false}});
+        ws.send(Message::Text(cmd.to_string().into()))
+            .await
+            .map_err(|e| AppError::Config(format!("cdp send id 4: {e}")))?;
+        wait_for_cdp_id(&mut ws, 4, 5).await?;
+
+        // Poll document.readyState after reload before injecting.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut poll_id: i64 = 100;
+        while std::time::Instant::now() < deadline {
+            poll_id += 1;
+            let probe = json!({
+                "id": poll_id,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": "document.readyState",
+                    "returnByValue": true
+                }
+            });
+            ws.send(Message::Text(probe.to_string().into()))
+                .await
+                .map_err(|e| AppError::Config(format!("cdp ready send: {e}")))?;
+            if let Ok(state) = wait_for_cdp_string(&mut ws, poll_id, 2).await {
+                if state == "complete" || state == "interactive" {
+                    break;
+                }
             }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
+    // Stamp marker so reinjects skip reload; then evaluate product script.
+    let stamped = format!(
+        "try{{window.__ccSwitchCspBypassed=true;}}catch(_e){{}};\n{script}"
+    );
     let eval = json!({
         "id": 10,
         "method": "Runtime.evaluate",
         "params": {
-            "expression": script,
+            "expression": stamped,
             "awaitPromise": false,
             "returnByValue": true
         }
@@ -160,6 +193,7 @@ async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError
         .map_err(|e| AppError::Config(format!("cdp send evaluate: {e}")))?;
     wait_for_cdp_id(&mut ws, 10, 5).await
 }
+
 
 async fn wait_for_cdp_id(
     ws: &mut (
