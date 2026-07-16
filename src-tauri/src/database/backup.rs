@@ -167,9 +167,7 @@ impl Database {
         remote_selections: &[RemoteCredentialSelection],
     ) -> Result<(), AppError> {
         use crate::app_config::AppType;
-        use crate::services::provider_security::{
-            apply_selected_credentials, extract_provider_credentials,
-        };
+        use crate::services::provider_security::restore_selected_credentials;
         use std::collections::BTreeSet;
         use std::str::FromStr;
 
@@ -189,24 +187,20 @@ impl Database {
             let use_remote_api_key = selection.map(|s| s.use_remote_api_key).unwrap_or(false);
             let use_remote_base_url = selection.map(|s| s.use_remote_base_url).unwrap_or(false);
 
-            let mut local_provider = remote_provider.clone();
-            local_provider.settings_config = local_settings.clone();
-            let local_creds = extract_provider_credentials(&local_provider, &app_type);
-
             // Default: re-apply local credential fields. Opt-in remote fields are left
             // as imported (remote) by simply not including them in the confirmed set.
             let mut confirmed = BTreeSet::new();
-            if local_creds.api_key.is_some() && !use_remote_api_key {
+            if !use_remote_api_key {
                 confirmed.insert("apiKey".to_string());
             }
-            if local_creds.base_url.is_some() && !use_remote_base_url {
+            if !use_remote_base_url {
                 confirmed.insert("baseUrl".to_string());
             }
             if confirmed.is_empty() {
                 continue;
             }
 
-            apply_selected_credentials(
+            restore_selected_credentials(
                 &mut remote_provider,
                 local_settings,
                 &app_type,
@@ -1066,6 +1060,48 @@ mod tests {
             Some("https://local.example"),
             "local base url must be preserved by default"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn cloud_restore_preserves_empty_local_credentials_by_default() -> Result<(), AppError> {
+        use crate::app_config::AppType;
+        use crate::services::provider_security::extract_provider_credentials;
+
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Remote Provider', ?1, '{}')",
+                rusqlite::params![serde_json::json!({
+                    "env": {
+                        "ANTHROPIC_AUTH_TOKEN": "sk-remote",
+                        "ANTHROPIC_BASE_URL": "https://remote.example"
+                    }
+                })
+                .to_string()],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_sync()?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('p1', 'claude', 'Local Provider', '{\"env\":{}}', '{}')",
+                [],
+            )?;
+        }
+
+        local_db.import_sql_string_for_sync(&remote_sql)?;
+        let provider = local_db
+            .get_provider_by_id("p1", "claude")?
+            .expect("provider after restore");
+        let credentials = extract_provider_credentials(&provider, &AppType::Claude);
+        assert_eq!(credentials.api_key, None);
+        assert_eq!(credentials.base_url, None);
         Ok(())
     }
 

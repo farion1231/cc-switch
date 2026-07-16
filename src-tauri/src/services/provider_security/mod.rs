@@ -12,6 +12,7 @@ pub use credentials::{
     apply_selected_credentials, base_urls_equivalent, credential_fingerprint,
     extract_provider_credentials, mask_credential, normalize_base_url, CredentialFields,
 };
+pub(crate) use credentials::restore_selected_credentials;
 pub use mutation::{MutationOutcome, ProviderMutationCoordinator, ProviderMutationRequest};
 pub use recovery::{
     get_security_status, ConfigurationState, ProviderSecurityStatus, RecoveryMode, RecoveryResult,

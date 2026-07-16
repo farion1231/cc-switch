@@ -111,7 +111,32 @@ pub fn apply_selected_credentials(
     app_type: &AppType,
     confirmed_fields: &BTreeSet<String>,
 ) -> Result<(), AppError> {
-    if confirmed_fields
+    apply_selected_credentials_inner(
+        target,
+        live_settings,
+        app_type,
+        confirmed_fields,
+        false,
+    )
+}
+
+pub(crate) fn restore_selected_credentials(
+    target: &mut Provider,
+    local_settings: &Value,
+    app_type: &AppType,
+    selected_fields: &BTreeSet<String>,
+) -> Result<(), AppError> {
+    apply_selected_credentials_inner(target, local_settings, app_type, selected_fields, true)
+}
+
+fn apply_selected_credentials_inner(
+    target: &mut Provider,
+    source_settings: &Value,
+    app_type: &AppType,
+    selected_fields: &BTreeSet<String>,
+    allow_missing: bool,
+) -> Result<(), AppError> {
+    if selected_fields
         .iter()
         .any(|field| !matches!(field.as_str(), "apiKey" | "baseUrl"))
     {
@@ -120,20 +145,21 @@ pub fn apply_selected_credentials(
         ));
     }
 
-    let mut live_provider = target.clone();
-    live_provider.settings_config = live_settings.clone();
-    let live = extract_provider_credentials(&live_provider, app_type);
+    let mut source_provider = target.clone();
+    source_provider.settings_config = source_settings.clone();
+    let source = extract_provider_credentials(&source_provider, app_type);
 
-    let api_key = confirmed_fields
+    let api_key = selected_fields
         .contains("apiKey")
-        .then_some(live.api_key)
+        .then_some(source.api_key)
         .flatten();
-    let base_url = confirmed_fields
+    let base_url = selected_fields
         .contains("baseUrl")
-        .then_some(live.base_url)
+        .then_some(source.base_url)
         .flatten();
-    if (confirmed_fields.contains("apiKey") && api_key.is_none())
-        || (confirmed_fields.contains("baseUrl") && base_url.is_none())
+    if !allow_missing
+        && ((selected_fields.contains("apiKey") && api_key.is_none())
+            || (selected_fields.contains("baseUrl") && base_url.is_none()))
     {
         return Err(AppError::Message(
             "ERROR:provider_credentials_missing".to_string(),
@@ -144,40 +170,47 @@ pub fn apply_selected_credentials(
     match app_type {
         AppType::Claude | AppType::ClaudeDesktop => {
             let env = nested_object_mut(settings, "env");
-            set_selected(env, "ANTHROPIC_AUTH_TOKEN", api_key);
-            set_selected(env, "ANTHROPIC_BASE_URL", base_url);
+            set_selected(env, "ANTHROPIC_AUTH_TOKEN", selected_fields.contains("apiKey"), api_key);
+            set_selected(env, "ANTHROPIC_BASE_URL", selected_fields.contains("baseUrl"), base_url);
         }
         AppType::Gemini => {
             let env = nested_object_mut(settings, "env");
-            set_selected(env, "GEMINI_API_KEY", api_key);
-            set_selected(env, "GOOGLE_GEMINI_BASE_URL", base_url);
+            set_selected(env, "GEMINI_API_KEY", selected_fields.contains("apiKey"), api_key);
+            set_selected(env, "GOOGLE_GEMINI_BASE_URL", selected_fields.contains("baseUrl"), base_url);
         }
         AppType::OpenCode => {
             let options = nested_object_mut(settings, "options");
-            set_selected(options, "apiKey", api_key);
-            set_selected(options, "baseURL", base_url);
+            set_selected(options, "apiKey", selected_fields.contains("apiKey"), api_key);
+            set_selected(options, "baseURL", selected_fields.contains("baseUrl"), base_url);
         }
         AppType::OpenClaw => {
-            set_selected(settings, "apiKey", api_key);
-            set_selected(settings, "baseUrl", base_url);
+            set_selected(settings, "apiKey", selected_fields.contains("apiKey"), api_key);
+            set_selected(settings, "baseUrl", selected_fields.contains("baseUrl"), base_url);
         }
         AppType::Hermes => {
-            set_selected(settings, "api_key", api_key);
-            set_selected(settings, "base_url", base_url);
+            set_selected(settings, "api_key", selected_fields.contains("apiKey"), api_key);
+            set_selected(settings, "base_url", selected_fields.contains("baseUrl"), base_url);
         }
         AppType::Codex => {
-            if let Some(api_key) = api_key {
-                nested_object_mut(settings, "auth")
-                    .insert("OPENAI_API_KEY".to_string(), Value::String(api_key));
+            if selected_fields.contains("apiKey") {
+                set_selected(
+                    nested_object_mut(settings, "auth"),
+                    "OPENAI_API_KEY",
+                    true,
+                    api_key,
+                );
             }
-            if let Some(base_url) = base_url {
+            if selected_fields.contains("baseUrl") {
                 let config = settings
                     .get("config")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                let updated =
-                    crate::codex_config::update_codex_toml_field(config, "base_url", &base_url)
-                        .map_err(AppError::InvalidInput)?;
+                let updated = crate::codex_config::update_codex_toml_field(
+                    config,
+                    "base_url",
+                    base_url.as_deref().unwrap_or_default(),
+                )
+                .map_err(AppError::InvalidInput)?;
                 settings.insert("config".to_string(), Value::String(updated));
             }
         }
@@ -203,9 +236,21 @@ fn nested_object_mut<'a>(
     )
 }
 
-fn set_selected(target: &mut Map<String, Value>, key: &str, value: Option<String>) {
-    if let Some(value) = value {
-        target.insert(key.to_string(), Value::String(value));
+fn set_selected(
+    target: &mut Map<String, Value>,
+    key: &str,
+    selected: bool,
+    value: Option<String>,
+) {
+    if selected {
+        match value {
+            Some(value) => {
+                target.insert(key.to_string(), Value::String(value));
+            }
+            None => {
+                target.remove(key);
+            }
+        }
     }
 }
 

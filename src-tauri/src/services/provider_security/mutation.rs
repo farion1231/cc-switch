@@ -1,6 +1,6 @@
 use super::recovery::{
-    credential_diffs, persist_configuration_state, read_configuration_state, ConfigurationState,
-    RecoveryMode, RecoveryResult,
+    persist_configuration_state, read_configuration_state, ConfigurationState, RecoveryMode,
+    RecoveryResult,
 };
 use super::{
     apply_selected_credentials, extract_provider_credentials, prune_credential_audits,
@@ -500,6 +500,7 @@ fn security_error(code: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::recovery::credential_diffs;
     use crate::database::Database;
     use crate::provider::Provider;
     use crate::services::provider::ProviderService;
