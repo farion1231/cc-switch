@@ -1468,12 +1468,20 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
         if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
             candidates.push(extensionless);
         }
+        if tool == "codefree" {
+            candidates.push(dir.join("codefree-o.cmd"));
+            candidates.push(dir.join("codefree-o.exe"));
+        }
         candidates
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        vec![dir.join(tool)]
+        let mut candidates = vec![dir.join(tool)];
+        if tool == "codefree" {
+            candidates.push(dir.join("codefree-o"));
+        }
+        candidates
     }
 }
 
