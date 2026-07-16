@@ -808,10 +808,13 @@ pub async fn handle_responses(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    let copilot_protocol = result.copilot_protocol;
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+    let response_protocol =
+        resolve_codex_response_protocol(&ctx.provider, &endpoint, copilot_protocol);
+    if response_protocol == CodexResponseProtocol::Anthropic {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -823,7 +826,7 @@ pub async fn handle_responses(
         .await;
     }
 
-    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+    if response_protocol == CodexResponseProtocol::Chat {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -899,10 +902,13 @@ pub async fn handle_responses_compact(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    let copilot_protocol = result.copilot_protocol;
     ctx.provider = result.provider;
     let response = result.response;
 
-    if super::providers::should_convert_codex_responses_to_anthropic(&ctx.provider, &endpoint) {
+    let response_protocol =
+        resolve_codex_response_protocol(&ctx.provider, &endpoint, copilot_protocol);
+    if response_protocol == CodexResponseProtocol::Anthropic {
         return handle_codex_anthropic_to_responses_transform(
             response,
             &ctx,
@@ -914,7 +920,7 @@ pub async fn handle_responses_compact(
         .await;
     }
 
-    if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
+    if response_protocol == CodexResponseProtocol::Chat {
         return handle_codex_chat_to_responses_transform(
             response,
             &ctx,
@@ -1159,6 +1165,41 @@ async fn handle_codex_chat_to_responses_transform(
             log::error!("[Codex] 构建 Responses 响应失败: {e}");
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexResponseProtocol {
+    Responses,
+    Chat,
+    Anthropic,
+}
+
+fn resolve_codex_response_protocol(
+    provider: &crate::provider::Provider,
+    endpoint: &str,
+    copilot_protocol: Option<super::providers::copilot_model_map::CopilotProtocol>,
+) -> CodexResponseProtocol {
+    match copilot_protocol {
+        Some(super::providers::copilot_model_map::CopilotProtocol::Messages) => {
+            CodexResponseProtocol::Anthropic
+        }
+        Some(super::providers::copilot_model_map::CopilotProtocol::Chat) => {
+            CodexResponseProtocol::Chat
+        }
+        Some(super::providers::copilot_model_map::CopilotProtocol::Responses) => {
+            CodexResponseProtocol::Responses
+        }
+        None if super::providers::should_convert_codex_responses_to_anthropic(
+            provider, endpoint,
+        ) =>
+        {
+            CodexResponseProtocol::Anthropic
+        }
+        None if super::providers::should_convert_codex_responses_to_chat(provider, endpoint) => {
+            CodexResponseProtocol::Chat
+        }
+        None => CodexResponseProtocol::Responses,
+    }
 }
 
 /// Response-transform handler for the Codex (Responses) ↔ Anthropic Messages gateway.
@@ -2390,10 +2431,62 @@ async fn log_usage(
 mod tests {
     use super::{
         body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        resolve_codex_response_protocol, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
+        CodexResponseProtocol,
     };
+    use crate::provider::{Provider, ProviderMeta};
+    use crate::proxy::providers::copilot_model_map::CopilotProtocol;
     use crate::proxy::ProxyError;
+
+    fn provider_with_api_format(api_format: &str) -> Provider {
+        Provider {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            settings_config: serde_json::json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+            meta: Some(ProviderMeta {
+                api_format: Some(api_format.to_string()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn copilot_protocol_overrides_static_provider_format_for_response_handling() {
+        let provider = provider_with_api_format("anthropic");
+        assert_eq!(
+            resolve_codex_response_protocol(
+                &provider,
+                "/v1/responses",
+                Some(CopilotProtocol::Responses)
+            ),
+            CodexResponseProtocol::Responses
+        );
+        assert_eq!(
+            resolve_codex_response_protocol(
+                &provider,
+                "/v1/responses",
+                Some(CopilotProtocol::Chat)
+            ),
+            CodexResponseProtocol::Chat
+        );
+        assert_eq!(
+            resolve_codex_response_protocol(
+                &provider,
+                "/v1/responses",
+                Some(CopilotProtocol::Messages)
+            ),
+            CodexResponseProtocol::Anthropic
+        );
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {

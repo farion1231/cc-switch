@@ -2,7 +2,13 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  settingsApi,
+  openclawApi,
+  proxyApi,
+  type AppId,
+} from "@/lib/api";
 import type {
   Provider,
   UsageScript,
@@ -156,7 +162,7 @@ export function useProviderActions(
   const switchProvider = useCallback(
     async (provider: Provider) => {
       const isCopilotProvider =
-        activeApp === "claude" &&
+        (activeApp === "claude" || activeApp === "codex") &&
         provider.meta?.providerType === "github_copilot";
       const isCodexChatFormat =
         activeApp === "codex" &&
@@ -228,7 +234,7 @@ export function useProviderActions(
         }
       }
 
-      if (proxyRequiredReason) {
+      if (proxyRequiredReason && !isCopilotProvider) {
         toast.warning(
           t("notifications.proxyRequiredForSwitch", {
             reason: proxyRequiredReason,
@@ -262,6 +268,31 @@ export function useProviderActions(
       try {
         const result = await switchProviderMutation.mutateAsync(provider.id);
         await syncClaudePlugin(provider);
+
+        // GitHub Copilot（托管账号）必须走代理接管：token 动态、需指纹头，
+        // 无法让 CLI 直连上游。切换成功后自动强制开启当前 app 的接管
+        // （set_takeover_for_app 会按需自动启动代理并改写 live 配置）。
+        if (isCopilotProvider) {
+          try {
+            await proxyApi.setProxyTakeoverForApp(activeApp, true);
+            await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+            await queryClient.invalidateQueries({
+              queryKey: ["proxyTakeoverStatus"],
+            });
+          } catch (takeoverError) {
+            console.error(
+              "Failed to auto-enable proxy takeover for Copilot provider",
+              takeoverError,
+            );
+            toast.error(
+              t("notifications.copilotTakeoverFailed", {
+                defaultValue:
+                  "自动开启代理接管失败，请手动在代理设置中为该应用开启接管",
+              }),
+              { duration: 6000 },
+            );
+          }
+        }
 
         // Show backfill warning if present
         if (result?.warnings?.length) {

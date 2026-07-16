@@ -11,6 +11,20 @@
 use super::copilot_auth::CopilotModel;
 use serde_json::Value;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopilotProtocol {
+    Messages,
+    Responses,
+    Chat,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCopilotModel {
+    pub id: String,
+    pub vendor: String,
+    pub protocol: CopilotProtocol,
+}
+
 /// 归一化客户端 model ID 为 Copilot upstream 接受的形式。
 /// 返回 `None` 表示无需变换（已归一化、非 Claude 4.x 系列、或空输入）。
 pub(super) fn normalize_to_copilot_id(client_id: &str) -> Option<String> {
@@ -126,6 +140,88 @@ pub fn resolve_against_models(client_id: &str, models: &[CopilotModel]) -> Optio
     }
 }
 
+pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<ResolvedCopilotModel> {
+    let normalized = normalize_to_copilot_id(client_id);
+    let target = normalized.as_deref().unwrap_or(client_id);
+    let model = models
+        .iter()
+        .find(|model| model.id.eq_ignore_ascii_case(target))
+        .or_else(|| {
+            let fallback = family_fallback(target, models)?;
+            models
+                .iter()
+                .find(|model| model.id.eq_ignore_ascii_case(&fallback))
+        })?;
+
+    Some(ResolvedCopilotModel {
+        id: model.id.clone(),
+        vendor: model.vendor.clone(),
+        protocol: protocol_for(model),
+    })
+}
+
+/// `/models` 暂时不可用时的保守回退。OpenAI 风格 ID 继续走 Responses，
+/// 其余模型走兼容面更广的 Chat；一旦 live 数据恢复即由 supported_endpoints 覆盖。
+pub fn fallback_protocol_for_model_id(model_id: &str) -> CopilotProtocol {
+    let lower = model_id.trim().to_ascii_lowercase();
+    if lower.starts_with("gpt-")
+        || lower.starts_with("chatgpt-")
+        || lower.starts_with('o')
+            && lower[1..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+    {
+        CopilotProtocol::Responses
+    } else {
+        CopilotProtocol::Chat
+    }
+}
+
+fn protocol_for(model: &CopilotModel) -> CopilotProtocol {
+    if model
+        .supported_endpoints
+        .iter()
+        .any(|endpoint| endpoint == "/v1/messages")
+    {
+        CopilotProtocol::Messages
+    } else if model
+        .supported_endpoints
+        .iter()
+        .any(|endpoint| endpoint == "/responses")
+    {
+        CopilotProtocol::Responses
+    } else if model
+        .supported_endpoints
+        .iter()
+        .any(|endpoint| endpoint == "/chat/completions")
+    {
+        CopilotProtocol::Chat
+    } else if model.vendor.eq_ignore_ascii_case("openai") {
+        CopilotProtocol::Responses
+    } else {
+        CopilotProtocol::Chat
+    }
+}
+
+/// 先按 Copilot 的模型归一化/fallback 规则解析客户端 model id，再返回真实 vendor。
+pub fn vendor_for<'a>(model_id: &str, models: &'a [CopilotModel]) -> Option<&'a str> {
+    let normalized = normalize_to_copilot_id(model_id);
+    let target = normalized.as_deref().unwrap_or(model_id);
+    if let Some(model) = models
+        .iter()
+        .find(|model| model.id.eq_ignore_ascii_case(target))
+    {
+        return Some(model.vendor.as_str());
+    }
+
+    let fallback = family_fallback(target, models)?;
+    models
+        .iter()
+        .find(|model| model.id.eq_ignore_ascii_case(&fallback))
+        .map(|model| model.vendor.as_str())
+}
+
 fn detect_family(id: &str) -> Option<&'static str> {
     let lower = id.to_ascii_lowercase();
     if lower.contains("haiku") {
@@ -162,7 +258,9 @@ fn family_fallback(target: &str, models: &[CopilotModel]) -> Option<String> {
             .iter()
             .filter(|m| {
                 let lower = m.id.to_ascii_lowercase();
-                lower.contains(family) && lower.ends_with("-1m") == require_1m
+                let is_1m = m.context_window.is_some_and(|tokens| tokens >= 1_000_000)
+                    || lower.contains("-1m");
+                lower.contains(family) && is_1m == require_1m
             })
             .filter_map(|m| extract_major_minor(&m.id).map(|v| (m, v)))
             .max_by_key(|(_, v)| *v)
@@ -300,6 +398,8 @@ mod tests {
             name: id.to_string(),
             vendor: "anthropic".to_string(),
             model_picker_enabled: true,
+            context_window: None,
+            supported_endpoints: vec![],
         }
     }
 
@@ -370,5 +470,100 @@ mod tests {
     fn resolve_handles_non_claude_target() {
         let models = vec![model("claude-sonnet-4.6")];
         assert_eq!(resolve_against_models("gpt-5", &models), None);
+    }
+
+    fn model_with_context(id: &str, context_window: u64) -> CopilotModel {
+        CopilotModel {
+            context_window: Some(context_window),
+            ..model(id)
+        }
+    }
+
+    #[test]
+    fn resolve_one_m_marker_to_internal_variant_by_context_window() {
+        let models = vec![
+            model_with_context("claude-opus-4.5", 200_000),
+            model_with_context("claude-opus-4.7-1m-internal", 1_000_000),
+        ];
+        assert_eq!(
+            resolve_against_models("claude-opus-4-5[1M]", &models),
+            Some("claude-opus-4.7-1m-internal".to_string())
+        );
+    }
+
+    #[test]
+    fn vendor_for_resolves_one_m_marker_before_lookup() {
+        let models = vec![model_with_context("claude-opus-4.7-1m-internal", 1_000_000)];
+        assert_eq!(
+            vendor_for("claude-opus-4-5[1M]", &models),
+            Some("anthropic")
+        );
+    }
+
+    #[test]
+    fn resolve_model_prefers_messages_then_responses_then_chat() {
+        let mut messages = model("claude-opus-4.8");
+        messages.supported_endpoints = vec![
+            "/chat/completions".to_string(),
+            "/responses".to_string(),
+            "/v1/messages".to_string(),
+        ];
+        let resolved = resolve_model("claude-opus-4.8", &[messages]).unwrap();
+        assert_eq!(resolved.protocol, CopilotProtocol::Messages);
+
+        let mut responses = model("gpt-5.5");
+        responses.vendor = "OpenAI".to_string();
+        responses.supported_endpoints =
+            vec!["/chat/completions".to_string(), "/responses".to_string()];
+        let resolved = resolve_model("gpt-5.5", &[responses]).unwrap();
+        assert_eq!(resolved.protocol, CopilotProtocol::Responses);
+
+        let mut chat = model("claude-sonnet-4.6");
+        chat.supported_endpoints = vec!["/chat/completions".to_string()];
+        let resolved = resolve_model("claude-sonnet-4.6", &[chat]).unwrap();
+        assert_eq!(resolved.protocol, CopilotProtocol::Chat);
+    }
+
+    #[test]
+    fn resolve_model_falls_back_by_vendor_without_endpoint_metadata() {
+        let mut openai = model("gpt-5.5");
+        openai.vendor = "OpenAI".to_string();
+        assert_eq!(
+            resolve_model("gpt-5.5", &[openai]).unwrap().protocol,
+            CopilotProtocol::Responses
+        );
+
+        let anthropic = model("claude-opus-4.8");
+        assert_eq!(
+            resolve_model("claude-opus-4.8", &[anthropic])
+                .unwrap()
+                .protocol,
+            CopilotProtocol::Chat
+        );
+    }
+
+    #[test]
+    fn fallback_protocol_for_model_id_is_independent_of_legacy_provider_format() {
+        assert_eq!(
+            fallback_protocol_for_model_id("gpt-5.5"),
+            CopilotProtocol::Responses
+        );
+        assert_eq!(
+            fallback_protocol_for_model_id("o3-mini"),
+            CopilotProtocol::Responses
+        );
+        assert_eq!(
+            fallback_protocol_for_model_id("claude-opus-4.8"),
+            CopilotProtocol::Chat
+        );
+    }
+
+    #[test]
+    fn resolve_model_family_fallback_keeps_capabilities_from_final_model() {
+        let mut fallback = model_with_context("claude-opus-4.6", 200_000);
+        fallback.supported_endpoints = vec!["/v1/messages".to_string()];
+        let resolved = resolve_model("claude-opus-4.8", &[fallback]).unwrap();
+        assert_eq!(resolved.id, "claude-opus-4.6");
+        assert_eq!(resolved.protocol, CopilotProtocol::Messages);
     }
 }

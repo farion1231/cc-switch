@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +28,12 @@ import {
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import { CopilotAuthSection } from "./CopilotAuthSection";
+import {
+  copilotGetModels,
+  copilotGetModelsForAccount,
+  type CopilotModel,
+} from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -34,6 +41,10 @@ import {
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import {
+  hasClaudeOneMMarker,
+  stripClaudeOneMMarker,
+} from "./hooks/useModelState";
 import { cn } from "@/lib/utils";
 import type {
   ClaudeApiKeyField,
@@ -46,6 +57,103 @@ import type {
 
 interface EndpointCandidate {
   url: string;
+}
+
+/**
+ * Codex + GitHub Copilot 模型下拉列表数据源。
+ *
+ * forwarder.rs 现在会 live 解析请求模型的真实 Copilot vendor：确认为非
+ * OpenAI（如 Anthropic Claude，含 `-1m` 扩展上下文变体）时自动把请求转成
+ * Chat Completions 发到 Copilot 的 `/chat/completions`；OpenAI vendor（gpt
+ * 系列）保持原有的 Responses 透传。因此这里不再按 vendor 过滤——Copilot
+ * 账号能选到的模型（含 1M 变体）都展示出来，交给用户在"实际请求模型"里选择，
+ * 后端会按 live vendor 自动路由到正确的上游格式。
+ *
+ * 导出用于单元测试。
+ */
+export function mapCopilotModelsForCodex(
+  models: CopilotModel[],
+): FetchedModel[] {
+  return models.map((m) => ({
+    id: m.id,
+    ownedBy: m.vendor ?? null,
+  }));
+}
+
+/**
+ * 计算在 GitHub Copilot 模型下拉里选中某个 model id 时，目录行的"上下文窗口"
+ * 是否应该自动回填成该 id 在 live `/models` 里声明的真实值。
+ *
+ * 只在这一行原本为空时才回填，绝不覆盖用户已手动填写的值；该 id 没有 live
+ * contextWindow（未拉取过、或字段缺失）时也不回填，让用户自己判断/手填，
+ * 而不是显示一个猜测出来的数字。返回 `undefined` 表示不回填。
+ *
+ * 导出用于单元测试。
+ */
+export function resolveCopilotContextWindowAutofill(
+  currentContextWindow: string | number | undefined,
+  liveContextWindow: number | undefined,
+): string | undefined {
+  if (currentContextWindow) return undefined;
+  if (!liveContextWindow || liveContextWindow <= 0) return undefined;
+  return String(liveContextWindow);
+}
+
+/**
+ * 目录行当前是否已经声明 1M。`[1M]` 仅用于识别并迁移旧配置；新配置统一通过
+ * contextWindow 声明，不修改实际请求模型。
+ *
+ * 导出用于单元测试。
+ */
+export function isCopilotOneMEnabled(
+  model: string,
+  contextWindow: string | number | undefined,
+): boolean {
+  if (hasClaudeOneMMarker(model)) return true;
+  const ctx =
+    typeof contextWindow === "string"
+      ? Number.parseInt(contextWindow, 10)
+      : contextWindow;
+  return typeof ctx === "number" && Number.isFinite(ctx) && ctx >= 1_000_000;
+}
+
+export interface CopilotOneMToggleResult {
+  model: string;
+  /** `undefined` 表示清空该字段（交给后端默认值），而非置为空字符串。 */
+  contextWindow: string | undefined;
+}
+
+/**
+ * 计算勾选/取消勾选 1M 时目录行应更新成的 model + contextWindow。
+ *
+ * 对所有 Copilot vendor 使用同一规则：勾选只声明 contextWindow=1M，取消时
+ * 尽可能恢复 live contextWindow；实际请求模型 ID 始终保持不变。
+ *
+ * 导出用于单元测试。
+ */
+export function resolveCopilotOneMToggle(
+  model: string,
+  enabled: boolean,
+  liveModels: CopilotModel[],
+): CopilotOneMToggleResult {
+  const baseModel = stripClaudeOneMMarker(model);
+  const exact = liveModels.find(
+    (m) => m.id.toLowerCase() === baseModel.toLowerCase(),
+  );
+
+  if (enabled) {
+    return {
+      model: baseModel,
+      contextWindow: "1000000",
+    };
+  }
+
+  return {
+    model: baseModel,
+    contextWindow: exact?.context_window
+      ? String(exact.context_window)
+      : undefined,
+  };
 }
 
 interface CodexFormFieldsProps {
@@ -107,6 +215,12 @@ interface CodexFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+
+  // GitHub Copilot OAuth（托管账号）
+  isCopilotPreset?: boolean;
+  usesOAuth?: boolean;
+  selectedGitHubAccountId?: string | null;
+  onGitHubAccountSelect?: (accountId: string | null) => void;
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
@@ -196,10 +310,29 @@ export function CodexFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  isCopilotPreset,
+  usesOAuth,
+  selectedGitHubAccountId,
+  onGitHubAccountSelect,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  // GitHub Copilot 专用：最近一次 live /models 拉取的原始结果（含每个 id 的
+  // 真实 vendor/context_window）。用于选中模型时自动回填目录行的上下文窗口，
+  // 以及取消 1M 声明时恢复该 model id 的 live contextWindow。
+  const [copilotLiveModels, setCopilotLiveModels] = useState<CopilotModel[]>(
+    [],
+  );
+  const copilotContextWindowById = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const m of copilotLiveModels) {
+      if (typeof m.context_window === "number" && m.context_window > 0) {
+        map[m.id] = m.context_window;
+      }
+    }
+    return map;
+  }, [copilotLiveModels]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   // 拉取请求序号：请求身份（Base URL / 完整地址开关 / API Key / 自定义 UA）
   // 一变即自增，清空旧列表并作废在途响应——/models 结果可能按 Key 的模型
@@ -209,6 +342,7 @@ export function CodexFormFields({
   useEffect(() => {
     fetchModelsSeqRef.current += 1;
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setCopilotLiveModels((prev) => (prev.length === 0 ? prev : []));
   }, [codexBaseUrl, isFullUrl, codexApiKey, customUserAgent]);
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
@@ -304,6 +438,40 @@ export function CodexFormFields({
   );
 
   const handleFetchModels = useCallback(() => {
+    // GitHub Copilot（托管账号）：用登录账号取模型，无需 API Key。
+    // 见文件顶部 mapCopilotModelsForCodex 的说明：展示账号可见的全部模型
+    // （含 Claude/-1m 变体），由后端按 live vendor 自动路由。
+    if (isCopilotPreset) {
+      const seq = ++fetchModelsSeqRef.current;
+      setIsFetchingModels(true);
+      const fetchModels = selectedGitHubAccountId
+        ? copilotGetModelsForAccount(selectedGitHubAccountId)
+        : copilotGetModels();
+      fetchModels
+        .then((models) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          const mapped = mapCopilotModelsForCodex(models);
+          setFetchedModels(mapped);
+          setCopilotLiveModels(models);
+          if (mapped.length === 0) {
+            toast.info(t("providerForm.fetchModelsEmpty"));
+          } else {
+            toast.success(
+              t("providerForm.fetchModelsSuccess", { count: mapped.length }),
+            );
+          }
+        })
+        .catch((err) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          console.warn("[Copilot] Failed to fetch models:", err);
+          showFetchModelsError(err, t);
+        })
+        .finally(() => {
+          if (seq === fetchModelsSeqRef.current) setIsFetchingModels(false);
+        });
+      return;
+    }
+
     if (!codexBaseUrl || !codexApiKey) {
       showFetchModelsError(null, t, {
         hasApiKey: !!codexApiKey,
@@ -337,7 +505,15 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
+  }, [
+    codexBaseUrl,
+    codexApiKey,
+    isFullUrl,
+    customUserAgent,
+    t,
+    isCopilotPreset,
+    selectedGitHubAccountId,
+  ]);
 
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;
@@ -430,27 +606,36 @@ export function CodexFormFields({
 
   return (
     <>
-      {/* Codex API Key 输入框 */}
-      <ApiKeySection
-        id="codexApiKey"
-        label="API Key"
-        value={codexApiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-        placeholder={{
-          official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
-          }),
-          thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
-          }),
-        }}
-      />
+      {/* GitHub Copilot OAuth 认证（托管账号，token 由后端动态注入） */}
+      {isCopilotPreset && (
+        <CopilotAuthSection
+          selectedAccountId={selectedGitHubAccountId}
+          onAccountSelect={onGitHubAccountSelect}
+        />
+      )}
 
+      {/* Codex API Key 输入框（非 OAuth 预设时显示） */}
+      {!usesOAuth && (
+        <ApiKeySection
+          id="codexApiKey"
+          label="API Key"
+          value={codexApiKey}
+          onChange={onApiKeyChange}
+          category={category}
+          shouldShowLink={shouldShowApiKeyLink}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
+          placeholder={{
+            official: t("providerForm.codexOfficialNoApiKey", {
+              defaultValue: "官方供应商无需 API Key",
+            }),
+            thirdParty: t("providerForm.codexApiKeyAutoFill", {
+              defaultValue: "输入 API Key，将自动填充到配置",
+            }),
+          }}
+        />
+      )}
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (
         <EndpointField
@@ -560,62 +745,89 @@ export function CodexFormFields({
           </CollapsibleTrigger>
           {!advancedExpanded && (
             <p className="mt-1 ml-1 text-xs text-muted-foreground">
-              {t("codexConfig.advancedSectionHint", {
-                defaultValue:
-                  "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
-              })}
+              {isCopilotPreset
+                ? t("codexConfig.advancedSectionHintCopilot", {
+                    defaultValue:
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。GitHub Copilot 始终需要本地路由（token 动态注入），任何上游格式都需开启路由接管。",
+                  })
+                : t("codexConfig.advancedSectionHint", {
+                    defaultValue:
+                      "包含上游格式、模型映射、思考能力与自定义 User-Agent。使用 Chat Completions 协议的供应商需开启路由接管才能使用。",
+                  })}
             </p>
           )}
           <CollapsibleContent className="space-y-3 pt-3">
-            {/* 上游格式 —— Chat 需开启路由接管（走代理转换），Responses 原生直连。
+            {/* 上游格式 —— Chat/Anthropic 需开启路由接管（走代理转换），Responses 原生直连。
+                但 Copilot 即使走 Responses 也强制路由（token 动态注入 + 指纹头），
+                故 Copilot 下 Responses 标签与说明也标注「需开启路由」。
                 沿用 shouldShowSpeedTest 门控，cloud_provider 保持不可切换。 */}
             {shouldShowSpeedTest && (
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <FormLabel htmlFor="codex-upstream-format">
-                    {t("codexConfig.upstreamFormatLabel", {
-                      defaultValue: "上游格式",
-                    })}
-                  </FormLabel>
-                  <Select
-                    value={apiFormat}
-                    onValueChange={(value) =>
-                      onApiFormatChange(value as CodexApiFormat)
-                    }
-                  >
-                    <SelectTrigger
-                      id="codex-upstream-format"
-                      className="w-full"
+                {isCopilotPreset ? (
+                  <div className="space-y-1.5 rounded-md border border-border/70 bg-muted/20 p-3">
+                    <FormLabel>
+                      {t("codexConfig.upstreamFormatAutoCopilot", {
+                        defaultValue: "按模型自动选择",
+                      })}
+                    </FormLabel>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.upstreamFormatAutoCopilotHint", {
+                        defaultValue:
+                          "CC Switch 会根据 GitHub Copilot 返回的模型能力自动选择 Messages、Responses 或 Chat 协议，无需手动配置。",
+                      })}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <FormLabel htmlFor="codex-upstream-format">
+                      {t("codexConfig.upstreamFormatLabel", {
+                        defaultValue: "上游格式",
+                      })}
+                    </FormLabel>
+                    <Select
+                      value={apiFormat}
+                      onValueChange={(value) =>
+                        onApiFormatChange(value as CodexApiFormat)
+                      }
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="openai_chat">
-                        {t("codexConfig.upstreamFormatChat", {
-                          defaultValue: "Chat Completions（需开启路由）",
-                        })}
-                      </SelectItem>
-                      <SelectItem value="openai_responses">
-                        {t("codexConfig.upstreamFormatResponses", {
-                          defaultValue: "Responses（原生）",
-                        })}
-                      </SelectItem>
-                      <SelectItem value="anthropic">
-                        {t("codexConfig.upstreamFormatAnthropic", {
-                          defaultValue: "Anthropic Messages（需开启路由）",
-                        })}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {t("codexConfig.upstreamFormatHint", {
-                      defaultValue:
-                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
-                    })}
-                  </p>
-                </div>
+                      <SelectTrigger
+                        id="codex-upstream-format"
+                        className="w-full"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="openai_chat">
+                          {t("codexConfig.upstreamFormatChat", {
+                            defaultValue: "Chat Completions（需开启路由）",
+                          })}
+                        </SelectItem>
+                        <SelectItem value="openai_responses">
+                          {isCopilotPreset
+                            ? t("codexConfig.upstreamFormatResponsesCopilot", {
+                                defaultValue: "Responses（原生，需开启路由）",
+                              })
+                            : t("codexConfig.upstreamFormatResponses", {
+                                defaultValue: "Responses（原生）",
+                              })}
+                        </SelectItem>
+                        <SelectItem value="anthropic">
+                          {t("codexConfig.upstreamFormatAnthropic", {
+                            defaultValue: "Anthropic Messages（需开启路由）",
+                          })}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.upstreamFormatHint", {
+                        defaultValue:
+                          "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
+                      })}
+                    </p>
+                  </div>
+                )}
 
-                {isAnthropicFormat && (
+                {!isCopilotPreset && isAnthropicFormat && (
                   <div className="space-y-1.5">
                     <FormLabel htmlFor="codex-anthropic-auth-field">
                       {t("codexConfig.anthropicAuthFieldLabel", {
@@ -875,103 +1087,160 @@ export function CodexFormFields({
                         })}
                       </span>
                       <span>
-                        {t("codexConfig.catalogColumnContext", {
-                          defaultValue: "上下文窗口",
-                        })}
+                        {isCopilotPreset
+                          ? t("codexConfig.catalogColumnContextOrOneM", {
+                              defaultValue: "上下文窗口 / 1M",
+                            })
+                          : t("codexConfig.catalogColumnContext", {
+                              defaultValue: "上下文窗口",
+                            })}
                       </span>
                       <span />
                     </div>
 
-                    {catalogRows.map((row, index) => (
-                      <div
-                        key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
-                      >
-                        <Input
-                          value={row.displayName ?? ""}
-                          onChange={(event) =>
-                            handleUpdateCatalogRow(index, {
-                              displayName: event.target.value,
-                            })
-                          }
-                          placeholder={t(
-                            "codexConfig.catalogDisplayNamePlaceholder",
-                            {
-                              defaultValue: "例如: DeepSeek V4 Flash",
-                            },
-                          )}
-                          aria-label={t("codexConfig.catalogColumnDisplay", {
-                            defaultValue: "菜单显示名",
-                          })}
-                        />
-                        <div className="flex gap-1">
+                    {catalogRows.map((row, index) => {
+                      // GitHub Copilot 供应商：这一列始终是 1M 勾选框（与
+                      // Claude Code 风格一致），不随行内当前的模型文本切换
+                      // 控件类型——即便这一行还没填模型、或填的是 GPT 系列，
+                      // 也显示勾选框；勾选只修改 contextWindow，不修改实际
+                      // 请求模型。
+                      const isCopilotOneMRow = Boolean(isCopilotPreset);
+                      const oneMEnabled = isCopilotOneMRow
+                        ? isCopilotOneMEnabled(row.model, row.contextWindow)
+                        : false;
+                      return (
+                        <div
+                          key={row.rowId}
+                          className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                        >
                           <Input
-                            value={row.model}
+                            value={row.displayName ?? ""}
                             onChange={(event) =>
                               handleUpdateCatalogRow(index, {
-                                model: event.target.value,
+                                displayName: event.target.value,
                               })
                             }
                             placeholder={t(
-                              "codexConfig.catalogModelPlaceholder",
+                              "codexConfig.catalogDisplayNamePlaceholder",
                               {
-                                defaultValue: "例如: deepseek-v4-flash",
+                                defaultValue: "例如: DeepSeek V4 Flash",
                               },
                             )}
-                            aria-label={t("codexConfig.catalogColumnModel", {
-                              defaultValue: "实际请求模型",
+                            aria-label={t("codexConfig.catalogColumnDisplay", {
+                              defaultValue: "菜单显示名",
                             })}
-                            className="flex-1"
                           />
-                          {fetchedModels.length > 0 && (
-                            <ModelDropdown
-                              models={fetchedModels}
-                              onSelect={(id) =>
+                          <div className="flex gap-1">
+                            <Input
+                              value={row.model}
+                              onChange={(event) =>
                                 handleUpdateCatalogRow(index, {
-                                  model: id,
-                                  displayName: row.displayName?.trim()
-                                    ? row.displayName
-                                    : id,
+                                  model: event.target.value,
                                 })
                               }
+                              placeholder={t(
+                                "codexConfig.catalogModelPlaceholder",
+                                {
+                                  defaultValue: "例如: deepseek-v4-flash",
+                                },
+                              )}
+                              aria-label={t("codexConfig.catalogColumnModel", {
+                                defaultValue: "实际请求模型",
+                              })}
+                              className="flex-1"
+                            />
+                            {fetchedModels.length > 0 && (
+                              <ModelDropdown
+                                models={fetchedModels}
+                                onSelect={(id) => {
+                                  // GitHub Copilot：若该 model id 的真实
+                                  // contextWindow 已从 live /models 拉到，且
+                                  // 用户还没手填过这一行，自动回填，省得对
+                                  // -1m 等扩展上下文变体的真实值靠猜测手填。
+                                  const autofillContextWindow =
+                                    resolveCopilotContextWindowAutofill(
+                                      row.contextWindow,
+                                      copilotContextWindowById[id],
+                                    );
+                                  handleUpdateCatalogRow(index, {
+                                    model: id,
+                                    displayName: row.displayName?.trim()
+                                      ? row.displayName
+                                      : id,
+                                    ...(autofillContextWindow !== undefined
+                                      ? { contextWindow: autofillContextWindow }
+                                      : null),
+                                  });
+                                }}
+                              />
+                            )}
+                          </div>
+                          {isCopilotOneMRow ? (
+                            <div className="flex h-9 items-center gap-2">
+                              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Checkbox
+                                  checked={oneMEnabled}
+                                  onCheckedChange={(checked) => {
+                                    const result = resolveCopilotOneMToggle(
+                                      row.model,
+                                      checked === true,
+                                      copilotLiveModels,
+                                    );
+                                    handleUpdateCatalogRow(index, {
+                                      model: result.model,
+                                      contextWindow: result.contextWindow,
+                                    });
+                                  }}
+                                  aria-label={t("codexConfig.modelOneMLabel", {
+                                    defaultValue: "1M",
+                                  })}
+                                />
+                                {t("codexConfig.modelOneMLabel", {
+                                  defaultValue: "1M",
+                                })}
+                              </label>
+                            </div>
+                          ) : (
+                            <Input
+                              type="number"
+                              min={1}
+                              inputMode="numeric"
+                              value={row.contextWindow ?? ""}
+                              onChange={(event) =>
+                                handleUpdateCatalogRow(index, {
+                                  contextWindow: event.target.value.replace(
+                                    /[^\d]/g,
+                                    "",
+                                  ),
+                                })
+                              }
+                              placeholder={t(
+                                "codexConfig.contextWindowPlaceholder",
+                                {
+                                  defaultValue: "例如: 128000",
+                                },
+                              )}
+                              aria-label={t(
+                                "codexConfig.catalogColumnContext",
+                                {
+                                  defaultValue: "上下文窗口",
+                                },
+                              )}
                             />
                           )}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            onClick={() => handleRemoveCatalogRow(index)}
+                            title={t("common.delete", { defaultValue: "删除" })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                         </div>
-                        <Input
-                          type="number"
-                          min={1}
-                          inputMode="numeric"
-                          value={row.contextWindow ?? ""}
-                          onChange={(event) =>
-                            handleUpdateCatalogRow(index, {
-                              contextWindow: event.target.value.replace(
-                                /[^\d]/g,
-                                "",
-                              ),
-                            })
-                          }
-                          placeholder={t(
-                            "codexConfig.contextWindowPlaceholder",
-                            {
-                              defaultValue: "例如: 128000",
-                            },
-                          )}
-                          aria-label={t("codexConfig.catalogColumnContext", {
-                            defaultValue: "上下文窗口",
-                          })}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleRemoveCatalogRow(index)}
-                          title={t("common.delete", { defaultValue: "删除" })}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
