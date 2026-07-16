@@ -1563,7 +1563,9 @@ impl RequestForwarder {
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
 
-        // 获取认证头（提前准备，用于内联替换）
+        // 获取认证头（提前准备，用于内联替换），同时保留仅用于日志脱敏的
+        // 精确认证材料。实际日志永远不输出这些值。
+        let mut log_secrets: Vec<String> = Vec::new();
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
@@ -1666,6 +1668,12 @@ impl RequestForwarder {
                     return Err(ProxyError::AuthError(
                         "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
+                }
+            }
+
+            for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
+                if !secret.is_empty() && !log_secrets.contains(secret) {
+                    log_secrets.push(secret.clone());
                 }
             }
 
@@ -2074,22 +2082,29 @@ impl RequestForwarder {
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
+        // 日志目标 URL 的脱敏分两种情形：
+        // - 有已知密钥(log_secrets 非空)：记录脱敏后的完整 URL，剥 userinfo/query
+        //   并抹掉已知密钥值，保留 host+path 便于诊断 base_url 配错路径导致的 404。
+        // - 无已知密钥：凭据可能整个内嵌在 path 里且无从脱敏，只记 origin，
+        //   避免默认 Info 级把形如 https://gw/<KEY>/v1 的 path 完整落盘。
+        let target_for_log = if log_secrets.is_empty() {
+            crate::redact_url_origin_for_log(&url)
+        } else {
+            crate::redact_url_for_log_with_secrets(&url, &log_secrets)
+        };
+
         // 输出请求信息日志
         let tag = adapter.name();
         let request_model = filtered_body
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
-        log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if log::log_enabled!(log::Level::Debug) {
-            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-                log::debug!(
-                    "[{tag}] >>> 请求体内容 ({}字节): {}",
-                    body_str.len(),
-                    body_str
-                );
-            }
-        }
+        log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
+        log::debug!(
+            "[{tag}] >>> 请求体已准备: bytes={}, hash={} (content omitted)",
+            body_bytes.len(),
+            short_value_hash(Some(&filtered_body))
+        );
 
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -2156,11 +2171,12 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url
-                .parse()
-                .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+            let uri: http::Uri = url.parse().map_err(|e| {
+                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
+            })?;
             super::hyper_client::send_request(
                 uri,
+                &target_for_log,
                 method.clone(),
                 ordered_headers,
                 extensions.clone(),
@@ -3186,11 +3202,11 @@ fn should_force_identity_encoding(
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
     if error.is_timeout() {
-        ProxyError::Timeout(format!("请求超时: {error}"))
+        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
     } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("连接失败: {error}"))
+        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
     } else {
-        ProxyError::ForwardFailed(error.to_string())
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
     }
 }
 
@@ -3390,7 +3406,8 @@ fn log_prompt_cache_trace(
         "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, system_hash={}, tools_hash={}, input_hash={}, messages_hash={}, include_hash={}, cache_controls={}, body_hash={}",
         app_type.as_str(),
         provider.id,
-        endpoint,
+        // Gemini 的 endpoint 带 ?key=<API_KEY>；脱敏剥掉 query 再落盘。
+        crate::redact_url_for_log(endpoint),
         api_format.unwrap_or("native"),
         session_client_provided,
         prompt_cache_key,
@@ -3527,6 +3544,7 @@ mod tests {
         assert_eq!(code, log_fwd::SINGLE_PROVIDER_FAILED);
         assert!(message.contains("Provider PackyCode-response 请求失败"));
         assert!(message.contains("上游 HTTP 429"));
+        // 上游错误消息保留(截断)，用于诊断失败原因。
         assert!(message.contains("rate limit exceeded"));
         assert!(!message.contains("切换下一个"));
     }
@@ -3557,20 +3575,6 @@ mod tests {
         assert_eq!(code, log_fwd::ALL_PROVIDERS_FAILED);
         assert!(message.contains("已尝试 2/2 个 Provider，均失败"));
         assert!(message.contains("connection reset by peer"));
-    }
-
-    #[test]
-    fn summarize_upstream_body_prefers_json_message() {
-        let body = json!({
-            "error": {
-                "message": "invalid_request_error: unsupported field"
-            },
-            "request_id": "req_123"
-        });
-
-        let summary = summarize_upstream_body(&body.to_string());
-
-        assert_eq!(summary, "invalid_request_error: unsupported field");
     }
 
     #[test]
