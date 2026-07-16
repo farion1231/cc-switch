@@ -17,15 +17,42 @@ pub struct CdpTarget {
     pub web_socket_debugger_url: Option<String>,
 }
 
-/// Select the first injectable Codex page target (never service_worker / iframe-only).
+/// True when a page target is a Codex shell we may inject into.
+///
+/// Live Windows Codex Desktop exposes Electron pages as `app://-/index.html`
+/// (title "Codex"), not only https://chatgpt.com / openai.com URLs.
+fn is_codex_page_url(url: &str, title: &str) -> bool {
+    let url_l = url.to_ascii_lowercase();
+    let title_l = title.to_ascii_lowercase();
+    url_l.contains("chatgpt.com")
+        || url_l.contains("openai.com")
+        || url_l.contains("codex")
+        || url_l.starts_with("app://")
+        || title_l.contains("codex")
+}
+
+/// Prefer the main Codex shell over avatar/overlay helper windows.
+fn codex_page_rank(url: &str) -> u8 {
+    let u = url.to_ascii_lowercase();
+    if u.contains("overlay") || u.contains("avatar") {
+        return 2;
+    }
+    if u.starts_with("app://") || u.contains("chatgpt.com") || u.contains("codex") {
+        return 0;
+    }
+    1
+}
+
+/// Select the best injectable Codex page target (never service_worker / iframe-only).
 pub fn pick_codex_target(targets: &[CdpTarget]) -> Option<&CdpTarget> {
-    targets.iter().find(|t| {
-        t.kind == "page"
-            && t.web_socket_debugger_url.is_some()
-            && (t.url.contains("chatgpt.com")
-                || t.url.contains("openai.com")
-                || t.url.contains("codex"))
-    })
+    targets
+        .iter()
+        .filter(|t| {
+            t.kind == "page"
+                && t.web_socket_debugger_url.is_some()
+                && is_codex_page_url(&t.url, &t.title)
+        })
+        .min_by_key(|t| codex_page_rank(&t.url))
 }
 
 pub async fn list_targets(cdp_port: u16) -> Result<Vec<CdpTarget>, AppError> {
@@ -113,11 +140,15 @@ mod tests {
     use super::*;
 
     fn target(kind: &str, url: &str) -> CdpTarget {
+        target_with_title(kind, url, "")
+    }
+
+    fn target_with_title(kind: &str, url: &str, title: &str) -> CdpTarget {
         CdpTarget {
             id: "1".into(),
             kind: kind.into(),
             url: url.into(),
-            title: String::new(),
+            title: title.into(),
             web_socket_debugger_url: Some("ws://127.0.0.1:9/devtools/page/1".into()),
         }
     }
@@ -137,5 +168,26 @@ mod tests {
     fn ignores_non_page_targets() {
         let targets = [target("service_worker", "https://chatgpt.com/codex")];
         assert!(pick_codex_target(&targets).is_none());
+    }
+
+    #[test]
+    fn picks_live_electron_app_shell_over_overlay() {
+        let targets = [
+            target_with_title(
+                "page",
+                "app://-/index.html?initialRoute=%2Favatar-overlay",
+                "Codex",
+            ),
+            target_with_title("page", "app://-/index.html", "Codex"),
+            target("worker", ""),
+        ];
+        let t = pick_codex_target(&targets).unwrap();
+        assert_eq!(t.url, "app://-/index.html");
+    }
+
+    #[test]
+    fn picks_app_shell_by_title_when_url_has_no_codex_token() {
+        let targets = [target_with_title("page", "app://-/index.html", "Codex")];
+        assert!(pick_codex_target(&targets).is_some());
     }
 }
