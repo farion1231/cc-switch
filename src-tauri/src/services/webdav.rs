@@ -401,33 +401,7 @@ pub fn webdav_status_error(op: &str, status: StatusCode, url: &str) -> AppError 
 }
 
 fn redact_url(raw: &str) -> String {
-    match Url::parse(raw) {
-        Ok(mut parsed) => {
-            let _ = parsed.set_username("");
-            let _ = parsed.set_password(None);
-
-            let mut out = format!("{}://", parsed.scheme());
-            if let Some(host) = parsed.host_str() {
-                out.push_str(host);
-            }
-            if let Some(port) = parsed.port() {
-                out.push(':');
-                out.push_str(&port.to_string());
-            }
-            out.push_str(parsed.path());
-
-            let mut keys: Vec<String> = parsed.query_pairs().map(|(k, _)| k.into_owned()).collect();
-            keys.sort();
-            keys.dedup();
-            if !keys.is_empty() {
-                out.push_str("?[keys:");
-                out.push_str(&keys.join(","));
-                out.push(']');
-            }
-            out
-        }
-        Err(_) => raw.split('?').next().unwrap_or(raw).to_string(),
-    }
+    crate::redact_url_for_log(raw)
 }
 
 fn response_too_large_error(url: &str, max_bytes: usize) -> AppError {
@@ -520,9 +494,11 @@ mod tests {
 
     #[test]
     fn redact_url_hides_credentials_and_query_values() {
+        // userinfo 与整个 query 一并剥离，host+path 保留用于诊断。
         let redacted = redact_url("https://alice:secret@example.com:8443/dav?token=abc&foo=1");
-        assert_eq!(redacted, "https://example.com:8443/dav?[keys:foo,token]");
+        assert_eq!(redacted, "https://example.com:8443/dav");
         assert!(!redacted.contains("secret"));
+        assert!(!redacted.contains("abc"));
     }
 
     #[test]
