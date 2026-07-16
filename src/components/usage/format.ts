@@ -97,17 +97,16 @@ export function formatTokensShort(
 }
 
 export type ReasoningFormatInput = {
-  reasoningTokens?: number;
+  reasoningTokens?: number | null;
   continuationRounds?: number;
   continuationStatus?: string;
 };
 
-/** unknown (undefined) → "—"; known 0 → "Tok 0"; N → "Tok N"; rounds/partial markers */
+/** unknown (nullish) → "—"; known 0 → "Tok 0"; N → "Tok N"; rounds/partial markers */
 export function formatReasoning(log: ReasoningFormatInput): string {
-  if (log.reasoningTokens === undefined) return "—";
+  if (log.reasoningTokens == null) return "—";
   const base = `Tok ${log.reasoningTokens.toLocaleString()}`;
   if (log.continuationStatus === "partial_failed") return `${base} ⚠`;
   const rounds = log.continuationRounds ?? 0;
   return rounds > 0 ? `${base} ✨${rounds}` : base;
 }
-

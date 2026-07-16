@@ -20,6 +20,7 @@ describe("usage format helpers", () => {
 describe("formatReasoning", () => {
   it.each([
     [undefined, 0, "not_attempted", "—"],
+    [null, 0, "not_attempted", "—"],
     [0, 0, "not_triggered", "Tok 0"],
     [500, 0, "not_triggered", "Tok 500"],
     [500, 2, "continued", "Tok 500 ✨2"],
@@ -37,4 +38,3 @@ describe("formatReasoning", () => {
     },
   );
 });
-
