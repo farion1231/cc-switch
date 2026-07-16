@@ -46,7 +46,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
         // /api/compatible，没有套餐额度，不在此命中。
         Some(CodingPlanProvider::Volcengine)
-    } else if url.contains("maas-coding-api.xf-yun.com") {
+    } else if url.contains("xf-yun.com") && url.contains("maas-coding-api") {
         Some(CodingPlanProvider::IFlyTek)
     } else if url.contains("sensenova.cn") || url.contains("token.sensenova") {
         Some(CodingPlanProvider::SenseTime)
