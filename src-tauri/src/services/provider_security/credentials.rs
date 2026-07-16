@@ -1,7 +1,9 @@
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,112 @@ pub fn credential_fingerprint(field: &str, value: &str) -> String {
     hasher.update([0]);
     hasher.update(value.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Copy only explicitly confirmed credential fields from a Live settings snapshot.
+/// Non-credential provider fields always remain sourced from the Project DB row.
+pub fn apply_selected_credentials(
+    target: &mut Provider,
+    live_settings: &Value,
+    app_type: &AppType,
+    confirmed_fields: &BTreeSet<String>,
+) -> Result<(), AppError> {
+    if confirmed_fields
+        .iter()
+        .any(|field| !matches!(field.as_str(), "apiKey" | "baseUrl"))
+    {
+        return Err(AppError::InvalidInput(
+            "unsupported credential field".to_string(),
+        ));
+    }
+
+    let mut live_provider = target.clone();
+    live_provider.settings_config = live_settings.clone();
+    let live = extract_provider_credentials(&live_provider, app_type);
+
+    let api_key = confirmed_fields
+        .contains("apiKey")
+        .then_some(live.api_key)
+        .flatten();
+    let base_url = confirmed_fields
+        .contains("baseUrl")
+        .then_some(live.base_url)
+        .flatten();
+    if (confirmed_fields.contains("apiKey") && api_key.is_none())
+        || (confirmed_fields.contains("baseUrl") && base_url.is_none())
+    {
+        return Err(AppError::Message(
+            "ERROR:provider_credentials_missing".to_string(),
+        ));
+    }
+
+    let settings = object_mut(&mut target.settings_config);
+    match app_type {
+        AppType::Claude | AppType::ClaudeDesktop => {
+            let env = nested_object_mut(settings, "env");
+            set_selected(env, "ANTHROPIC_AUTH_TOKEN", api_key);
+            set_selected(env, "ANTHROPIC_BASE_URL", base_url);
+        }
+        AppType::Gemini => {
+            let env = nested_object_mut(settings, "env");
+            set_selected(env, "GEMINI_API_KEY", api_key);
+            set_selected(env, "GOOGLE_GEMINI_BASE_URL", base_url);
+        }
+        AppType::OpenCode => {
+            let options = nested_object_mut(settings, "options");
+            set_selected(options, "apiKey", api_key);
+            set_selected(options, "baseURL", base_url);
+        }
+        AppType::OpenClaw => {
+            set_selected(settings, "apiKey", api_key);
+            set_selected(settings, "baseUrl", base_url);
+        }
+        AppType::Hermes => {
+            set_selected(settings, "api_key", api_key);
+            set_selected(settings, "base_url", base_url);
+        }
+        AppType::Codex => {
+            if let Some(api_key) = api_key {
+                nested_object_mut(settings, "auth")
+                    .insert("OPENAI_API_KEY".to_string(), Value::String(api_key));
+            }
+            if let Some(base_url) = base_url {
+                let config = settings
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let updated =
+                    crate::codex_config::update_codex_toml_field(config, "base_url", &base_url)
+                        .map_err(AppError::InvalidInput)?;
+                settings.insert("config".to_string(), Value::String(updated));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn object_mut(value: &mut Value) -> &mut Map<String, Value> {
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    value.as_object_mut().expect("object initialized")
+}
+
+fn nested_object_mut<'a>(
+    parent: &'a mut Map<String, Value>,
+    key: &str,
+) -> &'a mut Map<String, Value> {
+    object_mut(
+        parent
+            .entry(key.to_string())
+            .or_insert_with(|| Value::Object(Map::new())),
+    )
+}
+
+fn set_selected(target: &mut Map<String, Value>, key: &str, value: Option<String>) {
+    if let Some(value) = value {
+        target.insert(key.to_string(), Value::String(value));
+    }
 }
 
 #[cfg(test)]

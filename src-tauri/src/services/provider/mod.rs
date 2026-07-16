@@ -4,19 +4,23 @@
 
 mod endpoints;
 mod gemini_auth;
-mod live;
+pub(crate) mod live;
 mod usage;
 
 use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use crate::app_config::AppType;
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
+use crate::services::provider_security::{
+    CredentialSource, MutationOutcome, ProviderMutationRequest, PROVIDER_REVISION_INITIAL,
+};
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
 
@@ -32,8 +36,8 @@ pub use live::{
 pub(crate) use live::sanitize_claude_settings_for_live;
 pub(crate) use live::{
     build_effective_settings_with_common_config, normalize_provider_common_config_for_storage,
-    provider_exists_in_live_config, strip_common_config_from_live_settings,
-    sync_current_provider_for_app_to_live, write_live_with_common_config,
+    provider_exists_in_live_config, sync_current_provider_for_app_to_live,
+    write_live_with_common_config,
 };
 
 // Internal re-exports
@@ -1283,6 +1287,13 @@ requires_openai_auth = true
         db.save_live_backup("claude-desktop", "{}")
             .await
             .expect("seed live backup");
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
         {
             let mut config = db
                 .get_proxy_config_for_app("claude-desktop")
@@ -1338,11 +1349,22 @@ requires_openai_auth = true
             "Claude Desktop provider edits should not rewrite takeover backup"
         );
 
+        let bound_port = db
+            .get_proxy_config()
+            .await
+            .expect("get proxy config")
+            .listen_port;
+        assert_ne!(
+            bound_port, 0,
+            "ephemeral proxy port should be persisted after start"
+        );
+        let expected_gateway = format!("http://127.0.0.1:{bound_port}/claude-desktop");
+
         let profile_path = claude_desktop_profile_path(home.dir.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
-            json!("http://127.0.0.1:15721/claude-desktop"),
+            json!(expected_gateway),
             "desktop profile should stay pointed at the local gateway during takeover"
         );
         assert_eq!(profile["inferenceGatewayAuthScheme"], json!("bearer"));
@@ -1585,7 +1607,9 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
-    fn import_opencode_providers_from_live_updates_existing_provider_from_live() {
+    fn import_opencode_providers_from_live_skips_existing_provider() {
+        // ADR 0001: Live import must not overwrite DB credentials/config for
+        // existing providers. Only brand-new live providers are imported.
         with_test_home(|state, _| {
             let provider = opencode_provider("existing-opencode");
             state
@@ -1602,18 +1626,17 @@ requires_openai_auth = true
 
             let updated = import_opencode_providers_from_live(state)
                 .expect("import opencode providers from live");
-            assert_eq!(updated, 1);
+            assert_eq!(updated, 0, "existing providers must be skipped");
 
             let saved = state
                 .db
                 .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
-                .expect("query updated opencode provider")
+                .expect("query existing opencode provider")
                 .expect("opencode provider should exist");
             assert_eq!(saved.name, provider.name);
-            assert_eq!(saved.settings_config["npm"], json!("@ai-sdk/anthropic"));
             assert_eq!(
-                saved.settings_config["models"]["gpt-4o"]["name"],
-                json!("Claude Sonnet")
+                saved.settings_config, provider.settings_config,
+                "DB-stored config must remain authoritative"
             );
         });
     }
@@ -1653,7 +1676,9 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
-    fn import_openclaw_providers_from_live_updates_existing_provider_from_live() {
+    fn import_openclaw_providers_from_live_skips_existing_provider() {
+        // ADR 0001: Live import must not overwrite DB credentials/config for
+        // existing providers. Only brand-new live providers are imported.
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("existing-openclaw");
             provider.settings_config["models"] = json!([
@@ -1669,34 +1694,37 @@ requires_openai_auth = true
 
             let mut live_settings = provider.settings_config.clone();
             live_settings["baseUrl"] = Value::String("https://api.example.com/v1".to_string());
-            live_settings["models"][0]["name"] = Value::String("Claude Sonnet 4.1".to_string());
+            live_settings["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4.1"
+                }
+            ]);
             crate::openclaw_config::set_provider(&provider.id, live_settings)
                 .expect("seed edited live openclaw provider");
 
             let updated = import_openclaw_providers_from_live(state)
                 .expect("import openclaw providers from live");
-            assert_eq!(updated, 1);
+            assert_eq!(updated, 0, "existing providers must be skipped");
 
             let saved = state
                 .db
                 .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
-                .expect("query updated openclaw provider")
+                .expect("query existing openclaw provider")
                 .expect("openclaw provider should exist");
             assert_eq!(saved.name, provider.name);
             assert_eq!(
-                saved.settings_config["baseUrl"],
-                json!("https://api.example.com/v1")
-            );
-            assert_eq!(
-                saved.settings_config["models"][0]["name"],
-                json!("Claude Sonnet 4.1")
+                saved.settings_config, provider.settings_config,
+                "DB-stored config must remain authoritative"
             );
         });
     }
 
     #[test]
     #[serial]
-    fn import_hermes_providers_from_live_updates_existing_provider_from_live() {
+    fn import_hermes_providers_from_live_skips_existing_provider() {
+        // ADR 0001: Live import must not overwrite DB credentials/config for
+        // existing providers. Only brand-new live providers are imported.
         with_test_home(|state, _| {
             let provider = hermes_provider("existing-hermes");
             state
@@ -1712,25 +1740,18 @@ requires_openai_auth = true
 
             let updated = import_hermes_providers_from_live(state)
                 .expect("import hermes providers from live");
-            assert_eq!(updated, 1);
+            assert_eq!(updated, 0, "existing providers must be skipped");
 
             let saved = state
                 .db
                 .get_provider_by_id(&provider.id, AppType::Hermes.as_str())
-                .expect("query updated hermes provider")
+                .expect("query existing hermes provider")
                 .expect("hermes provider should exist");
             assert_eq!(saved.name, provider.name);
             assert_eq!(
-                saved.settings_config["base_url"],
-                json!("https://api.hermes.example/v1")
+                saved.settings_config, provider.settings_config,
+                "DB-stored config must remain authoritative"
             );
-            // models are denormalized from YAML dict to UI-friendly array by
-            // get_providers(), so access by index rather than dict key
-            assert_eq!(
-                saved.settings_config["models"][0]["name"],
-                json!("GPT-4o Updated")
-            );
-            assert_eq!(saved.settings_config["models"][0]["id"], json!("gpt-4o"));
         });
     }
 
@@ -2224,90 +2245,124 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
-        // already exists in live config. Editing a DB-only provider must not auto-add it.
+        // Additive same-id path (OpenCode/OpenClaw/Hermes/OMO): DB is authoritative
+        // via CAS mutate. Live projection is gated inside mutate:
+        // - OMO: only current variant rewrites its profile file
+        // - other additive: only when the provider already exists in Live
+        // Editing a DB-only provider must not auto-add it to Live.
         if app_type.is_additive_mode() {
-            let omo_variant = if matches!(app_type, AppType::OpenCode) {
-                match provider.category.as_deref() {
-                    Some("omo") => Some(&crate::services::omo::STANDARD),
-                    Some("omo-slim") => Some(&crate::services::omo::SLIM),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            if let Some(variant) = omo_variant {
-                let is_current = state.db.is_omo_provider_current(
-                    app_type.as_str(),
+            // Preserve live_config_managed metadata before CAS so DB row stays consistent
+            // with whether this provider is present in the Live file.
+            // DB-only rows (live_config_managed=false) skip Live projection so a
+            // malformed Live file cannot block a pure DB edit — matching the pre-CAS
+            // behavior of check_live_config_exists(...).unwrap_or(false).
+            let is_omo = matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"));
+            let mut skip_live_projection = false;
+            if !is_omo {
+                let live_config_managed = Self::check_live_config_exists(
+                    &app_type,
                     &provider.id,
-                    variant.category,
+                    Self::provider_live_config_managed(&provider).or_else(|| {
+                        existing_provider
+                            .as_ref()
+                            .and_then(Self::provider_live_config_managed)
+                    }),
                 )?;
-                if is_current {
-                    crate::services::OmoService::write_provider_config_to_file(&provider, variant)?;
-                }
-                if let Err(err) = state.db.save_provider(app_type.as_str(), &provider) {
-                    if is_current {
-                        if let Err(rollback_err) =
-                            crate::services::OmoService::write_config_to_file(state, variant)
-                        {
-                            log::warn!(
-                                "Failed to roll back {} config after DB save error: {}",
-                                variant.label,
-                                rollback_err
-                            );
-                        }
-                    }
-                    return Err(err);
-                }
-                return Ok(true);
+                Self::set_provider_live_config_managed(&mut provider, live_config_managed);
+                skip_live_projection = !live_config_managed;
             }
-            let live_config_managed = Self::check_live_config_exists(
-                &app_type,
-                &provider.id,
-                Self::provider_live_config_managed(&provider).or_else(|| {
-                    existing_provider
-                        .as_ref()
-                        .and_then(Self::provider_live_config_managed)
-                }),
-            )?;
-            Self::set_provider_live_config_managed(&mut provider, live_config_managed);
 
-            // Save to database after live-config presence is resolved so parse errors
-            // do not report failure after already mutating DB state.
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            let expected_revision = state
+                .db
+                .get_provider_revision(app_type.as_str(), &provider.id)?
+                .unwrap_or(PROVIDER_REVISION_INITIAL);
 
-            if !live_config_managed {
-                return Ok(true);
+            let mut confirmed_credential_fields = BTreeSet::new();
+            // Provider-edit UI already collects the full intended credential set;
+            // auto-confirm so mutate can apply apiKey/baseUrl changes without a
+            // separate confirmation round-trip on this legacy path.
+            for field in ["apiKey", "baseUrl", "token", "auth_token", "access_token"] {
+                confirmed_credential_fields.insert(field.to_string());
             }
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-            return Ok(true);
+
+            let outcome = futures::executor::block_on(state.provider_mutation_coordinator.mutate(
+                ProviderMutationRequest {
+                    app_type: app_type.clone(),
+                    provider: provider.clone(),
+                    expected_revision,
+                    source: CredentialSource::ProviderEdit,
+                    confirmed_credential_fields,
+                    skip_live_projection,
+                },
+            ))?;
+
+            match outcome {
+                MutationOutcome::Conflict {
+                    current_revision, ..
+                } => {
+                    return Err(AppError::Message(format!(
+                        "供应商 revision 冲突（期望 {expected_revision}，实际 {current_revision}），请刷新后重试"
+                    )));
+                }
+                MutationOutcome::Saved { .. } => return Ok(true),
+            }
         }
 
-        // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        // Exclusive same-id path: DB is authoritative via CAS mutate.
+        // Live projection is gated inside mutate to effective-current only.
+        // Proxy takeover owns Live placeholders — skip projection and update backup.
+        let has_live_backup =
+            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                .ok()
+                .flatten()
+                .is_some();
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(&app_type);
+        let should_sync_via_proxy = has_live_backup || live_taken_over;
 
-        // For other apps: Check if this is current provider (use effective current, not just DB)
+        let expected_revision = state
+            .db
+            .get_provider_revision(app_type.as_str(), &provider.id)?
+            .unwrap_or(PROVIDER_REVISION_INITIAL);
+
+        let mut confirmed_credential_fields = BTreeSet::new();
+        // Provider-edit UI already collects the full intended credential set;
+        // auto-confirm so mutate can apply apiKey/baseUrl changes without a
+        // separate confirmation round-trip on this legacy path.
+        for field in ["apiKey", "baseUrl", "token", "auth_token", "access_token"] {
+            confirmed_credential_fields.insert(field.to_string());
+        }
+
+        let outcome = futures::executor::block_on(state.provider_mutation_coordinator.mutate(
+            ProviderMutationRequest {
+                app_type: app_type.clone(),
+                provider: provider.clone(),
+                expected_revision,
+                source: CredentialSource::ProviderEdit,
+                confirmed_credential_fields,
+                skip_live_projection: should_sync_via_proxy,
+            },
+        ))?;
+
+        match outcome {
+            MutationOutcome::Conflict {
+                current_revision, ..
+            } => {
+                return Err(AppError::Message(format!(
+                    "供应商 revision 冲突（期望 {expected_revision}，实际 {current_revision}），请刷新后重试"
+                )));
+            }
+            MutationOutcome::Saved { .. } => {}
+        }
+
+        // Side-effects after DB CAS: proxy takeover owns Live placeholders.
+        // ClaudeDesktop still writes its own profile; Claude/Codex refresh
+        // proxy-safe Live + backup; non-takeover exclusive apps reproject MCP.
         let effective_current =
             crate::settings::get_effective_current_provider(&state.db, &app_type)?;
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
-
         if is_current {
-            // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
-            // - 不直接走普通 Live 写入逻辑
-            // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
-            let has_live_backup =
-                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-                    .ok()
-                    .flatten()
-                    .is_some();
-            let live_taken_over = state
-                .proxy_service
-                .detect_takeover_in_live_config_for_app(&app_type);
-            // Backup or live placeholders mean the live file is currently owned
-            // by proxy takeover, including the short activation window before
-            // proxy_config.enabled is committed.
-            let should_sync_via_proxy = has_live_backup || live_taken_over;
-
             if should_sync_via_proxy {
                 if matches!(app_type, AppType::ClaudeDesktop) {
                     write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
@@ -2318,9 +2373,7 @@ impl ProviderService {
                             .update_live_backup_from_provider(app_type.as_str(), &provider),
                     )
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-                }
 
-                if futures::executor::block_on(state.proxy_service.is_running()) {
                     if matches!(app_type, AppType::Claude) {
                         futures::executor::block_on(
                             state
@@ -2330,11 +2383,9 @@ impl ProviderService {
                         .map_err(|e| {
                             AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
                         })?;
-                    } else if live_taken_over && matches!(app_type, AppType::Codex) {
-                        // Codex model mappings are projected into a generated
-                        // model_catalog_json file. Refresh takeover-owned Live
-                        // immediately so adding/removing mappings cannot leave
-                        // the previous catalog pointer and capabilities active.
+                    }
+
+                    if matches!(app_type, AppType::Codex) {
                         futures::executor::block_on(
                             state
                                 .proxy_service
@@ -2343,13 +2394,9 @@ impl ProviderService {
                         .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
                     }
                 }
-            } else {
-                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
-                // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
-                // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
-                // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
-                // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+            } else if !app_type.is_additive_mode() {
+                // Live was projected inside mutate only when this provider is
+                // effective current. Reproject MCP for exclusive apps (best-effort).
                 if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
                     log::warn!(
                         "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
@@ -2621,45 +2668,22 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Backfill: Backfill current live config to current provider
-        // Use effective current provider (validated existence) to ensure backfill targets valid provider
+        // DB credentials are authoritative (ADR 0001). Do NOT backfill Live API key /
+        // base URL into the outgoing provider — that can associate client-side drift
+        // with the wrong provider. Still harvest non-credential common-config snippet
+        // changes from Live before we project the next provider.
         let current_id = crate::settings::get_effective_current_provider(&state.db, &app_type)?;
-
         if let Some(current_id) = current_id {
-            if current_id != id {
-                // Additive mode apps - all providers coexist in the same file,
-                // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
-                if !app_type.is_additive_mode() {
-                    // Only backfill when switching to a different provider
-                    if let Ok(live_config) = read_live_settings(app_type.clone()) {
-                        if let Some(mut current_provider) = providers.get(&current_id).cloned() {
-                            // 切走前先把 live 里的可共享改动（含用户直接在应用内
-                            // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
-                            // 详见 sync_common_config_snippet_from_live 的文档。
-                            Self::sync_common_config_snippet_from_live(
-                                state,
-                                &app_type,
-                                &current_provider,
-                                &live_config,
-                                &mut result,
-                            );
-
-                            current_provider.settings_config =
-                                strip_common_config_from_live_settings(
-                                    state.db.as_ref(),
-                                    &app_type,
-                                    &current_provider,
-                                    live_config,
-                                );
-                            if let Err(e) =
-                                state.db.save_provider(app_type.as_str(), &current_provider)
-                            {
-                                log::warn!("Backfill failed: {e}");
-                                result
-                                    .warnings
-                                    .push(format!("backfill_failed:{current_id}"));
-                            }
-                        }
+            if current_id != id && !app_type.is_additive_mode() {
+                if let Ok(live_config) = read_live_settings(app_type.clone()) {
+                    if let Some(current_provider) = providers.get(&current_id) {
+                        Self::sync_common_config_snippet_from_live(
+                            state,
+                            &app_type,
+                            current_provider,
+                            &live_config,
+                            &mut result,
+                        );
                     }
                 }
             }
