@@ -146,6 +146,7 @@ export function useModelState({
   const isUserEditingRef = useRef(false);
   const lastConfigRef = useRef(settingsConfig);
   const latestConfigRef = useRef(settingsConfig);
+  const lastLocallyWrittenConfigRef = useRef<string | null>(null);
 
   latestConfigRef.current = settingsConfig;
 
@@ -157,10 +158,20 @@ export function useModelState({
     }
     if (isUserEditingRef.current) {
       isUserEditingRef.current = false;
+      // Ignore the immediate echo of our own write-back, but do not suppress
+      // a genuinely different external config such as switching to another
+      // preset/provider right after editing.
+      if (lastLocallyWrittenConfigRef.current === settingsConfig) {
+        lastConfigRef.current = settingsConfig;
+        return;
+      }
+    }
+    if (lastLocallyWrittenConfigRef.current === settingsConfig) {
       lastConfigRef.current = settingsConfig;
       return;
     }
     lastConfigRef.current = settingsConfig;
+    lastLocallyWrittenConfigRef.current = null;
 
     const parsed = parseModelsFromConfig(settingsConfig);
     setClaudeModel(parsed.model);
@@ -216,6 +227,7 @@ export function useModelState({
 
         const updatedConfig = JSON.stringify(currentConfig, null, 2);
         latestConfigRef.current = updatedConfig;
+        lastLocallyWrittenConfigRef.current = updatedConfig;
         onConfigChange(updatedConfig);
       } catch (err) {
         console.error("Failed to update model config:", err);

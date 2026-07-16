@@ -31,13 +31,20 @@ export function useBaseUrlState({
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [geminiBaseUrl, setGeminiBaseUrl] = useState("");
   const isUpdatingRef = useRef(false);
+  const pendingSettingsConfigRef = useRef<string | null>(null);
+  const pendingCodexConfigRef = useRef<string | null>(null);
 
   // 从配置同步到 state（Claude / Claude Desktop）
   useEffect(() => {
     if (appType !== "claude" && appType !== "claude-desktop") return;
     // 只有 official 类别不显示 Base URL 输入框，其他类别都需要回填
     if (category === "official") return;
-    if (isUpdatingRef.current) return;
+    if (
+      isUpdatingRef.current &&
+      pendingSettingsConfigRef.current === settingsConfig
+    ) {
+      return;
+    }
 
     try {
       const config = JSON.parse(settingsConfig || "{}");
@@ -56,7 +63,12 @@ export function useBaseUrlState({
     if (appType !== "codex") return;
     // 只有 official 类别不显示 Base URL 输入框，其他类别都需要回填
     if (category === "official") return;
-    if (isUpdatingRef.current) return;
+    if (
+      isUpdatingRef.current &&
+      pendingCodexConfigRef.current === codexConfig
+    ) {
+      return;
+    }
     if (!codexConfig) return;
 
     const extracted = extractCodexBaseUrl(codexConfig) || "";
@@ -68,7 +80,12 @@ export function useBaseUrlState({
     if (appType !== "gemini") return;
     // 只有 official 类别不显示 Base URL 输入框，其他类别都需要回填
     if (category === "official") return;
-    if (isUpdatingRef.current) return;
+    if (
+      isUpdatingRef.current &&
+      pendingSettingsConfigRef.current === settingsConfig
+    ) {
+      return;
+    }
 
     try {
       const config = JSON.parse(settingsConfig || "{}");
@@ -96,12 +113,15 @@ export function useBaseUrlState({
           config.env = {};
         }
         config.env.ANTHROPIC_BASE_URL = sanitized;
-        onSettingsConfigChange(JSON.stringify(config, null, 2));
+        const nextConfig = JSON.stringify(config, null, 2);
+        pendingSettingsConfigRef.current = nextConfig;
+        onSettingsConfigChange(nextConfig);
       } catch {
         // ignore
       } finally {
         setTimeout(() => {
           isUpdatingRef.current = false;
+          pendingSettingsConfigRef.current = null;
         }, 0);
       }
     },
@@ -123,10 +143,12 @@ export function useBaseUrlState({
         codexConfig || "",
         sanitized,
       );
+      pendingCodexConfigRef.current = updatedConfig;
       onCodexConfigChange(updatedConfig);
 
       setTimeout(() => {
         isUpdatingRef.current = false;
+        pendingCodexConfigRef.current = null;
       }, 0);
     },
     [codexConfig, onCodexConfigChange],
@@ -146,12 +168,15 @@ export function useBaseUrlState({
           config.env = {};
         }
         config.env.GOOGLE_GEMINI_BASE_URL = sanitized;
-        onSettingsConfigChange(JSON.stringify(config, null, 2));
+        const nextConfig = JSON.stringify(config, null, 2);
+        pendingSettingsConfigRef.current = nextConfig;
+        onSettingsConfigChange(nextConfig);
       } catch {
         // ignore
       } finally {
         setTimeout(() => {
           isUpdatingRef.current = false;
+          pendingSettingsConfigRef.current = null;
         }, 0);
       }
     },

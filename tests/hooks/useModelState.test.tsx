@@ -132,6 +132,45 @@ describe("useModelState", () => {
     expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
   });
 
+  it("switching to another preset after a local edit should not keep the previous model state", () => {
+    let settingsConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_MODEL: "LongCat-2.0",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-2.0",
+      },
+    });
+    const onConfigChange = vi.fn((config: string) => {
+      settingsConfig = config;
+    });
+
+    const { result, rerender } = renderHook(
+      ({ config }) =>
+        useModelState({
+          settingsConfig: config,
+          onConfigChange,
+        }),
+      {
+        initialProps: { config: settingsConfig },
+      },
+    );
+
+    act(() => {
+      result.current.handleModelChange("ANTHROPIC_MODEL", "LongCat-2.0");
+    });
+
+    settingsConfig = JSON.stringify({
+      env: {
+        ANTHROPIC_MODEL: "glm-5.1",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.1",
+      },
+    });
+
+    rerender({ config: settingsConfig });
+
+    expect(result.current.claudeModel).toBe("glm-5.1");
+    expect(result.current.defaultSonnetModel).toBe("glm-5.1");
+  });
+
   it("normalizes Claude Code 1M markers for UI toggles", () => {
     expect(hasClaudeOneMMarker("deepseek-v4-pro[1m]")).toBe(true);
     expect(hasClaudeOneMMarker("deepseek-v4-pro [1M]  ")).toBe(true);
