@@ -25,6 +25,11 @@ export interface OpenTerminalOptions {
   cwd?: string;
 }
 
+export interface ProviderUpdateOptions {
+  originalId?: string;
+  expectedRevision: number;
+}
+
 export interface ClaudeDesktopStatus {
   supported: boolean;
   configured: boolean;
@@ -48,6 +53,7 @@ export interface ClaudeDesktopDefaultRoute {
 
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
+    // Backend returns VersionedProvider { ...Provider, revision } via serde flatten.
     return await invoke("get_providers", { app: appId });
   },
 
@@ -66,12 +72,13 @@ export const providersApi = {
   async update(
     provider: Provider,
     appId: AppId,
-    originalId?: string,
+    options: ProviderUpdateOptions,
   ): Promise<boolean> {
     return await invoke("update_provider", {
       provider,
       app: appId,
-      originalId,
+      originalId: options.originalId,
+      expectedRevision: options.expectedRevision,
     });
   },
 

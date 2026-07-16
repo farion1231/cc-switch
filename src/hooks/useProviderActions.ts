@@ -332,7 +332,12 @@ export function useProviderActions(
           },
         };
 
-        await providersApi.update(updatedProvider, activeApp);
+        if (updatedProvider.revision === undefined) {
+          throw new Error("provider_revision_missing");
+        }
+        await providersApi.update(updatedProvider, activeApp, {
+          expectedRevision: updatedProvider.revision,
+        });
         await queryClient.invalidateQueries({
           queryKey: ["providers", activeApp],
         });

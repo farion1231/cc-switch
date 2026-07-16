@@ -152,7 +152,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       provider: Provider;
       originalId?: string;
     }) => {
-      await providersApi.update(provider, appId, originalId);
+      if (provider.revision === undefined) {
+        throw new Error("provider_revision_missing");
+      }
+      await providersApi.update(provider, appId, {
+        originalId,
+        expectedRevision: provider.revision,
+      });
       return provider;
     },
     onSuccess: async (provider, variables) => {
@@ -184,6 +190,18 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onError: (error: Error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
+      if (
+        detail.includes("provider_revision_conflict") ||
+        detail.includes("revision conflict")
+      ) {
+        toast.error(
+          t("notifications.providerRevisionConflict", {
+            defaultValue:
+              "供应商已被其他操作更新，请重新加载列表后再保存",
+          }),
+        );
+        return;
+      }
       toast.error(
         t("notifications.updateFailed", {
           defaultValue: "更新供应商失败: {{error}}",

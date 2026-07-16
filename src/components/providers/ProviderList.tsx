@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { providerSecurityApi } from "@/lib/api/providerSecurity";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -114,6 +115,27 @@ export function ProviderList({
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
+
+  // DB-vs-Live credential conflict counts for list badges
+  const providerIds = useMemo(() => Object.keys(providers), [providers]);
+  const { data: conflictCountById } = useQuery({
+    queryKey: ["providerSecurityConflicts", appId, providerIds],
+    queryFn: async () => {
+      const pairs = await Promise.all(
+        providerIds.map(async (id) => {
+          try {
+            const status = await providerSecurityApi.status(appId, id);
+            return [id, status.conflicts?.length ?? 0] as const;
+          } catch {
+            return [id, 0] as const;
+          }
+        }),
+      );
+      return Object.fromEntries(pairs) as Record<string, number>;
+    },
+    enabled: !isProxyTakeover && providerIds.length > 0,
+    staleTime: 30_000,
+  });
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
@@ -391,6 +413,7 @@ export function ProviderList({
               <SortableProviderCard
                 key={provider.id}
                 provider={provider}
+                conflictCount={conflictCountById?.[provider.id] ?? 0}
                 isCurrent={
                   isOmo
                     ? isOmoCurrent
@@ -557,6 +580,7 @@ interface SortableProviderCardProps {
   isTesting: boolean;
   isProxyRunning: boolean;
   isProxyTakeover: boolean;
+  conflictCount?: number;
   isAutoFailoverEnabled: boolean;
   failoverPriority?: number;
   isInFailoverQueue: boolean;
@@ -588,6 +612,7 @@ function SortableProviderCard({
   isTesting,
   isProxyRunning,
   isProxyTakeover,
+  conflictCount = 0,
   isAutoFailoverEnabled,
   failoverPriority,
   isInFailoverQueue,
@@ -635,6 +660,7 @@ function SortableProviderCard({
         isTesting={isTesting}
         isProxyRunning={isProxyRunning}
         isProxyTakeover={isProxyTakeover}
+        conflictCount={conflictCount}
         dragHandleProps={{
           attributes,
           listeners,

@@ -9,6 +9,10 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { openclawApi, providersApi, vscodeApi, type AppId } from "@/lib/api";
+import { providerSecurityApi } from "@/lib/api/providerSecurity";
+import { ProviderCredentialConflict } from "@/components/providers/ProviderCredentialConflict";
+import type { ProviderSecurityStatus } from "@/types/providerSecurity";
+import { extractErrorMessage } from "@/utils/errorUtils";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -32,6 +36,9 @@ export function EditProviderDialog({
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const [securityStatus, setSecurityStatus] =
+    useState<ProviderSecurityStatus | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
   const [liveSettings, setLiveSettings] = useState<Record<
@@ -131,27 +138,53 @@ export function EditProviderDialog({
     };
   }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
 
-  const initialSettingsConfig = useMemo(() => {
-    const base = (liveSettings ?? provider?.settingsConfig ?? {}) as Record<
-      string,
-      unknown
-    >;
+  // Load DB-vs-Live credential conflict status (does not overwrite form fields).
+  useEffect(() => {
+    if (!open || !provider?.id) {
+      setSecurityStatus(null);
+      setSaveError(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status = await providerSecurityApi.status(appId, provider.id);
+        if (!cancelled) setSecurityStatus(status);
+      } catch {
+        if (!cancelled) setSecurityStatus(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, provider?.id, appId]);
 
-    // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。Live 的 config.toml
-    // 仅在写入时投影出 model_catalog_json 指针；Codex.app 改写配置、代理接管/恢复周期、
-    // 来回切换供应商都可能让 Live 丢失该投影，从而 read_live_settings 反解为空。
-    // 若放任 Live 覆盖，编辑界面会显示空映射表，保存后连同数据库里的映射一起清空（数据丢失）。
-    // 因此始终以数据库 SSOT 的 modelCatalog 为准，仅在数据库确实没有时才回退到 Live 反解结果。
+
+  // Form is database-authoritative for credentials. Live is only used for
+  // non-credential enrichment (and never silently overwrites apiKey/baseUrl).
+  const initialSettingsConfig = useMemo(() => {
+    const db = (provider?.settingsConfig ?? {}) as Record<string, unknown>;
+    const live = (liveSettings ?? null) as Record<string, unknown> | null;
+
+    // Start from DB SSOT so credential fields always show stored values.
+    let base: Record<string, unknown> = { ...db };
+
+    // Optional: shallow-merge non-credential live hints for display-only fields
+    // when editing the currently active provider. Credentials stay from DB.
+    if (live && typeof live === "object") {
+      // no credential overwrite from live
+    }
+
+    // Codex 的 modelCatalog 是 cc-switch 私有字段，SSOT 在数据库。
     if (
       appId === "codex" &&
-      liveSettings &&
       provider?.settingsConfig &&
       typeof provider.settingsConfig === "object"
     ) {
       const dbCatalog = (provider.settingsConfig as Record<string, unknown>)
         .modelCatalog;
       if (dbCatalog !== undefined) {
-        return { ...base, modelCatalog: dbCatalog };
+        base = { ...base, modelCatalog: dbCatalog };
       }
     }
 
@@ -208,11 +241,35 @@ export function EditProviderDialog({
         ...(values.meta ? { meta: values.meta } : {}),
       };
 
-      await onSubmit({
-        provider: updatedProvider,
-        originalId: provider.id,
-      });
-      onOpenChange(false);
+      // Preserve optimistic-concurrency revision from list/query.
+      const withRevision: Provider = {
+        ...updatedProvider,
+        revision: provider.revision,
+      };
+
+      try {
+        await onSubmit({
+          provider: withRevision,
+          originalId: provider.id,
+        });
+        onOpenChange(false);
+      } catch (error) {
+        const detail = extractErrorMessage(error) || String(error ?? "");
+        setSaveError(detail);
+        if (
+          detail.includes("provider_revision_conflict") ||
+          detail.includes("revision")
+        ) {
+          // Refresh security status so user can re-resolve.
+          try {
+            const status = await providerSecurityApi.status(appId, provider.id);
+            setSecurityStatus(status);
+          } catch {
+            /* ignore */
+          }
+        }
+        throw error;
+      }
     },
     [appId, onSubmit, onOpenChange, provider],
   );
@@ -238,17 +295,43 @@ export function EditProviderDialog({
         </Button>
       }
     >
-      <ProviderForm
-        appId={appId}
-        providerId={provider.id}
-        submitLabel={t("common.save")}
-        onSubmit={handleSubmit}
-        onCancel={() => onOpenChange(false)}
-        onSubmittingChange={setIsFormSubmitting}
-        initialData={initialData}
-        showButtons={false}
-        isProxyTakeover={isProxyTakeover}
-      />
+      <div className="space-y-4">
+        {securityStatus && securityStatus.conflicts.length > 0 ? (
+          <ProviderCredentialConflict
+            appId={appId}
+            providerId={provider.id}
+            revision={securityStatus.revision}
+            conflicts={securityStatus.conflicts}
+            onImported={async () => {
+              try {
+                const status = await providerSecurityApi.status(
+                  appId,
+                  provider.id,
+                );
+                setSecurityStatus(status);
+              } catch {
+                /* ignore */
+              }
+            }}
+          />
+        ) : null}
+        {saveError ? (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {saveError}
+          </div>
+        ) : null}
+        <ProviderForm
+          appId={appId}
+          providerId={provider.id}
+          submitLabel={t("common.save")}
+          onSubmit={handleSubmit}
+          onCancel={() => onOpenChange(false)}
+          onSubmittingChange={setIsFormSubmitting}
+          initialData={initialData}
+          showButtons={false}
+          isProxyTakeover={isProxyTakeover}
+        />
+      </div>
     </FullScreenPanel>
   );
 }

@@ -11,6 +11,8 @@ export type ProviderCategory =
 export interface Provider {
   id: string;
   name: string;
+  /** Optimistic-concurrency revision returned by get_providers. */
+  revision?: number;
   settingsConfig: Record<string, any>; // 应用配置对象：Claude 为 settings.json；Codex 为 { auth, config }
   websiteUrl?: string;
   // 新增：供应商分类（用于差异化提示/能力开关）

@@ -43,6 +43,7 @@ import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSe
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
+import { ConfigurationSecuritySection } from "@/components/settings/ConfigurationSecuritySection";
 import { BackupListSection } from "@/components/settings/BackupListSection";
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import { AboutSection } from "@/components/settings/AboutSection";
@@ -380,7 +381,10 @@ export function SettingsPage({
                           </div>
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <ImportExportSection
+                          <div className="rounded-lg border p-4">
+                            <ConfigurationSecuritySection />
+                          </div>
+                    <ImportExportSection
                             status={importStatus}
                             selectedFile={selectedFile}
                             errorMessage={errorMessage}

@@ -6,6 +6,7 @@ const apiMocks = vi.hoisted(() => ({
   getCurrent: vi.fn(),
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
+  securityStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -17,6 +18,12 @@ vi.mock("@/lib/api", () => ({
   },
   openclawApi: {
     getLiveProvider: apiMocks.getOpenClawLiveProvider,
+  },
+}));
+
+vi.mock("@/lib/api/providerSecurity", () => ({
+  providerSecurityApi: {
+    status: apiMocks.securityStatus,
   },
 }));
 
@@ -96,9 +103,18 @@ describe("EditProviderDialog", () => {
     apiMocks.getCurrent.mockReset();
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
+    apiMocks.securityStatus.mockReset();
+    apiMocks.securityStatus.mockResolvedValue({
+      providerId: "deepseek",
+      appType: "codex",
+      revision: 1,
+      credentialValid: true,
+      conflicts: [],
+      configurationState: "synced",
+    });
   });
 
-  it("保留 Codex 数据库中的 modelCatalog，避免 live 配置缺字段时清空模型映射", async () => {
+  it("使用数据库配置初始化表单，不让 live 配置覆盖待编辑凭据", async () => {
     const dbModelCatalog = {
       models: [
         {
@@ -141,22 +157,26 @@ describe("EditProviderDialog", () => {
       />,
     );
 
+    // Form must stay DB-authoritative even if live is loaded for conflict checks /
+    // non-credential enrichment. Live credentials must never overwrite DB values.
     await waitFor(() => {
       expect(
         JSON.parse(screen.getByTestId("settings-config").textContent ?? "{}"),
-      ).toEqual({
-        ...liveSettings,
-        modelCatalog: dbModelCatalog,
-      });
+      ).toEqual(provider.settingsConfig);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
-    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual({
-      ...liveSettings,
-      modelCatalog: dbModelCatalog,
-    });
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).toEqual(
+      provider.settingsConfig,
+    );
+    // Ensure live key was not silently promoted into the form/save payload.
+    expect(handleSubmit.mock.calls[0][0].provider.settingsConfig).not.toEqual(
+      expect.objectContaining({
+        auth: expect.objectContaining({ OPENAI_API_KEY: "live-key" }),
+      }),
+    );
   });
 
   it("代理接管中编辑 Codex 供应商时展示数据库配置而不是读取 live 代理配置", async () => {

@@ -17,6 +17,7 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
+import { ProviderConflictBadge } from "@/components/providers/ProviderCredentialConflict";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import {
   extractCodexBaseUrl,
@@ -36,6 +37,7 @@ interface DragHandleProps {
 }
 
 interface ProviderCardProps {
+  conflictCount?: number;
   provider: Provider;
   isCurrent: boolean;
   appId: AppId;
@@ -164,6 +166,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  conflictCount = 0,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -433,6 +436,8 @@ export function ProviderCard({
                     })}
                   </span>
                 )}
+
+              <ProviderConflictBadge count={conflictCount ?? 0} />
 
               {isProxyRunning && isInFailoverQueue && health && (
                 <ProviderHealthBadge
