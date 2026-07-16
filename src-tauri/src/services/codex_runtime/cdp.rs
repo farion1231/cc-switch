@@ -235,25 +235,59 @@ async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError
         }
     }
 
-    // Stamp marker so reinjects skip reload; then evaluate product script.
-    let stamped = format!(
-        "try{{window.__ccSwitchCspBypassed=true;}}catch(_e){{}};\n{script}"
-    );
-    let eval = json!({
-        "id": 10,
-        "method": "Runtime.evaluate",
-        "params": {
-            "expression": stamped,
-            "awaitPromise": false,
-            "returnByValue": true
-        }
-    });
-    ws.send(Message::Text(eval.to_string().into()))
-        .await
-        .map_err(|e| AppError::Config(format!("cdp send evaluate: {e}")))?;
-    wait_for_cdp_id(&mut ws, 10, 5).await
+    // Evaluate product script first. Only stamp the CSP-bypass marker after a
+    // successful evaluate. Live Store Codex showed a sticky failure mode:
+    // stamping marker *before* the product script leaves
+    // window.__ccSwitchCspBypassed=true while __ccSwitchCodex is still undefined
+    // (subsequent injects then skip reload and never recover).
+    {
+        let eval = json!({
+            "id": 10,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": script,
+                "awaitPromise": false,
+                "returnByValue": true
+            }
+        });
+        ws.send(Message::Text(eval.to_string().into()))
+            .await
+            .map_err(|e| AppError::Config(format!("cdp send evaluate: {e}")))?;
+        wait_for_cdp_id(&mut ws, 10, 5).await?;
+    }
+
+    // Stamp marker only after product script accepted without exceptionDetails.
+    {
+        let stamp = json!({
+            "id": 11,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": "try{window.__ccSwitchCspBypassed=true;}catch(_e){};true",
+                "awaitPromise": false,
+                "returnByValue": true
+            }
+        });
+        ws.send(Message::Text(stamp.to_string().into()))
+            .await
+            .map_err(|e| AppError::Config(format!("cdp send stamp: {e}")))?;
+        wait_for_cdp_id(&mut ws, 11, 5).await
+    }
 }
 
+
+
+/// True when a CDP Runtime.evaluate-style response is usable (no protocol error
+/// and no JS exceptionDetails). Used so we never stamp the CSP marker after a
+/// failed product script.
+fn cdp_eval_response_ok(v: &Value) -> Result<(), String> {
+    if v.get("error").is_some() {
+        return Err(format!("cdp protocol error: {v}"));
+    }
+    if v.pointer("/result/exceptionDetails").is_some() {
+        return Err(format!("cdp exceptionDetails: {v}"));
+    }
+    Ok(())
+}
 
 async fn wait_for_cdp_id(
     ws: &mut (
@@ -272,9 +306,9 @@ async fn wait_for_cdp_id(
                 let v: Value = serde_json::from_str(&t)
                     .map_err(|e| AppError::Config(format!("cdp json: {e}")))?;
                 if v.get("id").and_then(|x| x.as_i64()) == Some(expect_id) {
-                    if v.get("error").is_some() {
+                    if let Err(msg) = cdp_eval_response_ok(&v) {
                         return Err(AppError::Config(format!(
-                            "cdp id {expect_id} error: {v}"
+                            "cdp id {expect_id}: {msg}"
                         )));
                     }
                     return Ok(());
@@ -380,5 +414,29 @@ mod tests {
     fn picks_app_shell_by_title_when_url_has_no_codex_token() {
         let targets = [target_with_title("page", "app://-/index.html", "Codex")];
         assert!(pick_codex_target(&targets).is_some());
+    }
+
+    #[test]
+    fn cdp_eval_accepts_clean_result() {
+        let v = serde_json::json!({"id": 10, "result": {"result": {"type": "string", "value": "ok"}}});
+        assert!(cdp_eval_response_ok(&v).is_ok());
+    }
+
+    #[test]
+    fn cdp_eval_rejects_exception_details() {
+        let v = serde_json::json!({
+            "id": 10,
+            "result": {
+                "result": {"type": "object"},
+                "exceptionDetails": {"text": "Uncaught", "lineNumber": 1}
+            }
+        });
+        assert!(cdp_eval_response_ok(&v).is_err());
+    }
+
+    #[test]
+    fn cdp_eval_rejects_protocol_error() {
+        let v = serde_json::json!({"id": 10, "error": {"code": -32000, "message": "x"}});
+        assert!(cdp_eval_response_ok(&v).is_err());
     }
 }
