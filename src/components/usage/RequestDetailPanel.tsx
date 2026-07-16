@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { formatReasoning } from "@/components/usage/format";
 import {
   Dialog,
   DialogContent,
@@ -181,6 +182,58 @@ export function RequestDetailPanel({
                   {request.outputTokens.toLocaleString()}
                 </dd>
               </div>
+
+              <div>
+                <dt className="text-muted-foreground">
+                  {t("usage.reasoning", "推理")}
+                </dt>
+                <dd className="font-mono">
+                  {formatReasoning(request)}
+                </dd>
+              </div>
+              {(request.reasoningSource ||
+                request.continuationStatus ||
+                request.turnId ||
+                request.promptFingerprint) && (
+                <div className="col-span-2 text-xs text-muted-foreground space-y-1">
+                  {request.reasoningSource && (
+                    <div>
+                      {t("usage.reasoningSource", "推理来源")}:{" "}
+                      <span className="font-mono">{request.reasoningSource}</span>
+                    </div>
+                  )}
+                  {request.continuationStatus &&
+                    request.continuationStatus !== "not_attempted" && (
+                      <div>
+                        {t("usage.continuationStatus", "续写状态")}:{" "}
+                        <span className="font-mono">
+                          {request.continuationStatus}
+                          {request.continuationRounds
+                            ? ` (R${request.continuationRounds})`
+                            : ""}
+                        </span>
+                      </div>
+                    )}
+                  {request.turnId && (
+                    <div>
+                      turn_id: <span className="font-mono">{request.turnId}</span>
+                    </div>
+                  )}
+                  {request.promptReplaced && (
+                    <div>{t("usage.promptReplaced", "Prompt 已替换")}</div>
+                  )}
+                  {request.identityCorrected && (
+                    <div>{t("usage.identityCorrected", "Identity 已校正")}</div>
+                  )}
+                  {request.promptFingerprint && (
+                    <div>
+                      fingerprint:{" "}
+                      <span className="font-mono">{request.promptFingerprint}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <dt className="text-muted-foreground">
                   {t("usage.cacheReadTokens", "缓存读取")}

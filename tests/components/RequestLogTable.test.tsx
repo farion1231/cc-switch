@@ -158,4 +158,63 @@ describe("RequestLogTable", () => {
       );
     });
   });
+
+  it.each([
+    [undefined, 0, "not_attempted", "—"],
+    [0, 0, "not_triggered", "Tok 0"],
+    [500, 0, "not_triggered", "Tok 500"],
+    [500, 2, "continued", "Tok 500 ✨2"],
+    [500, 1, "partial_failed", "Tok 500 ⚠"],
+  ] as const)(
+    "renders reasoning column for tokens=%s rounds=%s status=%s as %s",
+    async (reasoningTokens, continuationRounds, continuationStatus, expected) => {
+      useRequestLogsMock.mockImplementation(() => ({
+        data: {
+          data: [
+            {
+              requestId: "req-1",
+              providerId: "p1",
+              providerName: "Prov",
+              appType: "codex",
+              model: "gpt-5",
+              costMultiplier: "1.0",
+              inputTokens: 10,
+              outputTokens: 20,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              inputCostUsd: "0",
+              outputCostUsd: "0",
+              cacheReadCostUsd: "0",
+              cacheCreationCostUsd: "0",
+              totalCostUsd: "0",
+              isStreaming: false,
+              latencyMs: 100,
+              statusCode: 200,
+              createdAt: 1_710_000_000,
+              reasoningTokens,
+              continuationRounds,
+              continuationStatus,
+            },
+          ],
+          total: 1,
+          page: 0,
+          pageSize: 20,
+        },
+        isLoading: false,
+      }));
+
+      render(
+        <RequestLogTable
+          range={{ preset: "today" }}
+          rangeLabel="Today"
+          appType="codex"
+          refreshIntervalMs={0}
+        />,
+      );
+
+      expect(screen.getByText("usage.reasoning")).toBeInTheDocument();
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    },
+  );
+
 });

@@ -95,3 +95,19 @@ export function formatTokensShort(
   if (value >= 1e3) return `${(value / 1e3).toFixed(decimals)}K`;
   return value.toLocaleString();
 }
+
+export type ReasoningFormatInput = {
+  reasoningTokens?: number;
+  continuationRounds?: number;
+  continuationStatus?: string;
+};
+
+/** unknown (undefined) → "—"; known 0 → "Tok 0"; N → "Tok N"; rounds/partial markers */
+export function formatReasoning(log: ReasoningFormatInput): string {
+  if (log.reasoningTokens === undefined) return "—";
+  const base = `Tok ${log.reasoningTokens.toLocaleString()}`;
+  if (log.continuationStatus === "partial_failed") return `${base} ⚠`;
+  const rounds = log.continuationRounds ?? 0;
+  return rounds > 0 ? `${base} ✨${rounds}` : base;
+}
+

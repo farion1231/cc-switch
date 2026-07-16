@@ -44,6 +44,7 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
+use crate::proxy::usage::parser::CodexReasoningUsage;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -2381,6 +2382,7 @@ async fn log_usage(
         session_id,
         None, // provider_type
         is_streaming,
+        CodexReasoningUsage::not_attempted(),
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }

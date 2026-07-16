@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatReasoning,
   formatTokensShort,
   getLocaleFromLanguage,
 } from "@/components/usage/format";
@@ -15,3 +16,25 @@ describe("usage format helpers", () => {
     expect(getLocaleFromLanguage("zh-HK")).toBe("zh-TW");
   });
 });
+
+describe("formatReasoning", () => {
+  it.each([
+    [undefined, 0, "not_attempted", "—"],
+    [0, 0, "not_triggered", "Tok 0"],
+    [500, 0, "not_triggered", "Tok 500"],
+    [500, 2, "continued", "Tok 500 ✨2"],
+    [500, 1, "partial_failed", "Tok 500 ⚠"],
+  ] as const)(
+    "renders reasoningTokens=%s rounds=%s status=%s as %s",
+    (reasoningTokens, continuationRounds, continuationStatus, expected) => {
+      expect(
+        formatReasoning({
+          reasoningTokens,
+          continuationRounds,
+          continuationStatus,
+        }),
+      ).toBe(expected);
+    },
+  );
+});
+

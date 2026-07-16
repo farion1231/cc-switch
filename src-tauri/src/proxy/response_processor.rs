@@ -10,7 +10,7 @@ use super::{
     hyper_client::ProxyResponse,
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
-    usage::parser::TokenUsage,
+    usage::parser::{CodexReasoningUsage, TokenUsage},
     ProxyError,
 };
 use crate::database::PRICING_SOURCE_REQUEST;
@@ -668,6 +668,7 @@ async fn log_usage_internal(
         session_id,
         None, // provider_type
         is_streaming,
+        CodexReasoningUsage::not_attempted(),
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }

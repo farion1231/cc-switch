@@ -1,7 +1,7 @@
 //! Usage Logger - 记录 API 请求使用情况
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
-use super::parser::TokenUsage;
+use super::parser::{CodexReasoningUsage, TokenUsage};
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
@@ -35,6 +35,15 @@ pub struct RequestLog {
     pub is_streaming: bool,
     /// 成本倍数
     pub cost_multiplier: String,
+    /// Codex reasoning token count (None = unknown / not applicable).
+    pub reasoning_tokens: Option<u32>,
+    pub reasoning_source: Option<String>,
+    pub continuation_status: String,
+    pub continuation_rounds: u32,
+    pub turn_id: Option<String>,
+    pub prompt_replaced: bool,
+    pub identity_corrected: bool,
+    pub prompt_fingerprint: Option<String>,
 }
 
 /// 使用量记录器
@@ -84,8 +93,10 @@ impl<'a> UsageLogger<'a> {
                 input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
-                provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+                provider_type, is_streaming, cost_multiplier, created_at,
+                reasoning_tokens, reasoning_source, continuation_status, continuation_rounds,
+                turn_id, prompt_replaced, identity_corrected, prompt_fingerprint
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
             rusqlite::params![
                 log.request_id,
                 log.provider_id,
@@ -112,6 +123,14 @@ impl<'a> UsageLogger<'a> {
                 log.is_streaming as i64,
                 log.cost_multiplier,
                 created_at,
+                log.reasoning_tokens.map(|v| v as i64),
+                log.reasoning_source,
+                log.continuation_status,
+                log.continuation_rounds as i64,
+                log.turn_id,
+                log.prompt_replaced as i64,
+                log.identity_corrected as i64,
+                log.prompt_fingerprint,
             ],
         )
         .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
@@ -155,6 +174,15 @@ impl<'a> UsageLogger<'a> {
             provider_type: None,
             is_streaming: false,
             cost_multiplier: "1.0".to_string(),
+
+            reasoning_tokens: None,
+            reasoning_source: None,
+            continuation_status: "not_attempted".to_string(),
+            continuation_rounds: 0,
+            turn_id: None,
+            prompt_replaced: false,
+            identity_corrected: false,
+            prompt_fingerprint: None,
         };
 
         self.log_request(&log)
@@ -196,6 +224,15 @@ impl<'a> UsageLogger<'a> {
             provider_type,
             is_streaming,
             cost_multiplier: "1.0".to_string(),
+
+            reasoning_tokens: None,
+            reasoning_source: None,
+            continuation_status: "not_attempted".to_string(),
+            continuation_rounds: 0,
+            turn_id: None,
+            prompt_replaced: false,
+            identity_corrected: false,
+            prompt_fingerprint: None,
         };
 
         self.log_request(&log)
@@ -328,6 +365,7 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
         is_streaming: bool,
+        codex_meta: CodexReasoningUsage,
     ) -> Result<(), AppError> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
@@ -364,6 +402,18 @@ impl<'a> UsageLogger<'a> {
             provider_type,
             is_streaming,
             cost_multiplier: cost_multiplier.to_string(),
+            reasoning_tokens: codex_meta.reasoning_tokens,
+            reasoning_source: codex_meta.reasoning_source,
+            continuation_status: if codex_meta.continuation_status.is_empty() {
+                "not_attempted".to_string()
+            } else {
+                codex_meta.continuation_status
+            },
+            continuation_rounds: codex_meta.continuation_rounds,
+            turn_id: codex_meta.turn_id,
+            prompt_replaced: codex_meta.prompt_replaced,
+            identity_corrected: codex_meta.identity_corrected,
+            prompt_fingerprint: codex_meta.prompt_fingerprint,
         };
 
         self.log_request(&log)
@@ -415,6 +465,7 @@ mod tests {
             None,
             Some("claude".to_string()),
             false,
+            CodexReasoningUsage::not_attempted(),
         )?;
 
         // 验证记录已插入

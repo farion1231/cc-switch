@@ -29,6 +29,7 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
   fmtInt,
   fmtUsd,
+  formatReasoning,
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
@@ -170,6 +171,9 @@ export function RequestLogTable({
                     {t("usage.outputTokens")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
+                    {t("usage.reasoning")}
+                  </TableHead>
+                  <TableHead className="text-center whitespace-nowrap">
                     {t("usage.totalCost")}
                   </TableHead>
                   <TableHead className="text-center whitespace-nowrap">
@@ -269,6 +273,9 @@ export function RequestLogTable({
                         </TableCell>
                         <TableCell className="text-center">
                           {fmtInt(log.outputTokens, locale)}
+                        </TableCell>
+                        <TableCell className="text-center px-1.5 tabular-nums">
+                          {formatReasoning(log)}
                         </TableCell>
                         <TableCell className="text-center px-1.5">
                           <div

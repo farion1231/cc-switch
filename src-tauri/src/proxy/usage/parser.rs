@@ -46,6 +46,30 @@ pub struct TokenUsage {
     pub message_id: Option<String>,
 }
 
+/// Codex workbench reasoning / continuation metadata attached to a request log.
+/// Defaults keep existing non-Codex call sites unchanged.
+#[derive(Debug, Clone, Default)]
+pub struct CodexReasoningUsage {
+    /// NULL in DB when unknown; Some(0) means known-zero. Never collapse these.
+    pub reasoning_tokens: Option<u32>,
+    pub reasoning_source: Option<String>,
+    pub continuation_status: String,
+    pub continuation_rounds: u32,
+    pub turn_id: Option<String>,
+    pub prompt_replaced: bool,
+    pub identity_corrected: bool,
+    pub prompt_fingerprint: Option<String>,
+}
+
+impl CodexReasoningUsage {
+    pub fn not_attempted() -> Self {
+        Self {
+            continuation_status: "not_attempted".to_string(),
+            ..Default::default()
+        }
+    }
+}
+
 impl TokenUsage {
     /// 生成与 session 日志共享的 request_id，用于跨源去重。
     /// 有 message_id 时返回 `session:{id}`，否则回退到随机 UUID。

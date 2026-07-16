@@ -34,6 +34,21 @@ export interface RequestLog {
   errorMessage?: string;
   createdAt: number;
   dataSource?: string;
+  /** undefined = unknown/SQL NULL; 0 = known zero */
+  reasoningTokens?: number;
+  reasoningSource?: "proxy_response" | "codex_session";
+  continuationStatus?:
+    | "not_attempted"
+    | "not_eligible"
+    | "not_triggered"
+    | "continued"
+    | "skipped"
+    | "partial_failed";
+  continuationRounds?: number;
+  turnId?: string;
+  promptReplaced?: boolean;
+  identityCorrected?: boolean;
+  previousResponseId?: string;
 }
 
 export interface SessionSyncResult {
