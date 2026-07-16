@@ -1096,6 +1096,26 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
+/// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
+///
+/// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
+/// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+fn normalize_function_parameters(params: Option<&Value>) -> Value {
+    let mut params = match params {
+        Some(Value::Object(obj)) => Value::Object(obj.clone()),
+        _ => json!({"type": "object", "properties": {}}),
+    };
+    if let Some(obj) = params.as_object_mut() {
+        match obj.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {}
+            _ => {
+                obj.insert("type".to_string(), json!("object"));
+            }
+        }
+    }
+    params
+}
+
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
     if tool.get("type").and_then(|v| v.as_str()) != Some("function") {
         return None;
@@ -1110,6 +1130,14 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .get_mut("function")
             .and_then(|value| value.as_object_mut())
         {
+            // Ensure parameters.type is "object" for strict OpenAI-compatible providers
+            if let Some(params) = obj.get("parameters") {
+                let normalized = normalize_function_parameters(Some(params));
+                if normalized != *params {
+                    obj.insert("parameters".to_string(), normalized);
+                }
+            }
+
             obj.insert("name".to_string(), json!(chat_name));
             if let Some(strict) = tool.get("strict").cloned() {
                 obj.entry("strict".to_string()).or_insert(strict);
@@ -1121,7 +1149,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     let mut function = json!({
         "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
+        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
