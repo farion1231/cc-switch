@@ -1,4 +1,5 @@
 use crate::database::Database;
+use crate::services::codex_runtime::CodexRuntimeHandle;
 use crate::services::{ProviderMutationCoordinator, ProxyService, UsageCache};
 use std::sync::Arc;
 
@@ -8,10 +9,10 @@ pub struct AppState {
     pub proxy_service: ProxyService,
     pub usage_cache: Arc<UsageCache>,
     pub provider_mutation_coordinator: ProviderMutationCoordinator,
+    pub codex_runtime: Arc<CodexRuntimeHandle>,
 }
 
 impl AppState {
-    /// 创建新的应用状态
     pub fn new(db: Arc<Database>) -> Self {
         let proxy_service = ProxyService::new(db.clone());
         let provider_mutation_coordinator = ProviderMutationCoordinator::new(db.clone());
@@ -21,6 +22,7 @@ impl AppState {
             proxy_service,
             usage_cache: Arc::new(UsageCache::new()),
             provider_mutation_coordinator,
+            codex_runtime: Arc::new(CodexRuntimeHandle::new()),
         }
     }
 }

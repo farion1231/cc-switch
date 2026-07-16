@@ -2,9 +2,14 @@ import { useTranslation } from "react-i18next";
 import {
   useCodexWorkbenchSettingsQuery,
   useCodexWorkbenchStatusQuery,
+  useLaunchEnhancedCodex,
+  useReinjectCodexEnhancements,
+  useUpdateCodexWorkbenchSettings,
 } from "@/lib/query/codexWorkbench";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import type { CodexEnhancementSettings } from "@/types/codexWorkbench";
 
 /**
  * Codex 工作台壳层页面。
@@ -13,14 +18,42 @@ import { Badge } from "@/components/ui/badge";
  */
 export function CodexWorkbenchPage() {
   const { t } = useTranslation();
-  const statusQuery = useCodexWorkbenchStatusQuery({
-    enabled: true,
-    refetchInterval: 2000,
-  });
+  const statusQuery = useCodexWorkbenchStatusQuery(true);
   const settingsQuery = useCodexWorkbenchSettingsQuery(true);
+  const updateSettings = useUpdateCodexWorkbenchSettings();
+  const launchMut = useLaunchEnhancedCodex();
+  const reinjectMut = useReinjectCodexEnhancements();
 
   const status = statusQuery.data;
   const settings = settingsQuery.data;
+
+  const toggleEnhancement = (key: keyof CodexEnhancementSettings) => {
+    if (!settings) return;
+    updateSettings.mutate({
+      ...settings,
+      enhancements: {
+        ...settings.enhancements,
+        [key]: !settings.enhancements[key],
+      },
+    });
+  };
+
+  const enhancementEntries: Array<{
+    key: keyof CodexEnhancementSettings;
+    label: string;
+  }> = [
+    { key: "pluginUnlock", label: "插件解锁" },
+    { key: "autoExpand", label: "自动展开" },
+    { key: "sessionDelete", label: "会话删除" },
+    { key: "wideConversation", label: "宽对话" },
+    { key: "nativeMenu", label: "原生菜单" },
+    { key: "userScriptRuntime", label: "用户脚本" },
+    { key: "markdownExport", label: "Markdown 导出" },
+    { key: "modelSwitcher", label: "模型切换" },
+    { key: "systemPrompt", label: "系统提示" },
+    { key: "reasoningResume", label: "推理恢复" },
+    { key: "reasoningToken", label: "推理 Token" },
+  ];
 
   return (
     <div className="flex h-full flex-col gap-4 p-4">
@@ -30,31 +63,74 @@ export function CodexWorkbenchPage() {
         </h2>
         {status && (
           <>
-            <Badge variant="secondary">
-              {t("codexWorkbench.runtime", { defaultValue: "运行时" })}:{" "}
+            <Badge variant="outline">
               {status.runtimeState}
             </Badge>
-            <Badge variant={status.proxyRunning ? "default" : "outline"}>
-              proxy: {status.proxyRunning ? "on" : "off"}
+            <Badge variant="secondary">
+              bridge: {status.bridgeState}
             </Badge>
-            <Badge variant="outline">
-              {status.platformSupported ? "Windows" : "unsupported"}
-            </Badge>
-            {status.currentProviderId && (
-              <Badge variant="outline">
-                provider: {status.currentProviderId}
-              </Badge>
+            {status.cdpPort != null && (
+              <Badge variant="secondary">CDP {status.cdpPort}</Badge>
+            )}
+            {status.proxyRunning && (
+              <Badge variant="default">proxy</Badge>
             )}
           </>
         )}
-        {statusQuery.isError && (
-          <span className="text-sm text-destructive">
-            {t("codexWorkbench.statusError", {
-              defaultValue: "状态加载失败",
-            })}
-          </span>
-        )}
+        <div className="ml-auto flex gap-2">
+          <Button
+            size="sm"
+            onClick={() => launchMut.mutate()}
+            disabled={
+              launchMut.isPending ||
+              status?.platformSupported === false ||
+              status?.runtimeState === "ordinary_running"
+            }
+          >
+            {t("codexWorkbench.launch", { defaultValue: "启动增强 Codex" })}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => reinjectMut.mutate()}
+            disabled={
+              reinjectMut.isPending ||
+              !status?.cdpPort ||
+              status?.runtimeState === "ordinary_running"
+            }
+          >
+            {t("codexWorkbench.reinject", { defaultValue: "重新注入" })}
+          </Button>
+        </div>
       </div>
+
+      {(status?.lastError ||
+        launchMut.error ||
+        reinjectMut.error ||
+        status?.runtimeState === "ordinary_running") && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+          {status?.runtimeState === "ordinary_running" && (
+            <p>
+              {t("codexWorkbench.ordinaryRunningHint", {
+                defaultValue:
+                  "检测到已运行的普通 Codex。请先手动关闭后再启动增强模式（不会强制结束进程）。",
+              })}
+            </p>
+          )}
+          {status?.lastError && <p>{status.lastError}</p>}
+          {launchMut.error && (
+            <p className="text-destructive">
+              {(launchMut.error as Error).message || String(launchMut.error)}
+            </p>
+          )}
+          {reinjectMut.error && (
+            <p className="text-destructive">
+              {(reinjectMut.error as Error).message ||
+                String(reinjectMut.error)}
+            </p>
+          )}
+        </div>
+      )}
 
       <Tabs defaultValue="enhancements" className="flex min-h-0 flex-1 flex-col">
         <TabsList className="w-fit">
@@ -75,38 +151,32 @@ export function CodexWorkbenchPage() {
         </TabsList>
 
         <TabsContent value="enhancements" className="flex-1 overflow-auto">
-          <div className="space-y-2 rounded-lg border p-4 text-sm">
+          <div className="space-y-3 rounded-lg border p-4 text-sm">
             <p className="text-muted-foreground">
               {t("codexWorkbench.enhancementsHint", {
                 defaultValue:
-                  "增强开关矩阵（后续任务接开关控件）。默认：前 6 项开启，后 5 项关闭。",
+                  "增强开关会写入本地设置，并在启动/重新注入时注入到 Codex 页面。",
               })}
             </p>
-            {settings && (
-              <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                {Object.entries(settings.enhancements).map(([key, value]) => (
-                  <li
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {enhancementEntries.map(({ key, label }) => {
+                const on = settings?.enhancements?.[key] ?? false;
+                return (
+                  <button
                     key={key}
-                    className="flex items-center justify-between rounded bg-muted/40 px-2 py-1"
+                    type="button"
+                    className="flex items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted/50"
+                    onClick={() => toggleEnhancement(key)}
+                    disabled={!settings || updateSettings.isPending}
                   >
-                    <span className="font-mono text-xs">{key}</span>
-                    <Badge variant={value ? "default" : "outline"}>
-                      {value ? "on" : "off"}
+                    <span>{label}</span>
+                    <Badge variant={on ? "default" : "outline"}>
+                      {on ? "ON" : "OFF"}
                     </Badge>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {settings && (
-              <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                <div>autoLaunch: {String(settings.autoLaunch)}</div>
-                <div>autoStartProxy: {String(settings.autoStartProxy)}</div>
-                <div>radarTtlMinutes: {settings.radarTtlMinutes}</div>
-                <div className="truncate">
-                  scriptMarketUrl: {settings.scriptMarketUrl}
-                </div>
-              </div>
-            )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </TabsContent>
 

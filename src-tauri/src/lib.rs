@@ -1229,6 +1229,8 @@ pub fn run() {
             commands::get_codex_workbench_status,
             commands::get_codex_workbench_settings,
             commands::update_codex_workbench_settings,
+            commands::launch_enhanced_codex,
+            commands::reinject_codex_enhancements,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,

@@ -8,16 +8,12 @@ export const codexWorkbenchKeys = {
   settings: () => [...codexWorkbenchKeys.all, "settings"] as const,
 };
 
-/** 工作台状态：仅在页面可见时由调用方开启 refetchInterval */
-export function useCodexWorkbenchStatusQuery(opts?: {
-  enabled?: boolean;
-  refetchInterval?: number | false;
-}) {
+export function useCodexWorkbenchStatusQuery(enabled = true) {
   return useQuery({
     queryKey: codexWorkbenchKeys.status(),
     queryFn: () => codexWorkbenchApi.getStatus(),
-    enabled: opts?.enabled ?? true,
-    refetchInterval: opts?.refetchInterval,
+    enabled,
+    refetchInterval: 3000,
   });
 }
 
@@ -36,6 +32,26 @@ export function useUpdateCodexWorkbenchSettings() {
       codexWorkbenchApi.updateSettings(settings),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.settings() });
+      void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.status() });
+    },
+  });
+}
+
+export function useLaunchEnhancedCodex() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => codexWorkbenchApi.launchEnhanced(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.status() });
+    },
+  });
+}
+
+export function useReinjectCodexEnhancements() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => codexWorkbenchApi.reinject(),
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: codexWorkbenchKeys.status() });
     },
   });
