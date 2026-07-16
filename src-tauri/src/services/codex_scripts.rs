@@ -105,7 +105,8 @@ fn load_meta() -> ScriptsMeta {
 fn save_meta(meta: &ScriptsMeta) -> Result<(), AppError> {
     ensure_root()?;
     let path = meta_path();
-    let bytes = serde_json::to_vec_pretty(meta).map_err(|e| AppError::JsonSerialize { source: e })?;
+    let bytes =
+        serde_json::to_vec_pretty(meta).map_err(|e| AppError::JsonSerialize { source: e })?;
     atomic_write(&path, &bytes)
 }
 
@@ -223,7 +224,10 @@ pub fn list_scripts() -> Result<Vec<UserScriptInfo>, AppError> {
 }
 
 /// Import a local .js file into the scripts root (copy + enable).
-pub fn import_local_script(source_path: &Path, key: Option<&str>) -> Result<UserScriptInfo, AppError> {
+pub fn import_local_script(
+    source_path: &Path,
+    key: Option<&str>,
+) -> Result<UserScriptInfo, AppError> {
     ensure_root()?;
     if !source_path.is_file() {
         return Err(AppError::InvalidInput(format!(
@@ -281,7 +285,11 @@ pub fn set_script_enabled(key: &str, enabled: bool) -> Result<(), AppError> {
 pub fn delete_user_script(key: &str) -> Result<(), AppError> {
     let safe = sanitize_market_id(key)?;
     let mut meta = load_meta();
-    let source = meta.sources.get(&safe).map(|s| s.as_str()).unwrap_or("user");
+    let source = meta
+        .sources
+        .get(&safe)
+        .map(|s| s.as_str())
+        .unwrap_or("user");
     if source == "builtin" {
         return Err(AppError::InvalidInput(
             "cannot delete builtin scripts".into(),
@@ -357,7 +365,8 @@ pub fn install_bytes(
 
 /// Refresh market index (user-initiated only).
 pub async fn refresh_market(market_url: &str) -> Result<MarketIndex, AppError> {
-    if !(market_url.starts_with("https://") || market_url.starts_with("http://127.0.0.1")
+    if !(market_url.starts_with("https://")
+        || market_url.starts_with("http://127.0.0.1")
         || market_url.starts_with("http://localhost"))
     {
         return Err(AppError::InvalidInput(
@@ -474,13 +483,7 @@ pub async fn install_from_market(
             }
         });
 
-    install_bytes(
-        &safe,
-        &bytes,
-        Some(&entry.version),
-        expected,
-        "market",
-    )
+    install_bytes(&safe, &bytes, Some(&entry.version), expected, "market")
 }
 
 /// Build JS snippet that wraps each enabled script in try/catch and reports status.
@@ -547,10 +550,7 @@ mod tests {
             crate::app_store::set_app_config_dir_override_for_test(Some(tmp.path().to_path_buf()));
             let root = scripts_root();
             fs::create_dir_all(&root).unwrap();
-            Self {
-                _tmp: tmp,
-                root,
-            }
+            Self { _tmp: tmp, root }
         }
 
         fn with_installed(key: &str, code: &str) -> Result<Self, AppError> {
@@ -565,7 +565,13 @@ mod tests {
             code: &str,
             wrong_hash: &str,
         ) -> Result<UserScriptInfo, AppError> {
-            install_bytes(key, code.as_bytes(), Some("2.0.0"), Some(wrong_hash), "market")
+            install_bytes(
+                key,
+                code.as_bytes(),
+                Some("2.0.0"),
+                Some(wrong_hash),
+                "market",
+            )
         }
 
         fn contents(&self, key: &str) -> Result<String, AppError> {
@@ -595,10 +601,7 @@ mod tests {
         let error = fixture
             .install_with_hash("demo", "new code", "wrong-hash")
             .unwrap_err();
-        assert!(
-            error.to_string().contains("SHA-256"),
-            "error was: {error}"
-        );
+        assert!(error.to_string().contains("SHA-256"), "error was: {error}");
         assert_eq!(fixture.contents("demo")?, "old code");
         Ok(())
     }

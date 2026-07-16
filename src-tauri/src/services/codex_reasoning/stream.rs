@@ -20,7 +20,6 @@ pub fn extract_terminal_output(terminal: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-
 /// Parse a full Responses-API SSE buffer into a ContinuationRoundResult.
 ///
 /// Scans events for the last `response.completed` (or any event carrying
@@ -30,9 +29,8 @@ pub fn parse_sse_to_round(
     round_index: u8,
     duration_ms: u64,
 ) -> Result<ContinuationRoundResult, AppError> {
-    let text = std::str::from_utf8(&sse).map_err(|e| {
-        AppError::InvalidInput(format!("SSE is not valid UTF-8: {e}"))
-    })?;
+    let text = std::str::from_utf8(&sse)
+        .map_err(|e| AppError::InvalidInput(format!("SSE is not valid UTF-8: {e}")))?;
 
     let mut events: Vec<Value> = Vec::new();
     let mut data_lines: Vec<String> = Vec::new();
@@ -106,7 +104,11 @@ pub fn parse_sse_to_round(
                 .pointer("/usage/completion_tokens_details/reasoning_tokens")
                 .and_then(|v| v.as_u64())
         })
-        .or_else(|| terminal.pointer("/usage/reasoning_tokens").and_then(|v| v.as_u64()))
+        .or_else(|| {
+            terminal
+                .pointer("/usage/reasoning_tokens")
+                .and_then(|v| v.as_u64())
+        })
         .map(|n| n as u32);
 
     let usage = if let Some(tu) = TokenUsage::from_codex_response(&terminal) {
@@ -147,7 +149,6 @@ pub fn parse_sse_to_round(
         terminal_output,
     })
 }
-
 
 /// Concatenate multiple SSE byte buffers into a single client-facing stream.
 ///
@@ -263,7 +264,9 @@ mod tests {
         assert!(s.contains("output_item.done"));
         assert!(!s.contains("response.completed"));
         let kept = strip_intermediate_completed(&sse, true);
-        assert!(std::str::from_utf8(&kept).unwrap().contains("response.completed"));
+        assert!(std::str::from_utf8(&kept)
+            .unwrap()
+            .contains("response.completed"));
     }
 
     #[test]

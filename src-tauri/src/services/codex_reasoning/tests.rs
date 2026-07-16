@@ -106,9 +106,13 @@ fn continue_request_preserves_model_and_appends_output() {
 #[test]
 fn stream_helpers_compose() {
     let a = Bytes::from_static(b"data: a\n\n");
-    let b = Bytes::from_static(b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n");
+    let b = Bytes::from_static(
+        b"event: response.completed\ndata: {\"type\":\"response.completed\"}\n\n",
+    );
     let stripped = strip_intermediate_completed(&b, false);
-    assert!(!std::str::from_utf8(&stripped).unwrap().contains("completed"));
+    assert!(!std::str::from_utf8(&stripped)
+        .unwrap()
+        .contains("completed"));
     let merged = concat_sse_rounds(&[a, stripped]);
     assert!(std::str::from_utf8(&merged).unwrap().contains("data: a"));
 }

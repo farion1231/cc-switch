@@ -111,13 +111,7 @@ pub fn apply_selected_credentials(
     app_type: &AppType,
     confirmed_fields: &BTreeSet<String>,
 ) -> Result<(), AppError> {
-    apply_selected_credentials_inner(
-        target,
-        live_settings,
-        app_type,
-        confirmed_fields,
-        false,
-    )
+    apply_selected_credentials_inner(target, live_settings, app_type, confirmed_fields, false)
 }
 
 pub(crate) fn restore_selected_credentials(
@@ -170,26 +164,76 @@ fn apply_selected_credentials_inner(
     match app_type {
         AppType::Claude | AppType::ClaudeDesktop => {
             let env = nested_object_mut(settings, "env");
-            set_selected(env, "ANTHROPIC_AUTH_TOKEN", selected_fields.contains("apiKey"), api_key);
-            set_selected(env, "ANTHROPIC_BASE_URL", selected_fields.contains("baseUrl"), base_url);
+            set_selected(
+                env,
+                "ANTHROPIC_AUTH_TOKEN",
+                selected_fields.contains("apiKey"),
+                api_key,
+            );
+            set_selected(
+                env,
+                "ANTHROPIC_BASE_URL",
+                selected_fields.contains("baseUrl"),
+                base_url,
+            );
         }
         AppType::Gemini => {
             let env = nested_object_mut(settings, "env");
-            set_selected(env, "GEMINI_API_KEY", selected_fields.contains("apiKey"), api_key);
-            set_selected(env, "GOOGLE_GEMINI_BASE_URL", selected_fields.contains("baseUrl"), base_url);
+            set_selected(
+                env,
+                "GEMINI_API_KEY",
+                selected_fields.contains("apiKey"),
+                api_key,
+            );
+            set_selected(
+                env,
+                "GOOGLE_GEMINI_BASE_URL",
+                selected_fields.contains("baseUrl"),
+                base_url,
+            );
         }
         AppType::OpenCode => {
             let options = nested_object_mut(settings, "options");
-            set_selected(options, "apiKey", selected_fields.contains("apiKey"), api_key);
-            set_selected(options, "baseURL", selected_fields.contains("baseUrl"), base_url);
+            set_selected(
+                options,
+                "apiKey",
+                selected_fields.contains("apiKey"),
+                api_key,
+            );
+            set_selected(
+                options,
+                "baseURL",
+                selected_fields.contains("baseUrl"),
+                base_url,
+            );
         }
         AppType::OpenClaw => {
-            set_selected(settings, "apiKey", selected_fields.contains("apiKey"), api_key);
-            set_selected(settings, "baseUrl", selected_fields.contains("baseUrl"), base_url);
+            set_selected(
+                settings,
+                "apiKey",
+                selected_fields.contains("apiKey"),
+                api_key,
+            );
+            set_selected(
+                settings,
+                "baseUrl",
+                selected_fields.contains("baseUrl"),
+                base_url,
+            );
         }
         AppType::Hermes => {
-            set_selected(settings, "api_key", selected_fields.contains("apiKey"), api_key);
-            set_selected(settings, "base_url", selected_fields.contains("baseUrl"), base_url);
+            set_selected(
+                settings,
+                "api_key",
+                selected_fields.contains("apiKey"),
+                api_key,
+            );
+            set_selected(
+                settings,
+                "base_url",
+                selected_fields.contains("baseUrl"),
+                base_url,
+            );
         }
         AppType::Codex => {
             if selected_fields.contains("apiKey") {
@@ -236,12 +280,7 @@ fn nested_object_mut<'a>(
     )
 }
 
-fn set_selected(
-    target: &mut Map<String, Value>,
-    key: &str,
-    selected: bool,
-    value: Option<String>,
-) {
+fn set_selected(target: &mut Map<String, Value>, key: &str, selected: bool, value: Option<String>) {
     if selected {
         match value {
             Some(value) => {

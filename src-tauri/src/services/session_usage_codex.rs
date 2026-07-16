@@ -50,10 +50,7 @@ struct DeltaTokens {
 
 impl DeltaTokens {
     fn is_zero(&self) -> bool {
-        self.input == 0
-            && self.cached_input == 0
-            && self.output == 0
-            && self.reasoning == 0
+        self.input == 0 && self.cached_input == 0 && self.output == 0 && self.reasoning == 0
     }
 }
 
@@ -310,7 +307,6 @@ fn parse_cumulative_tokens(total_usage: &serde_json::Value) -> Option<Cumulative
             .unwrap_or(0),
     })
 }
-
 
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
@@ -646,14 +642,7 @@ fn insert_codex_session_entry(
         });
 
     // Prefer enriching an existing proxy log over inserting a session-only row.
-    if try_enrich_proxy_log(
-        &conn,
-        session_id,
-        turn_id,
-        model,
-        delta,
-        created_at,
-    )? {
+    if try_enrich_proxy_log(&conn, session_id, turn_id, model, delta, created_at)? {
         return Ok(true);
     }
 
@@ -944,8 +933,9 @@ mod tests {
             input: 17934,
             cached_input: 9600,
             output: 454,
-        
-            reasoning: 0,};
+
+            reasoning: 0,
+        };
         let delta = compute_delta(&prev, &current);
         assert_eq!(delta.input, 17934);
         assert_eq!(delta.cached_input, 9600);
@@ -959,14 +949,16 @@ mod tests {
             input: 17934,
             cached_input: 9600,
             output: 454,
-        
-            reasoning: 0,});
+
+            reasoning: 0,
+        });
         let current = CumulativeTokens {
             input: 36722,
             cached_input: 27904,
             output: 804,
-        
-            reasoning: 0,};
+
+            reasoning: 0,
+        };
         let delta = compute_delta(&prev, &current);
         assert_eq!(delta.input, 36722 - 17934);
         assert_eq!(delta.cached_input, 27904 - 9600);
@@ -979,15 +971,17 @@ mod tests {
             input: 58346,
             cached_input: 46976,
             output: 1045,
-        
-            reasoning: 0,});
+
+            reasoning: 0,
+        });
         // task 边界：相同的累计值
         let current = CumulativeTokens {
             input: 58346,
             cached_input: 46976,
             output: 1045,
-        
-            reasoning: 0,};
+
+            reasoning: 0,
+        };
         let delta = compute_delta(&prev, &current);
         assert!(delta.is_zero());
     }
@@ -999,14 +993,16 @@ mod tests {
             input: 100,
             cached_input: 50,
             output: 30,
-        
-            reasoning: 0,});
+
+            reasoning: 0,
+        });
         let current = CumulativeTokens {
             input: 80,
             cached_input: 40,
             output: 20,
-        
-            reasoning: 0,};
+
+            reasoning: 0,
+        };
         let delta = compute_delta(&prev, &current);
         assert_eq!(delta.input, 0);
         assert_eq!(delta.cached_input, 0);
@@ -1240,8 +1236,9 @@ mod tests {
             input: 10,
             cached_input: 1,
             output: 2,
-        
-            reasoning: 0,};
+
+            reasoning: 0,
+        };
         let inserted = insert_codex_session_entry(
             &db,
             "codex-session-dup",
@@ -1325,14 +1322,16 @@ mod tests {
             input: 100,
             cached_input: 0,
             output: 50,
-        
-            reasoning: 0,});
+
+            reasoning: 0,
+        });
         let current = CumulativeTokens {
             input: 110,       // delta = 10
             cached_input: 80, // delta = 80（异常：大于 input delta）
             output: 60,
-        
-            reasoning: 0,};
+
+            reasoning: 0,
+        };
         let delta = compute_delta(&prev, &current);
         // 钳制前：cached_input = 80, input = 10
         assert_eq!(delta.cached_input, 80);
@@ -1498,15 +1497,8 @@ mod tests {
         {
             let conn = db.conn.lock().unwrap();
             // ambiguous: two rows match → no enrich
-            let ok = try_enrich_proxy_log(
-                &conn,
-                Some("sess-x"),
-                None,
-                "gpt-5",
-                &delta,
-                1720000000,
-            )
-            .unwrap();
+            let ok = try_enrich_proxy_log(&conn, Some("sess-x"), None, "gpt-5", &delta, 1720000000)
+                .unwrap();
             assert!(!ok, "ambiguous match must not enrich");
         }
         // leave only one matching row
@@ -1514,15 +1506,8 @@ mod tests {
             let conn = db.conn.lock().unwrap();
             conn.execute("DELETE FROM proxy_request_logs WHERE request_id = 'r2'", [])
                 .unwrap();
-            let ok = try_enrich_proxy_log(
-                &conn,
-                Some("sess-x"),
-                None,
-                "gpt-5",
-                &delta,
-                1720000000,
-            )
-            .unwrap();
+            let ok = try_enrich_proxy_log(&conn, Some("sess-x"), None, "gpt-5", &delta, 1720000000)
+                .unwrap();
             assert!(ok);
             let rt: Option<i64> = conn
                 .query_row(
@@ -1534,5 +1519,4 @@ mod tests {
             assert_eq!(rt, Some(7));
         }
     }
-
 }

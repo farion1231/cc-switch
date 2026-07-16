@@ -5,9 +5,7 @@ use crate::error::AppError;
 use crate::services::codex_runtime::{
     self, CodexRuntimeHandle, CodexRuntimeState, LaunchEnhancedCodexResult,
 };
-use crate::settings::{
-    get_settings, set_codex_workbench_settings, CodexWorkbenchSettings,
-};
+use crate::settings::{get_settings, set_codex_workbench_settings, CodexWorkbenchSettings};
 use crate::store::AppState;
 use serde::Serialize;
 

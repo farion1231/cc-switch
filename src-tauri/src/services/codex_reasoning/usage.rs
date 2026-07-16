@@ -101,11 +101,7 @@ impl RoundUsageAccumulator {
             .saturating_add(round.usage.cache_creation_tokens);
 
         if let Some(rt) = round.reasoning_tokens {
-            self.reasoning_tokens = Some(
-                self.reasoning_tokens
-                    .unwrap_or(0)
-                    .saturating_add(rt),
-            );
+            self.reasoning_tokens = Some(self.reasoning_tokens.unwrap_or(0).saturating_add(rt));
         }
 
         if let Some(c) = cost {

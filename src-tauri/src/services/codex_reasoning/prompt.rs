@@ -253,12 +253,8 @@ mod tests {
             "instructions": "keep",
             "input": [{"role": "user", "content": "u"}]
         });
-        let meta = rewrite_codex_system_prompt(
-            &mut request,
-            "m",
-            None,
-            CodexRequestProtocol::Responses,
-        )?;
+        let meta =
+            rewrite_codex_system_prompt(&mut request, "m", None, CodexRequestProtocol::Responses)?;
         assert!(!meta.replaced);
         assert_eq!(request["instructions"], "keep");
 
@@ -305,18 +301,10 @@ mod tests {
         let mut a = json!({"instructions": "x", "input": []});
         let mut b = json!({"instructions": "x", "input": []});
         let cfg = enabled_cfg("same text", false);
-        let m1 = rewrite_codex_system_prompt(
-            &mut a,
-            "m",
-            Some(&cfg),
-            CodexRequestProtocol::Responses,
-        )?;
-        let m2 = rewrite_codex_system_prompt(
-            &mut b,
-            "m",
-            Some(&cfg),
-            CodexRequestProtocol::Responses,
-        )?;
+        let m1 =
+            rewrite_codex_system_prompt(&mut a, "m", Some(&cfg), CodexRequestProtocol::Responses)?;
+        let m2 =
+            rewrite_codex_system_prompt(&mut b, "m", Some(&cfg), CodexRequestProtocol::Responses)?;
         assert_eq!(m1.fingerprint, m2.fingerprint);
         let fp = m1.fingerprint.unwrap();
         assert_eq!(fp.len(), 32);

@@ -4,8 +4,7 @@ use crate::settings::CodexWorkbenchSettings;
 
 const RENDERER_FEATURES: &str =
     include_str!("../../../resources/codex-workbench/renderer-features.js");
-const RENDERER_INJECT: &str =
-    include_str!("../../../resources/codex-workbench/renderer-inject.js");
+const RENDERER_INJECT: &str = include_str!("../../../resources/codex-workbench/renderer-inject.js");
 
 fn js_bool(v: bool) -> &'static str {
     if v {

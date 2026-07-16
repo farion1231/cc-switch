@@ -1177,10 +1177,7 @@ pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
     settings_store().read().ok()?.s3_sync.clone()
 }
 
-
-pub fn set_codex_workbench_settings(
-    settings: CodexWorkbenchSettings,
-) -> Result<(), AppError> {
+pub fn set_codex_workbench_settings(settings: CodexWorkbenchSettings) -> Result<(), AppError> {
     mutate_settings(|current| {
         current.codex_workbench = settings;
     })

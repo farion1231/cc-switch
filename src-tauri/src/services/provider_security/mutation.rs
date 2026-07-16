@@ -135,7 +135,9 @@ impl ProviderMutationCoordinator {
         let old_live_settings = if request.skip_live_projection {
             None
         } else {
-            Some(ProviderService::read_live_settings(request.app_type.clone()))
+            Some(ProviderService::read_live_settings(
+                request.app_type.clone(),
+            ))
         };
         let now = chrono::Utc::now().timestamp_millis();
         let snapshot_id = uuid::Uuid::new_v4().to_string();
@@ -238,10 +240,13 @@ impl ProviderMutationCoordinator {
             ConfigurationState::Consistent,
             None,
         )?;
-        let warnings = self.prune_mutation_history(now).err().map_or_else(Vec::new, |error| {
-            log::warn!("provider mutation history pruning failed: {error}");
-            vec!["provider_history_prune_failed".to_string()]
-        });
+        let warnings = self
+            .prune_mutation_history(now)
+            .err()
+            .map_or_else(Vec::new, |error| {
+                log::warn!("provider mutation history pruning failed: {error}");
+                vec!["provider_history_prune_failed".to_string()]
+            });
         Ok(MutationOutcome::Saved {
             revision: next_revision,
             warnings,
@@ -499,8 +504,8 @@ fn security_error(code: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::recovery::credential_diffs;
+    use super::*;
     use crate::database::Database;
     use crate::provider::Provider;
     use crate::services::provider::ProviderService;
@@ -627,8 +632,7 @@ mod tests {
         );
 
         let live = ProviderService::read_live_settings(AppType::Claude)?;
-        assert!(credential_diffs(&provider_b, &live, &AppType::Claude)?
-            .is_empty());
+        assert!(credential_diffs(&provider_b, &live, &AppType::Claude)?.is_empty());
         Ok(())
     }
 
@@ -708,9 +712,11 @@ mod tests {
         let (audit_count, snapshot_count): (i64, i64) = {
             let conn = lock_conn!(db.conn);
             (
-                conn.query_row("SELECT COUNT(*) FROM provider_credential_audit", [], |row| {
-                    row.get(0)
-                })?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM provider_credential_audit",
+                    [],
+                    |row| row.get(0),
+                )?,
                 conn.query_row(
                     "SELECT COUNT(*) FROM provider_rollback_snapshots",
                     [],

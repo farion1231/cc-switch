@@ -1,12 +1,10 @@
 //! Codex 工作台 Tauri 命令
 
 use crate::error::AppError;
-use crate::services::codex_runtime::LaunchEnhancedCodexResult;
 use crate::services::codex_plugins::{self, MarketplaceResult, PluginCacheInfo};
 use crate::services::codex_radar::{self, RadarResult};
-use crate::services::codex_scripts::{
-    self, MarketIndex, ScriptInstallRequest, UserScriptInfo,
-};
+use crate::services::codex_runtime::LaunchEnhancedCodexResult;
+use crate::services::codex_scripts::{self, MarketIndex, ScriptInstallRequest, UserScriptInfo};
 use crate::services::codex_workbench::{self, CodexWorkbenchStatus};
 use crate::settings::{get_settings, CodexWorkbenchSettings};
 use crate::store::AppState;
@@ -27,9 +25,7 @@ pub fn get_codex_workbench_settings() -> Result<CodexWorkbenchSettings, AppError
 }
 
 #[tauri::command]
-pub fn update_codex_workbench_settings(
-    settings: CodexWorkbenchSettings,
-) -> Result<(), AppError> {
+pub fn update_codex_workbench_settings(settings: CodexWorkbenchSettings) -> Result<(), AppError> {
     codex_workbench::update_workbench_settings(settings)
 }
 
@@ -116,7 +112,6 @@ pub async fn reinject_after_script_change(
     }
     codex_workbench::get_status(&state).await
 }
-
 
 // --- Codex plugins (T10) ---
 

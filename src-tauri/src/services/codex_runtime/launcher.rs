@@ -340,9 +340,9 @@ pub async fn reinject_enhancements(
     handle: &CodexRuntimeHandle,
 ) -> Result<LaunchEnhancedCodexResult, AppError> {
     let snap = handle.snapshot().await;
-    let cdp_port = snap.cdp_port.ok_or_else(|| {
-        AppError::Config("无 CDP 端口，无法重新注入；请先启动增强 Codex".into())
-    })?;
+    let cdp_port = snap
+        .cdp_port
+        .ok_or_else(|| AppError::Config("无 CDP 端口，无法重新注入；请先启动增强 Codex".into()))?;
     attach_and_inject(handle, snap.pid, cdp_port).await
 }
 

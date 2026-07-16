@@ -13,12 +13,7 @@ pub const MIN_GRID_MULTIPLE: u64 = 3;
 pub const MAX_CONTINUE_ROUNDS: u8 = 3;
 
 /// Models known to support encrypted reasoning continuation.
-const SUPPORTED_MODEL_PREFIXES: &[&str] = &[
-    "gpt-5",
-    "o3",
-    "o4",
-    "codex",
-];
+const SUPPORTED_MODEL_PREFIXES: &[&str] = &["gpt-5", "o3", "o4", "codex"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContinuationStopReason {
@@ -84,10 +79,7 @@ pub fn grid_multiple(reasoning_tokens: u64) -> Option<u64> {
 fn model_supports_continuation(model: &str) -> bool {
     let lower = model.to_ascii_lowercase();
     // Strip common provider prefixes like "openai/" or "azure/"
-    let bare = lower
-        .rsplit('/')
-        .next()
-        .unwrap_or(lower.as_str());
+    let bare = lower.rsplit('/').next().unwrap_or(lower.as_str());
     SUPPORTED_MODEL_PREFIXES
         .iter()
         .any(|p| bare.starts_with(p) || bare.contains(p))

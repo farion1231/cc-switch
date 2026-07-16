@@ -112,16 +112,8 @@ where
 
     // Decide after round 0
     eligibility.completed_rounds = 0;
-    let mut decision = decide_continuation(
-        &terminal_from_round(&round0),
-        &eligibility,
-    );
-    let record0 = ContinuationRoundRecord::from_result(
-        &round0,
-        &decision,
-        "success",
-        None,
-    );
+    let mut decision = decide_continuation(&terminal_from_round(&round0), &eligibility);
+    let record0 = ContinuationRoundRecord::from_result(&round0, &decision, "success", None);
     accumulator.rounds.push(record0);
 
     // ---- Continuation rounds (1..=max) ----
@@ -164,21 +156,17 @@ where
                 completed_extra = completed_extra.saturating_add(1);
                 eligibility.completed_rounds = next_round;
 
-                decision = decide_continuation(
-                    &terminal_from_round(&round),
-                    &eligibility,
-                );
+                decision = decide_continuation(&terminal_from_round(&round), &eligibility);
                 let status = if matches!(decision, ContinuationDecision::Continue { .. }) {
                     "success"
                 } else {
                     "success_final"
                 };
-                accumulator.rounds.push(ContinuationRoundRecord::from_result(
-                    &round,
-                    &decision,
-                    status,
-                    None,
-                ));
+                accumulator
+                    .rounds
+                    .push(ContinuationRoundRecord::from_result(
+                        &round, &decision, status, None,
+                    ));
                 continuation_status = "continued".into();
             }
             Err(e) => {
@@ -536,10 +524,7 @@ mod tests {
         assert_eq!(result.reasoning.continuation_rounds, 0);
         assert_eq!(result.reasoning.continuation_status, "skipped");
         assert!(result.reasoning.prompt_replaced);
-        assert_eq!(
-            result.reasoning.prompt_fingerprint.as_deref(),
-            Some("abc")
-        );
+        assert_eq!(result.reasoning.prompt_fingerprint.as_deref(), Some("abc"));
         // sender should NOT have been called (initial provided, no continue)
         assert!(sender.calls.lock().unwrap().is_empty());
     }

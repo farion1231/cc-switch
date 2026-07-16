@@ -401,7 +401,6 @@ impl Database {
 
         Self::create_v14_security_tables(conn)?;
 
-        
         // T15: accelerate session enrichment matching
         if Self::has_column(conn, "proxy_request_logs", "turn_id")? {
             conn.execute_batch(

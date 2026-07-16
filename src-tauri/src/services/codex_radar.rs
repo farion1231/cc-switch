@@ -9,8 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Default public source used by CodexElves-style radar pages.
-pub const DEFAULT_RADAR_SOURCE_URL: &str =
-    "https://artificialanalysis.ai/leaderboards/models";
+pub const DEFAULT_RADAR_SOURCE_URL: &str = "https://artificialanalysis.ai/leaderboards/models";
 
 const CACHE_REL: &str = "codex-workbench/cache/radar.json";
 
@@ -101,7 +100,11 @@ fn ttl_secs() -> u64 {
 /// 1) JSON: `{ "models":[{"model":"gpt","score":80,"label":"gpt"}], "comparisons":[...] }`
 /// 2) Line format: `MODEL|SCORE|LABEL` per line
 /// 3) Simple HTML table rows: `<tr><td>model</td><td>12.3</td></tr>`
-pub fn parse_radar_payload(body: &str, source_url: &str, fetched_at: i64) -> Result<CodexRadarSnapshot, AppError> {
+pub fn parse_radar_payload(
+    body: &str,
+    source_url: &str,
+    fetched_at: i64,
+) -> Result<CodexRadarSnapshot, AppError> {
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return Err(AppError::Message("radar payload empty".into()));
@@ -115,9 +118,8 @@ pub fn parse_radar_payload(body: &str, source_url: &str, fetched_at: i64) -> Res
             #[serde(default)]
             comparisons: Vec<CodexRadarIqComparison>,
         }
-        let wire: Wire = serde_json::from_str(trimmed).map_err(|e| {
-            AppError::Message(format!("radar json parse: {e}"))
-        })?;
+        let wire: Wire = serde_json::from_str(trimmed)
+            .map_err(|e| AppError::Message(format!("radar json parse: {e}")))?;
         if wire.models.is_empty() {
             return Err(AppError::Message("radar models empty".into()));
         }
@@ -146,7 +148,10 @@ pub fn parse_radar_payload(body: &str, source_url: &str, fetched_at: i64) -> Res
             if parts.len() >= 2 {
                 if let Ok(score) = parts[1].parse::<f64>() {
                     let model = parts[0].to_string();
-                    let label = parts.get(2).map(|s| s.to_string()).unwrap_or_else(|| model.clone());
+                    let label = parts
+                        .get(2)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| model.clone());
                     models.push(CodexRadarModelIq {
                         model,
                         score,
@@ -289,7 +294,9 @@ fn build_comparisons(models: &[CodexRadarModelIq]) -> Vec<CodexRadarIqComparison
 
 fn read_cache(path: &Path) -> Option<CodexRadarSnapshot> {
     let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<CodexRadarSnapshot>(&text).ok().filter(|s| !s.models.is_empty())
+    serde_json::from_str::<CodexRadarSnapshot>(&text)
+        .ok()
+        .filter(|s| !s.models.is_empty())
 }
 
 fn write_cache(path: &Path, snap: &CodexRadarSnapshot) -> Result<(), AppError> {
@@ -325,11 +332,7 @@ async fn fetch_remote_body(url: &str) -> Result<String, String> {
         .user_agent("cc-switch-codex-radar/1.0")
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("http {}", resp.status()));
     }

@@ -106,14 +106,13 @@ pub fn extract_zip_hardened(zip_bytes: &[u8], dest: &Path) -> Result<(), AppErro
     }
     fs::create_dir_all(dest).map_err(|e| AppError::io(dest, e))?;
     let cursor = std::io::Cursor::new(zip_bytes);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| {
-        AppError::InvalidInput(format!("invalid ZIP: {e}"))
-    })?;
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| AppError::InvalidInput(format!("invalid ZIP: {e}")))?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| {
-            AppError::InvalidInput(format!("zip entry {i}: {e}"))
-        })?;
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| AppError::InvalidInput(format!("zip entry {i}: {e}")))?;
         let name = file.name().to_string();
         if !is_safe_zip_path(&name) {
             return Err(AppError::InvalidInput(format!(
@@ -123,7 +122,11 @@ pub fn extract_zip_hardened(zip_bytes: &[u8], dest: &Path) -> Result<(), AppErro
         // zip crate: unix mode high bits for symlink
         #[cfg(unix)]
         {
-            if file.unix_mode().map(|m| (m & 0o170000) == 0o120000).unwrap_or(false) {
+            if file
+                .unix_mode()
+                .map(|m| (m & 0o170000) == 0o120000)
+                .unwrap_or(false)
+            {
                 return Err(AppError::InvalidInput(format!(
                     "symlink ZIP entry rejected: {name}"
                 )));
@@ -139,7 +142,8 @@ pub fn extract_zip_hardened(zip_bytes: &[u8], dest: &Path) -> Result<(), AppErro
         }
         let mut outfile = fs::File::create(&out_path).map_err(|e| AppError::io(&out_path, e))?;
         let mut buf = Vec::new();
-        file.read_to_end(&mut buf).map_err(|e| AppError::io(&out_path, e))?;
+        file.read_to_end(&mut buf)
+            .map_err(|e| AppError::io(&out_path, e))?;
         outfile
             .write_all(&buf)
             .map_err(|e| AppError::io(&out_path, e))?;
@@ -148,7 +152,10 @@ pub fn extract_zip_hardened(zip_bytes: &[u8], dest: &Path) -> Result<(), AppErro
 }
 
 /// Merge marketplace section into config.toml using toml_edit; preserve unrelated text.
-pub fn ensure_marketplace_in_config(config_path: &Path, marketplace_path: &Path) -> Result<(), AppError> {
+pub fn ensure_marketplace_in_config(
+    config_path: &Path,
+    marketplace_path: &Path,
+) -> Result<(), AppError> {
     let existing = if config_path.exists() {
         fs::read_to_string(config_path).map_err(|e| AppError::io(config_path, e))?
     } else {
@@ -163,21 +170,21 @@ pub fn ensure_marketplace_in_config(config_path: &Path, marketplace_path: &Path)
         .as_table_mut()
         .entry("plugins")
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-    let plugins_tbl = plugins.as_table_mut().ok_or_else(|| {
-        AppError::InvalidInput("plugins is not a table".into())
-    })?;
+    let plugins_tbl = plugins
+        .as_table_mut()
+        .ok_or_else(|| AppError::InvalidInput("plugins is not a table".into()))?;
     let mps = plugins_tbl
         .entry("marketplaces")
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-    let mps_tbl = mps.as_table_mut().ok_or_else(|| {
-        AppError::InvalidInput("plugins.marketplaces is not a table".into())
-    })?;
+    let mps_tbl = mps
+        .as_table_mut()
+        .ok_or_else(|| AppError::InvalidInput("plugins.marketplaces is not a table".into()))?;
     let entry = mps_tbl
         .entry(MARKETPLACE_ID)
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-    let entry_tbl = entry.as_table_mut().ok_or_else(|| {
-        AppError::InvalidInput("marketplace entry is not a table".into())
-    })?;
+    let entry_tbl = entry
+        .as_table_mut()
+        .ok_or_else(|| AppError::InvalidInput("marketplace entry is not a table".into()))?;
     entry_tbl.insert(
         "source",
         toml_edit::value(marketplace_path.to_string_lossy().as_ref()),
@@ -219,7 +226,12 @@ fn read_version_file(dir: &Path) -> Option<String> {
     // directory name as version fallback (e.g. cache/<id>/<version>)
     dir.file_name()
         .and_then(|s| s.to_str())
-        .filter(|s| s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+        .filter(|s| {
+            s.chars()
+                .next()
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        })
         .map(|s| s.to_string())
 }
 
@@ -349,8 +361,8 @@ fn build_minimal_marketplace_zip(version: &str) -> Result<Vec<u8>, AppError> {
     use std::io::Cursor;
     let buf = Cursor::new(Vec::new());
     let mut zipw = zip::ZipWriter::new(buf);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     // marketplace root files
     zipw.start_file("openai-curated-remote/marketplace.json", opts)
         .map_err(|e| AppError::Message(format!("zip write: {e}")))?;
@@ -361,8 +373,11 @@ fn build_minimal_marketplace_zip(version: &str) -> Result<Vec<u8>, AppError> {
     );
     zipw.write_all(manifest.as_bytes())
         .map_err(|e| AppError::Message(format!("zip write: {e}")))?;
-    zipw.start_file("openai-curated-remote/plugins/demo-plugin/plugin.json", opts)
-        .map_err(|e| AppError::Message(format!("zip write: {e}")))?;
+    zipw.start_file(
+        "openai-curated-remote/plugins/demo-plugin/plugin.json",
+        opts,
+    )
+    .map_err(|e| AppError::Message(format!("zip write: {e}")))?;
     let plugin = format!(
         r#"{{"id":"demo-plugin","name":"Demo","version":"{ver}"}}"#,
         ver = version
@@ -442,13 +457,10 @@ pub fn inspect_plugin(home: &Path, plugin_id: &str) -> Result<PluginCacheInfo, A
     let current_version = cached_versions.last().cloned();
 
     let (can_refresh, refresh_reason) = match (&source_version, &current_version) {
-        (Some(src), Some(cur)) if version_lt(src, cur) => (
-            false,
-            format!("拒绝降级：源版本 {src} 低于已缓存 {cur}"),
-        ),
-        (Some(src), Some(cur)) if src == cur => {
-            (false, "已是最新缓存版本".into())
+        (Some(src), Some(cur)) if version_lt(src, cur) => {
+            (false, format!("拒绝降级：源版本 {src} 低于已缓存 {cur}"))
         }
+        (Some(src), Some(cur)) if src == cur => (false, "已是最新缓存版本".into()),
         (Some(_), _) => (true, "可刷新到源版本".into()),
         (None, _) => (false, "市场中无此插件源".into()),
     };
@@ -511,7 +523,10 @@ pub fn refresh_plugin_cache(home: &Path, plugin_id: &str) -> Result<PluginCacheI
 
 fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), AppError> {
     fs::create_dir_all(dest).map_err(|e| AppError::io(dest, e))?;
-    for ent in fs::read_dir(src).map_err(|e| AppError::io(src, e))?.flatten() {
+    for ent in fs::read_dir(src)
+        .map_err(|e| AppError::io(src, e))?
+        .flatten()
+    {
         let from = ent.path();
         let to = dest.join(ent.file_name());
         if from.is_dir() {
@@ -613,10 +628,7 @@ mod tests {
         fs::write(cache.join("VERSION"), "2.0.0").unwrap();
 
         let err = refresh_plugin_cache(home, "demo").unwrap_err();
-        assert!(
-            err.to_string().contains("降级"),
-            "expected 降级 in {err}"
-        );
+        assert!(err.to_string().contains("降级"), "expected 降级 in {err}");
     }
 
     #[test]
