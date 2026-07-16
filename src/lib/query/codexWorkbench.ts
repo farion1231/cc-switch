@@ -150,9 +150,9 @@ export function useImportCodexUserScript() {
   });
 }
 
-export function useGetCodexScriptsDir() {
+export function useOpenCodexScriptsDir() {
   return useMutation({
-    mutationFn: () => codexWorkbenchApi.getScriptsDir(),
+    mutationFn: () => codexWorkbenchApi.openScriptsDir(),
   });
 }
 

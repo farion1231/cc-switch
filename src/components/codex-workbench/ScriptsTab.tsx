@@ -9,7 +9,7 @@ import {
   useSetCodexUserScriptEnabled,
   useDeleteCodexUserScript,
   useImportCodexUserScript,
-  useGetCodexScriptsDir,
+  useOpenCodexScriptsDir,
 } from "@/lib/query/codexWorkbench";
 import type { MarketScriptEntry, UserScriptInfo } from "@/types/codexWorkbench";
 
@@ -34,7 +34,7 @@ export function ScriptsTab() {
   const setEnabled = useSetCodexUserScriptEnabled();
   const delScript = useDeleteCodexUserScript();
   const importScript = useImportCodexUserScript();
-  const getDir = useGetCodexScriptsDir();
+  const openScriptsDir = useOpenCodexScriptsDir();
 
   const scripts: UserScriptInfo[] = scriptsQ.data ?? [];
   const market: MarketScriptEntry[] = marketQ.data?.scripts ?? [];
@@ -62,9 +62,7 @@ export function ScriptsTab() {
 
   const onOpenFolder = async () => {
     try {
-      const dir = await getDir.mutateAsync();
-      const { openPath } = await import("@tauri-apps/plugin-opener");
-      await openPath(dir);
+      await openScriptsDir.mutateAsync();
     } catch (e) {
       console.error(e);
     }
@@ -79,7 +77,7 @@ export function ScriptsTab() {
         <Button size="sm" variant="outline" onClick={() => void onImport()} disabled={importScript.isPending}>
           {t("codexWorkbench.scripts.importLocal", { defaultValue: "导入本地脚本" })}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void onOpenFolder()} disabled={getDir.isPending}>
+        <Button size="sm" variant="outline" onClick={() => void onOpenFolder()} disabled={openScriptsDir.isPending}>
           {t("codexWorkbench.scripts.openFolder", { defaultValue: "打开脚本目录" })}
         </Button>
       </div>

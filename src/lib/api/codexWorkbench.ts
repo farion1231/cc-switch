@@ -48,7 +48,7 @@ export const codexWorkbenchApi = {
       key: key ?? null,
     }),
 
-  getScriptsDir: () => invoke<string>("get_codex_scripts_dir"),
+  openScriptsDir: () => invoke<void>("open_codex_scripts_dir"),
 
   refreshMarket: () =>
     invoke<MarketIndex>("refresh_codex_script_market"),

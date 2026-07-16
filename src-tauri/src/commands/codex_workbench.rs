@@ -11,7 +11,8 @@ use crate::services::codex_workbench::{self, CodexWorkbenchStatus};
 use crate::settings::{get_settings, CodexWorkbenchSettings};
 use crate::store::AppState;
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub async fn get_codex_workbench_status(
@@ -73,8 +74,12 @@ pub fn import_codex_user_script(
 }
 
 #[tauri::command]
-pub fn get_codex_scripts_dir() -> Result<String, AppError> {
-    Ok(codex_scripts::scripts_dir_path()?.display().to_string())
+pub fn open_codex_scripts_dir(handle: AppHandle) -> Result<(), AppError> {
+    let dir = codex_scripts::scripts_dir_path()?;
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<String>)
+        .map_err(|error| AppError::Message(format!("打开 Codex 脚本目录失败: {error}")))
 }
 
 #[tauri::command]

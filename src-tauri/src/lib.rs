@@ -1235,7 +1235,7 @@ pub fn run() {
             commands::set_codex_user_script_enabled,
             commands::delete_codex_user_script,
             commands::import_codex_user_script,
-            commands::get_codex_scripts_dir,
+            commands::open_codex_scripts_dir,
             commands::refresh_codex_script_market,
             commands::get_codex_script_market_cache,
             commands::install_codex_market_script,
