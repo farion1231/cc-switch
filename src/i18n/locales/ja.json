@@ -397,10 +397,10 @@
         "cacheInjectionDescription": "リクエストの重要な位置に標準の 5 分間 Cache ブレークポイントを自動注入し、重複トークンの課金を削減"
       },
       "logConfig": {
-        "title": "ログ管理",
-        "description": "ログ出力レベルを制御",
-        "enabled": "ログを有効化",
-        "enabledDescription": "マスタースイッチ、オフにするとすべてのログが無効になります",
+        "title": "アプリ診断ログ",
+        "description": "アプリ診断ログの出力レベルを制御",
+        "enabled": "診断ログを有効化",
+        "enabledDescription": "cc-switch.log を制御します。リクエスト使用量記録と crash.log には影響しません",
         "level": "ログレベル",
         "levelDescription": "出力する最小ログレベルを設定",
         "levels": {
@@ -1701,7 +1701,10 @@
   "errors": {
     "usage_query_failed": "利用状況の取得に失敗しました",
     "configLoadFailedTitle": "設定の読み込みに失敗しました",
-    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。"
+    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。",
+    "frontendCrashTitle": "画面で問題が発生しました",
+    "frontendCrashMessage": "エラー情報をアプリ診断ログに保存しようとしました。画面を再読み込みし、問題が続く場合は Issue にログを添付してください。",
+    "reloadInterface": "画面を再読み込み"
   },
   "presetSelector": {
     "title": "設定タイプを選択",
@@ -2533,8 +2536,8 @@
           "description": "単一リクエストの最大待機時間（0 = 無制限、または 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "ログ記録を有効化",
-          "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
+          "label": "リクエスト使用量を記録",
+          "description": "ルーティングリクエストの使用量と状態をローカル統計データベースに保存"
         },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
