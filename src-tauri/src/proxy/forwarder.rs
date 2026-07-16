@@ -64,6 +64,8 @@ pub struct ForwardResult {
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
+    /// 本次 Codex + Copilot 请求实际使用的上游协议。
+    pub copilot_protocol: Option<super::providers::copilot_model_map::CopilotProtocol>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -489,7 +491,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model)) => {
+                Ok((response, claude_api_format, outbound_model, copilot_protocol)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -538,6 +540,7 @@ impl RequestForwarder {
                         provider: provider.clone(),
                         claude_api_format,
                         outbound_model,
+                        copilot_protocol,
                         connection_guard: None,
                     });
                 }
@@ -588,7 +591,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    copilot_protocol,
+                                )) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
@@ -641,6 +649,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        copilot_protocol,
                                         connection_guard: None,
                                     });
                                 }
@@ -734,7 +743,12 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format, outbound_model)) => {
+                                    Ok((
+                                        response,
+                                        claude_api_format,
+                                        outbound_model,
+                                        copilot_protocol,
+                                    )) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -790,6 +804,7 @@ impl RequestForwarder {
                                             provider: provider.clone(),
                                             claude_api_format,
                                             outbound_model,
+                                            copilot_protocol,
                                             connection_guard: None,
                                         });
                                     }
@@ -900,7 +915,12 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((
+                                    response,
+                                    claude_api_format,
+                                    outbound_model,
+                                    copilot_protocol,
+                                )) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -950,6 +970,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        copilot_protocol,
                                         connection_guard: None,
                                     });
                                 }
@@ -1121,7 +1142,15 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<
+        (
+            ProxyResponse,
+            Option<String>,
+            Option<String>,
+            Option<super::providers::copilot_model_map::CopilotProtocol>,
+        ),
+        ProxyError,
+    > {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1139,12 +1168,7 @@ impl RequestForwarder {
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
 
-        // Codex upstream conversion mode — computed early because the [1m]-suffix strip
-        // below must be skipped on the Anthropic path (the marker has to survive to
-        // catalog matching and to the transform's own strip+beta detection).
-        let codex_responses_to_chat = matches!(app_type, AppType::Codex)
-            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
+        let static_codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
@@ -1167,11 +1191,58 @@ impl RequestForwarder {
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
+        // Copilot 的 endpoint 能力属于具体 model id，不能仅按 vendor 或供应商表单中的
+        // 静态 apiFormat 推断。一次解析同时确定最终 live model 与实际协议，后续请求、
+        // URL 和响应转换都共享该结果。
+        let resolved_codex_copilot_model = (matches!(app_type, AppType::Codex)
+            && is_copilot
+            && is_codex_responses_endpoint_path(endpoint))
+        .then(|| {
+            mapped_body
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .flatten();
+        let copilot_requested_model = resolved_codex_copilot_model;
+        let resolved_codex_copilot_model = match copilot_requested_model.as_deref() {
+            Some(model_id) => self.resolve_codex_copilot_model(provider, model_id).await,
+            None => None,
+        };
+        if let Some(resolved) = resolved_codex_copilot_model.as_ref() {
+            if mapped_body.get("model").and_then(Value::as_str) != Some(resolved.id.as_str()) {
+                mapped_body["model"] = Value::String(resolved.id.clone());
+            }
+        }
+        let copilot_protocol = resolved_codex_copilot_model
+            .as_ref()
+            .map(|resolved| resolved.protocol)
+            .or_else(|| {
+                copilot_requested_model.as_deref().map(|model_id| {
+                    super::providers::copilot_model_map::fallback_protocol_for_model_id(model_id)
+                })
+            });
+
+        let codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
+            && match copilot_protocol {
+                Some(super::providers::copilot_model_map::CopilotProtocol::Messages) => true,
+                Some(_) => false,
+                None => static_codex_responses_to_anthropic,
+            };
+
+        let codex_responses_to_chat = matches!(app_type, AppType::Codex)
+            && match copilot_protocol {
+                Some(super::providers::copilot_model_map::CopilotProtocol::Chat) => true,
+                Some(_) => false,
+                None => {
+                    super::providers::should_convert_codex_responses_to_chat(provider, endpoint)
+                }
+            };
 
         // Copilot 的模型归一化 + 优化器是为 Anthropic messages 格式（claude-* 名、
-        // tool_result/thinking block）设计的。Codex 走 Responses 格式（input 数组、gpt 模型），
-        // 首版仅支持 gpt 系列，跳过这些 Claude 专用改写，只保留 token 注入 / 指纹头 /
-        // 动态 endpoint（下方由 is_copilot 驱动，与此无关）。
+        // tool_result/thinking block）设计的。Codex 走 Responses/Chat 格式（input
+        // 数组或 chat messages），默认跳过这些 Claude 专用改写，只保留 token 注入 /
+        // 指纹头 / 动态 endpoint（下方由 is_copilot 驱动，与此无关）。
         let is_copilot_claude_body = is_copilot && !matches!(app_type, AppType::Codex);
         if is_copilot_claude_body {
             mapped_body =
@@ -1348,12 +1419,18 @@ impl RequestForwarder {
         // avoids leaking the Claude Code fingerprint and identity prompt to
         // general-purpose gateways.
         let codex_impersonate_claude_code = codex_responses_to_anthropic
+            && !is_copilot
             && provider
                 .meta
                 .as_ref()
                 .and_then(|meta| meta.impersonate_claude_code)
                 == Some(true);
-        let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
+        let (effective_endpoint, passthrough_query) = if matches!(
+            copilot_protocol,
+            Some(super::providers::copilot_model_map::CopilotProtocol::Responses)
+        ) {
+            rewrite_codex_responses_endpoint_for_copilot(endpoint)
+        } else if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
         } else if codex_responses_to_anthropic {
             rewrite_codex_responses_endpoint_to_anthropic(endpoint)
@@ -1443,7 +1520,11 @@ impl RequestForwarder {
             chat_body
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
-            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            // Copilot 的最终 model 已由 live `/models` 解析确定。再次套用 provider
+            // 默认模型会把 family fallback（例如 opus 4.8 → 4.6）错误覆盖回 GPT。
+            if copilot_protocol.is_none() {
+                super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            }
             // Per-provider output ceiling override. Codex does not forward its
             // `model_max_output_tokens` in the request body, so honor the value
             // configured on the provider here — it takes precedence over any
@@ -2201,7 +2282,12 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((
+                response,
+                resolved_claude_api_format,
+                outbound_model,
+                copilot_protocol,
+            ))
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
@@ -2533,6 +2619,35 @@ impl RequestForwarder {
         }
     }
 
+    async fn resolve_codex_copilot_model(
+        &self,
+        provider: &Provider,
+        model_id: &str,
+    ) -> Option<super::providers::copilot_model_map::ResolvedCopilotModel> {
+        if model_id.is_empty() {
+            return None;
+        }
+
+        let Some(app_handle) = &self.app_handle else {
+            return None;
+        };
+
+        let copilot_state = app_handle.state::<CopilotAuthState>();
+        let copilot_auth = copilot_state.0.read().await;
+        let account_id = provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.managed_account_id_for("github_copilot"));
+
+        let models_result = match account_id.as_deref() {
+            Some(id) => copilot_auth.fetch_models_for_account(id).await,
+            None => copilot_auth.fetch_models().await,
+        };
+
+        let models = models_result.ok()?;
+        super::providers::copilot_model_map::resolve_model(model_id, &models)
+    }
+
     fn categorize_proxy_error(&self, error: &ProxyError, provider: &Provider) -> ErrorCategory {
         // Authentication belongs to the Codex client for the built-in official
         // route. Retrying another provider would silently move the conversation
@@ -2730,6 +2845,20 @@ fn strip_beta_query(query: Option<&str>) -> Option<String> {
 
 fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
+}
+
+/// Whether `endpoint` targets one of Codex's Responses-API paths. Mirrors the
+/// path match in [`super::providers::should_convert_codex_responses_to_chat`];
+/// used to gate the Codex+Copilot live vendor lookup so it only fires on the
+/// same paths that static Chat-conversion detection considers.
+fn is_codex_responses_endpoint_path(endpoint: &str) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+    matches!(
+        path,
+        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+    )
 }
 
 fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
@@ -2977,6 +3106,21 @@ fn rewrite_codex_responses_endpoint_to_anthropic(endpoint: &str) -> (String, Opt
         _ => target_path.to_string(),
     };
 
+    (rewritten, passthrough_query)
+}
+
+fn rewrite_codex_responses_endpoint_for_copilot(endpoint: &str) -> (String, Option<String>) {
+    let (path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let target_path = if path.ends_with("/compact") {
+        "/responses/compact"
+    } else {
+        "/responses"
+    };
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
     (rewritten, passthrough_query)
 }
 
@@ -4015,6 +4159,23 @@ mod tests {
     }
 
     #[test]
+    fn is_codex_responses_endpoint_path_matches_known_paths() {
+        assert!(is_codex_responses_endpoint_path("/responses"));
+        assert!(is_codex_responses_endpoint_path("/v1/responses"));
+        assert!(is_codex_responses_endpoint_path("/responses/compact"));
+        assert!(is_codex_responses_endpoint_path("/v1/responses/compact"));
+        assert!(is_codex_responses_endpoint_path("/v1/responses?foo=bar"));
+    }
+
+    #[test]
+    fn is_codex_responses_endpoint_path_rejects_other_paths() {
+        assert!(!is_codex_responses_endpoint_path("/chat/completions"));
+        assert!(!is_codex_responses_endpoint_path("/v1/chat/completions"));
+        assert!(!is_codex_responses_endpoint_path("/v1/messages"));
+        assert!(!is_codex_responses_endpoint_path(""));
+    }
+
+    #[test]
     fn prepend_claude_code_system_prompt_from_string() {
         let mut body = json!({ "system": "You are a Codex agent." });
         prepend_claude_code_system_prompt(&mut body);
@@ -4052,6 +4213,21 @@ mod tests {
 
         let (endpoint, _) = rewrite_codex_responses_endpoint_to_anthropic("/v1/responses");
         assert_eq!(endpoint, "/v1/messages");
+    }
+
+    #[test]
+    fn rewrite_codex_responses_endpoint_for_copilot_removes_v1() {
+        assert_eq!(
+            rewrite_codex_responses_endpoint_for_copilot("/v1/responses?foo=bar"),
+            (
+                "/responses?foo=bar".to_string(),
+                Some("foo=bar".to_string())
+            )
+        );
+        assert_eq!(
+            rewrite_codex_responses_endpoint_for_copilot("/v1/responses/compact"),
+            ("/responses/compact".to_string(), None)
+        );
     }
 
     #[test]

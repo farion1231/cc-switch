@@ -228,6 +228,12 @@ pub fn resolve_codex_catalog_tool_profile(
     if is_codex_official_provider(provider) {
         return CodexCatalogToolProfile::NativeResponses;
     }
+    // Copilot 对外始终接收 Codex Responses，具体模型的 Messages/Responses/Chat
+    // 协议由代理按 `/models.supported_endpoints` 动态桥接。旧 provider 可能仍保存
+    // apiFormat=anthropic，不能让它把整个混合模型目录错误生成成 Anthropic profile。
+    if provider.is_github_copilot() {
+        return CodexCatalogToolProfile::NativeResponses;
+    }
     if codex_provider_uses_anthropic(provider) {
         return CodexCatalogToolProfile::Anthropic;
     }
@@ -771,12 +777,13 @@ impl ProviderAdapter for CodexAdapter {
         // 常规补 /v1，会得到 /v1/chat/completions → 404。这里对 Copilot 的 chat 路径
         // 直接裸拼，不补 /v1；host 判定同时覆盖 *.githubcopilot.com 与 GHES 的
         // copilot-api.* 两种形态。
-        let is_copilot_chat = is_copilot_chat_host(base_trimmed)
-            && endpoint_trimmed
-                .trim_end_matches('/')
-                .ends_with("chat/completions");
+        let is_copilot_unversioned_endpoint = is_copilot_chat_host(base_trimmed)
+            && matches!(
+                endpoint_trimmed.trim_end_matches('/'),
+                "chat/completions" | "responses" | "responses/compact"
+            );
 
-        let mut url = if is_copilot_chat {
+        let mut url = if is_copilot_unversioned_endpoint {
             format!("{base_trimmed}/{endpoint_trimmed}")
         } else if already_has_v1 {
             // 已经有 /v1，直接拼接
@@ -1193,6 +1200,20 @@ wire_api = "anthropic"
         assert_eq!(
             resolve_codex_catalog_tool_profile(&chat),
             CodexCatalogToolProfile::ProxyChat
+        );
+    }
+
+    #[test]
+    fn test_copilot_catalog_profile_ignores_legacy_anthropic_format() {
+        let mut provider = create_provider(json!({}));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses
         );
     }
 

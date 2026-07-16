@@ -177,6 +177,11 @@ export const normalizeCodexCatalogModelsForSave = (
   return normalized;
 };
 
+export const resolveCodexApiFormatForSave = (
+  apiFormat: CodexApiFormat,
+  isCopilotProvider: boolean,
+): CodexApiFormat => (isCopilotProvider ? "openai_responses" : apiFormat);
+
 /**
  * 确定要落盘的 providerType（新建时从预设获取，编辑时从现有数据获取）。
  *
@@ -1555,7 +1560,10 @@ function ProviderFormFull({
         appId === "claude" && category !== "official"
           ? localApiFormat
           : appId === "codex" && category !== "official"
-            ? localCodexApiFormat
+            ? resolveCodexApiFormatForSave(
+                localCodexApiFormat,
+                isCopilotProvider,
+              )
             : undefined,
       apiKeyField:
         appId === "claude" &&
@@ -1564,6 +1572,7 @@ function ProviderFormFull({
           ? localApiKeyField
           : appId === "codex" &&
               category !== "official" &&
+              !isCopilotProvider &&
               localCodexApiFormat === "anthropic" &&
               localCodexAnthropicAuthField !== "ANTHROPIC_AUTH_TOKEN"
             ? localCodexAnthropicAuthField
@@ -1572,6 +1581,7 @@ function ProviderFormFull({
       impersonateClaudeCode:
         appId === "codex" &&
         category !== "official" &&
+        !isCopilotProvider &&
         localCodexApiFormat === "anthropic" &&
         localCodexImpersonateClaudeCode
           ? true
@@ -1580,6 +1590,7 @@ function ProviderFormFull({
       maxOutputTokens:
         appId === "codex" &&
         category !== "official" &&
+        !isCopilotProvider &&
         localCodexApiFormat === "anthropic" &&
         localCodexMaxOutputTokens.trim() !== "" &&
         Number(localCodexMaxOutputTokens) > 0

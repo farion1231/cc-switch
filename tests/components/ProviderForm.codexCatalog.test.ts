@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizeCodexCatalogModelsForSave,
+  resolveCodexApiFormatForSave,
   resolveProviderTypeForSave,
 } from "@/components/providers/forms/ProviderForm";
 
 describe("ProviderForm Codex catalog helpers", () => {
+  it("Copilot 保存时规范化为本地 Responses 入口，非 Copilot 保留手动格式", () => {
+    expect(resolveCodexApiFormatForSave("anthropic", true)).toBe(
+      "openai_responses",
+    );
+    expect(resolveCodexApiFormatForSave("openai_chat", true)).toBe(
+      "openai_responses",
+    );
+    expect(resolveCodexApiFormatForSave("anthropic", false)).toBe("anthropic");
+  });
+
   it("normalizes catalog rows and removes empty or duplicate models", () => {
     expect(
       normalizeCodexCatalogModelsForSave([
