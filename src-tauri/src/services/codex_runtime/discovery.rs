@@ -66,6 +66,10 @@ pub fn discover_codex_executable() -> Result<PathBuf, AppError> {
 
 #[cfg(windows)]
 fn discover_windowsapps_codex() -> Option<PathBuf> {
+    // Prefer Get-AppxPackage InstallLocation: listing WindowsApps is often ACL-denied.
+    if let Some(p) = discover_windowsapps_via_appx_package() {
+        return Some(p);
+    }
     let roots = [
         PathBuf::from(r"C:\Program Files\WindowsApps"),
         std::env::var("ProgramFiles")
@@ -103,6 +107,41 @@ fn discover_windowsapps_codex() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Resolve Codex via Appx package metadata (no WindowsApps directory listing).
+#[cfg(windows)]
+fn discover_windowsapps_via_appx_package() -> Option<PathBuf> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // Emit full path to ChatGPT.exe under InstallLocation\app
+    let script = concat!(
+        "$p = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue | ",
+        "Select-Object -First 1 -ExpandProperty InstallLocation; ",
+        "if ($p) { Join-Path $p 'app\\ChatGPT.exe' }"
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().next()?.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(line);
+    if path.is_file() {
+        return Some(path);
+    }
+    let alt = path
+        .parent()
+        .map(|d| d.join("Codex.exe"))
+        .filter(|c| c.is_file());
+    alt
 }
 
 fn which_codex_on_path() -> Result<PathBuf, AppError> {
