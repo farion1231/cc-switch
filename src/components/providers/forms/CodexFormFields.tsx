@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { FormLabel } from "@/components/ui/form";
@@ -36,9 +36,11 @@ import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
 import type {
+  ClaudeApiKeyField,
   CodexApiFormat,
   CodexCatalogModel,
   CodexChatReasoning,
+  PromptCacheRoutingMode,
   ProviderCategory,
 } from "@/types";
 
@@ -69,12 +71,27 @@ interface CodexFormFieldsProps {
   autoSelect: boolean;
   onAutoSelectChange: (checked: boolean) => void;
 
+  // Default model (config.toml top-level `model`)
+  codexModel?: string;
+  onModelChange?: (model: string) => void;
+
   // API Format
   // Note: wire_api is always "responses" for Codex; apiFormat controls proxy-layer conversion
   apiFormat: CodexApiFormat;
   onApiFormatChange: (format: CodexApiFormat) => void;
+  // Auth field for the Anthropic Messages upstream (only used when apiFormat === "anthropic")
+  anthropicAuthField: ClaudeApiKeyField;
+  onAnthropicAuthFieldChange: (value: ClaudeApiKeyField) => void;
+  // Anthropic path: whether to emulate the Claude Code client
+  impersonateClaudeCode: boolean;
+  onImpersonateClaudeCodeChange: (value: boolean) => void;
+  // Anthropic path: output ceiling override (empty string = use default). Digits only.
+  maxOutputTokens: string;
+  onMaxOutputTokensChange: (value: string) => void;
   codexChatReasoning?: CodexChatReasoning;
   onCodexChatReasoningChange?: (value: CodexChatReasoning) => void;
+  promptCacheRouting: PromptCacheRoutingMode;
+  onPromptCacheRoutingChange: (value: PromptCacheRoutingMode) => void;
 
   // Model Catalog
   catalogModels?: CodexCatalogModel[];
@@ -156,10 +173,20 @@ export function CodexFormFields({
   onCustomEndpointsChange,
   autoSelect,
   onAutoSelectChange,
+  codexModel = "",
+  onModelChange,
   apiFormat,
   onApiFormatChange,
+  anthropicAuthField,
+  onAnthropicAuthFieldChange,
+  impersonateClaudeCode,
+  onImpersonateClaudeCodeChange,
+  maxOutputTokens,
+  onMaxOutputTokensChange,
   codexChatReasoning = {},
   onCodexChatReasoningChange,
+  promptCacheRouting,
+  onPromptCacheRoutingChange,
   catalogModels = [],
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -174,9 +201,19 @@ export function CodexFormFields({
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  // 拉取请求序号：请求身份（Base URL / 完整地址开关 / API Key / 自定义 UA）
+  // 一变即自增，清空旧列表并作废在途响应——/models 结果可能按 Key 的模型
+  // 授权返回，换号后残留旧列表会误导选择
+  const fetchModelsSeqRef = useRef(0);
+
+  useEffect(() => {
+    fetchModelsSeqRef.current += 1;
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+  }, [codexBaseUrl, isFullUrl, codexApiKey, customUserAgent]);
   // 思考能力随 Chat 格式显示（仅 Chat Completions 转换路径用得上）；模型映射常驻
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
+  const isAnthropicFormat = apiFormat === "anthropic";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -194,8 +231,11 @@ export function CodexFormFields({
     hasRequestOverrides ||
     catalogModels.length > 0 ||
     apiFormat === "openai_responses" ||
+    isAnthropicFormat ||
     supportsThinking ||
-    supportsEffort;
+    supportsEffort ||
+    promptCacheRouting !== "auto" ||
+    !!maxOutputTokens;
   const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
 
   // 预设/编辑加载填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
@@ -271,6 +311,7 @@ export function CodexFormFields({
       });
       return;
     }
+    const seq = ++fetchModelsSeqRef.current;
     setIsFetchingModels(true);
     fetchModelsForConfig(
       codexBaseUrl,
@@ -280,6 +321,7 @@ export function CodexFormFields({
       customUserAgent,
     )
       .then((models) => {
+        if (seq !== fetchModelsSeqRef.current) return;
         setFetchedModels(models);
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
@@ -290,6 +332,7 @@ export function CodexFormFields({
         }
       })
       .catch((err) => {
+        if (seq !== fetchModelsSeqRef.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
@@ -313,6 +356,47 @@ export function CodexFormFields({
   const handleRemoveCatalogRow = useCallback((index: number) => {
     setCatalogRows((current) => current.filter((_, i) => i !== index));
   }, []);
+
+  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表
+  const defaultModelSuggestions = useMemo<FetchedModel[]>(() => {
+    const seen = new Set<string>();
+    const suggestions: FetchedModel[] = [];
+    for (const row of catalogRows) {
+      const id = row.model.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      suggestions.push({
+        id,
+        ownedBy: t("codexConfig.modelMappingTitle", {
+          defaultValue: "模型映射",
+        }),
+      });
+    }
+    for (const model of fetchedModels) {
+      if (seen.has(model.id)) continue;
+      seen.add(model.id);
+      suggestions.push(model);
+    }
+    return suggestions;
+  }, [catalogRows, fetchedModels, t]);
+
+  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
+  const trimmedDefaultModel = codexModel.trim();
+  const isDefaultModelOutsideCatalog =
+    catalogRows.length > 0 &&
+    !!trimmedDefaultModel &&
+    !catalogRows.some((row) => row.model.trim() === trimmedDefaultModel);
+
+  const handleAddDefaultModelToCatalog = useCallback(() => {
+    if (!onCatalogModelsChange || !trimmedDefaultModel) return;
+    setCatalogRows((current) => [
+      ...current,
+      createCatalogRow({
+        model: trimmedDefaultModel,
+        displayName: trimmedDefaultModel,
+      }),
+    ]);
+  }, [onCatalogModelsChange, trimmedDefaultModel]);
 
   const renderCatalogActionButtons = (onAdd: () => void, addLabel: string) => (
     <div className="flex gap-1">
@@ -383,6 +467,73 @@ export function CodexFormFields({
         />
       )}
 
+      {/* 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。
+          实时写回 TOML；留空则删行（有映射时保存回退为映射第一行）。 */}
+      {category !== "official" && onModelChange && (
+        <div className="space-y-1.5">
+          <FormLabel htmlFor="codexDefaultModel">
+            {t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" })}
+          </FormLabel>
+          <div className="flex gap-1">
+            <Input
+              id="codexDefaultModel"
+              value={codexModel}
+              onChange={(event) => onModelChange(event.target.value)}
+              placeholder={t("codexConfig.defaultModelPlaceholder", {
+                defaultValue: "例如: gpt-5.6",
+              })}
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={handleFetchModels}
+              disabled={isFetchingModels}
+              className="shrink-0"
+              title={t("providerForm.fetchModels")}
+            >
+              {isFetchingModels ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+            </Button>
+            {defaultModelSuggestions.length > 0 && (
+              <ModelDropdown
+                models={defaultModelSuggestions}
+                onSelect={(id) => onModelChange(id)}
+              />
+            )}
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {t("codexConfig.defaultModelHint", {
+              defaultValue:
+                "Codex 默认请求的模型，随时可改，无需等待预设更新。留空且配置了模型映射时，默认使用映射第一行。",
+            })}
+          </p>
+          {isDefaultModelOutsideCatalog && (
+            <p className="flex flex-wrap items-center gap-x-2 text-xs leading-relaxed text-muted-foreground">
+              {t("codexConfig.defaultModelNotInCatalog", {
+                defaultValue:
+                  "该模型不在模型映射中，Codex 的 /model 菜单不会列出它（直接请求仍然有效）。",
+              })}
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs"
+                onClick={handleAddDefaultModelToCatalog}
+              >
+                {t("codexConfig.addToModelMapping", {
+                  defaultValue: "加入映射",
+                })}
+              </Button>
+            </p>
+          )}
+        </div>
+      )}
+
       {/* 高级选项 —— 上游格式/模型映射/思考能力/自定义 UA；预设供应商通常无需展开 */}
       {category !== "official" && (
         <Collapsible
@@ -449,15 +600,118 @@ export function CodexFormFields({
                           defaultValue: "Responses（原生）",
                         })}
                       </SelectItem>
+                      <SelectItem value="anthropic">
+                        {t("codexConfig.upstreamFormatAnthropic", {
+                          defaultValue: "Anthropic Messages（需开启路由）",
+                        })}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs leading-relaxed text-muted-foreground">
                     {t("codexConfig.upstreamFormatHint", {
                       defaultValue:
-                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat（需开启路由接管才能转换为 Chat Completions）。",
+                        "供应商原生是 Responses API 就选 Responses（直连，不转换格式）；使用 Chat Completions 协议就选 Chat；供应商只提供原生 Anthropic Messages 协议就选 Anthropic Messages。Chat 与 Anthropic Messages 均需开启路由接管才能转换为 Responses。",
                     })}
                   </p>
                 </div>
+
+                {isAnthropicFormat && (
+                  <div className="space-y-1.5">
+                    <FormLabel htmlFor="codex-anthropic-auth-field">
+                      {t("codexConfig.anthropicAuthFieldLabel", {
+                        defaultValue: "认证字段",
+                      })}
+                    </FormLabel>
+                    <Select
+                      value={anthropicAuthField}
+                      onValueChange={(value) =>
+                        onAnthropicAuthFieldChange(value as ClaudeApiKeyField)
+                      }
+                    >
+                      <SelectTrigger
+                        id="codex-anthropic-auth-field"
+                        className="w-full"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                          {t("codexConfig.anthropicAuthFieldAuthToken", {
+                            defaultValue:
+                              "ANTHROPIC_AUTH_TOKEN（Authorization）",
+                          })}
+                        </SelectItem>
+                        <SelectItem value="ANTHROPIC_API_KEY">
+                          {t("codexConfig.anthropicAuthFieldApiKey", {
+                            defaultValue: "ANTHROPIC_API_KEY（x-api-key）",
+                          })}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.anthropicAuthFieldHint", {
+                        defaultValue:
+                          "选择网关接收 API Key 的请求头：ANTHROPIC_AUTH_TOKEN 发送 Authorization: Bearer；ANTHROPIC_API_KEY 发送 x-api-key。两者只发其一。",
+                      })}
+                    </p>
+                  </div>
+                )}
+
+                {isAnthropicFormat && (
+                  <div className="flex items-center justify-between gap-4 border-t border-border-default pt-3">
+                    <div className="space-y-1">
+                      <FormLabel>
+                        {t("codexConfig.impersonateClaudeCodeLabel", {
+                          defaultValue: "模拟 Claude Code 客户端",
+                        })}
+                      </FormLabel>
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t("codexConfig.impersonateClaudeCodeHint", {
+                          defaultValue:
+                            "网关或其上游限制只能通过 Claude Code 使用时开启：伪装 User-Agent、anthropic-beta、x-app 请求头，并在系统提示首行注入 Claude Code 身份。",
+                        })}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={impersonateClaudeCode}
+                      onCheckedChange={onImpersonateClaudeCodeChange}
+                      aria-label={t("codexConfig.impersonateClaudeCodeLabel", {
+                        defaultValue: "模拟 Claude Code 客户端",
+                      })}
+                    />
+                  </div>
+                )}
+
+                {isAnthropicFormat && (
+                  <div className="space-y-1.5 border-t border-border-default pt-3">
+                    <FormLabel htmlFor="codex-anthropic-max-output-tokens">
+                      {t("codexConfig.maxOutputTokensLabel", {
+                        defaultValue: "最大输出 tokens",
+                      })}
+                    </FormLabel>
+                    <Input
+                      id="codex-anthropic-max-output-tokens"
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={maxOutputTokens}
+                      onChange={(event) =>
+                        onMaxOutputTokensChange(
+                          event.target.value.replace(/[^\d]/g, ""),
+                        )
+                      }
+                      placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
+                        defaultValue: "留空则使用默认 8192",
+                      })}
+                    />
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("codexConfig.maxOutputTokensHint", {
+                        defaultValue:
+                          "Codex 不会把 model_max_output_tokens 写进请求体，默认上限 8192 容易在长回答或深度思考时被截断（stop_reason=max_tokens）。此处设置会作为 Anthropic 的 max_tokens 覆盖请求值。请勿超过该模型/网关的真实输出上限，否则可能 400。留空使用默认 8192。",
+                      })}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -468,6 +722,49 @@ export function CodexFormFields({
                   shouldShowSpeedTest && "border-t border-border-default pt-3",
                 )}
               >
+                <div className="space-y-2">
+                  <FormLabel>
+                    {t("codexConfig.promptCacheRoutingLabel", {
+                      defaultValue: "提示词缓存路由",
+                    })}
+                  </FormLabel>
+                  <Select
+                    value={promptCacheRouting}
+                    onValueChange={(value) =>
+                      onPromptCacheRoutingChange(
+                        value as PromptCacheRoutingMode,
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">
+                        {t("codexConfig.promptCacheRoutingAuto", {
+                          defaultValue: "自动（推荐）",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="enabled">
+                        {t("codexConfig.promptCacheRoutingEnabled", {
+                          defaultValue: "开启",
+                        })}
+                      </SelectItem>
+                      <SelectItem value="disabled">
+                        {t("codexConfig.promptCacheRoutingDisabled", {
+                          defaultValue: "关闭",
+                        })}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {t("codexConfig.promptCacheRoutingHint", {
+                      defaultValue:
+                        "自动模式仅对已确认兼容的上游发送 prompt_cache_key；开启可用于其他兼容网关，关闭可避免严格网关因未知字段返回 400。只使用客户端提供的稳定会话 ID。",
+                    })}
+                  </p>
+                </div>
+
                 <div className="space-y-1">
                   <FormLabel>
                     {t("codexConfig.reasoningGroupTitle", {

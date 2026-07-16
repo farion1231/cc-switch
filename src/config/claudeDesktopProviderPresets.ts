@@ -32,7 +32,7 @@ export interface ClaudeDesktopRoutePreset {
  * `next_catalog_safe_route_id` 都从此映射派生 routeId，避免散落硬编码。
  */
 export const CLAUDE_DESKTOP_ROLE_ROUTE_IDS = {
-  sonnet: "claude-sonnet-4-6",
+  sonnet: "claude-sonnet-5",
   opus: "claude-opus-4-8",
   fable: "claude-fable-5",
   haiku: "claude-haiku-4-5",
@@ -163,7 +163,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
     ),
@@ -241,8 +241,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "teamorouter",
   },
   {
+    name: "Amux",
+    websiteUrl: "https://amux.ai",
+    apiKeyUrl: "https://amux.ai",
+    category: "aggregator",
+    baseUrl: "https://api.amux.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    icon: "amux",
+  },
+  {
     name: "火山Agentplan",
-    websiteUrl: "https://www.volcengine.com/product/ark",
+    websiteUrl:
+      "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
@@ -261,7 +273,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "BytePlus",
-    websiteUrl: "https://www.byteplus.com/en/product/modelark",
+    websiteUrl:
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
@@ -280,7 +293,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "DouBaoSeed",
-    websiteUrl: "https://www.volcengine.com/product/doubao",
+    websiteUrl:
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     category: "cn_official",
@@ -364,8 +378,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     providerType: "github_copilot",
     requiresOAuth: true,
     modelRoutes: brandedRoutes(
-      "claude-sonnet-4.6",
-      "claude-sonnet-4.6",
+      "claude-sonnet-5",
+      "claude-sonnet-5",
       "claude-haiku-4.5",
     ),
     icon: "github",
@@ -380,7 +394,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "openai_responses",
     providerType: "codex_oauth",
     requiresOAuth: true,
-    modelRoutes: brandedRoutes("gpt-5.5", "gpt-5.5", "gpt-5.4-mini"),
+    modelRoutes: brandedRoutes("gpt-5.6", "gpt-5.6", "gpt-5.6-luna"),
     icon: "openai",
     iconColor: "#000000",
   },
@@ -566,11 +580,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.longcat.chat/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
-    modelRoutes: brandedRoutes(
-      "LongCat-Flash-Chat",
-      "LongCat-Flash-Chat",
-      "LongCat-Flash-Chat",
-    ),
+    modelRoutes: brandedRoutes("LongCat-2.0", "LongCat-2.0", "LongCat-2.0"),
     icon: "longcat",
     iconColor: "#29E154",
   },
@@ -640,7 +650,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
     ),
@@ -757,14 +767,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "SudoCode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     category: "third_party",
-    baseUrl: "https://sudocode.us",
+    baseUrl: "https://api.sudocode.chat",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(),
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    endpointCandidates: ["https://api.sudocode.chat"],
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
     icon: "sudocode",
   },
   {
@@ -779,6 +792,32 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "claudeapi",
     icon: "claudeapi",
+  },
+  {
+    name: "Code0",
+    websiteUrl: "https://code0.ai",
+    apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
+    category: "aggregator",
+    baseUrl: "https://code0.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "code0",
+    icon: "code0",
+  },
+  {
+    name: "NekoCode",
+    websiteUrl: "https://nekocode.ai",
+    apiKeyUrl: "https://nekocode.ai?aff=CCSWITCH",
+    category: "aggregator",
+    baseUrl: "https://nekocode.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "nekocode",
+    icon: "nekocode",
   },
   {
     name: "ClaudeCN",
@@ -1003,7 +1042,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
       true,
@@ -1020,7 +1059,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-5",
       "anthropic/claude-opus-4.8",
       "anthropic/claude-haiku-4.5",
       true,
