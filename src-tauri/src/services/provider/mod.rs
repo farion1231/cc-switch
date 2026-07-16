@@ -983,6 +983,234 @@ command = "legacy-cmd"
         );
     }
 
+    #[test]
+    fn extract_codex_common_config_keeps_user_owned_model_catalog_pointer() {
+        let settings = json!({
+            "config": "model_catalog_json = \"shared-model-catalog.json\"\ndisable_response_storage = true\n"
+        });
+
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract should succeed");
+        let parsed: toml::Value = toml::from_str(&extracted).expect("parse extracted TOML");
+
+        assert_eq!(
+            parsed
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some("shared-model-catalog.json"),
+            "user-owned catalog pointers must survive common-config autosync"
+        );
+        assert_eq!(
+            parsed
+                .get("disable_response_storage")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn codex_common_config_sync_preserves_user_catalog_over_legacy_managed_live_pointer() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.set_config_snippet(
+            "codex",
+            Some(
+                "model_catalog_json = \"shared-model-catalog.json\"\ndisable_response_storage = true"
+                    .to_string(),
+            ),
+        )
+        .expect("save current snippet");
+        let state = AppState::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "current".to_string(),
+            "Current".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        let live = json!({
+            "auth": {},
+            "config": "model_catalog_json = \"cc-switch-model-catalog.json\"\ndisable_response_storage = false\n"
+        });
+        let mut result = SwitchResult::default();
+
+        ProviderService::sync_common_config_snippet_from_live(
+            &state,
+            &AppType::Codex,
+            &provider,
+            &live,
+            &mut result,
+        );
+
+        let saved = db
+            .get_config_snippet("codex")
+            .expect("load snippet")
+            .expect("snippet exists");
+        let parsed: toml::Value = toml::from_str(&saved).expect("parse saved snippet");
+        assert_eq!(
+            parsed
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some("shared-model-catalog.json"),
+            "an old managed live projection must not erase the user-owned common pointer"
+        );
+        assert_eq!(
+            parsed
+                .get("disable_response_storage")
+                .and_then(|value| value.as_bool()),
+            Some(false),
+            "other live edits should still be synchronized"
+        );
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn codex_common_config_sync_allows_explicit_user_catalog_deletion() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.set_config_snippet(
+            "codex",
+            Some("model_catalog_json = \"shared-model-catalog.json\"".to_string()),
+        )
+        .expect("save current snippet");
+        let state = AppState::new(db.clone());
+
+        let mut provider = Provider::with_id(
+            "current".to_string(),
+            "Current".to_string(),
+            json!({ "auth": {}, "config": "" }),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            ..Default::default()
+        });
+        let live = json!({
+            "auth": {},
+            "config": "disable_response_storage = true\n"
+        });
+        let mut result = SwitchResult::default();
+
+        ProviderService::sync_common_config_snippet_from_live(
+            &state,
+            &AppType::Codex,
+            &provider,
+            &live,
+            &mut result,
+        );
+
+        let saved = db
+            .get_config_snippet("codex")
+            .expect("load snippet")
+            .expect("snippet exists");
+        let parsed: toml::Value = toml::from_str(&saved).expect("parse saved snippet");
+        assert!(
+            parsed.get("model_catalog_json").is_none(),
+            "an actually deleted live pointer must remain deleted"
+        );
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn codex_normal_switch_preserves_user_common_catalog_over_legacy_live_projection() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        db.set_config_snippet(
+            "codex",
+            Some("model_catalog_json = \"shared-model-catalog.json\"".to_string()),
+        )
+        .expect("save common snippet");
+        let state = AppState::new(db.clone());
+
+        let mut provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "key-a" },
+                "config": "model_provider = \"a\"\nmodel = \"model-a\"\n\n[model_providers.a]\nname = \"A\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n"
+            }),
+            None,
+        );
+        provider_a.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": "model_provider = \"b\"\nmodel = \"model-b\"\n\n[model_providers.b]\nname = \"B\"\nbase_url = \"https://b.example/v1\"\nwire_api = \"responses\"\n",
+                "modelCatalog": { "models": [{ "model": "model-b" }] }
+            }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            common_config_enabled: Some(true),
+            api_format: Some("openai_responses".to_string()),
+            ..Default::default()
+        });
+
+        db.save_provider("codex", &provider_a)
+            .expect("save provider A");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider B");
+        db.set_current_provider("codex", "a")
+            .expect("set DB current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider");
+
+        write_json_file(
+            &crate::codex_config::get_codex_auth_path(),
+            &json!({ "OPENAI_API_KEY": "key-a" }),
+        )
+        .expect("write legacy live auth");
+        crate::config::write_text_file(
+            &crate::codex_config::get_codex_config_path(),
+            "model_provider = \"a\"\nmodel = \"model-a\"\nmodel_catalog_json = \"cc-switch-model-catalog.json\"\n\n[model_providers.a]\nname = \"A\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\n",
+        )
+        .expect("write legacy managed live config");
+
+        ProviderService::switch(&state, AppType::Codex, "b").expect("switch to provider B");
+
+        let saved_snippet = db
+            .get_config_snippet("codex")
+            .expect("load common snippet")
+            .expect("common snippet exists");
+        let saved_snippet: toml::Value =
+            toml::from_str(&saved_snippet).expect("parse saved common snippet");
+        assert_eq!(
+            saved_snippet
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some("shared-model-catalog.json"),
+            "switch-away autosync must preserve the user-owned common pointer"
+        );
+
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read switched live config");
+        let live_config: toml::Value =
+            toml::from_str(&live_config).expect("parse switched live config");
+        assert_eq!(
+            live_config
+                .get("model_catalog_json")
+                .and_then(|value| value.as_str()),
+            Some("shared-model-catalog.json"),
+            "the target provider's generated mapping must not override common config"
+        );
+        assert!(
+            !crate::codex_config::get_codex_model_catalog_path().exists(),
+            "CC Switch must not generate an unused catalog when an external pointer wins"
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup()
@@ -2872,6 +3100,60 @@ impl ProviderService {
         Self::migrate_legacy_common_config_usage(state, app_type, &snippet)
     }
 
+    /// 升级保护：旧版本可能已把 live 中的用户外部 catalog 指针覆盖成
+    /// cc-switch 自有指针。首次切换时沿用 DB 通用片段中的用户指针，避免自动
+    /// 回写把它误判为删除；live 中确实没有该键时仍按用户删除处理。
+    fn preserve_user_owned_codex_catalog_pointer_during_sync(
+        current_snippet: Option<&str>,
+        live_config: &Value,
+        extracted_snippet: &str,
+    ) -> Result<String, AppError> {
+        let Some(live_toml) = live_config.get("config").and_then(Value::as_str) else {
+            return Ok(extracted_snippet.to_string());
+        };
+        let live_doc = live_toml
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
+        let live_has_managed_pointer = live_doc
+            .get("model_catalog_json")
+            .and_then(|item| item.as_str())
+            .is_some_and(crate::codex_config::is_cc_switch_owned_model_catalog_path);
+        if !live_has_managed_pointer {
+            return Ok(extracted_snippet.to_string());
+        }
+
+        let Some(current_snippet) = current_snippet else {
+            return Ok(extracted_snippet.to_string());
+        };
+        let current_doc = current_snippet
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?;
+        let Some(current_pointer) = current_doc.get("model_catalog_json") else {
+            return Ok(extracted_snippet.to_string());
+        };
+        let current_is_user_owned = current_pointer
+            .as_str()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .is_some_and(|path| !crate::codex_config::is_cc_switch_owned_model_catalog_path(path));
+        if !current_is_user_owned {
+            return Ok(extracted_snippet.to_string());
+        }
+
+        let mut extracted_doc = if extracted_snippet.trim().is_empty() {
+            toml_edit::DocumentMut::new()
+        } else {
+            extracted_snippet
+                .parse::<toml_edit::DocumentMut>()
+                .map_err(|e| AppError::Message(format!("TOML parse error: {e}")))?
+        };
+        extracted_doc
+            .as_table_mut()
+            .insert("model_catalog_json", current_pointer.clone());
+
+        Ok(extracted_doc.to_string().trim().to_string())
+    }
+
     /// 切走某供应商前，把它 live 配置里的可共享部分重新提取并**整体替换**到
     /// 通用配置片段，使在 live 应用里直接做的改动不会因切换而丢失。
     ///
@@ -2890,8 +3172,9 @@ impl ProviderService {
     /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
     /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
     /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
-    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
-    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
+    /// fallback、cc-switch 自有的 `model_catalog_json`、`web_search = "disabled"`
+    /// 哨兵——密钥与注入产物不会进共享片段；用户维护的外部 catalog 指针会保留。
+    /// Gemini 暂未纳入，如需支持应单独验证后再加。
     ///
     /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
     /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
@@ -2929,7 +3212,7 @@ impl ProviderService {
             }
         }
 
-        let new_snippet = match Self::extract_common_config_snippet_from_settings(
+        let mut new_snippet = match Self::extract_common_config_snippet_from_settings(
             app_type.clone(),
             live_config,
         ) {
@@ -2950,6 +3233,22 @@ impl ProviderService {
             .get_config_snippet(app_type.as_str())
             .ok()
             .flatten();
+        if matches!(app_type, AppType::Codex) {
+            new_snippet = match Self::preserve_user_owned_codex_catalog_pointer_during_sync(
+                current.as_deref(),
+                live_config,
+                &new_snippet,
+            ) {
+                Ok(snippet) => snippet,
+                Err(err) => {
+                    log::warn!(
+                        "Failed to preserve user-owned Codex model catalog while syncing provider '{}': {err}",
+                        provider.id
+                    );
+                    return;
+                }
+            };
+        }
         if current.as_deref() == Some(new_snippet.as_str()) {
             return;
         }
@@ -3196,8 +3495,15 @@ impl ProviderService {
         //   整表已剥），但无活跃路由 / 内建保留 id / 路由表缺失三种 fallback
         //   会落在顶层——不剥等于把 API 密钥写进共享片段。
         root.remove("experimental_bearer_token");
-        // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
-        root.remove("model_catalog_json");
+        // - 仅剥离 cc-switch 自己生成的 catalog 投影指针（DB 为 SSOT）。
+        //   用户在通用配置中维护的其它 catalog 路径属于可共享配置，必须保留。
+        let should_remove_catalog_pointer = root
+            .get("model_catalog_json")
+            .and_then(|item| item.as_str())
+            .is_some_and(crate::codex_config::is_cc_switch_owned_model_catalog_path);
+        if should_remove_catalog_pointer {
+            root.remove("model_catalog_json");
+        }
         // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
         //   属于可共享偏好，保留。
         if root

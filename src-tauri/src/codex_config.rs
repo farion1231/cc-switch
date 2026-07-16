@@ -21,6 +21,16 @@ pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
+/// Whether a `model_catalog_json` value points at the catalog file owned by
+/// CC Switch. User-managed catalog paths must never be overwritten or removed
+/// by the generated-catalog projection.
+pub(crate) fn is_cc_switch_owned_model_catalog_path(path: &str) -> bool {
+    Path::new(path.trim())
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+}
+
 /// Top-level `config.toml` key that controls Codex's built-in web-search tool.
 pub(crate) const CODEX_WEB_SEARCH_FIELD: &str = "web_search";
 /// Value that disables the web-search tool. Some native `/responses` gateways
@@ -921,6 +931,19 @@ fn codex_model_catalog_from_settings(
     )))
 }
 
+fn has_user_owned_model_catalog_pointer(config_text: &str) -> Result<bool, AppError> {
+    let doc = config_text
+        .parse::<DocumentMut>()
+        .map_err(|e| AppError::Message(format!("Invalid Codex config.toml: {e}")))?;
+
+    Ok(doc
+        .get("model_catalog_json")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .is_some_and(|path| !is_cc_switch_owned_model_catalog_path(path)))
+}
+
 fn set_codex_model_catalog_json_field(
     config_text: &str,
     catalog_path: Option<&Path>,
@@ -931,16 +954,23 @@ fn set_codex_model_catalog_json_field(
 
     match catalog_path {
         Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            let has_user_owned_catalog = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .is_some_and(|path| !is_cc_switch_owned_model_catalog_path(path));
+
+            if !has_user_owned_catalog {
+                doc["model_catalog_json"] =
+                    toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            }
         }
         None => {
             let should_remove = doc
                 .get("model_catalog_json")
                 .and_then(|item| item.as_str())
-                .map(|path| {
-                    Path::new(path).file_name().and_then(|name| name.to_str())
-                        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
-                })
+                .map(is_cc_switch_owned_model_catalog_path)
                 .unwrap_or(false);
             if should_remove {
                 doc.as_table_mut().remove("model_catalog_json");
@@ -989,6 +1019,20 @@ pub fn prepare_codex_config_text_with_model_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
+    // An external catalog pointer is user-owned SSOT. Do not generate or write
+    // CC Switch's otherwise-unused catalog file; only maintain the independent
+    // web_search compatibility sentinel for the selected upstream profile.
+    if has_user_owned_model_catalog_pointer(config_text)? {
+        let disable_web_search = match profile {
+            CodexCatalogToolProfile::Anthropic => true,
+            CodexCatalogToolProfile::NativeResponses => {
+                codex_native_gateway_rejects_web_search(config_text)
+            }
+            CodexCatalogToolProfile::ProxyChat => false,
+        };
+        return set_codex_native_web_search_field(config_text, disable_web_search);
+    }
+
     let catalog_path = get_codex_model_catalog_path();
 
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
@@ -1078,9 +1122,7 @@ pub(crate) fn resolve_cc_switch_catalog_path(
         .filter(|s| !s.is_empty())?;
 
     let referenced_path = Path::new(catalog_path_str);
-    let is_cc_switch_owned = referenced_path.file_name().and_then(|name| name.to_str())
-        == Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
-    if !is_cc_switch_owned {
+    if !is_cc_switch_owned_model_catalog_path(catalog_path_str) {
         return None;
     }
 
@@ -3454,6 +3496,22 @@ model = "glm-5"
             parsed.get("model_catalog_json").and_then(|v| v.as_str()),
             Some("/Users/me/.codex/my-custom-catalog.json"),
             "None arm should NOT remove user-owned catalog"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_catalog() {
+        let input = r#"model_catalog_json = "shared-model-catalog.json"
+"#;
+        let generated_path = Path::new("/tmp/cc-switch-model-catalog.json");
+
+        let result = set_codex_model_catalog_json_field(input, Some(generated_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("shared-model-catalog.json"),
+            "generated catalog projection must not override a user-owned pointer"
         );
     }
 
