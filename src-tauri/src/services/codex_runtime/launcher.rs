@@ -633,4 +633,58 @@ mod tests {
 
         bridge.shutdown().await;
     }
+
+    /// Live smoke: production `launch_enhanced_codex` against Store Codex already
+    /// listening on CDP (discovery → attach_and_inject → nav_watcher).
+    ///
+    /// Run:
+    /// `cargo test --manifest-path src-tauri/Cargo.toml --lib services::codex_runtime::launcher::tests::live_launch_enhanced_codex_attach_store -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "requires live Store Codex with CDP (discovery finds has_cdp main)"]
+    async fn live_launch_enhanced_codex_attach_store() {
+        let running = discovery::find_running_codex();
+        let with_cdp: Vec<_> = running.iter().filter(|p| p.has_cdp).collect();
+        assert!(
+            !with_cdp.is_empty(),
+            "no has_cdp Codex process; start Store Codex with --remote-debugging-port"
+        );
+
+        let handle = CodexRuntimeHandle::new();
+        let result = launch_enhanced_codex(&handle)
+            .await
+            .unwrap_or_else(|e| panic!("launch_enhanced_codex failed: {e}"));
+
+        eprintln!(
+            "launch result: state={:?} pid={:?} cdp={:?} bridge={:?} msg={:?}",
+            result.state, result.pid, result.cdp_port, result.bridge_port, result.message
+        );
+
+        assert_eq!(
+            result.state,
+            CodexRuntimeState::Running,
+            "expected Running, got {:?} msg={:?}",
+            result.state,
+            result.message
+        );
+        let cdp_port = result.cdp_port.expect("cdp_port");
+        assert!(result.bridge_port.is_some(), "bridge_port should be set");
+        assert!(result.instance_id.is_some(), "instance_id should be set");
+
+        let marked = cdp::probe_csp_marker(cdp_port)
+            .await
+            .unwrap_or_else(|e| panic!("probe_csp_marker failed: {e}"));
+        assert!(marked, "CSP marker should be true after launch_enhanced_codex");
+
+        // Cleanup bridge + nav watcher so the test process exits cleanly.
+        let (bridge, stop) = {
+            let mut guard = handle.inner.lock().await;
+            (guard.bridge.take(), guard.watcher_stop.take())
+        };
+        if let Some(tx) = stop {
+            let _ = tx.send(());
+        }
+        if let Some(bridge) = bridge {
+            bridge.shutdown().await;
+        }
+    }
 }
