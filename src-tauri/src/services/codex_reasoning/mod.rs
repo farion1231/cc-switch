@@ -24,5 +24,5 @@ pub use prompt::{
 };
 pub use stream::{concat_sse_rounds, extract_terminal_output, parse_sse_to_round, strip_intermediate_completed};
 pub use usage::{
-    ContinuationRoundRecord, ContinuationRoundResult, RoundUsage, RoundUsageAccumulator,
+    ContinuationRoundResult,
 };

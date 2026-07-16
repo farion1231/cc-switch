@@ -17,6 +17,27 @@ Components under:
 
 ## Attribution
 
+### CodexElves (primary ported source)
+
+- **Repository**: [junxin367/CodexElves](https://github.com/junxin367/CodexElves)
+- **License**: MIT
+- **Pinned commit**: `bf1224e`
+- **What was adapted** (algorithms / behavior, reimplemented natively in CC Switch):
+  - Codex App launch / process attach patterns (CDP workbench shell)
+  - User-script market install & hash verification flows
+  - Plugin marketplace cache initialize/repair around `CODEX_HOME`
+  - Degradation radar fetch + 30-minute TTL cache
+  - System-prompt rewrite (fingerprint-only logging; no prompt text storage)
+  - GPT reasoning continuation grid (`continue_thinking` behavioral reference):
+    518-grid eligibility, multi-round continue, single-provider pin, single main usage row
+  - Session JSONL enrichment for reasoning / turn token fields on unique match
+- **What was *not* copied**: proprietary UI assets, raw conversation bodies,
+  encrypted reasoning payloads, or closed-source binaries.
+- Substantially ported modules live under `src-tauri/src/services/codex_*`,
+  `src-tauri/src/services/codex_reasoning/`, `src/components/codex-workbench/`,
+  and related settings/usage surfaces. File headers on those modules note the
+  CodexElves behavioral lineage where applicable.
+
 ### Codex App / OpenAI Codex (ideas & protocol compatibility)
 
 - **What was used**: Public protocol shapes for Responses API token usage fields,

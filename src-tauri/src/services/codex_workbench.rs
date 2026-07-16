@@ -10,7 +10,6 @@ use crate::settings::{
 };
 use crate::store::AppState;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// 工作台聚合状态（前端轮询）
 #[derive(Debug, Clone, Serialize)]
