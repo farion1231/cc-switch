@@ -439,4 +439,40 @@ mod tests {
         let v = serde_json::json!({"id": 10, "error": {"code": -32000, "message": "x"}});
         assert!(cdp_eval_response_ok(&v).is_err());
     }
+
+    /// Live smoke against Store Codex CDP (default 9229).
+    /// Run: `cargo test -p cc-switch --lib services::codex_runtime::cdp::tests::live_inject_script_store_codex -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "requires live Store Codex with --remote-debugging-port=9229"]
+    async fn live_inject_script_store_codex() {
+        let port: u16 = std::env::var("CC_SWITCH_LIVE_CDP_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(9229);
+
+        // Minimal product-shaped payload: set globals then stamp marker (same order as prod).
+        let script = r#"
+(function(){
+  try {
+    window.__CodexApp = window.__CodexApp || { liveRust: true };
+    window.__ccSwitchBoot = function(){ return true; };
+    window.__ccSwitchFeatures = window.__ccSwitchFeatures || {};
+    window.__ccSwitchBootstrapped = true;
+    window.__ccSwitchCspBypassed = true;
+    return 'ok';
+  } catch (e) {
+    throw e;
+  }
+})()
+"#;
+
+        inject_script(port, script)
+            .await
+            .unwrap_or_else(|e| panic!("inject_script failed on port {port}: {e}"));
+
+        let marked = probe_csp_marker(port)
+            .await
+            .unwrap_or_else(|e| panic!("probe_csp_marker failed: {e}"));
+        assert!(marked, "CSP marker should be true after successful inject");
+    }
 }
