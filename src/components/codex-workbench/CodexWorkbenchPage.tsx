@@ -9,7 +9,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { CodexEnhancementSettings } from "@/types/codexWorkbench";
+import type { CodexWorkbenchSettings } from "@/types/codexWorkbench";
+import { EnhancementsTab } from "./EnhancementsTab";
 
 /**
  * Codex 工作台壳层页面。
@@ -27,33 +28,9 @@ export function CodexWorkbenchPage() {
   const status = statusQuery.data;
   const settings = settingsQuery.data;
 
-  const toggleEnhancement = (key: keyof CodexEnhancementSettings) => {
-    if (!settings) return;
-    updateSettings.mutate({
-      ...settings,
-      enhancements: {
-        ...settings.enhancements,
-        [key]: !settings.enhancements[key],
-      },
-    });
+  const handleSettingsChange = (next: CodexWorkbenchSettings) => {
+    updateSettings.mutate(next);
   };
-
-  const enhancementEntries: Array<{
-    key: keyof CodexEnhancementSettings;
-    label: string;
-  }> = [
-    { key: "pluginUnlock", label: "插件解锁" },
-    { key: "autoExpand", label: "自动展开" },
-    { key: "sessionDelete", label: "会话删除" },
-    { key: "wideConversation", label: "宽对话" },
-    { key: "nativeMenu", label: "原生菜单" },
-    { key: "userScriptRuntime", label: "用户脚本" },
-    { key: "markdownExport", label: "Markdown 导出" },
-    { key: "modelSwitcher", label: "模型切换" },
-    { key: "systemPrompt", label: "系统提示" },
-    { key: "reasoningResume", label: "推理恢复" },
-    { key: "reasoningToken", label: "推理 Token" },
-  ];
 
   return (
     <div className="flex h-full flex-col gap-4 p-4">
@@ -63,18 +40,12 @@ export function CodexWorkbenchPage() {
         </h2>
         {status && (
           <>
-            <Badge variant="outline">
-              {status.runtimeState}
-            </Badge>
-            <Badge variant="secondary">
-              bridge: {status.bridgeState}
-            </Badge>
+            <Badge variant="outline">{status.runtimeState}</Badge>
+            <Badge variant="secondary">bridge: {status.bridgeState}</Badge>
             {status.cdpPort != null && (
               <Badge variant="secondary">CDP {status.cdpPort}</Badge>
             )}
-            {status.proxyRunning && (
-              <Badge variant="default">proxy</Badge>
-            )}
+            {status.proxyRunning && <Badge variant="default">proxy</Badge>}
           </>
         )}
         <div className="ml-auto flex gap-2">
@@ -83,7 +54,8 @@ export function CodexWorkbenchPage() {
             onClick={() => launchMut.mutate()}
             disabled={
               launchMut.isPending ||
-              status?.platformSupported === false ||
+              status?.runtimeState === "launching" ||
+              status?.runtimeState === "injecting" ||
               status?.runtimeState === "ordinary_running"
             }
           >
@@ -132,7 +104,10 @@ export function CodexWorkbenchPage() {
         </div>
       )}
 
-      <Tabs defaultValue="enhancements" className="flex min-h-0 flex-1 flex-col">
+      <Tabs
+        defaultValue="enhancements"
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <TabsList className="w-fit">
           <TabsTrigger value="enhancements">
             {t("codexWorkbench.tabs.enhancements", {
@@ -151,33 +126,12 @@ export function CodexWorkbenchPage() {
         </TabsList>
 
         <TabsContent value="enhancements" className="flex-1 overflow-auto">
-          <div className="space-y-3 rounded-lg border p-4 text-sm">
-            <p className="text-muted-foreground">
-              {t("codexWorkbench.enhancementsHint", {
-                defaultValue:
-                  "增强开关会写入本地设置，并在启动/重新注入时注入到 Codex 页面。",
-              })}
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {enhancementEntries.map(({ key, label }) => {
-                const on = settings?.enhancements?.[key] ?? false;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className="flex items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted/50"
-                    onClick={() => toggleEnhancement(key)}
-                    disabled={!settings || updateSettings.isPending}
-                  >
-                    <span>{label}</span>
-                    <Badge variant={on ? "default" : "outline"}>
-                      {on ? "ON" : "OFF"}
-                    </Badge>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <EnhancementsTab
+            settings={settings}
+            isLoading={settingsQuery.isLoading}
+            isSaving={updateSettings.isPending}
+            onChange={handleSettingsChange}
+          />
         </TabsContent>
 
         <TabsContent value="scripts" className="flex-1 overflow-auto">
