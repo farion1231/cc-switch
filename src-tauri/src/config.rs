@@ -255,30 +255,90 @@ pub fn read_json_file<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, AppE
 
 /// 递归排序 JSON 对象的键（按字母顺序），确保序列化输出是确定性的
 fn sort_json_keys(value: &Value) -> Value {
+    sort_json_keys_preserving_object_key_order(value, &[])
+}
+
+/// 递归排序 JSON 对象的键，但保留指定对象键所对应对象的直接键顺序。
+///
+/// 被保留对象的子值仍会递归排序，因此只影响该对象自身的直接键顺序。
+fn sort_json_keys_preserving_object_key_order(
+    value: &Value,
+    preserve_object_key_order_for: &[&str],
+) -> Value {
     match value {
         Value::Object(map) => {
             let mut sorted_map = Map::new();
             let mut keys: Vec<_> = map.keys().collect();
             keys.sort();
             for key in keys {
-                sorted_map.insert(key.clone(), sort_json_keys(&map[key]));
+                let child = &map[key];
+                let sorted_child = if preserve_object_key_order_for.contains(&key.as_str()) {
+                    sort_json_object_preserving_direct_key_order(
+                        child,
+                        preserve_object_key_order_for,
+                    )
+                } else {
+                    sort_json_keys_preserving_object_key_order(child, preserve_object_key_order_for)
+                };
+                sorted_map.insert(key.clone(), sorted_child);
             }
             Value::Object(sorted_map)
         }
-        Value::Array(arr) => Value::Array(arr.iter().map(sort_json_keys).collect()),
+        Value::Array(arr) => Value::Array(
+            arr.iter()
+                .map(|item| {
+                    sort_json_keys_preserving_object_key_order(item, preserve_object_key_order_for)
+                })
+                .collect(),
+        ),
         other => other.clone(),
+    }
+}
+
+fn sort_json_object_preserving_direct_key_order(
+    value: &Value,
+    preserve_object_key_order_for: &[&str],
+) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        sort_json_keys_preserving_object_key_order(
+                            value,
+                            preserve_object_key_order_for,
+                        ),
+                    )
+                })
+                .collect(),
+        ),
+        _ => sort_json_keys_preserving_object_key_order(value, preserve_object_key_order_for),
     }
 }
 
 /// 写入 JSON 配置文件（键按字母排序，确保确定性输出）
 pub fn write_json_file<T: Serialize>(path: &Path, data: &T) -> Result<(), AppError> {
+    write_json_file_preserving_object_key_order(path, data, &[])
+}
+
+/// 写入 JSON 配置文件，并保留指定对象键所对应对象的直接键顺序。
+pub fn write_json_file_preserving_object_key_order<T: Serialize>(
+    path: &Path,
+    data: &T,
+    preserve_object_key_order_for: &[&str],
+) -> Result<(), AppError> {
     // 确保目录存在
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
 
     let value = serde_json::to_value(data).map_err(|e| AppError::JsonSerialize { source: e })?;
-    let sorted_value = sort_json_keys(&value);
+    let sorted_value = if preserve_object_key_order_for.is_empty() {
+        sort_json_keys(&value)
+    } else {
+        sort_json_keys_preserving_object_key_order(&value, preserve_object_key_order_for)
+    };
     let json = serde_json::to_string_pretty(&sorted_value)
         .map_err(|e| AppError::JsonSerialize { source: e })?;
 
@@ -520,6 +580,63 @@ mod tests {
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
         );
+    }
+
+    #[test]
+    fn preserved_object_key_order_keeps_variants_order_but_sorts_other_objects() {
+        let input = serde_json::json!({
+            "z_top": 1,
+            "models": {
+                "example": {
+                    "z_model": 1,
+                    "variants": {
+                        "none": { "z_field": 1, "a_field": 2 },
+                        "low": { "z_field": 1, "a_field": 2 },
+                        "medium": { "z_field": 1, "a_field": 2 },
+                        "high": { "z_field": 1, "a_field": 2 },
+                        "xhigh": { "z_field": 1, "a_field": 2 },
+                        "max": { "z_field": 1, "a_field": 2 }
+                    },
+                    "a_model": 2
+                }
+            },
+            "a_top": 2
+        });
+
+        let sorted = sort_json_keys_preserving_object_key_order(&input, &["variants"]);
+        let top_level_keys: Vec<_> = sorted
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let model = &sorted["models"]["example"];
+        let model_keys: Vec<_> = model
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let variant_keys: Vec<_> = model["variants"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let variant_field_keys: Vec<_> = model["variants"]["none"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+
+        assert_eq!(top_level_keys, ["a_top", "models", "z_top"]);
+        assert_eq!(model_keys, ["a_model", "variants", "z_model"]);
+        assert_eq!(
+            variant_keys,
+            ["none", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(variant_field_keys, ["a_field", "z_field"]);
     }
 }
 
