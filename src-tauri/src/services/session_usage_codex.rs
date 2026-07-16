@@ -54,11 +54,23 @@ impl DeltaTokens {
 
 /// 单文件解析时的运行状态
 struct FileParseState {
-    thread_id: Option<String>,
+    root_thread_id: Option<String>,
+    active_thread_id: Option<String>,
+    is_subagent: bool,
     current_model: String,
     prev_total: Option<CumulativeTokens>,
     event_index: u32,
     history_replay_boundary: Option<i64>,
+}
+
+impl FileParseState {
+    fn is_active_root_thread(&self) -> bool {
+        match (&self.root_thread_id, &self.active_thread_id) {
+            (Some(root), Some(active)) => root == active,
+            (None, _) => true,
+            _ => false,
+        }
+    }
 }
 
 /// Codex 子代理日志中的 `id` 是当前线程的唯一 ID，`session_id` 则指向父线程。
@@ -66,6 +78,7 @@ struct FileParseState {
 struct CodexSessionIdentity {
     thread_id: String,
     carries_history_snapshot: bool,
+    is_subagent: bool,
 }
 
 fn parse_codex_session_identity(payload: &serde_json::Value) -> Option<CodexSessionIdentity> {
@@ -81,19 +94,21 @@ fn parse_codex_session_identity(payload: &serde_json::Value) -> Option<CodexSess
         .get("session_id")
         .or_else(|| payload.get("sessionId"))
         .and_then(|value| value.as_str());
+    let is_subagent = payload
+        .get("source")
+        .and_then(|source| source.get("subagent"))
+        .is_some()
+        || session_id.is_some_and(|session_id| session_id != thread_id);
     let carries_history_snapshot = payload
         .get("forked_from_id")
         .and_then(|value| value.as_str())
         .is_some_and(|value| !value.is_empty())
-        || payload
-            .get("source")
-            .and_then(|source| source.get("subagent"))
-            .is_some()
-        || session_id.is_some_and(|session_id| session_id != thread_id);
+        || is_subagent;
 
     Some(CodexSessionIdentity {
         thread_id,
         carries_history_snapshot,
+        is_subagent,
     })
 }
 
@@ -121,13 +136,13 @@ fn read_codex_session_identity(file_path: &Path) -> Option<CodexSessionIdentity>
     None
 }
 
-/// fork/子代理日志会先重放父线程历史，再以接管事件开始当前线程。
+/// 子代理日志会先重放父线程历史，再以接管事件开始当前线程。
 /// 返回接管事件所在行；此前的 token_count 只用于恢复累计值基线。
 fn codex_history_replay_boundary(
     file_path: &Path,
     identity: Option<&CodexSessionIdentity>,
 ) -> Option<i64> {
-    if !identity.is_some_and(|identity| identity.carries_history_snapshot) {
+    if !identity.is_some_and(|identity| identity.is_subagent && identity.carries_history_snapshot) {
         return None;
     }
 
@@ -408,7 +423,11 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
     let history_replay_boundary = codex_history_replay_boundary(file_path, identity.as_ref());
 
     let mut state = FileParseState {
-        thread_id: identity.map(|identity| identity.thread_id),
+        root_thread_id: identity.as_ref().map(|identity| identity.thread_id.clone()),
+        active_thread_id: None,
+        is_subagent: identity
+            .as_ref()
+            .is_some_and(|identity| identity.is_subagent),
         current_model: "unknown".to_string(),
         prev_total: None,
         event_index: 0,
@@ -454,11 +473,15 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
         };
 
         match event_type {
-            "session_meta" if state.thread_id.is_none() => {
-                state.thread_id = value
+            "session_meta" => {
+                let thread_id = value
                     .get("payload")
                     .and_then(parse_codex_session_identity)
                     .map(|identity| identity.thread_id);
+                if state.root_thread_id.is_none() {
+                    state.root_thread_id = thread_id.clone();
+                }
+                state.active_thread_id = thread_id;
             }
             "turn_context" => {
                 if let Some(payload) = value.get("payload") {
@@ -547,13 +570,24 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     continue;
                 }
 
+                // Desktop fork rollouts embed parent/ancestor session segments. Unlike
+                // subagents, they return to the child by writing its session_meta again.
+                // Keep replay events in the cumulative baseline and stable event index,
+                // but only insert usage while the active segment belongs to this file.
+                if !state.is_subagent && !state.is_active_root_thread() {
+                    if line_offset > last_offset {
+                        skipped += 1;
+                    }
+                    continue;
+                }
+
                 // 跳过已处理的行（但仍需解析以恢复状态）
                 if line_offset <= last_offset {
                     continue;
                 }
 
                 // 生成唯一 request_id
-                let thread_id = state.thread_id.as_deref().unwrap_or("unknown");
+                let thread_id = state.root_thread_id.as_deref().unwrap_or("unknown");
                 let request_id = format!(
                     "{CODEX_THREAD_REQUEST_ID_PREFIX}:{thread_id}:{}",
                     state.event_index
@@ -570,7 +604,7 @@ fn sync_single_codex_file(db: &Database, file_path: &Path) -> Result<(u32, u32),
                     &request_id,
                     &delta,
                     &state.current_model,
-                    state.thread_id.as_deref(),
+                    state.root_thread_id.as_deref(),
                     timestamp.as_deref(),
                 ) {
                     Ok(true) => imported += 1,
@@ -742,6 +776,22 @@ mod tests {
         })
     }
 
+    fn desktop_session_meta(thread_id: &str, forked_from_id: Option<&str>) -> serde_json::Value {
+        let mut payload = serde_json::json!({
+            "id": thread_id,
+            "session_id": thread_id,
+            "source": "vscode"
+        });
+        if let Some(forked_from_id) = forked_from_id {
+            payload["forked_from_id"] = serde_json::Value::String(forked_from_id.to_string());
+        }
+        serde_json::json!({
+            "timestamp": "2026-07-10T03:00:00Z",
+            "type": "session_meta",
+            "payload": payload
+        })
+    }
+
     fn turn_context() -> serde_json::Value {
         serde_json::json!({
             "timestamp": "2026-07-10T03:00:01Z",
@@ -762,6 +812,14 @@ mod tests {
                     "output_tokens": output
                 }}
             }
+        })
+    }
+
+    fn thread_settings_applied() -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": "2026-07-10T03:00:03Z",
+            "type": "event_msg",
+            "payload": { "type": "thread_settings_applied" }
         })
     }
 
@@ -882,6 +940,7 @@ mod tests {
 
         assert_eq!(identity.thread_id, "child");
         assert!(identity.carries_history_snapshot);
+        assert!(identity.is_subagent);
     }
 
     #[test]
@@ -896,11 +955,7 @@ mod tests {
                 turn_context(),
                 token_count(1_000, 900, 100),
                 token_count(1_200, 1_000, 120),
-                serde_json::json!({
-                    "timestamp": "2026-07-10T03:00:03Z",
-                    "type": "event_msg",
-                    "payload": { "type": "thread_settings_applied" }
-                }),
+                thread_settings_applied(),
                 token_count(1_300, 1_050, 150),
             ],
         );
@@ -916,6 +971,107 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert_eq!(usage, (100, 50, 30));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_desktop_empty_fork_skips_parent_history_after_settings() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("empty-fork.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                desktop_session_meta("child", Some("parent")),
+                desktop_session_meta("parent", None),
+                turn_context(),
+                token_count(20_149, 9_984, 5),
+                thread_settings_applied(),
+                token_count(43_884, 20_480, 11),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (0, 2));
+
+        let conn = lock_conn!(db.conn);
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_desktop_fork_imports_only_child_segment() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("fork.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                desktop_session_meta("child", Some("parent")),
+                desktop_session_meta("parent", None),
+                turn_context(),
+                token_count(1_000, 400, 50),
+                thread_settings_applied(),
+                token_count(1_200, 500, 70),
+                desktop_session_meta("child", Some("parent")),
+                turn_context(),
+                token_count(1_200, 500, 70),
+                token_count(1_300, 550, 100),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 2));
+
+        let conn = lock_conn!(db.conn);
+        let usage: (String, i64, i64, i64) = conn.query_row(
+            "SELECT session_id, input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs
+             WHERE request_id = 'codex_session:thread-v1:child:3'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(usage, ("child".to_string(), 100, 50, 30));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_desktop_nested_fork_skips_all_ancestor_segments() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let child = temp.path().join("nested-fork.jsonl");
+        write_jsonl(
+            &child,
+            &[
+                desktop_session_meta("grandchild", Some("parent")),
+                desktop_session_meta("ancestor", None),
+                turn_context(),
+                token_count(100, 40, 10),
+                desktop_session_meta("parent", Some("ancestor")),
+                token_count(200, 80, 20),
+                desktop_session_meta("ancestor", None),
+                token_count(300, 120, 30),
+                desktop_session_meta("grandchild", Some("parent")),
+                token_count(300, 120, 30),
+                token_count(400, 160, 40),
+            ],
+        );
+
+        assert_eq!(sync_single_codex_file(&db, &child)?, (1, 3));
+
+        let conn = lock_conn!(db.conn);
+        let usage: (String, i64, i64, i64) = conn.query_row(
+            "SELECT session_id, input_tokens, cache_read_tokens, output_tokens
+             FROM proxy_request_logs
+             WHERE request_id = 'codex_session:thread-v1:grandchild:4'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(usage, ("grandchild".to_string(), 100, 40, 10));
 
         Ok(())
     }
