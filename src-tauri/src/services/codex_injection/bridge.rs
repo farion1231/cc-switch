@@ -58,6 +58,19 @@ pub async fn start_bridge(instance_id: &str) -> Result<BridgeHandle, AppError> {
                             _ => return,
                         };
                         let req = String::from_utf8_lossy(&buf[..n]);
+                        // CORS preflight from app://- after CSP bypass.
+                        if req.starts_with("OPTIONS ") {
+                            let resp = concat!(
+                                "HTTP/1.1 204 No Content\r\n",
+                                "Access-Control-Allow-Origin: *\r\n",
+                                "Access-Control-Allow-Headers: Authorization, Content-Type\r\n",
+                                "Access-Control-Allow-Methods: GET, OPTIONS\r\n",
+                                "Content-Length: 0\r\n",
+                                "Connection: close\r\n\r\n"
+                            );
+                            let _ = socket.write_all(resp.as_bytes()).await;
+                            return;
+                        }
                         let authorized = req.lines().any(|l| {
                             let lower = l.to_ascii_lowercase();
                             lower.starts_with("authorization:")
@@ -81,7 +94,7 @@ pub async fn start_bridge(instance_id: &str) -> Result<BridgeHandle, AppError> {
                             body.to_string()
                         };
                         let resp = format!(
-                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                             body.len()
                         );
                         let _ = socket.write_all(resp.as_bytes()).await;

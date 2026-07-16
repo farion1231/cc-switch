@@ -1,6 +1,7 @@
 //! Minimal CDP helpers: list targets and Runtime.evaluate injection.
 
 use crate::error::AppError;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -91,7 +92,7 @@ pub async fn inject_script(cdp_port: u16, script: &str) -> Result<(), AppError> 
 }
 
 async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError> {
-    use futures_util::{SinkExt, StreamExt};
+    use futures_util::SinkExt;
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message;
 
@@ -99,8 +100,54 @@ async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError
         .await
         .map_err(|e| AppError::Config(format!("cdp ws connect: {e}")))?;
 
-    let payload = json!({
-        "id": 1,
+    // Store Codex CSP connect-src omits loopback. Live probe proved:
+    // setBypassCSP alone does NOT unlock the current document; bypass + reload does.
+    let setup_cmds = [
+        json!({"id": 1, "method": "Page.enable", "params": {}}),
+        json!({"id": 2, "method": "Page.setBypassCSP", "params": {"enabled": true}}),
+        json!({"id": 3, "method": "Page.reload", "params": {"ignoreCache": false}}),
+    ];
+
+    for cmd in &setup_cmds {
+        let id = cmd["id"].as_i64().unwrap_or(0);
+        ws.send(Message::Text(cmd.to_string().into()))
+            .await
+            .map_err(|e| AppError::Config(format!("cdp send id {id}: {e}")))?;
+        let soft = id == 1; // Page.enable may be optional
+        let res = wait_for_cdp_id(&mut ws, id, 5).await;
+        if let Err(e) = res {
+            if !soft {
+                return Err(e);
+            }
+        }
+    }
+
+    // Poll document.readyState after reload before injecting.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut poll_id: i64 = 100;
+    while std::time::Instant::now() < deadline {
+        poll_id += 1;
+        let probe = json!({
+            "id": poll_id,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": "document.readyState",
+                "returnByValue": true
+            }
+        });
+        ws.send(Message::Text(probe.to_string().into()))
+            .await
+            .map_err(|e| AppError::Config(format!("cdp ready send: {e}")))?;
+        if let Ok(state) = wait_for_cdp_string(&mut ws, poll_id, 2).await {
+            if state == "complete" || state == "interactive" {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    let eval = json!({
+        "id": 10,
         "method": "Runtime.evaluate",
         "params": {
             "expression": script,
@@ -108,31 +155,81 @@ async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError
             "returnByValue": true
         }
     });
-    let text = payload.to_string();
-    ws.send(Message::Text(text.into()))
+    ws.send(Message::Text(eval.to_string().into()))
         .await
-        .map_err(|e| AppError::Config(format!("cdp send: {e}")))?;
+        .map_err(|e| AppError::Config(format!("cdp send evaluate: {e}")))?;
+    wait_for_cdp_id(&mut ws, 10, 5).await
+}
 
-    let timeout = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+async fn wait_for_cdp_id(
+    ws: &mut (
+        impl StreamExt<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
+            + Unpin
+    ),
+    expect_id: i64,
+    secs: u64,
+) -> Result<(), AppError> {
+    use tokio_tungstenite::tungstenite::Message;
+
+    tokio::time::timeout(std::time::Duration::from_secs(secs), async {
         while let Some(msg) = ws.next().await {
             let msg = msg.map_err(|e| AppError::Config(format!("cdp recv: {e}")))?;
             if let Message::Text(t) = msg {
                 let v: Value = serde_json::from_str(&t)
                     .map_err(|e| AppError::Config(format!("cdp json: {e}")))?;
-                if v.get("id").and_then(|x| x.as_i64()) == Some(1) {
+                if v.get("id").and_then(|x| x.as_i64()) == Some(expect_id) {
                     if v.get("error").is_some() {
-                        return Err(AppError::Config(format!("cdp evaluate error: {v}")));
+                        return Err(AppError::Config(format!(
+                            "cdp id {expect_id} error: {v}"
+                        )));
                     }
                     return Ok(());
                 }
             }
         }
-        Err(AppError::Config("cdp evaluate: connection closed".into()))
+        Err(AppError::Config(format!(
+            "cdp id {expect_id}: connection closed"
+        )))
     })
     .await
-    .map_err(|_| AppError::Config("cdp evaluate timeout".into()))?;
+    .map_err(|_| AppError::Config(format!("cdp id {expect_id} timeout")))?
+}
 
-    timeout
+async fn wait_for_cdp_string(
+    ws: &mut (
+        impl StreamExt<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
+            + Unpin
+    ),
+    expect_id: i64,
+    secs: u64,
+) -> Result<String, AppError> {
+    use tokio_tungstenite::tungstenite::Message;
+
+    tokio::time::timeout(std::time::Duration::from_secs(secs), async {
+        while let Some(msg) = ws.next().await {
+            let msg = msg.map_err(|e| AppError::Config(format!("cdp recv: {e}")))?;
+            if let Message::Text(t) = msg {
+                let v: Value = serde_json::from_str(&t)
+                    .map_err(|e| AppError::Config(format!("cdp json: {e}")))?;
+                if v.get("id").and_then(|x| x.as_i64()) == Some(expect_id) {
+                    if v.get("error").is_some() {
+                        return Ok(String::new());
+                    }
+                    let s = v
+                        .pointer("/result/result/value")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    return Ok(s);
+                }
+            }
+        }
+        Err(AppError::Config(format!(
+            "cdp id {expect_id}: connection closed"
+        )))
+    })
+    .await
+    .map_err(|_| AppError::Config(format!("cdp id {expect_id} timeout")))?
 }
 
 #[cfg(test)]

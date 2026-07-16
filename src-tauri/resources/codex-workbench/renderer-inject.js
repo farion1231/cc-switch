@@ -133,11 +133,32 @@
     var existing =
       typeof window !== "undefined" ? window.__ccSwitchCodex : null;
 
+    function bindFetchBridge(runtime, cfg) {
+      if (!(cfg && cfg.bridgePort && cfg.nonce)) {
+        return;
+      }
+      var port = cfg.bridgePort;
+      var nonce = cfg.nonce;
+      runtime.bridgePort = port;
+      runtime.fetchBridge = function (path, init) {
+        init = init || {};
+        var headers = Object.assign({}, init.headers || {}, {
+          Authorization: "Bearer " + nonce,
+        });
+        return fetch(
+          "http://127.0.0.1:" + port + (path || "/"),
+          Object.assign({}, init, { headers: headers })
+        );
+      };
+    }
+
     if (
       existing &&
       existing.instanceId === instanceId &&
       typeof existing.configure === "function"
     ) {
+      // Same instance: still rebind if bridge port/nonce rotated.
+      bindFetchBridge(existing, config);
       existing.configure(config.features || {});
       return existing;
     }
@@ -153,18 +174,8 @@
     });
 
     // Secure bridge helper (localhost + Bearer nonce). Secrets like API keys never appear here.
-    if (config.bridgePort && config.nonce) {
-      runtime.fetchBridge = function (path, init) {
-        init = init || {};
-        var headers = Object.assign({}, init.headers || {}, {
-          Authorization: "Bearer " + config.nonce,
-        });
-        return fetch(
-          "http://127.0.0.1:" + config.bridgePort + (path || "/"),
-          Object.assign({}, init, { headers: headers })
-        );
-      };
-    }
+    // Note: Store Codex CSP blocks loopback until Page.setBypassCSP + reload (host inject path).
+    bindFetchBridge(runtime, config);
 
     if (typeof window !== "undefined") {
       window.__ccSwitchCodex = runtime;
