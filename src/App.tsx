@@ -234,6 +234,12 @@ function App() {
     }
   }, [sharedFeatureApp, currentView]);
 
+  useEffect(() => {
+    if (currentView === "codexWorkbench" && activeApp !== "codex") {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView]);
+
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -1461,22 +1467,7 @@ function App() {
                             </>
                           ) : activeApp === "openclaw" ? (
                             <>
-                              
-                    {activeApp === "codex" && (
-                      <Button
-                        variant={
-                          currentView === "codexWorkbench" ? "default" : "ghost"
-                        }
-                        size="sm"
-                        onClick={() => setCurrentView("codexWorkbench")}
-                        className="gap-1"
-                      >
-                        {t("codexWorkbench.nav", {
-                          defaultValue: "工作台",
-                        })}
-                      </Button>
-                    )}
-<Button
+                              <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("workspace")}
@@ -1524,6 +1515,20 @@ function App() {
                             </>
                           ) : (
                             <>
+                              {activeApp === "codex" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    setCurrentView("codexWorkbench")
+                                  }
+                                  className="gap-1"
+                                >
+                                  {t("codexWorkbench.nav", {
+                                    defaultValue: "工作台",
+                                  })}
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"

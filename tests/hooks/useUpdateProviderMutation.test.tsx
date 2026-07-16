@@ -62,6 +62,7 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
   return {
     id: "provider-1",
     name: "Test Provider",
+    revision: 1,
     settingsConfig: {},
     ...overrides,
   };
@@ -83,7 +84,9 @@ describe("useUpdateProviderMutation", () => {
       await result.current.mutateAsync({ provider });
     });
 
-    expect(apiMocks.update).toHaveBeenCalledWith(provider, "codex", undefined);
+    expect(apiMocks.update).toHaveBeenCalledWith(provider, "codex", {
+      expectedRevision: 1,
+    });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["providers", "codex"],
     });
@@ -109,11 +112,10 @@ describe("useUpdateProviderMutation", () => {
       });
     });
 
-    expect(apiMocks.update).toHaveBeenCalledWith(
-      provider,
-      "openclaw",
-      "provider-old",
-    );
+    expect(apiMocks.update).toHaveBeenCalledWith(provider, "openclaw", {
+      originalId: "provider-old",
+      expectedRevision: 1,
+    });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: usageKeys.script("provider-new", "openclaw"),
     });

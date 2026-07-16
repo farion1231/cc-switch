@@ -71,6 +71,19 @@ describe("RequestLogTable", () => {
     );
   });
 
+  it("spans every visible column in the empty state", () => {
+    render(
+      <RequestLogTable
+        range={{ preset: "today" }}
+        rangeLabel="Today"
+        appType="all"
+        refreshIntervalMs={0}
+      />,
+    );
+
+    expect(screen.getByText("usage.noData")).toHaveAttribute("colspan", "10");
+  });
+
   it("resets pagination when the dashboard range changes", async () => {
     const initialRange: UsageRangeSelection = { preset: "today" };
     const nextRange: UsageRangeSelection = {
@@ -167,7 +180,12 @@ describe("RequestLogTable", () => {
     [500, 1, "partial_failed", "Tok 500 ⚠"],
   ] as const)(
     "renders reasoning column for tokens=%s rounds=%s status=%s as %s",
-    async (reasoningTokens, continuationRounds, continuationStatus, expected) => {
+    async (
+      reasoningTokens,
+      continuationRounds,
+      continuationStatus,
+      expected,
+    ) => {
       useRequestLogsMock.mockImplementation(() => ({
         data: {
           data: [
@@ -216,5 +234,4 @@ describe("RequestLogTable", () => {
       expect(await screen.findByText(expected)).toBeInTheDocument();
     },
   );
-
 });

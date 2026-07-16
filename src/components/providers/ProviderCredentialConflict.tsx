@@ -71,12 +71,16 @@ export function ProviderCredentialConflict({
 
     setImporting(true);
     try {
-      await providerSecurityApi.importLiveCredentials({
+      const outcome = await providerSecurityApi.importLiveCredentials({
         appId,
         providerId,
         expectedRevision: revision,
         fields,
       });
+      if (outcome.kind === "conflict") {
+        toast.error("供应商已被其他操作更新，请重新加载后再导入");
+        return;
+      }
       toast.success("已从 Live 导入选中凭据");
       setShowImport(false);
       setSelected({});
@@ -110,7 +114,8 @@ export function ProviderCredentialConflict({
             Live 凭据冲突
           </div>
           <p className="text-muted-foreground">
-            磁盘 Live 配置与项目数据库中的凭据不一致。表单始终展示数据库值；如需覆盖，请显式从
+            磁盘 Live
+            配置与项目数据库中的凭据不一致。表单始终展示数据库值；如需覆盖，请显式从
             Live 导入。
           </p>
           <ul className="space-y-1 text-xs text-muted-foreground">
@@ -119,7 +124,8 @@ export function ProviderCredentialConflict({
                 <span className="font-medium text-foreground">
                   {FIELD_LABEL[normalizeField(c.field) ?? ""] ?? c.field}
                 </span>
-                ：DB {c.storedMasked || "（空）"} / Live {c.liveMasked || "（空）"}
+                ：DB {c.storedMasked || "（空）"} / Live{" "}
+                {c.liveMasked || "（空）"}
               </li>
             ))}
           </ul>
@@ -198,11 +204,7 @@ export function ProviderCredentialConflict({
   );
 }
 
-export function ProviderConflictBadge({
-  count,
-}: {
-  count: number;
-}) {
+export function ProviderConflictBadge({ count }: { count: number }) {
   if (count <= 0) return null;
   return (
     <span

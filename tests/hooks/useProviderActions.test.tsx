@@ -100,6 +100,7 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
   return {
     id: "provider-1",
     name: "Test Provider",
+    revision: 1,
     settingsConfig: {},
     category: "official",
     ...overrides,
@@ -494,6 +495,7 @@ describe("useProviderActions", () => {
         },
       },
       "claude",
+      { expectedRevision: 1 },
     );
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["providers", "claude"],

@@ -134,6 +134,10 @@ vi.mock("@/components/UpdateBadge", () => ({
   ),
 }));
 
+vi.mock("@/components/codex-workbench/CodexWorkbenchPage", () => ({
+  CodexWorkbenchPage: () => <div data-testid="codex-workbench">workbench</div>,
+}));
+
 vi.mock("@/components/mcp/McpPanel", () => ({
   default: ({ open, onOpenChange }: any) =>
     open ? (
@@ -161,6 +165,35 @@ describe("App integration with MSW", () => {
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+  });
+
+  it("shows and opens the Codex workbench only for the Codex app", async () => {
+    window.localStorage.clear();
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(
+      screen.queryByRole("button", { name: /codexWorkbench\.nav|工作台/ }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("switch-codex"));
+
+    const workbenchButton = await screen.findByRole("button", {
+      name: /codexWorkbench\.nav|工作台/,
+    });
+    fireEvent.click(workbenchButton);
+
+    expect(await screen.findByTestId("codex-workbench")).toBeInTheDocument();
+  });
+
+  it("does not restore the Codex workbench for another app", async () => {
+    window.localStorage.setItem("cc-switch-last-app", "claude");
+    window.localStorage.setItem("cc-switch-last-view", "codexWorkbench");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    expect(await screen.findByTestId("provider-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("codex-workbench")).not.toBeInTheDocument();
   });
 
   it("covers basic provider flows via real hooks", async () => {
