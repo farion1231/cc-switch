@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import type { WebDavSyncSettings } from "@/types";
+import type { S3SyncSettings, WebDavSyncSettings } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -80,6 +80,9 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncUpload: vi.fn(),
     webdavSyncPrepareDownload: vi.fn(),
     webdavSyncApplyDownload: vi.fn(),
+    s3SyncFetchRemoteInfo: vi.fn(),
+    s3SyncPrepareDownload: vi.fn(),
+    s3SyncApplyDownload: vi.fn(),
   },
 }));
 
@@ -98,7 +101,23 @@ const baseConfig: WebDavSyncSettings = {
   status: {},
 };
 
-function renderSection(config?: WebDavSyncSettings) {
+const baseS3Config: S3SyncSettings = {
+  enabled: true,
+  region: "us-east-1",
+  bucket: "cc-switch-sync",
+  accessKeyId: "AKIAEXAMPLE",
+  secretAccessKey: "secret",
+  endpoint: "https://s3.example.com",
+  remoteRoot: "cc-switch-sync",
+  profile: "default",
+  autoSync: false,
+  status: {},
+};
+
+function renderSection(
+  config?: WebDavSyncSettings,
+  s3Config?: S3SyncSettings,
+) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -107,7 +126,7 @@ function renderSection(config?: WebDavSyncSettings) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <WebdavSyncSection config={config} />
+      <WebdavSyncSection config={config} s3Config={s3Config} />
     </QueryClientProvider>,
   );
   return { ...view, client };
@@ -125,6 +144,9 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncUpload.mockReset();
     settingsApiMock.webdavSyncPrepareDownload.mockReset();
     settingsApiMock.webdavSyncApplyDownload.mockReset();
+    settingsApiMock.s3SyncFetchRemoteInfo.mockReset();
+    settingsApiMock.s3SyncPrepareDownload.mockReset();
+    settingsApiMock.s3SyncApplyDownload.mockReset();
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
@@ -148,6 +170,22 @@ describe("WebdavSyncSection", () => {
       exactRestoreCredentialFieldCount: 0,
     });
     settingsApiMock.webdavSyncApplyDownload.mockResolvedValue({ status: "downloaded" });
+    settingsApiMock.s3SyncFetchRemoteInfo.mockResolvedValue({
+      deviceName: "S3 Device",
+      createdAt: "2026-02-01T10:00:00Z",
+      snapshotId: "s3-snapshot-1",
+      version: 2,
+      compatible: true,
+      artifacts: ["db.sql", "skills.zip"],
+    });
+    settingsApiMock.s3SyncPrepareDownload.mockResolvedValue({
+      previewId: "s3-preview-1",
+      newProviderCount: 0,
+      existingProviderCount: 1,
+      credentialConflicts: [],
+      exactRestoreCredentialFieldCount: 0,
+    });
+    settingsApiMock.s3SyncApplyDownload.mockResolvedValue({ status: "downloaded" });
   });
 
   it("shows auto sync error callout when last auto sync failed", () => {
@@ -625,6 +663,94 @@ describe("WebdavSyncSection", () => {
     });
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "settings.webdavSync.downloadSuccess",
+    );
+  });
+
+
+  it("S3 prepare/apply download path keeps local credentials by default", async () => {
+    renderSection(baseConfig, baseS3Config);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.s3Sync.download" }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncFetchRemoteInfo).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.confirmDownload.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncPrepareDownload).toHaveBeenCalledTimes(1);
+      expect(settingsApiMock.s3SyncApplyDownload).toHaveBeenCalledWith(
+        "s3-preview-1",
+        [],
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "settings.s3Sync.downloadSuccess",
+    );
+  });
+
+  it("S3 credential impact requires explicit confirm before apply", async () => {
+    settingsApiMock.s3SyncPrepareDownload.mockResolvedValueOnce({
+      previewId: "s3-preview-impact",
+      newProviderCount: 1,
+      existingProviderCount: 2,
+      credentialConflicts: [
+        {
+          appType: "claude",
+          providerId: "p1",
+          providerName: "Claude",
+          apiKeyDiffers: true,
+          baseUrlDiffers: false,
+        },
+      ],
+      exactRestoreCredentialFieldCount: 1,
+    });
+
+    renderSection(baseConfig, baseS3Config);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.s3Sync.download" }),
+    );
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncFetchRemoteInfo).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.confirmDownload.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", {
+          name: "settings.s3Sync.confirmCredentialImpact.confirm",
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(settingsApiMock.s3SyncApplyDownload).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.confirmCredentialImpact.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncApplyDownload).toHaveBeenCalledWith(
+        "s3-preview-impact",
+        [],
+      );
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "settings.s3Sync.downloadSuccess",
     );
   });
 
