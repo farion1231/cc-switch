@@ -8,7 +8,6 @@ import type { Provider } from "@/types";
 const apiMocks = vi.hoisted(() => ({
   add: vi.fn(),
   ensureClaudeDesktopOfficialProvider: vi.fn(),
-  ensureCodexOfficialProvider: vi.fn(),
   getAll: vi.fn(),
   updateTrayMenu: vi.fn(),
 }));
@@ -22,8 +21,6 @@ vi.mock("@/lib/api", () => ({
     add: (...args: unknown[]) => apiMocks.add(...args),
     ensureClaudeDesktopOfficialProvider: (...args: unknown[]) =>
       apiMocks.ensureClaudeDesktopOfficialProvider(...args),
-    ensureCodexOfficialProvider: (...args: unknown[]) =>
-      apiMocks.ensureCodexOfficialProvider(...args),
     getAll: (...args: unknown[]) => apiMocks.getAll(...args),
     updateTrayMenu: (...args: unknown[]) => apiMocks.updateTrayMenu(...args),
   },
@@ -62,7 +59,6 @@ beforeEach(() => {
   apiMocks.ensureClaudeDesktopOfficialProvider
     .mockReset()
     .mockResolvedValue(true);
-  apiMocks.ensureCodexOfficialProvider.mockReset().mockResolvedValue(true);
   apiMocks.getAll.mockReset().mockResolvedValue({});
   apiMocks.updateTrayMenu.mockReset().mockResolvedValue(true);
   uuidMocks.generateUUID.mockReset().mockReturnValue("generated-uuid");
@@ -138,16 +134,7 @@ describe("useAddProviderMutation", () => {
     expect(persistedProvider).toEqual(seedProvider);
   });
 
-  it("recreates and returns the fixed Codex official seed", async () => {
-    const seedProvider: Provider = {
-      id: "codex-official",
-      name: "OpenAI Official",
-      settingsConfig: { auth: {}, config: "" },
-      category: "official",
-    };
-    apiMocks.getAll.mockResolvedValueOnce({
-      "codex-official": seedProvider,
-    });
+  it("creates an independent Codex official provider", async () => {
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useAddProviderMutation("codex"), {
       wrapper,
@@ -155,16 +142,29 @@ describe("useAddProviderMutation", () => {
 
     const persistedProvider = await act(async () =>
       result.current.mutateAsync({
-        name: "OpenAI Official",
-        settingsConfig: { auth: {}, config: "" },
+        name: "OpenAI Account B",
+        settingsConfig: {
+          auth: { tokens: { access_token: "token-b" } },
+          config: "",
+        },
         category: "official",
-        ensureCodexOfficialSeed: true,
       }),
     );
 
-    expect(apiMocks.ensureCodexOfficialProvider).toHaveBeenCalledTimes(1);
-    expect(apiMocks.getAll).toHaveBeenCalledWith("codex");
-    expect(apiMocks.add).not.toHaveBeenCalled();
-    expect(persistedProvider).toEqual(seedProvider);
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "generated-uuid",
+        name: "OpenAI Account B",
+        category: "official",
+        settingsConfig: {
+          auth: { tokens: { access_token: "token-b" } },
+          config: "",
+        },
+      }),
+      "codex",
+      undefined,
+    );
+    expect(persistedProvider.id).toBe("generated-uuid");
+    expect(persistedProvider.id).not.toBe("codex-official");
   });
 });

@@ -125,4 +125,39 @@ describe("AddProviderDialog", () => {
       },
     });
   });
+
+  it("新增 Codex 官方预设时保留为独立供应商", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    mockFormValues = {
+      name: "OpenAI Account B",
+      websiteUrl: "https://chatgpt.com/codex",
+      settingsConfig: JSON.stringify({ auth: {}, config: "" }),
+      presetId: "codex-0",
+      presetCategory: "official",
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="codex"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted).toEqual(
+      expect.objectContaining({
+        name: "OpenAI Account B",
+        category: "official",
+        settingsConfig: { auth: {}, config: "" },
+      }),
+    );
+    expect(submitted).not.toHaveProperty("ensureCodexOfficialSeed");
+  });
 });
