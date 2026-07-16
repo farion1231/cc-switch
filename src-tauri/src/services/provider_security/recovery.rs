@@ -1,5 +1,6 @@
 use super::{
-    credential_fingerprint, extract_provider_credentials, mask_credential, CredentialDiff,
+    base_urls_equivalent, credential_fingerprint, extract_provider_credentials, mask_credential,
+    CredentialDiff,
 };
 use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
@@ -113,7 +114,7 @@ pub(crate) fn credential_diffs(
     stored: &Provider,
     live_settings: &serde_json::Value,
     app_type: &AppType,
-) -> Vec<CredentialDiff> {
+) -> Result<Vec<CredentialDiff>, AppError> {
     let stored_fields = extract_provider_credentials(stored, app_type);
     let mut live_provider = stored.clone();
     live_provider.settings_config = live_settings.clone();
@@ -127,14 +128,19 @@ pub(crate) fn credential_diffs(
     ) {
         result.push(diff);
     }
-    if let Some(diff) = diff_field(
-        "baseUrl",
+    if !base_urls_equivalent(
         stored_fields.base_url.as_deref(),
         live_fields.base_url.as_deref(),
-    ) {
-        result.push(diff);
+    )? {
+        if let Some(diff) = diff_field(
+            "baseUrl",
+            stored_fields.base_url.as_deref(),
+            live_fields.base_url.as_deref(),
+        ) {
+            result.push(diff);
+        }
     }
-    result
+    Ok(result)
 }
 
 pub fn get_security_status(
@@ -150,11 +156,8 @@ pub fn get_security_status(
         .ok_or_else(|| AppError::InvalidInput("provider revision missing".to_string()))?;
     let stored = extract_provider_credentials(&provider, &app_type);
     let credential_valid = stored.api_key.is_some() || stored.base_url.is_some();
-    let live_settings = ProviderService::read_live_settings(app_type.clone()).ok();
-    let conflicts = live_settings
-        .as_ref()
-        .map(|settings| credential_diffs(&provider, settings, &app_type))
-        .unwrap_or_default();
+    let live_settings = ProviderService::read_live_settings(app_type.clone())?;
+    let conflicts = credential_diffs(&provider, &live_settings, &app_type)?;
 
     Ok(ProviderSecurityStatus {
         provider_id: provider_id.to_string(),
@@ -185,12 +188,38 @@ mod tests {
             "ANTHROPIC_AUTH_TOKEN": "sk-live-secret",
             "ANTHROPIC_BASE_URL": "https://live.example"
         }});
-        let diffs = credential_diffs(&stored, &live, &AppType::Claude);
+        let diffs = credential_diffs(&stored, &live, &AppType::Claude).unwrap();
         let encoded = serde_json::to_string(&diffs).unwrap();
         assert_eq!(diffs.len(), 2);
         assert!(!encoded.contains("sk-stored-secret"));
         assert!(!encoded.contains("sk-live-secret"));
         assert!(!encoded.contains("https://db.example"));
         assert!(!encoded.contains("https://live.example"));
+    }
+
+    #[test]
+    fn equivalent_base_urls_do_not_create_a_conflict() {
+        let stored = provider(json!({"env": {
+            "ANTHROPIC_BASE_URL": " HTTPS://Example.COM:443/v1/ "
+        }}));
+        let live = json!({"env": {
+            "ANTHROPIC_BASE_URL": "https://example.com/v1"
+        }});
+
+        assert!(credential_diffs(&stored, &live, &AppType::Claude)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn invalid_base_urls_are_reported_instead_of_hidden() {
+        let stored = provider(json!({"env": {
+            "ANTHROPIC_BASE_URL": "not a URL"
+        }}));
+        let live = json!({"env": {
+            "ANTHROPIC_BASE_URL": "https://example.com"
+        }});
+
+        assert!(credential_diffs(&stored, &live, &AppType::Claude).is_err());
     }
 }

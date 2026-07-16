@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use serde::Serialize;
 use tauri::{Emitter, State};
 
 use crate::app_config::AppType;
@@ -18,14 +19,34 @@ const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionedProvider {
+    #[serde(flatten)]
+    provider: Provider,
+    revision: i64,
+}
+
 /// 获取所有供应商
 #[tauri::command]
 pub fn get_providers(
     state: State<'_, AppState>,
     app: String,
-) -> Result<IndexMap<String, Provider>, String> {
+) -> Result<IndexMap<String, VersionedProvider>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())
+    let app_type_str = app_type.as_str().to_string();
+    let providers = ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())?;
+    providers
+        .into_iter()
+        .map(|(id, provider)| {
+            let revision = state
+                .db
+                .get_provider_revision(&app_type_str, &id)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Provider revision missing: {app_type_str}/{id}"))?;
+            Ok((id, VersionedProvider { provider, revision }))
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -52,10 +73,17 @@ pub fn update_provider(
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] originalId: Option<String>,
+    #[allow(non_snake_case)] expectedRevision: i64,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
-        .map_err(|e| e.to_string())
+    ProviderService::update(
+        state.inner(),
+        app_type,
+        originalId.as_deref(),
+        provider,
+        expectedRevision,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

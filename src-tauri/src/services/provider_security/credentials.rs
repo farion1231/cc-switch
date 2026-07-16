@@ -69,6 +69,19 @@ pub fn normalize_base_url(input: &str) -> Result<String, AppError> {
     Ok(normalized.trim_end_matches('/').to_string())
 }
 
+pub fn base_urls_equivalent(
+    stored: Option<&str>,
+    candidate: Option<&str>,
+) -> Result<bool, AppError> {
+    match (stored, candidate) {
+        (Some(stored), Some(candidate)) => {
+            Ok(normalize_base_url(stored)? == normalize_base_url(candidate)?)
+        }
+        (None, None) => Ok(true),
+        _ => Ok(false),
+    }
+}
+
 pub fn mask_credential(value: &str) -> String {
     let char_count = value.chars().count();
     if char_count <= 8 {
@@ -216,6 +229,16 @@ mod tests {
     fn rejects_non_http_and_userinfo_urls() {
         assert!(normalize_base_url("file:///tmp/provider").is_err());
         assert!(normalize_base_url("https://token@example.com/v1").is_err());
+    }
+
+    #[test]
+    fn equivalent_base_urls_compare_using_canonical_values() {
+        assert!(base_urls_equivalent(
+            Some(" HTTPS://Example.COM:443/v1/ "),
+            Some("https://example.com/v1")
+        )
+        .unwrap());
+        assert!(!base_urls_equivalent(Some("https://a.example"), None).unwrap());
     }
 
     #[test]

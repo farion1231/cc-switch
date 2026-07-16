@@ -34,7 +34,6 @@ pub fn record_credential_audit(
     fields_changed: &[&str],
     old_fields: &CredentialFields,
     new_fields: &CredentialFields,
-    _outcome: &str,
     created_at_ms: i64,
 ) -> Result<(), AppError> {
     let changed_json = serde_json::to_string(fields_changed)
@@ -141,7 +140,6 @@ mod tests {
             &["api_key", "base_url"],
             &old,
             &new,
-            "success",
             1_000,
         )
         .unwrap();

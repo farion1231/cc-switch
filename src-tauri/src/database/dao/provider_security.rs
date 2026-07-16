@@ -1,7 +1,7 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::Provider;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 impl Database {
     pub fn get_provider_revision(
@@ -106,6 +106,110 @@ impl Database {
         Ok(Some(expected_revision + 1))
     }
 
+    pub fn rename_provider_cas(
+        &self,
+        app_type: &str,
+        original_id: &str,
+        provider: &Provider,
+        expected_revision: i64,
+    ) -> Result<Option<i64>, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(format!("begin provider rename CAS: {e}")))?;
+
+        let original_state = tx
+            .query_row(
+                "SELECT revision, is_current, in_failover_queue
+                 FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![original_id, app_type],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, bool>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("read provider rename state: {e}")))?;
+        let Some((current_revision, is_current, in_failover_queue)) = original_state else {
+            return Ok(None);
+        };
+        if current_revision != expected_revision {
+            return Ok(None);
+        }
+
+        let target_exists = tx
+            .query_row(
+                "SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![provider.id, app_type],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(format!("check provider rename target: {e}")))?
+            .is_some();
+        if target_exists {
+            return Err(AppError::InvalidInput(format!(
+                "provider '{}' already exists",
+                provider.id
+            )));
+        }
+
+        let mut meta = provider.meta.clone().unwrap_or_default();
+        let endpoints = std::mem::take(&mut meta.custom_endpoints);
+        let settings = serde_json::to_string(&provider.settings_config)
+            .map_err(|e| AppError::Database(format!("serialize provider settings: {e}")))?;
+        let meta = serde_json::to_string(&meta)
+            .map_err(|e| AppError::Database(format!("serialize provider metadata: {e}")))?;
+        let next_revision = expected_revision + 1;
+
+        tx.execute(
+            "INSERT INTO providers (
+                id, app_type, name, settings_config, website_url, category,
+                created_at, sort_index, notes, icon, icon_color, meta,
+                is_current, in_failover_queue, revision
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                provider.id,
+                app_type,
+                provider.name,
+                settings,
+                provider.website_url,
+                provider.category,
+                provider.created_at,
+                provider.sort_index.map(|value| value as i64),
+                provider.notes,
+                provider.icon,
+                provider.icon_color,
+                meta,
+                is_current,
+                in_failover_queue,
+                next_revision,
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("insert renamed provider: {e}")))?;
+
+        for (url, endpoint) in endpoints {
+            tx.execute(
+                "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![provider.id, app_type, url, endpoint.added_at],
+            )
+            .map_err(|e| AppError::Database(format!("insert renamed provider endpoint: {e}")))?;
+        }
+        tx.execute(
+            "DELETE FROM providers
+             WHERE id = ?1 AND app_type = ?2 AND revision = ?3",
+            params![original_id, app_type, expected_revision],
+        )
+        .map_err(|e| AppError::Database(format!("delete original provider after rename: {e}")))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("commit provider rename CAS: {e}")))?;
+        Ok(Some(next_revision))
+    }
+
     pub fn update_provider_sort_index(
         &self,
         app_type: &str,
@@ -119,5 +223,73 @@ impl Database {
         )
         .map(|changed| changed == 1)
         .map_err(|e| AppError::Database(format!("update provider sort index: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::CustomEndpoint;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn provider(id: &str, name: &str) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            name.to_string(),
+            json!({"apiKey": "sk-test"}),
+            None,
+        );
+        let mut endpoints = HashMap::new();
+        endpoints.insert(
+            "https://api.example/v1".to_string(),
+            CustomEndpoint {
+                url: "https://api.example/v1".to_string(),
+                added_at: 123,
+                last_used: None,
+            },
+        );
+        provider.meta.get_or_insert_default().custom_endpoints = endpoints;
+        provider
+    }
+
+    #[test]
+    fn rename_provider_cas_is_atomic_and_preserves_endpoints() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.save_provider("openclaw", &provider("old", "Old"))?;
+
+        let renamed = provider("new", "New");
+        assert_eq!(
+            db.rename_provider_cas("openclaw", "old", &renamed, 1)?,
+            Some(2)
+        );
+        assert!(db.get_provider_by_id("old", "openclaw")?.is_none());
+        assert_eq!(
+            db.get_all_providers("openclaw")?
+                .get("new")
+                .expect("renamed provider")
+                .meta
+                .as_ref()
+                .expect("metadata")
+                .custom_endpoints
+                .len(),
+            1
+        );
+        assert_eq!(db.get_provider_revision("openclaw", "new")?, Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn rename_provider_cas_rejects_stale_revision_without_changes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.save_provider("openclaw", &provider("old", "Old"))?;
+
+        assert_eq!(
+            db.rename_provider_cas("openclaw", "old", &provider("new", "New"), 0)?,
+            None
+        );
+        assert!(db.get_provider_by_id("old", "openclaw")?.is_some());
+        assert!(db.get_provider_by_id("new", "openclaw")?.is_none());
+        Ok(())
     }
 }

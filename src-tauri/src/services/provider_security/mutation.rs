@@ -3,8 +3,9 @@ use super::recovery::{
     RecoveryMode, RecoveryResult,
 };
 use super::{
-    apply_selected_credentials, extract_provider_credentials, record_credential_audit,
-    CredentialDiff, CredentialSource, ROLLBACK_MAX_AGE_DAYS,
+    apply_selected_credentials, extract_provider_credentials, prune_credential_audits,
+    prune_snapshots, record_credential_audit, CredentialDiff, CredentialSource,
+    ROLLBACK_MAX_AGE_DAYS,
 };
 use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
@@ -118,21 +119,27 @@ impl ProviderMutationCoordinator {
         if current_revision != request.expected_revision {
             return Ok(MutationOutcome::Conflict {
                 current_revision,
-                diff: provider_diffs(&old_provider, &request.provider, &request.app_type),
+                diff: provider_diffs(&old_provider, &request.provider, &request.app_type)?,
             });
         }
 
         let old_fields = extract_provider_credentials(&old_provider, &request.app_type);
         let new_fields = extract_provider_credentials(&request.provider, &request.app_type);
-        let changed_fields = changed_credential_fields(&old_fields, &new_fields);
+        let changed_fields = changed_credential_fields(&old_fields, &new_fields)?;
         for field in &changed_fields {
             if !request.confirmed_credential_fields.contains(*field) {
                 return Err(security_error("provider_credentials_missing"));
             }
         }
 
-        let old_live_settings = ProviderService::read_live_settings(request.app_type.clone()).ok();
+        let old_live_settings = if request.skip_live_projection {
+            None
+        } else {
+            Some(ProviderService::read_live_settings(request.app_type.clone()))
+        };
         let now = chrono::Utc::now().timestamp_millis();
+        let snapshot_id = uuid::Uuid::new_v4().to_string();
+        let audit_id = (!changed_fields.is_empty()).then(|| uuid::Uuid::new_v4().to_string());
         let next_revision = {
             let mut conn = lock_conn!(self.db.conn);
             let tx = conn
@@ -151,7 +158,7 @@ impl ProviderMutationCoordinator {
                     id, provider_id, app_type, provider_json, source_revision, created_at, expires_at
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
-                    uuid::Uuid::new_v4().to_string(),
+                    snapshot_id,
                     old_provider.id,
                     app,
                     serde_json::to_string(&old_provider)
@@ -163,17 +170,16 @@ impl ProviderMutationCoordinator {
             )
             .map_err(|e| AppError::Database(format!("write provider rollback snapshot: {e}")))?;
 
-            if !changed_fields.is_empty() {
+            if let Some(audit_id) = audit_id.as_deref() {
                 record_credential_audit(
                     &tx,
-                    &uuid::Uuid::new_v4().to_string(),
+                    audit_id,
                     &request.provider.id,
                     &request.app_type,
                     request.source,
                     &changed_fields,
                     &old_fields,
                     &new_fields,
-                    "success",
                     now,
                 )?;
             }
@@ -203,20 +209,18 @@ impl ProviderMutationCoordinator {
                 false
             } else {
                 match old_live_settings {
-                    Some(settings) => {
+                    Some(Ok(settings)) => {
                         let mut live_provider = old_provider.clone();
                         live_provider.settings_config = settings;
                         write_live_snapshot(&request.app_type, &live_provider).is_ok()
                     }
-                    None => write_live_with_common_config(
-                        self.db.as_ref(),
-                        &request.app_type,
-                        &old_provider,
-                    )
-                    .is_ok(),
+                    Some(Err(_)) => false,
+                    None => true,
                 }
             };
-            if !db_compensated || !live_compensated {
+            if db_compensated && live_compensated {
+                self.discard_failed_mutation_records(&snapshot_id, audit_id.as_deref())?;
+            } else {
                 persist_configuration_state(
                     &self.db,
                     &request.app_type,
@@ -234,10 +238,50 @@ impl ProviderMutationCoordinator {
             ConfigurationState::Consistent,
             None,
         )?;
+        let warnings = self.prune_mutation_history(now).err().map_or_else(Vec::new, |error| {
+            log::warn!("provider mutation history pruning failed: {error}");
+            vec!["provider_history_prune_failed".to_string()]
+        });
         Ok(MutationOutcome::Saved {
             revision: next_revision,
-            warnings: Vec::new(),
+            warnings,
         })
+    }
+
+    fn prune_mutation_history(&self, now: i64) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.db.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(format!("begin mutation history pruning: {e}")))?;
+        prune_credential_audits(&tx, now)?;
+        prune_snapshots(&tx, now)?;
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("commit mutation history pruning: {e}")))
+    }
+
+    fn discard_failed_mutation_records(
+        &self,
+        snapshot_id: &str,
+        audit_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.db.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(format!("begin mutation record cleanup: {e}")))?;
+        tx.execute(
+            "DELETE FROM provider_rollback_snapshots WHERE id = ?1",
+            params![snapshot_id],
+        )
+        .map_err(|e| AppError::Database(format!("delete failed rollback snapshot: {e}")))?;
+        if let Some(audit_id) = audit_id {
+            tx.execute(
+                "DELETE FROM provider_credential_audit WHERE id = ?1",
+                params![audit_id],
+            )
+            .map_err(|e| AppError::Database(format!("delete failed credential audit: {e}")))?;
+        }
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("commit mutation record cleanup: {e}")))
     }
 
     pub async fn recover(
@@ -336,18 +380,22 @@ impl ProviderMutationCoordinator {
 fn changed_credential_fields<'a>(
     old: &'a super::CredentialFields,
     new: &'a super::CredentialFields,
-) -> Vec<&'a str> {
+) -> Result<Vec<&'a str>, AppError> {
     let mut changed = Vec::new();
     if old.api_key != new.api_key {
         changed.push("apiKey");
     }
-    if old.base_url != new.base_url {
+    if !super::base_urls_equivalent(old.base_url.as_deref(), new.base_url.as_deref())? {
         changed.push("baseUrl");
     }
-    changed
+    Ok(changed)
 }
 
-fn provider_diffs(old: &Provider, new: &Provider, app_type: &AppType) -> Vec<CredentialDiff> {
+fn provider_diffs(
+    old: &Provider,
+    new: &Provider,
+    app_type: &AppType,
+) -> Result<Vec<CredentialDiff>, AppError> {
     super::recovery::credential_diffs(old, &new.settings_config, app_type)
 }
 
@@ -423,7 +471,7 @@ fn verify_additive_live_credentials(
     }
     .ok_or_else(|| security_error("live_projection_failed"))?;
 
-    if super::recovery::credential_diffs(provider, &live, app_type).is_empty() {
+    if super::recovery::credential_diffs(provider, &live, app_type)?.is_empty() {
         Ok(())
     } else {
         Err(security_error("live_projection_failed"))
@@ -438,7 +486,7 @@ fn verify_live_credentials(provider: &Provider, app_type: &AppType) -> Result<()
 
     let live = ProviderService::read_live_settings(app_type.clone())
         .map_err(|_| security_error("live_projection_failed"))?;
-    if super::recovery::credential_diffs(provider, &live, app_type).is_empty() {
+    if super::recovery::credential_diffs(provider, &live, app_type)?.is_empty() {
         Ok(())
     } else {
         Err(security_error("live_projection_failed"))
@@ -578,7 +626,8 @@ mod tests {
         );
 
         let live = ProviderService::read_live_settings(AppType::Claude)?;
-        assert!(credential_diffs(&provider_b, &live, &AppType::Claude).is_empty());
+        assert!(credential_diffs(&provider_b, &live, &AppType::Claude)?
+            .is_empty());
         Ok(())
     }
 
@@ -628,6 +677,141 @@ mod tests {
                 .api_key
                 .as_deref(),
             Some("sk-first")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn compensated_projection_failure_removes_unapplied_audit_and_snapshot(
+    ) -> Result<(), AppError> {
+        let _home = IsolatedHome::new();
+        let original = provider("sk-original");
+        let (db, state) = setup_claude_provider(&original)?;
+
+        FAIL_NEXT_LIVE_PROJECTION.store(true, Ordering::SeqCst);
+        let error = state
+            .provider_mutation_coordinator
+            .mutate(ProviderMutationRequest {
+                app_type: AppType::Claude,
+                provider: provider("sk-new"),
+                expected_revision: 1,
+                source: CredentialSource::ProviderEdit,
+                confirmed_credential_fields: confirmed_api_key(),
+                skip_live_projection: false,
+            })
+            .await
+            .expect_err("projection should fail");
+        assert!(error.to_string().contains("live_projection_failed"));
+
+        let (audit_count, snapshot_count): (i64, i64) = {
+            let conn = lock_conn!(db.conn);
+            (
+                conn.query_row("SELECT COUNT(*) FROM provider_credential_audit", [], |row| {
+                    row.get(0)
+                })?,
+                conn.query_row(
+                    "SELECT COUNT(*) FROM provider_rollback_snapshots",
+                    [],
+                    |row| row.get(0),
+                )?,
+            )
+        };
+        assert_eq!(audit_count, 0);
+        assert_eq!(snapshot_count, 0);
+        assert_eq!(
+            extract_provider_credentials(
+                &db.get_provider_by_id("p1", AppType::Claude.as_str())?
+                    .expect("provider remains"),
+                &AppType::Claude,
+            )
+            .api_key
+            .as_deref(),
+            Some("sk-original")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn failed_projection_does_not_prune_a_valid_snapshot_before_compensation(
+    ) -> Result<(), AppError> {
+        let _home = IsolatedHome::new();
+        let original = provider("sk-original");
+        let (db, state) = setup_claude_provider(&original)?;
+        {
+            let conn = lock_conn!(db.conn);
+            let now = chrono::Utc::now().timestamp_millis();
+            for index in 0..crate::services::provider_security::ROLLBACK_MAX_VERSIONS {
+                conn.execute(
+                    "INSERT INTO provider_rollback_snapshots (
+                        id, provider_id, app_type, provider_json, source_revision,
+                        created_at, expires_at
+                     ) VALUES (?1, 'p1', 'claude', '{}', ?2, ?3, ?4)",
+                    params![
+                        format!("existing-{index}"),
+                        index as i64,
+                        now - index as i64,
+                        i64::MAX,
+                    ],
+                )?;
+            }
+        }
+
+        FAIL_NEXT_LIVE_PROJECTION.store(true, Ordering::SeqCst);
+        state
+            .provider_mutation_coordinator
+            .mutate(ProviderMutationRequest {
+                app_type: AppType::Claude,
+                provider: provider("sk-new"),
+                expected_revision: 1,
+                source: CredentialSource::ProviderEdit,
+                confirmed_credential_fields: confirmed_api_key(),
+                skip_live_projection: false,
+            })
+            .await
+            .expect_err("projection should fail");
+
+        let count: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM provider_rollback_snapshots WHERE provider_id = 'p1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            count,
+            crate::services::provider_security::ROLLBACK_MAX_VERSIONS as i64
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn unreadable_live_snapshot_is_not_replaced_during_compensation() -> Result<(), AppError>
+    {
+        let _home = IsolatedHome::new();
+        let original = provider("sk-original");
+        let (_db, state) = setup_claude_provider(&original)?;
+        let live_path = crate::config::get_claude_settings_path();
+        std::fs::write(&live_path, "{ malformed live settings").expect("write malformed live");
+
+        FAIL_NEXT_LIVE_PROJECTION.store(true, Ordering::SeqCst);
+        let error = state
+            .provider_mutation_coordinator
+            .mutate(ProviderMutationRequest {
+                app_type: AppType::Claude,
+                provider: provider("sk-new"),
+                expected_revision: 1,
+                source: CredentialSource::ProviderEdit,
+                confirmed_credential_fields: confirmed_api_key(),
+                skip_live_projection: false,
+            })
+            .await
+            .expect_err("unsafe compensation must be rejected");
+
+        assert!(error.to_string().contains("configuration_inconsistent"));
+        assert_eq!(
+            std::fs::read_to_string(live_path).expect("read malformed live"),
+            "{ malformed live settings"
         );
         Ok(())
     }

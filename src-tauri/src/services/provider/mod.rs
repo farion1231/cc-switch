@@ -19,7 +19,7 @@ use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
 use crate::services::provider_security::{
-    CredentialSource, MutationOutcome, ProviderMutationRequest, PROVIDER_REVISION_INITIAL,
+    CredentialSource, MutationOutcome, ProviderMutationRequest,
 };
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -492,7 +492,7 @@ mod tests {
             let mut updated = provider.clone();
             updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
 
-            ProviderService::update(state, AppType::Codex, None, updated)
+            ProviderService::update(state, AppType::Codex, None, updated, 1)
                 .expect("update provider main credentials");
 
             let saved = state
@@ -550,7 +550,7 @@ mod tests {
             let mut edited_provider = saved_after_add.clone();
             edited_provider.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
 
-            ProviderService::update(state, AppType::Codex, None, edited_provider)
+            ProviderService::update(state, AppType::Codex, None, edited_provider, 1)
                 .expect("edit copied provider credentials");
 
             let saved_after_update = state
@@ -601,7 +601,7 @@ mod tests {
                 ..Default::default()
             });
 
-            ProviderService::update(state, AppType::Codex, None, updated)
+            ProviderService::update(state, AppType::Codex, None, updated, 1)
                 .expect("update provider with redundant usage credentials");
 
             let saved = state
@@ -617,6 +617,43 @@ mod tests {
 
             assert_eq!(script.api_key, None);
             assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_rejects_a_stale_revision_from_an_older_editor() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-stale-editor",
+                "https://api.a.example/v1",
+                "sk-a",
+                None,
+                None,
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider");
+
+            let mut first_edit = provider.clone();
+            first_edit.name = "First edit".to_string();
+            ProviderService::update(state, AppType::Codex, None, first_edit, 1)
+                .expect("first editor should save");
+
+            let mut stale_edit = provider;
+            stale_edit.name = "Stale edit".to_string();
+            let error = ProviderService::update(state, AppType::Codex, None, stale_edit, 1)
+                .expect_err("stale editor must not overwrite the newer value");
+            assert!(error.to_string().contains("provider_revision_conflict"));
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-stale-editor", AppType::Codex.as_str())
+                .expect("query provider")
+                .expect("provider remains");
+            assert_eq!(saved.name, "First edit");
         });
     }
 
@@ -1068,7 +1105,7 @@ command = "legacy-cmd"
             None,
         );
 
-        ProviderService::update(&state, AppType::Claude, None, updated.clone())
+        ProviderService::update(&state, AppType::Claude, None, updated.clone(), 1)
             .expect("update current provider");
 
         let backup = db
@@ -1208,7 +1245,7 @@ requires_openai_auth = true
             "models": [{ "model": "gpt-5.4", "displayName": "GPT 5.4" }]
         });
 
-        ProviderService::update(&state, AppType::Codex, None, updated.clone())
+        ProviderService::update(&state, AppType::Codex, None, updated.clone(), 1)
             .expect("update current Codex provider mapping");
 
         let catalog_path = crate::codex_config::get_codex_model_catalog_path();
@@ -1224,7 +1261,7 @@ requires_openai_auth = true
         assert!(live_config.contains("model_catalog_json"));
 
         updated.settings_config["modelCatalog"] = json!({ "models": [] });
-        ProviderService::update(&state, AppType::Codex, None, updated)
+        ProviderService::update(&state, AppType::Codex, None, updated, 2)
             .expect("remove current Codex provider mapping");
 
         let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
@@ -1336,7 +1373,7 @@ requires_openai_auth = true
             ..Default::default()
         });
 
-        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone())
+        ProviderService::update(&state, AppType::ClaudeDesktop, None, updated.clone(), 1)
             .expect("update current provider");
 
         let backup = db
@@ -1391,6 +1428,7 @@ requires_openai_auth = true
                 AppType::OpenClaw,
                 Some("missing-provider"),
                 renamed,
+                1,
             )
             .expect_err("stale originalId should be rejected");
 
@@ -1405,6 +1443,47 @@ requires_openai_auth = true
                     .expect("query renamed provider")
                     .is_none(),
                 "rename must not create a new row when originalId is stale"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn rename_rejects_stale_revision_without_creating_target_provider() {
+        with_test_home(|state, _| {
+            let original = openclaw_provider("deepseek");
+            ProviderService::add(state, AppType::OpenClaw, original.clone(), false)
+                .expect("seed db-only provider");
+
+            let mut current = original.clone();
+            current.name = "Current edit".to_string();
+            ProviderService::update(state, AppType::OpenClaw, None, current, 1)
+                .expect("advance revision");
+
+            let mut stale_rename = original;
+            stale_rename.id = "deepseek-renamed".to_string();
+            let error = ProviderService::update(
+                state,
+                AppType::OpenClaw,
+                Some("deepseek"),
+                stale_rename,
+                1,
+            )
+            .expect_err("stale rename must fail atomically");
+            assert!(error.to_string().contains("provider_revision_conflict"));
+            assert!(state
+                .db
+                .get_provider_by_id("deepseek-renamed", AppType::OpenClaw.as_str())
+                .expect("query rename target")
+                .is_none());
+            assert_eq!(
+                state
+                    .db
+                    .get_provider_by_id("deepseek", AppType::OpenClaw.as_str())
+                    .expect("query original")
+                    .expect("original remains")
+                    .name,
+                "Current edit"
             );
         });
     }
@@ -1440,7 +1519,7 @@ requires_openai_auth = true
             updated.name = "DeepSeek Edited".to_string();
             updated.meta.get_or_insert_with(ProviderMeta::default);
 
-            ProviderService::update(state, AppType::OpenClaw, None, updated)
+            ProviderService::update(state, AppType::OpenClaw, None, updated, 1)
                 .expect("db-only update should ignore live parse errors");
 
             let saved = state
@@ -1773,7 +1852,7 @@ requires_openai_auth = true
             let mut updated = provider.clone();
             updated.name = "Legacy Edited".to_string();
 
-            let err = ProviderService::update(state, AppType::OpenClaw, None, updated)
+            let err = ProviderService::update(state, AppType::OpenClaw, None, updated, 1)
                 .expect_err("legacy providers should still surface live parse errors");
             assert!(
                 err.to_string().contains("Failed to parse OpenClaw config"),
@@ -1798,7 +1877,7 @@ requires_openai_auth = true
                 updated.settings_config["agents"]["writer"]["model"] =
                     Value::String(format!("{category}-next-model"));
 
-                ProviderService::update(state, AppType::OpenCode, None, updated)
+                ProviderService::update(state, AppType::OpenCode, None, updated, 1)
                     .unwrap_or_else(|err| panic!("update {category} provider: {err}"));
 
                 let saved = state
@@ -1839,7 +1918,7 @@ requires_openai_auth = true
                 updated.settings_config["otherFields"]["theme"] =
                     Value::String(format!("{category}-light"));
 
-                ProviderService::update(state, AppType::OpenCode, None, updated)
+                ProviderService::update(state, AppType::OpenCode, None, updated, 1)
                     .unwrap_or_else(|err| panic!("update current {category} provider: {err}"));
 
                 let saved = state
@@ -1892,7 +1971,7 @@ requires_openai_auth = true
             updated.settings_config["agents"]["writer"]["model"] =
                 Value::String("omo-saved-model".to_string());
 
-            ProviderService::update(state, AppType::OpenCode, None, updated)
+            ProviderService::update(state, AppType::OpenCode, None, updated, 1)
                 .expect_err("update should fail when current omo file write fails");
 
             let saved = state
@@ -1951,7 +2030,7 @@ requires_openai_auth = true
             updated.settings_config["otherFields"]["theme"] =
                 Value::String("omo-light".to_string());
 
-            ProviderService::update(state, AppType::OpenCode, None, updated)
+            ProviderService::update(state, AppType::OpenCode, None, updated, 1)
                 .expect_err("update should fail when plugin sync fails");
 
             let saved = state
@@ -2161,6 +2240,7 @@ impl ProviderService {
         app_type: AppType,
         original_id: Option<&str>,
         provider: Provider,
+        expected_revision: i64,
     ) -> Result<bool, AppError> {
         let mut provider = provider;
         let original_id = original_id.unwrap_or(provider.id.as_str()).to_string();
@@ -2235,8 +2315,20 @@ impl ProviderService {
             }
 
             Self::set_provider_live_config_managed(&mut provider, false);
-            state.db.save_provider(app_type.as_str(), &provider)?;
-            state.db.delete_provider(app_type.as_str(), &original_id)?;
+            if state
+                .db
+                .rename_provider_cas(
+                    app_type.as_str(),
+                    &original_id,
+                    &provider,
+                    expected_revision,
+                )?
+                .is_none()
+            {
+                return Err(AppError::Message(
+                    "ERROR:provider_revision_conflict".to_string(),
+                ));
+            }
 
             if crate::settings::get_current_provider(&app_type).as_deref() == Some(&original_id) {
                 crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
@@ -2272,11 +2364,6 @@ impl ProviderService {
                 skip_live_projection = !live_config_managed;
             }
 
-            let expected_revision = state
-                .db
-                .get_provider_revision(app_type.as_str(), &provider.id)?
-                .unwrap_or(PROVIDER_REVISION_INITIAL);
-
             let mut confirmed_credential_fields = BTreeSet::new();
             // Provider-edit UI already collects the full intended credential set;
             // auto-confirm so mutate can apply apiKey/baseUrl changes without a
@@ -2297,12 +2384,10 @@ impl ProviderService {
             ))?;
 
             match outcome {
-                MutationOutcome::Conflict {
-                    current_revision, ..
-                } => {
-                    return Err(AppError::Message(format!(
-                        "供应商 revision 冲突（期望 {expected_revision}，实际 {current_revision}），请刷新后重试"
-                    )));
+                MutationOutcome::Conflict { .. } => {
+                    return Err(AppError::Message(
+                        "ERROR:provider_revision_conflict".to_string(),
+                    ));
                 }
                 MutationOutcome::Saved { .. } => return Ok(true),
             }
@@ -2320,11 +2405,6 @@ impl ProviderService {
             .proxy_service
             .detect_takeover_in_live_config_for_app(&app_type);
         let should_sync_via_proxy = has_live_backup || live_taken_over;
-
-        let expected_revision = state
-            .db
-            .get_provider_revision(app_type.as_str(), &provider.id)?
-            .unwrap_or(PROVIDER_REVISION_INITIAL);
 
         let mut confirmed_credential_fields = BTreeSet::new();
         // Provider-edit UI already collects the full intended credential set;
@@ -2346,12 +2426,10 @@ impl ProviderService {
         ))?;
 
         match outcome {
-            MutationOutcome::Conflict {
-                current_revision, ..
-            } => {
-                return Err(AppError::Message(format!(
-                    "供应商 revision 冲突（期望 {expected_revision}，实际 {current_revision}），请刷新后重试"
-                )));
+            MutationOutcome::Conflict { .. } => {
+                return Err(AppError::Message(
+                    "ERROR:provider_revision_conflict".to_string(),
+                ));
             }
             MutationOutcome::Saved { .. } => {}
         }
