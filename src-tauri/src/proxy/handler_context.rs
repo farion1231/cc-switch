@@ -9,6 +9,7 @@ use crate::proxy::{
     forwarder::RequestForwarder,
     server::ProxyState,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    usage::parser::CodexReasoningUsage,
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -70,6 +71,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// Codex reasoning / prompt-rewrite / continuation metadata for usage log row.
+    pub codex_reasoning: CodexReasoningUsage,
 }
 
 impl RequestContext {
@@ -173,6 +176,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            codex_reasoning: CodexReasoningUsage::not_attempted(),
         })
     }
 

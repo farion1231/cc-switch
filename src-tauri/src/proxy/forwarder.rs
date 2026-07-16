@@ -20,6 +20,7 @@ use super::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    usage::parser::CodexReasoningUsage,
     ProxyError,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState};
@@ -64,6 +65,8 @@ pub struct ForwardResult {
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
+    /// Codex reasoning / prompt rewrite / continuation metadata (T12–T14).
+    pub codex_reasoning: Option<CodexReasoningUsage>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -489,7 +492,7 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model)) => {
+                Ok((response, claude_api_format, outbound_model, codex_reasoning)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -538,6 +541,7 @@ impl RequestForwarder {
                         provider: provider.clone(),
                         claude_api_format,
                         outbound_model,
+                        codex_reasoning,
                         connection_guard: None,
                     });
                 }
@@ -588,7 +592,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((response, claude_api_format, outbound_model, codex_reasoning)) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
@@ -641,6 +645,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        codex_reasoning,
                                         connection_guard: None,
                                     });
                                 }
@@ -734,7 +739,7 @@ impl RequestForwarder {
                                     )
                                     .await
                                 {
-                                    Ok((response, claude_api_format, outbound_model)) => {
+                                    Ok((response, claude_api_format, outbound_model, codex_reasoning)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
                                             &provider.id,
@@ -790,6 +795,7 @@ impl RequestForwarder {
                                             provider: provider.clone(),
                                             claude_api_format,
                                             outbound_model,
+                                            codex_reasoning,
                                             connection_guard: None,
                                         });
                                     }
@@ -900,7 +906,7 @@ impl RequestForwarder {
                                 )
                                 .await
                             {
-                                Ok((response, claude_api_format, outbound_model)) => {
+                                Ok((response, claude_api_format, outbound_model, codex_reasoning)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
                                         &provider.id,
@@ -950,6 +956,7 @@ impl RequestForwarder {
                                         provider: provider.clone(),
                                         claude_api_format,
                                         outbound_model,
+                                        codex_reasoning,
                                         connection_guard: None,
                                     });
                                 }
@@ -1108,8 +1115,9 @@ impl RequestForwarder {
 
     /// 转发单个请求（使用适配器）
     ///
-    /// 成功时返回 `(response, claude_api_format, outbound_model)`，其中
-    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
+    /// 成功时返回 `(response, claude_api_format, outbound_model, codex_reasoning)`，其中
+    /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后），
+    /// `codex_reasoning` 为 Codex prompt rewrite / continuation 元数据（非 Codex 为 None）。
     #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
@@ -1121,7 +1129,15 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<
+        (
+            ProxyResponse,
+            Option<String>,
+            Option<String>,
+            Option<CodexReasoningUsage>,
+        ),
+        ProxyError,
+    > {
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1403,6 +1419,7 @@ impl RequestForwarder {
         // T12: Codex system-prompt rewrite BEFORE protocol conversion.
         // Order: prompt rewrite → (later T13 continuation) → Chat/Anthropic transform.
         let mut mapped_body = mapped_body;
+        let mut codex_reasoning_meta: Option<CodexReasoningUsage> = None;
         if matches!(app_type, AppType::Codex) {
             let selected_model = outbound_model.as_deref().unwrap_or("");
             let prompt_cfg = provider
@@ -1417,15 +1434,26 @@ impl RequestForwarder {
                 prompt_cfg,
                 protocol,
             ) {
-                Ok(meta) if meta.replaced || meta.identity_corrected => {
-                    log::debug!(
-                        "[Codex] system prompt rewrite replaced={} identity={} fingerprint={:?}",
-                        meta.replaced,
-                        meta.identity_corrected,
-                        meta.fingerprint
-                    );
+                Ok(meta) => {
+                    codex_reasoning_meta = Some(CodexReasoningUsage {
+                        reasoning_tokens: None,
+                        reasoning_source: None,
+                        continuation_status: "not_attempted".to_string(),
+                        continuation_rounds: 0,
+                        turn_id: None,
+                        prompt_replaced: meta.replaced,
+                        identity_corrected: meta.identity_corrected,
+                        prompt_fingerprint: meta.fingerprint.clone(),
+                    });
+                    if meta.replaced || meta.identity_corrected {
+                        log::info!(
+                            "[Codex] system prompt rewrite applied: replaced={}, identity_corrected={}, fingerprint={:?}",
+                            meta.replaced,
+                            meta.identity_corrected,
+                            meta.fingerprint
+                        );
+                    }
                 }
-                Ok(_) => {}
                 Err(e) => {
                     log::warn!("[Codex] system prompt rewrite failed: {e}");
                 }
@@ -2227,7 +2255,7 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((response, resolved_claude_api_format, outbound_model, codex_reasoning_meta))
         } else {
             let status_code = status.as_u16();
             // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何

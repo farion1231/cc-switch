@@ -217,6 +217,9 @@ async fn handle_messages_for_app(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    if let Some(meta) = result.codex_reasoning.take() {
+        ctx.codex_reasoning = meta;
+    }
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -345,6 +348,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
         log.is_streaming,
         log.status_code,
         Some(log.session_id),
+        CodexReasoningUsage::not_attempted(),
     )
     .await;
 }
@@ -441,6 +445,7 @@ async fn handle_claude_transform(
             // "claude" 会把 claude-desktop 的行错记到 claude 名下
             let app_type_str = ctx.app_type_str;
 
+            let codex_meta = ctx.codex_reasoning.clone();
             Some(SseUsageCollector::new(
                 start_time,
                 Some(claude_stream_usage_event_filter),
@@ -458,6 +463,7 @@ async fn handle_claude_transform(
                         let request_model = request_model.clone();
                         let outbound_model = fallback_model.clone();
 
+                        let codex_meta_log = codex_meta.clone();
                         tokio::spawn(async move {
                             log_usage(
                                 &state,
@@ -472,6 +478,7 @@ async fn handle_claude_transform(
                                 true,
                                 status_code,
                                 Some(session_id),
+                                codex_meta_log,
                             )
                             .await;
                         });
@@ -742,6 +749,9 @@ pub async fn handle_chat_completions(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    if let Some(meta) = result.codex_reasoning.take() {
+        ctx.codex_reasoning = meta;
+    }
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -809,6 +819,9 @@ pub async fn handle_responses(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    if let Some(meta) = result.codex_reasoning.take() {
+        ctx.codex_reasoning = meta;
+    }
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -900,6 +913,9 @@ pub async fn handle_responses_compact(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    if let Some(meta) = result.codex_reasoning.take() {
+        ctx.codex_reasoning = meta;
+    }
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -972,6 +988,7 @@ async fn handle_codex_chat_to_responses_transform(
             let start_time = ctx.start_time;
             let session_id = ctx.session_id.clone();
 
+            let codex_meta = ctx.codex_reasoning.clone();
             Some(SseUsageCollector::new(
                 start_time,
                 Some(codex_stream_usage_event_filter),
@@ -999,6 +1016,7 @@ async fn handle_codex_chat_to_responses_transform(
                     let request_model = request_model.clone();
                     let outbound_model = fallback_model.clone();
                     let session_id = session_id.clone();
+                    let codex_meta_log = codex_meta.clone();
 
                     tokio::spawn(async move {
                         log_usage(
@@ -1014,6 +1032,7 @@ async fn handle_codex_chat_to_responses_transform(
                             true,
                             status.as_u16(),
                             Some(session_id),
+                            codex_meta_log,
                         )
                         .await;
                     });
@@ -1110,6 +1129,8 @@ async fn handle_codex_chat_to_responses_transform(
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
         let app_type_str = ctx.app_type_str;
+        let codex_meta = ctx.codex_reasoning.clone();
+        let codex_meta_log = codex_meta.clone();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -1129,6 +1150,7 @@ async fn handle_codex_chat_to_responses_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
+                    codex_meta_log,
                 )
                 .await;
             }
@@ -1274,6 +1296,8 @@ async fn handle_codex_anthropic_to_responses_transform(
             .clone()
             .unwrap_or_else(|| ctx.request_model.clone());
         let app_type_str = ctx.app_type_str;
+        let codex_meta = ctx.codex_reasoning.clone();
+        let codex_meta_log = codex_meta.clone();
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
@@ -1293,6 +1317,7 @@ async fn handle_codex_anthropic_to_responses_transform(
                     false,
                     status.as_u16(),
                     Some(session_id),
+                    codex_meta_log,
                 )
                 .await;
             }
@@ -1344,6 +1369,7 @@ fn build_codex_anthropic_sse_response(
         let start_time = ctx.start_time;
         let session_id = ctx.session_id.clone();
 
+        let codex_meta = ctx.codex_reasoning.clone();
         Some(SseUsageCollector::new(
             start_time,
             Some(codex_stream_usage_event_filter),
@@ -1365,6 +1391,7 @@ fn build_codex_anthropic_sse_response(
                 let request_model = request_model.clone();
                 let outbound_model = fallback_model.clone();
                 let session_id = session_id.clone();
+                let codex_meta_log = codex_meta.clone();
 
                 tokio::spawn(async move {
                     log_usage(
@@ -1380,6 +1407,7 @@ fn build_codex_anthropic_sse_response(
                         true,
                         status.as_u16(),
                         Some(session_id),
+                        codex_meta_log,
                     )
                     .await;
                 });
@@ -1737,6 +1765,9 @@ pub async fn handle_gemini(
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
+    if let Some(meta) = result.codex_reasoning.take() {
+        ctx.codex_reasoning = meta;
+    }
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -2348,6 +2379,7 @@ async fn log_usage(
     is_streaming: bool,
     status_code: u16,
     session_id: Option<String>,
+    codex_meta: CodexReasoningUsage,
 ) {
     use super::usage::logger::UsageLogger;
 
@@ -2382,7 +2414,7 @@ async fn log_usage(
         session_id,
         None, // provider_type
         is_streaming,
-        CodexReasoningUsage::not_attempted(),
+        codex_meta,
     ) {
         log::warn!("[USG-001] 记录使用量失败: {e}");
     }
