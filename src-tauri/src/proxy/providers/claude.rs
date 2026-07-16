@@ -346,11 +346,7 @@ pub fn transform_claude_request_for_api_format(
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
     // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
     // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
-    let is_copilot = provider
-        .meta
-        .as_ref()
-        .and_then(|m| m.provider_type.as_deref())
-        == Some("github_copilot")
+    let is_copilot = provider.is_github_copilot()
         || provider
             .settings_config
             .get("baseUrl")
@@ -1931,6 +1927,30 @@ mod tests {
                 ..Default::default()
             },
         );
+        let body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64,
+            "stop_sequences": ["\n\nHuman:"]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert!(transformed.get("stop").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_openai_chat_strips_stop_for_copilot_env_url() {
+        // 兼容旧/手动 Copilot provider：即使没有 meta.provider_type，
+        // 只要 ANTHROPIC_BASE_URL 指向 Copilot，也应移除 stop。
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
         let body = json!({
             "model": "claude-sonnet-4-6",
             "messages": [{ "role": "user", "content": "hello" }],
