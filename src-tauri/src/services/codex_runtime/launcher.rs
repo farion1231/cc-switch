@@ -8,7 +8,8 @@ use crate::services::codex_injection::{self, BridgeHandle};
 use crate::settings::get_settings;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use tokio::sync::Mutex;
+use std::sync::Arc;
+use tokio::sync::{oneshot, Mutex};
 
 const DEFAULT_CDP_PORT: u16 = 9222;
 
@@ -23,9 +24,10 @@ pub struct LaunchEnhancedCodexResult {
     pub message: Option<String>,
 }
 
-/// In-process runtime handle shared via AppState.
+/// In-process runtime handle shared via AppState (cloneable Arc core).
+#[derive(Clone)]
 pub struct CodexRuntimeHandle {
-    inner: Mutex<RuntimeInner>,
+    inner: Arc<Mutex<RuntimeInner>>,
 }
 
 #[derive(Default)]
@@ -33,6 +35,10 @@ struct RuntimeInner {
     snapshot: CodexRuntimeSnapshot,
     bridge: Option<BridgeHandle>,
     child: Option<std::process::Child>,
+    /// Last successfully injected bootstrap bundle (navigation reinject).
+    last_bundle: Option<String>,
+    /// Cancel background navigation reinject watcher.
+    watcher_stop: Option<oneshot::Sender<()>>,
 }
 
 impl Default for CodexRuntimeHandle {
@@ -44,7 +50,7 @@ impl Default for CodexRuntimeHandle {
 impl CodexRuntimeHandle {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(RuntimeInner::default()),
+            inner: Arc::new(Mutex::new(RuntimeInner::default())),
         }
     }
 
@@ -348,6 +354,7 @@ async fn attach_and_inject(
     {
         let mut guard = handle.inner.lock().await;
         guard.bridge = Some(bridge);
+        guard.last_bundle = Some(bundle);
         guard.snapshot = CodexRuntimeSnapshot {
             state: result.state.clone(),
             pid: result.pid,
@@ -357,6 +364,8 @@ async fn attach_and_inject(
             message: result.message.clone(),
         };
     }
+    // Keep enhancements alive across page reloads / soft navigations.
+    start_nav_watcher(handle, cdp_port);
     Ok(result)
 }
 
@@ -368,6 +377,67 @@ pub async fn reinject_enhancements(
         .cdp_port
         .ok_or_else(|| AppError::Config("无 CDP 端口，无法重新注入；请先启动增强 Codex".into()))?;
     attach_and_inject(handle, snap.pid, cdp_port).await
+}
+
+
+/// Poll CSP marker every 2s. After navigation wipes the page (marker false for
+/// two consecutive polls), reinject `last_bundle` without rebuilding the bridge.
+fn start_nav_watcher(handle: &CodexRuntimeHandle, cdp_port: u16) {
+    let handle = handle.clone();
+    let (tx, mut rx) = oneshot::channel::<()>();
+    tokio::spawn(async move {
+        // Replace previous watcher (if any) with this one.
+        {
+            let mut guard = handle.inner.lock().await;
+            if let Some(prev) = guard.watcher_stop.take() {
+                let _ = prev.send(());
+            }
+            guard.watcher_stop = Some(tx);
+        }
+
+        let mut consecutive_missing = 0u32;
+        let mut cooldown = false;
+        loop {
+            tokio::select! {
+                _ = &mut rx => break,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+            }
+
+            let (state, bundle) = {
+                let guard = handle.inner.lock().await;
+                (guard.snapshot.state.clone(), guard.last_bundle.clone())
+            };
+            if state != CodexRuntimeState::Running {
+                continue;
+            }
+            let Some(bundle) = bundle else { continue };
+
+            match cdp::probe_csp_marker(cdp_port).await {
+                Ok(true) => {
+                    consecutive_missing = 0;
+                    cooldown = false;
+                }
+                Ok(false) => {
+                    consecutive_missing = consecutive_missing.saturating_add(1);
+                    if consecutive_missing >= 2 && !cooldown {
+                        log::info!("codex nav watcher: marker missing — reinjecting bundle");
+                        match cdp::inject_script(cdp_port, &bundle).await {
+                            Ok(()) => {
+                                cooldown = true;
+                                consecutive_missing = 0;
+                            }
+                            Err(e) => {
+                                log::warn!("codex nav watcher reinject failed: {e}");
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    consecutive_missing = 0;
+                }
+            }
+        }
+    });
 }
 
 #[cfg(windows)]

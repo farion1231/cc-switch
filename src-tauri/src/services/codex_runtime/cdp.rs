@@ -91,6 +91,66 @@ pub async fn inject_script(cdp_port: u16, script: &str) -> Result<(), AppError> 
     inject_via_websocket(&ws_url, script).await
 }
 
+/// Returns Ok(true) when `window.__ccSwitchCspBypassed` is truthy on the Codex page.
+/// Ok(false) when the page is reachable but marker is missing (e.g. after navigation).
+/// Err when CDP/target is unavailable.
+pub async fn probe_csp_marker(cdp_port: u16) -> Result<bool, AppError> {
+    let targets = list_targets(cdp_port).await?;
+    let target = pick_codex_target(&targets).ok_or_else(|| {
+        AppError::Config("未找到可探测的 Codex page target".into())
+    })?;
+    let ws_url = target
+        .web_socket_debugger_url
+        .clone()
+        .ok_or_else(|| AppError::Config("target missing webSocketDebuggerUrl".into()))?;
+    probe_marker_via_websocket(&ws_url).await
+}
+
+async fn probe_marker_via_websocket(ws_url: &str) -> Result<bool, AppError> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (mut ws, _) = connect_async(ws_url)
+        .await
+        .map_err(|e| AppError::Config(format!("cdp ws connect: {e}")))?;
+
+    let cmd = json!({
+        "id": 1,
+        "method": "Runtime.evaluate",
+        "params": {
+            "expression": "!!(window.__ccSwitchCspBypassed)",
+            "returnByValue": true
+        }
+    });
+    ws.send(Message::Text(cmd.to_string().into()))
+        .await
+        .map_err(|e| AppError::Config(format!("cdp probe send: {e}")))?;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        let next = tokio::time::timeout(std::time::Duration::from_millis(500), ws.next()).await;
+        let Ok(Some(Ok(Message::Text(text)))) = next else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        if v.get("id").and_then(|x| x.as_u64()) != Some(1) {
+            continue;
+        }
+        if let Some(err) = v.get("error") {
+            return Err(AppError::Config(format!("cdp probe error: {err}")));
+        }
+        let result = v
+            .pointer("/result/result/value")
+            .cloned()
+            .unwrap_or(Value::Bool(false));
+        return Ok(result.as_bool().unwrap_or(false));
+    }
+    Err(AppError::Config("cdp probe timeout".into()))
+}
+
 async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError> {
     use futures_util::SinkExt;
     use tokio_tungstenite::connect_async;
