@@ -330,6 +330,78 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// Codex App 增强开关矩阵（前 6 默认 true，后 5 默认 false）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexEnhancementSettings {
+    pub plugin_unlock: bool,
+    pub auto_expand: bool,
+    pub session_delete: bool,
+    pub wide_conversation: bool,
+    pub native_menu: bool,
+    pub user_script_runtime: bool,
+    pub markdown_export: bool,
+    pub model_switcher: bool,
+    pub system_prompt: bool,
+    pub reasoning_resume: bool,
+    pub reasoning_token: bool,
+}
+
+impl Default for CodexEnhancementSettings {
+    fn default() -> Self {
+        Self {
+            plugin_unlock: true,
+            auto_expand: true,
+            session_delete: true,
+            wide_conversation: true,
+            native_menu: true,
+            user_script_runtime: true,
+            markdown_export: false,
+            model_switcher: false,
+            system_prompt: false,
+            reasoning_resume: false,
+            reasoning_token: false,
+        }
+    }
+}
+
+/// Codex 工作台设置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexWorkbenchSettings {
+    #[serde(default)]
+    pub enhancements: CodexEnhancementSettings,
+    #[serde(default = "default_true")]
+    pub auto_launch: bool,
+    #[serde(default = "default_true")]
+    pub auto_start_proxy: bool,
+    #[serde(default = "default_script_market_url")]
+    pub script_market_url: String,
+    #[serde(default = "default_radar_ttl_minutes")]
+    pub radar_ttl_minutes: u32,
+}
+
+fn default_script_market_url() -> String {
+    "https://raw.githubusercontent.com/BigPizzaV3/CodexPlusPlusScriptMarket/main/index.json"
+        .to_string()
+}
+
+fn default_radar_ttl_minutes() -> u32 {
+    30
+}
+
+impl Default for CodexWorkbenchSettings {
+    fn default() -> Self {
+        Self {
+            enhancements: CodexEnhancementSettings::default(),
+            auto_launch: true,
+            auto_start_proxy: true,
+            script_market_url: default_script_market_url(),
+            radar_ttl_minutes: default_radar_ttl_minutes(),
+        }
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -479,6 +551,9 @@ pub struct AppSettings {
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+    /// Codex 工作台设置
+    #[serde(default)]
+    pub codex_workbench: CodexWorkbenchSettings,
 }
 
 fn default_show_in_tray() -> bool {
@@ -539,6 +614,7 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            codex_workbench: CodexWorkbenchSettings::default(),
         }
     }
 }
@@ -1099,6 +1175,15 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
 
 pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
     settings_store().read().ok()?.s3_sync.clone()
+}
+
+
+pub fn set_codex_workbench_settings(
+    settings: CodexWorkbenchSettings,
+) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.codex_workbench = settings;
+    })
 }
 
 pub fn set_s3_sync_settings(settings: Option<S3SyncSettings>) -> Result<(), AppError> {

@@ -37,3 +37,4 @@ export type {
   ManagedAuthStatus,
   ManagedAuthDeviceCodeResponse,
 } from "./auth";
+export * from "./codexWorkbench";

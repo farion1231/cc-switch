@@ -425,6 +425,9 @@ export interface Settings {
   // ===== S3 同步设置 =====
   s3Sync?: S3SyncSettings;
 
+  // ===== Codex 工作台 =====
+  codexWorkbench?: import("./types/codexWorkbench").CodexWorkbenchSettings;
+
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)
   backupIntervalHours?: number;

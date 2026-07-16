@@ -95,6 +95,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import { CodexWorkbenchPage } from "@/components/codex-workbench/CodexWorkbenchPage";
 
 type View =
   | "providers"
@@ -110,7 +111,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "codexWorkbench";
 
 interface SyncStatusUpdatedPayload {
   source?: string;
@@ -156,6 +158,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "codexWorkbench",
 ];
 
 const getInitialView = (): View => {
@@ -947,6 +950,8 @@ function App() {
             </div>
           );
 
+        case "codexWorkbench":
+          return <CodexWorkbenchPage />;
         case "sessions":
           return (
             <SessionManagerPage
@@ -1183,6 +1188,8 @@ function App() {
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
+                  {currentView === "codexWorkbench" &&
+                    t("codexWorkbench.title", { defaultValue: "Codex 工作台" })}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
                 </h1>
               </div>
@@ -1454,7 +1461,22 @@ function App() {
                             </>
                           ) : activeApp === "openclaw" ? (
                             <>
-                              <Button
+                              
+                    {activeApp === "codex" && (
+                      <Button
+                        variant={
+                          currentView === "codexWorkbench" ? "default" : "ghost"
+                        }
+                        size="sm"
+                        onClick={() => setCurrentView("codexWorkbench")}
+                        className="gap-1"
+                      >
+                        {t("codexWorkbench.nav", {
+                          defaultValue: "工作台",
+                        })}
+                      </Button>
+                    )}
+<Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("workspace")}

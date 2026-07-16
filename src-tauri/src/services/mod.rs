@@ -1,5 +1,6 @@
 pub mod balance;
 pub mod codex_oauth_models;
+pub mod codex_workbench;
 pub mod coding_plan;
 pub mod config;
 pub mod env_checker;
@@ -36,10 +37,7 @@ pub use mcp::McpService;
 pub use omo::OmoService;
 pub use prompt::PromptService;
 pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
-pub use provider_security::{
-    ConfigurationState, MutationOutcome, ProviderMutationCoordinator, ProviderMutationRequest,
-    ProviderSecurityStatus, RecoveryMode, RecoveryResult,
-};
+pub use provider_security::ProviderMutationCoordinator;
 pub use proxy::ProxyService;
 #[allow(unused_imports)]
 pub use skill::{DiscoverableSkill, Skill, SkillRepo, SkillService};

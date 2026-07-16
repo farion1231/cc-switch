@@ -2929,5 +2929,21 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "codexWorkbench": {
+    "title": "Codex 工作台",
+    "nav": "工作台",
+    "runtime": "Runtime",
+    "statusError": "Failed to load status",
+    "enhancementsHint": "Enhancement matrix (controls in a later task).",
+    "scriptsPlaceholder": "Script market comes in a later task.",
+    "pluginsPlaceholder": "Plugin management comes in a later task.",
+    "radarPlaceholder": "Radar comes in a later task.",
+    "tabs": {
+      "enhancements": "Enhancements",
+      "scripts": "Scripts",
+      "plugins": "Plugins",
+      "radar": "Radar"
+    }
   }
 }

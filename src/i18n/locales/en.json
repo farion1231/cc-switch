@@ -2957,5 +2957,21 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "codexWorkbench": {
+    "title": "Codex Workbench",
+    "nav": "Workbench",
+    "runtime": "Runtime",
+    "statusError": "Failed to load status",
+    "enhancementsHint": "Enhancement matrix (controls in a later task).",
+    "scriptsPlaceholder": "Script market comes in a later task.",
+    "pluginsPlaceholder": "Plugin management comes in a later task.",
+    "radarPlaceholder": "Radar comes in a later task.",
+    "tabs": {
+      "enhancements": "Enhancements",
+      "scripts": "Scripts",
+      "plugins": "Plugins",
+      "radar": "Radar"
+    }
   }
 }

@@ -2957,5 +2957,21 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "codexWorkbench": {
+    "title": "Codex ワークベンチ",
+    "nav": "ワークベンチ",
+    "runtime": "Runtime",
+    "statusError": "Failed to load status",
+    "enhancementsHint": "Enhancement matrix (controls in a later task).",
+    "scriptsPlaceholder": "Script market comes in a later task.",
+    "pluginsPlaceholder": "Plugin management comes in a later task.",
+    "radarPlaceholder": "Radar comes in a later task.",
+    "tabs": {
+      "enhancements": "拡張",
+      "scripts": "スクリプト",
+      "plugins": "プラグイン",
+      "radar": "レーダー"
+    }
   }
 }

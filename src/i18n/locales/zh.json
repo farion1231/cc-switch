@@ -2957,5 +2957,21 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "codexWorkbench": {
+    "title": "Codex 工作台",
+    "nav": "工作台",
+    "runtime": "运行时",
+    "statusError": "状态加载失败",
+    "enhancementsHint": "增强开关矩阵（后续任务接开关控件）。默认：前 6 项开启，后 5 项关闭。",
+    "scriptsPlaceholder": "脚本市场将在后续任务接入。",
+    "pluginsPlaceholder": "插件管理将在后续任务接入。",
+    "radarPlaceholder": "降智雷达将在后续任务接入。",
+    "tabs": {
+      "enhancements": "增强",
+      "scripts": "脚本",
+      "plugins": "插件",
+      "radar": "降智雷达"
+    }
   }
 }
