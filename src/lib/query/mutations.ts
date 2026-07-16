@@ -10,7 +10,6 @@ import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { usageKeys } from "@/lib/query/usage";
-import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -43,14 +42,10 @@ export const useAddProviderMutation = (appId: AppId) => {
         return officialProvider;
       }
 
+      // Preserve the fixed built-in route as a recovery target, but unlike the
+      // old flow, keep going so this submission is also saved as its own account.
       if (appId === "codex" && ensureCodexOfficialSeed) {
         await providersApi.ensureCodexOfficialProvider();
-        const providers = await providersApi.getAll(appId);
-        const officialProvider = providers[CODEX_OFFICIAL_PROVIDER_ID];
-        if (!officialProvider) {
-          throw new Error("Codex official provider was not created");
-        }
-        return officialProvider;
       }
 
       let id: string;
