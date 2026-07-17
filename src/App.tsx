@@ -80,6 +80,10 @@ import {
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
+import {
+  WebdavSyncConflictDialog,
+  type WebdavSyncResolutionAction,
+} from "@/components/WebdavSyncConflictDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
@@ -116,8 +120,17 @@ interface SyncStatusUpdatedPayload {
   source?: string;
   status?: string;
   error?: string;
+  errorKey?: string | null;
 }
 
+const CONFLICT_SYNC_ERROR_KEY = "sync.conflict_detected";
+const REMOTE_CHANGED_SYNC_ERROR_KEY = "sync.remote_changed_since_last_sync";
+const MANUAL_RESOLUTION_SYNC_ERROR_KEY = "sync.manual_resolution_required";
+const WEBDAV_MANUAL_RESOLUTION_ERROR_KEYS = new Set([
+  CONFLICT_SYNC_ERROR_KEY,
+  REMOTE_CHANGED_SYNC_ERROR_KEY,
+  MANUAL_RESOLUTION_SYNC_ERROR_KEY,
+]);
 const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 
@@ -241,6 +254,9 @@ function App() {
     provider: Provider;
     action: "remove" | "delete";
   } | null>(null);
+  const [webdavConflictOpen, setWebdavConflictOpen] = useState(false);
+  const [webdavResolutionAction, setWebdavResolutionAction] =
+    useState<WebdavSyncResolutionAction | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
 
@@ -405,7 +421,18 @@ function App() {
     async (payload) => {
       const statusPayload = payload ?? {};
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
+      if (statusPayload.source !== "auto") {
+        return;
+      }
+      if (
+        statusPayload.status === "conflict" ||
+        (statusPayload.errorKey &&
+          WEBDAV_MANUAL_RESOLUTION_ERROR_KEYS.has(statusPayload.errorKey))
+      ) {
+        setWebdavConflictOpen(true);
+        return;
+      }
+      if (statusPayload.status !== "error") {
         return;
       }
       toast.error(
@@ -422,6 +449,10 @@ function App() {
       const statusPayload = payload ?? {};
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       if (statusPayload.source !== "auto" || statusPayload.status !== "error") {
+        return;
+      }
+      if (statusPayload.errorKey === REMOTE_CHANGED_SYNC_ERROR_KEY) {
+        toast.error(t("settings.s3Sync.autoSyncRemoteChangedToast"));
         return;
       }
       toast.error(
@@ -688,6 +719,35 @@ function App() {
       await deleteProvider(provider.id);
     }
     setConfirmAction(null);
+  };
+
+  const handleResolveWebdavConflict = async (
+    action: WebdavSyncResolutionAction,
+  ) => {
+    setWebdavResolutionAction(action);
+    try {
+      if (action === "upload") {
+        await settingsApi.webdavSyncUpload();
+        toast.success(t("settings.webdavSync.uploadSuccess"));
+      } else {
+        await settingsApi.webdavSyncDownload();
+        toast.success(t("settings.webdavSync.downloadSuccess"));
+      }
+      setWebdavConflictOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    } catch (error) {
+      const key =
+        action === "upload"
+          ? "settings.webdavSync.uploadFailed"
+          : "settings.webdavSync.downloadFailed";
+      toast.error(
+        t(key, {
+          error: (error as Error)?.message ?? String(error),
+        }),
+      );
+    } finally {
+      setWebdavResolutionAction(null);
+    }
   };
 
   const generateUniqueProviderCopyKey = (
@@ -1662,6 +1722,14 @@ function App() {
           })();
         }}
         onCancel={() => setLaunchDashboardOpen(false)}
+      />
+
+      <WebdavSyncConflictDialog
+        open={webdavConflictOpen}
+        resolvingAction={webdavResolutionAction}
+        onUseLocal={() => void handleResolveWebdavConflict("upload")}
+        onUseRemote={() => void handleResolveWebdavConflict("download")}
+        onCancel={() => setWebdavConflictOpen(false)}
       />
 
       <DeepLinkImportDialog />

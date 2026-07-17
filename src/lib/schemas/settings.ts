@@ -52,10 +52,13 @@ export const settingsSchema = z.object({
         .object({
           lastSyncAt: z.number().nullable().optional(),
           lastError: z.string().nullable().optional(),
+          lastErrorKey: z.string().nullable().optional(),
           lastErrorSource: z.string().nullable().optional(),
           lastRemoteEtag: z.string().nullable().optional(),
           lastLocalManifestHash: z.string().nullable().optional(),
           lastRemoteManifestHash: z.string().nullable().optional(),
+          lastLocalSnapshotId: z.string().nullable().optional(),
+          lastRemoteSnapshotId: z.string().nullable().optional(),
         })
         .optional(),
     })

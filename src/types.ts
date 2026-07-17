@@ -290,10 +290,13 @@ export interface VisibleApps {
 export interface WebDavSyncStatus {
   lastSyncAt?: number | null;
   lastError?: string | null;
+  lastErrorKey?: string | null;
   lastErrorSource?: string | null;
   lastRemoteEtag?: string | null;
   lastLocalManifestHash?: string | null;
   lastRemoteManifestHash?: string | null;
+  lastLocalSnapshotId?: string | null;
+  lastRemoteSnapshotId?: string | null;
 }
 
 // WebDAV 同步配置
