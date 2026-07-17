@@ -11,7 +11,15 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "zhipu_team" | "minimax" | "zenmux" | "volcengine" | "iflytek" | "sensenova";
+  id:
+    | "kimi"
+    | "zhipu"
+    | "zhipu_team"
+    | "minimax"
+    | "zenmux"
+    | "volcengine"
+    | "iflytek"
+    | "sensenova";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
