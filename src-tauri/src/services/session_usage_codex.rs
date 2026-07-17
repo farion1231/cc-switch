@@ -754,8 +754,9 @@ fn insert_codex_session_entry(
 
 /// Try to uniquely match a proxy_request_logs row and fill missing reasoning/turn_id.
 /// Matching order:
-///   1. exact turn_id
-///   2. session_id + model + token fingerprint within ±10 minutes (must be unique)
+///   1. exact turn_id (must be unique among codex rows; ambiguous → skip)
+///   2. session_id + normalized model + token fingerprint within ±10 minutes
+///      (must be unique; model compared via normalize_codex_model on model/request_model)
 ///
 /// Only NULL fields are filled; already-set values are preserved.
 fn try_enrich_proxy_log(
@@ -766,59 +767,86 @@ fn try_enrich_proxy_log(
     delta: &DeltaTokens,
     created_at: i64,
 ) -> Result<bool, AppError> {
-    // 1) exact turn_id match
+    // 1) exact turn_id match — must be unique (never pick an arbitrary LIMIT 1 row)
     if let Some(tid) = turn_id {
-        let id: Option<String> = conn
-            .query_row(
+        let mut stmt = conn
+            .prepare(
                 "SELECT request_id FROM proxy_request_logs
                  WHERE turn_id = ?1 AND app_type = 'codex'
-                 LIMIT 1",
-                rusqlite::params![tid],
-                |row| row.get(0),
+                 LIMIT 2",
             )
-            .ok();
-        if let Some(row_id) = id {
-            return apply_enrich(conn, &row_id, delta, turn_id);
+            .map_err(|e| AppError::Database(format!("enrich turn_id prepare: {e}")))?;
+        let ids: Vec<String> = stmt
+            .query_map(rusqlite::params![tid], |row| row.get(0))
+            .map_err(|e| AppError::Database(format!("enrich turn_id query: {e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        if ids.len() == 1 {
+            return apply_enrich(conn, &ids[0], delta, turn_id);
         }
+        // 0 matches → fall through to fingerprint; 2+ → ambiguous, skip turn_id path
     }
 
-    // 2) session + model + tokens ±10min, unique only
+    // 2) session + model + tokens ±10min, unique only.
+    // Normalize model so session labels like `openai/gpt-5.4-2026-03-05` can match
+    // proxy rows stored as `gpt-5.4` (and vice versa when both sides normalize equal).
     let Some(sid) = session_id else {
         return Ok(false);
     };
+    let model_norm = normalize_codex_model(model);
     let window_start = created_at - 600;
     let window_end = created_at + 600;
 
     let mut stmt = conn
         .prepare(
-            "SELECT request_id FROM proxy_request_logs
+            "SELECT request_id, model, request_model FROM proxy_request_logs
              WHERE session_id = ?1
                AND app_type = 'codex'
-               AND model = ?2
-               AND input_tokens = ?3
-               AND output_tokens = ?4
-               AND cache_read_tokens = ?5
-               AND created_at BETWEEN ?6 AND ?7
-             LIMIT 3",
+               AND input_tokens = ?2
+               AND output_tokens = ?3
+               AND cache_read_tokens = ?4
+               AND created_at BETWEEN ?5 AND ?6
+             LIMIT 8",
         )
         .map_err(|e| AppError::Database(format!("enrich query prepare: {e}")))?;
 
-    let ids: Vec<String> = stmt
-        .query_map(
-            rusqlite::params![
-                sid,
-                model,
-                delta.input,
-                delta.output,
-                delta.cached_input,
-                window_start,
-                window_end,
-            ],
-            |row| row.get(0),
-        )
-        .map_err(|e| AppError::Database(format!("enrich query: {e}")))?
-        .filter_map(|r| r.ok())
-        .collect();
+    let mut ids: Vec<String> = Vec::new();
+    {
+        let rows = stmt
+            .query_map(
+                rusqlite::params![
+                    sid,
+                    delta.input,
+                    delta.output,
+                    delta.cached_input,
+                    window_start,
+                    window_end,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .map_err(|e| AppError::Database(format!("enrich query: {e}")))?;
+
+        for row in rows {
+            let (request_id, row_model, request_model) =
+                row.map_err(|e| AppError::Database(format!("enrich row: {e}")))?;
+            let row_matches = normalize_codex_model(&row_model) == model_norm
+                || request_model
+                    .as_deref()
+                    .map(|m| normalize_codex_model(m) == model_norm)
+                    .unwrap_or(false)
+                || row_model == model
+                || request_model.as_deref() == Some(model);
+            if row_matches {
+                ids.push(request_id);
+            }
+        }
+    }
 
     if ids.len() == 1 {
         return apply_enrich(conn, &ids[0], delta, turn_id);
@@ -1516,6 +1544,127 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(rt, Some(7));
+        }
+    }
+
+    #[test]
+    fn enrich_by_turn_id_requires_unique() {
+        let db = Database::memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            for rid in ["r1", "r2"] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, request_model,
+                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                        input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                        latency_ms, status_code, session_id, provider_type, is_streaming,
+                        cost_multiplier, created_at, data_source, turn_id
+                    ) VALUES (
+                        ?1, 'p1', 'codex', 'gpt-5', 'gpt-5',
+                        100, 50, 10, 0,
+                        '0','0','0','0','0',
+                        0, 200, 'sess-dup', 'proxy', 1,
+                        '1.0', 1720000000, 'proxy', 'turn-dup'
+                    )",
+                    rusqlite::params![rid],
+                )
+                .unwrap();
+            }
+        }
+        let delta = DeltaTokens {
+            input: 100,
+            cached_input: 10,
+            output: 50,
+            reasoning: 9,
+        };
+        {
+            let conn = db.conn.lock().unwrap();
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-dup"),
+                Some("turn-dup"),
+                "gpt-5",
+                &delta,
+                1720000000,
+            )
+            .unwrap();
+            assert!(!ok, "duplicate turn_id must not enrich arbitrarily");
+        }
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("DELETE FROM proxy_request_logs WHERE request_id = 'r2'", [])
+                .unwrap();
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-dup"),
+                Some("turn-dup"),
+                "gpt-5",
+                &delta,
+                1720000000,
+            )
+            .unwrap();
+            assert!(ok);
+            let rt: Option<i64> = conn
+                .query_row(
+                    "SELECT reasoning_tokens FROM proxy_request_logs WHERE request_id = 'r1'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(rt, Some(9));
+        }
+    }
+
+    #[test]
+    fn enrich_by_fingerprint_matches_normalized_model() {
+        let db = Database::memory().unwrap();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                    latency_ms, status_code, session_id, provider_type, is_streaming,
+                    cost_multiplier, created_at, data_source
+                ) VALUES (
+                    'r-norm', 'p1', 'codex', 'gpt-5.4', 'gpt-5.4',
+                    100, 50, 10, 0,
+                    '0','0','0','0','0',
+                    0, 200, 'sess-norm', 'proxy', 1,
+                    '1.0', 1720000000, 'proxy'
+                )",
+                [],
+            )
+            .unwrap();
+        }
+        let delta = DeltaTokens {
+            input: 100,
+            cached_input: 10,
+            output: 50,
+            reasoning: 11,
+        };
+        {
+            let conn = db.conn.lock().unwrap();
+            let ok = try_enrich_proxy_log(
+                &conn,
+                Some("sess-norm"),
+                None,
+                "openai/GPT-5.4-2026-03-05",
+                &delta,
+                1720000000,
+            )
+            .unwrap();
+            assert!(ok, "normalized model should match proxy row");
+            let rt: Option<i64> = conn
+                .query_row(
+                    "SELECT reasoning_tokens FROM proxy_request_logs WHERE request_id = 'r-norm'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(rt, Some(11));
         }
     }
 }
