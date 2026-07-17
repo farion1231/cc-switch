@@ -24,7 +24,6 @@ use std::collections::{BTreeMap, HashSet};
 
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
 
-
 /// Truncate a string to at most `max_bytes` bytes, splitting only on valid
 /// UTF-8 character boundaries so the returned slice can never panic when
 /// formatted with `{}`.
