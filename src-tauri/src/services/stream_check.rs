@@ -160,7 +160,8 @@ impl StreamCheckService {
         let ua = Self::custom_user_agent(provider);
 
         let result = if config.enable_model_check {
-            Self::probe_model_availability(&client, app_type, provider, &base_url, timeout, config).await
+            Self::probe_model_availability(&client, app_type, provider, &base_url, timeout, config)
+                .await
         } else {
             Self::probe_reachability(&client, &base_url, timeout, ua).await
         };
@@ -324,9 +325,16 @@ impl StreamCheckService {
 
         if *app_type == AppType::Gemini {
             let url = if base_url.contains("googleapis.com") {
-                format!("https://generativelanguage.googleapis.com/v1beta/models?key={}", api_key)
+                format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models?key={}",
+                    api_key
+                )
             } else {
-                format!("{}/v1beta/models?key={}", base_url.trim_end_matches('/'), api_key)
+                format!(
+                    "{}/v1beta/models?key={}",
+                    base_url.trim_end_matches('/'),
+                    api_key
+                )
             };
             let req = client.get(&url).timeout(timeout);
             if let Ok(resp) = req.send().await {
@@ -348,7 +356,8 @@ impl StreamCheckService {
             } else {
                 format!("{}/v1/models", base_url.trim_end_matches('/'))
             };
-            let req = client.get(&url)
+            let req = client
+                .get(&url)
                 .header("x-api-key", api_key)
                 .header("anthropic-version", "2023-06-01")
                 .timeout(timeout);
@@ -373,8 +382,9 @@ impl StreamCheckService {
             } else {
                 format!("{}/v1/models", base_url.trim_end_matches('/'))
             };
-            
-            let req = client.get(&url)
+
+            let req = client
+                .get(&url)
                 .header("Authorization", format!("Bearer {}", api_key))
                 .timeout(timeout);
             if let Ok(resp) = req.send().await {
@@ -397,7 +407,9 @@ impl StreamCheckService {
     /// 提取供应商自身配置的模型（从 env 或者是 options 字段中）
     fn extract_provider_own_model(provider: &Provider, app_type: &AppType) -> Option<String> {
         let env_keys = match app_type {
-            AppType::Claude | AppType::ClaudeDesktop => vec!["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            AppType::Claude | AppType::ClaudeDesktop => {
+                vec!["ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL"]
+            }
             AppType::Gemini => vec!["GEMINI_MODEL"],
             _ => vec!["OPENAI_MODEL", "DEEPSEEK_MODEL", "OPENCODE_MODEL", "MODEL"],
         };
@@ -416,7 +428,11 @@ impl StreamCheckService {
                 return Some(m.trim().to_string());
             }
         }
-        if let Some(m) = settings.get("options").and_then(|o| o.get("model")).and_then(|v| v.as_str()) {
+        if let Some(m) = settings
+            .get("options")
+            .and_then(|o| o.get("model"))
+            .and_then(|v| v.as_str())
+        {
             if !m.trim().is_empty() {
                 return Some(m.trim().to_string());
             }
@@ -438,12 +454,16 @@ impl StreamCheckService {
         let (_, api_key) = provider.resolve_usage_credentials(app_type);
         let api_key = api_key.trim().to_string();
         if api_key.is_empty() {
-            return Err(AppError::Message("Missing API Key configuration".to_string()));
+            return Err(AppError::Message(
+                "Missing API Key configuration".to_string(),
+            ));
         }
 
         // 2. 提取 Model：
         // 优先级：(1) provider 专属 test_model -> (2) provider 本身 env 里的模型 -> (3) 全局配置 test_model -> (4) API 动态探测 -> (5) 系统默认
-        let mut model = provider.meta.as_ref()
+        let mut model = provider
+            .meta
+            .as_ref()
             .and_then(|m| m.test_model.clone())
             .filter(|s| !s.trim().is_empty());
 
@@ -454,24 +474,27 @@ impl StreamCheckService {
         if model.is_none() {
             model = config.test_model.clone().filter(|s| !s.trim().is_empty());
         }
-        
+
         // 如果 testModel 为 "auto" 或者未配置，尝试通过 API 动态探测
         if model.as_deref() == Some("auto") || model.is_none() {
-            if let Some(api_model) = Self::fetch_model_from_api(client, app_type, provider, base_url, &api_key, timeout).await {
+            if let Some(api_model) =
+                Self::fetch_model_from_api(client, app_type, provider, base_url, &api_key, timeout)
+                    .await
+            {
                 model = Some(api_model);
             }
         }
 
-        let model = model.unwrap_or_else(|| {
-            match app_type {
-                AppType::Claude | AppType::ClaudeDesktop => "claude-3-5-sonnet-20241022".to_string(),
-                AppType::Gemini => "gemini-2.5-flash".to_string(),
-                _ => "gpt-4o-mini".to_string(),
-            }
+        let model = model.unwrap_or_else(|| match app_type {
+            AppType::Claude | AppType::ClaudeDesktop => "claude-3-5-sonnet-20241022".to_string(),
+            AppType::Gemini => "gemini-2.5-flash".to_string(),
+            _ => "gpt-4o-mini".to_string(),
         });
 
         // 3. 提取 Prompt：优先提取当前 Provider meta 的 testPrompt，若为空再使用全局配置，最后兜底为 "hi"
-        let mut prompt = provider.meta.as_ref()
+        let mut prompt = provider
+            .meta
+            .as_ref()
             .and_then(|m| m.test_prompt.clone())
             .filter(|s| !s.trim().is_empty());
 
@@ -481,7 +504,8 @@ impl StreamCheckService {
         let prompt = prompt.unwrap_or_else(|| "hi".to_string());
 
         // 4. 根据接口格式进行探测
-        let is_anthropic_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+        let is_anthropic_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
+        {
             Some("openai_chat") | Some("openai_responses") => false,
             Some("anthropic") => true,
             _ => {
@@ -491,7 +515,8 @@ impl StreamCheckService {
             }
         };
 
-        let is_responses_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref()) {
+        let is_responses_proto = match provider.meta.as_ref().and_then(|m| m.api_format.as_deref())
+        {
             Some("openai_responses") => true,
             _ => false,
         };
@@ -557,14 +582,15 @@ impl StreamCheckService {
         if !url.ends_with("/chat/completions") {
             url = format!("{}/chat/completions", url.trim_end_matches('/'));
         }
-        
+
         let payload = serde_json::json!({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 5
         });
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .timeout(timeout)
             .header("Authorization", format!("Bearer {key}"))
             .json(&payload)
@@ -578,7 +604,8 @@ impl StreamCheckService {
         } else {
             let err_text = resp.text().await.unwrap_or_default();
             let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
-                err_json.pointer("/error/message")
+                err_json
+                    .pointer("/error/message")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or(err_text)
@@ -602,14 +629,15 @@ impl StreamCheckService {
         if !url.ends_with("/v1/messages") {
             url = format!("{}/v1/messages", url.trim_end_matches('/'));
         }
-        
+
         let payload = serde_json::json!({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 5
         });
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .timeout(timeout)
             .header("x-api-key", key)
             .header("anthropic-version", "2023-06-01")
@@ -625,7 +653,8 @@ impl StreamCheckService {
         } else {
             let err_text = resp.text().await.unwrap_or_default();
             let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
-                err_json.pointer("/error/message")
+                err_json
+                    .pointer("/error/message")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or(err_text)
@@ -663,7 +692,8 @@ impl StreamCheckService {
             "max_output_tokens": 5
         });
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .timeout(timeout)
             .header("Authorization", format!("Bearer {key}"))
             .json(&payload)
@@ -677,7 +707,8 @@ impl StreamCheckService {
         } else {
             let err_text = resp.text().await.unwrap_or_default();
             let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
-                err_json.pointer("/error/message")
+                err_json
+                    .pointer("/error/message")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or(err_text)
@@ -697,10 +728,13 @@ impl StreamCheckService {
         prompt: &str,
         timeout: std::time::Duration,
     ) -> Result<u16, AppError> {
-        if !base_url.contains("googleapis.com") && base_url.contains("/v1") && !base_url.contains("/v1beta") {
+        if !base_url.contains("googleapis.com")
+            && base_url.contains("/v1")
+            && !base_url.contains("/v1beta")
+        {
             return Self::probe_openai_api(client, base_url, key, model, prompt, timeout).await;
         }
-        
+
         let separator = if base_url.contains('?') { "&" } else { "?" };
         let url = format!(
             "{}/v1beta/models/{}:generateContent{}key={}",
@@ -715,7 +749,8 @@ impl StreamCheckService {
             "generationConfig": {"maxOutputTokens": 5}
         });
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .timeout(timeout)
             .json(&payload)
             .send()
@@ -728,7 +763,8 @@ impl StreamCheckService {
         } else {
             let err_text = resp.text().await.unwrap_or_default();
             let msg = if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&err_text) {
-                err_json.pointer("/error/message")
+                err_json
+                    .pointer("/error/message")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or(err_text)
