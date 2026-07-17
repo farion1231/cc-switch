@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export type AppCountBarFilter = AppId | "all";
 
 const interactiveBadgeClass =
-  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-all outline-none focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0";
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-all outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 interface AppCountBarProps {
   totalLabel: string;
