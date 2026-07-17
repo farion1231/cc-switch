@@ -1463,8 +1463,7 @@ mod tests {
 
     #[test]
     fn enrich_by_session_fingerprint_requires_unique() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("t2.db");
+        let _dir = tempdir().unwrap();
         let db = Database::memory().unwrap();
         {
             let conn = db.conn.lock().unwrap();
