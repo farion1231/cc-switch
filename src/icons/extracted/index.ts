@@ -2,6 +2,7 @@
 // Do not edit manually
 
 import _apikeyfun from "./apikeyfun.png";
+import _arcrouter from "./arcrouter.svg?url";
 import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
 import _claudeapi from "./ClaudeApi.png";
@@ -104,6 +105,7 @@ export const icons: Record<string, string> = {
 export const iconUrls: Record<string, string> = {
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
+  arcrouter: _arcrouter,
   atlascloud: _atlascloud,
   byteplus: _byteplus,
   ccsub: _ccsub,
