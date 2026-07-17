@@ -564,7 +564,7 @@ fn convert_input_to_messages(
                             log::warn!(
                                 "[Codex/Anthropic] Degrading invalid function_call arguments \
                                  for '{name}' (call_id={call_id}): {error}; raw: {}",
-                                utf8_truncate(&args_str, 200)
+                                utf8_truncate(args_str, 200)
                             );
                             json!({})
                         }
