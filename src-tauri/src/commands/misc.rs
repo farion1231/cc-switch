@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 6] = [
-    "claude", "codex", "gemini", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 7] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -424,6 +424,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "claude" => "Claude Code",
         "codex" => "Codex",
         "gemini" => "Gemini CLI",
+        "grok" => "Grok Build",
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
@@ -492,6 +493,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "claude" => Some("npm i -g @anthropic-ai/claude-code@latest"),
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
+        "grok" => Some("npm i -g @xai-official/grok@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         _ => None,
@@ -762,6 +764,7 @@ async fn get_single_tool_version_impl(
         }
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
         "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
+        "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
         "opencode" => {
             if let Some(version) =
                 fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
@@ -1945,6 +1948,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "claude" => Some("@anthropic-ai/claude-code"),
         "codex" => Some("@openai/codex"),
         "gemini" => Some("@google/gemini-cli"),
+        "grok" => Some("@xai-official/grok"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         _ => None,
@@ -2257,7 +2261,8 @@ fn package_manager_anchored_command_from_paths(
 ///    formula 由 Homebrew 拥有,避免 self-update 尝试改动包管理器管理的安装。
 /// ④ 其余支持官方自升级的工具 → `<bin_path 绝对> update/upgrade || <原锚定包管理器命令>`；
 ///    Codex 的 self-update 只在部分 release 可用,所以保留 npm/brew/bun/volta fallback。
-/// ⑤ 不支持官方自升级的 npm 全局包(例如 Gemini CLI) → 锚定到"那处 bin 目录的 npm"。
+/// ⑤ 不支持官方自升级的 npm 全局包(例如 Gemini CLI / Grok Build) → 锚定到
+///    "那处 bin 目录的 npm"。
 #[cfg(not(target_os = "windows"))]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     let real_lower = real_target.to_ascii_lowercase();
@@ -2553,6 +2558,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "claude" => crate::settings::get_claude_override_dir(),
         "codex" => crate::settings::get_codex_override_dir(),
         "gemini" => crate::settings::get_gemini_override_dir(),
+        "grok" => crate::settings::get_grok_override_dir(),
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
@@ -3661,6 +3667,35 @@ mod tests {
     }
 
     #[test]
+    fn grok_lifecycle_metadata_is_consistent() {
+        let requested = vec!["unsupported".to_string(), "grok".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["grok"]);
+        assert_eq!(tool_display_name("grok"), "Grok Build");
+        assert_eq!(npm_package_for("grok"), Some("@xai-official/grok"));
+        assert_eq!(
+            npm_install_command_for("grok"),
+            Some("npm i -g @xai-official/grok@latest")
+        );
+        assert_eq!(official_update_args("grok"), None);
+
+        for shell in [
+            LifecycleCommandShell::Posix,
+            LifecycleCommandShell::WindowsBatch,
+        ] {
+            assert_eq!(
+                tool_action_shell_command_for_shell("grok", ToolLifecycleAction::Install, shell,)
+                    .as_deref(),
+                Some("npm i -g @xai-official/grok@latest")
+            );
+            assert_eq!(
+                tool_action_shell_command_for_shell("grok", ToolLifecycleAction::Update, shell,)
+                    .as_deref(),
+                Some("npm i -g @xai-official/grok@latest")
+            );
+        }
+    }
+
+    #[test]
     fn test_compare_semver() {
         use std::cmp::Ordering;
         assert_eq!(
@@ -3898,6 +3933,18 @@ mod tests {
             // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
             let expected = format!(
                 "{} i -g @openai/codex@latest",
+                expect_quoted_path(&npm_full)
+            );
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn grok_windows_anchors_to_sibling_npm() {
+            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "grok.cmd", &["npm.cmd"]);
+            let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            let expected = format!(
+                "{} i -g @xai-official/grok@latest",
                 expect_quoted_path(&npm_full)
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
@@ -4223,6 +4270,9 @@ mod tests {
             let codex =
                 wsl_tool_action_shell_command("codex", ToolLifecycleAction::Install).unwrap();
             assert_eq!(codex, "npm i -g @openai/codex@latest");
+
+            let grok = wsl_tool_action_shell_command("grok", ToolLifecycleAction::Install).unwrap();
+            assert_eq!(grok, "npm i -g @xai-official/grok@latest");
         }
 
         #[test]
@@ -4379,6 +4429,21 @@ mod tests {
                 cmd.as_deref(),
                 Some(
                     "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                )
+            );
+        }
+
+        #[test]
+        fn grok_nvm_anchors_to_npm_without_cli_update() {
+            let cmd = anchored_command_from_paths(
+                "grok",
+                "/Users/me/.nvm/versions/node/v22.14.0/bin/grok",
+                "/Users/me/.nvm/versions/node/v22.14.0/lib/node_modules/@xai-official/grok/bin/grok",
+            );
+            assert_eq!(
+                cmd.as_deref(),
+                Some(
+                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
                 )
             );
         }
@@ -4834,6 +4899,12 @@ mod tests {
         }
 
         #[test]
+        fn grok_install_keeps_static_npm() {
+            let cmd = install_command_for("grok");
+            assert_eq!(cmd, "npm i -g @xai-official/grok@latest");
+        }
+
+        #[test]
         fn openclaw_install_keeps_static_npm() {
             let cmd = install_command_for("openclaw");
             assert_eq!(cmd, "npm i -g openclaw@latest");
@@ -4855,6 +4926,11 @@ mod tests {
                 "npm i -g @google/gemini-cli@latest"
             );
             assert!(!static_fallback_command("gemini").contains("gemini update"));
+            assert_eq!(
+                static_fallback_command("grok"),
+                "npm i -g @xai-official/grok@latest"
+            );
+            assert!(!static_fallback_command("grok").contains("grok update"));
             assert_eq!(
                 static_fallback_command("opencode"),
                 "opencode upgrade || npm i -g opencode-ai@latest"
