@@ -11,6 +11,8 @@ export interface KimiProviderPreset {
   settingsConfig: object;
   endpointCandidates?: string[];
   isOfficial?: boolean;
+  isPartner?: boolean;
+  partnerPromotionKey?: string;
   category?: ProviderCategory;
   icon?: string;
   iconColor?: string;

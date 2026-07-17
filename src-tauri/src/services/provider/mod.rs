@@ -703,6 +703,41 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn kimi_switch_rejects_empty_api_key_before_changing_current_or_live() {
+        with_test_home(|state, _| {
+            let provider = Provider::with_id(
+                "empty-kimi".into(),
+                "Empty Kimi".into(),
+                json!({
+                    "env": {
+                        "KIMI_BASE_URL": "https://api.kimi.com/coding/v1",
+                        "KIMI_API_KEY": "",
+                        "KIMI_PROVIDER_NAME": "mingwei"
+                    }
+                }),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Kimi.as_str(), &provider)
+                .expect("seed legacy provider");
+
+            ProviderService::switch(state, AppType::Kimi, &provider.id)
+                .expect_err("empty Kimi key must be rejected");
+
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(AppType::Kimi.as_str())
+                    .expect("read current provider"),
+                None
+            );
+            assert!(!crate::kimi_config::get_kimi_config_path().exists());
+        });
+    }
+
+    #[test]
     fn extract_claude_common_config_strips_all_credentials_keeps_shareable() {
         // env 混入多种凭据（Anthropic/OpenRouter/Google/OpenAI/Gemini + AWS/Vertex）
         // 与可共享配置；顶层混入非标准的 apiKey/api_key 凭据与正常设置。
@@ -2407,9 +2442,6 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
-                    AppType::Kimi => {
-                        let _ = crate::kimi_config::write_kimi_live("", "", crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME);
-                    }
                     _ => {}
                 }
             }
@@ -2476,7 +2508,11 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Kimi => {
-                crate::kimi_config::write_kimi_live("", "", crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME)?;
+                return Err(AppError::localized(
+                    "kimi.live.remove_unsupported",
+                    "Kimi 不支持仅从实时配置中移除供应商，请直接切换到另一个有效供应商",
+                    "Kimi does not support removing a provider from live config; switch to another valid provider instead",
+                ));
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -2512,6 +2548,13 @@ impl ProviderService {
         let _provider = providers
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        // Validate before changing current-provider state or touching Live config.
+        // In particular, never allow a legacy Kimi entry with an empty API key
+        // to overwrite a valid key in ~/.kimi-code/config.toml.
+        if matches!(app_type, AppType::Kimi) {
+            crate::kimi_config::validate_kimi_settings_strict(&_provider.settings_config)?;
+        }
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
@@ -2635,7 +2678,12 @@ impl ProviderService {
             if current_id != id {
                 // Additive mode apps - all providers coexist in the same file,
                 // no backfill needed (backfill is for exclusive mode apps like Claude/Codex/Gemini)
-                if !app_type.is_additive_mode() {
+                // Kimi Live only projects provider identity and credentials.
+                // Kimi Code may independently point a highspeed model at
+                // `managed:kimi-code`; backfilling that projection would then
+                // overwrite the stored CC Switch provider (for example
+                // `mingwei`) with the managed provider's name/key.
+                if !app_type.is_additive_mode() && !matches!(app_type, AppType::Kimi) {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
@@ -2717,11 +2765,6 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
-                    AppType::Kimi => {
-                        crate::kimi_config::write_kimi_live("", "", crate::kimi_config::KIMI_DEFAULT_PROVIDER_NAME).map_err(|e| {
-                            AppError::Message(format!("Failed to rollback Kimi live config: {e}"))
-                        })
-                    }
                     _ => Ok(()),
                 };
 
@@ -3007,7 +3050,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Kimi => Ok(String::new()), // Kimi doesn't use common config snippets
+            AppType::Kimi => Ok(String::new()),   // Kimi doesn't use common config snippets
         }
     }
 
@@ -3024,7 +3067,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
-            AppType::Kimi => Ok(String::new()), // Kimi doesn't use common config snippets
+            AppType::Kimi => Ok(String::new()),   // Kimi doesn't use common config snippets
         }
     }
 
@@ -3525,7 +3568,7 @@ impl ProviderService {
                 }
             }
             AppType::Kimi => {
-                crate::kimi_config::validate_kimi_settings(&provider.settings_config)?;
+                crate::kimi_config::validate_kimi_settings_strict(&provider.settings_config)?;
             }
         }
 
@@ -3737,16 +3780,13 @@ impl ProviderService {
                 let env_map = crate::kimi_config::json_to_env(&provider.settings_config)?;
 
                 let api_key = env_map.get("KIMI_API_KEY").cloned().unwrap_or_default();
-                let base_url = env_map
-                    .get("KIMI_BASE_URL")
-                    .cloned()
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "kimi.missing_base_url",
-                            "缺少 KIMI_BASE_URL",
-                            "Missing KIMI_BASE_URL",
-                        )
-                    })?;
+                let base_url = env_map.get("KIMI_BASE_URL").cloned().ok_or_else(|| {
+                    AppError::localized(
+                        "kimi.missing_base_url",
+                        "缺少 KIMI_BASE_URL",
+                        "Missing KIMI_BASE_URL",
+                    )
+                })?;
 
                 Ok((api_key, base_url))
             }

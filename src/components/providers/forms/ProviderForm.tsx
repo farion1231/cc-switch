@@ -51,6 +51,7 @@ import {
   type HermesProviderPreset,
 } from "@/config/hermesProviderPresets";
 import { kimiProviderPresets } from "@/config/kimiProviderPresets";
+import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { OpenClawFormFields } from "./OpenClawFormFields";
 import { HermesFormFields } from "./HermesFormFields";
@@ -130,6 +131,7 @@ type PresetEntry = {
     | ProviderPreset
     | CodexProviderPreset
     | GeminiProviderPreset
+    | KimiProviderPreset
     | OpenCodeProviderPreset
     | OpenClawProviderPreset
     | HermesProviderPreset;
@@ -392,7 +394,17 @@ function ProviderFormFull({
                 : appId === "hermes"
                   ? HERMES_DEFAULT_CONFIG
                   : appId === "kimi"
-                    ? JSON.stringify({ env: { KIMI_BASE_URL: "", KIMI_API_KEY: "", KIMI_PROVIDER_NAME: "ccswitch" } }, null, 2)
+                    ? JSON.stringify(
+                        {
+                          env: {
+                            KIMI_BASE_URL: "",
+                            KIMI_API_KEY: "",
+                            KIMI_PROVIDER_NAME: "ccswitch",
+                          },
+                        },
+                        null,
+                        2,
+                      )
                     : CLAUDE_DEFAULT_CONFIG,
       icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
@@ -476,21 +488,31 @@ function ProviderFormFull({
     try {
       const config = JSON.parse(form.getValues("settingsConfig") || "{}");
       const envName: unknown = config?.env?.KIMI_PROVIDER_NAME;
-      const nextName = typeof envName === "string" && envName.trim() ? envName.trim() : "ccswitch";
+      const nextName =
+        typeof envName === "string" && envName.trim()
+          ? envName.trim()
+          : "ccswitch";
       setKimiProviderName(nextName);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, [appId, form.watch("settingsConfig")]);
 
-  const handleKimiProviderNameChange = useCallback((name: string) => {
-    const trimmed = name.trim();
-    setKimiProviderName(trimmed);
-    try {
-      const config = JSON.parse(form.getValues("settingsConfig") || "{}");
-      if (!config.env) config.env = {};
-      config.env.KIMI_PROVIDER_NAME = trimmed;
-      handleSettingsConfigChange(JSON.stringify(config, null, 2));
-    } catch { /* ignore */ }
-  }, [form, handleSettingsConfigChange]);
+  const handleKimiProviderNameChange = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      setKimiProviderName(trimmed);
+      try {
+        const config = JSON.parse(form.getValues("settingsConfig") || "{}");
+        if (!config.env) config.env = {};
+        config.env.KIMI_PROVIDER_NAME = trimmed;
+        handleSettingsConfigChange(JSON.stringify(config, null, 2));
+      } catch {
+        /* ignore */
+      }
+    },
+    [form, handleSettingsConfigChange],
+  );
 
   const {
     claudeModel,
@@ -1197,6 +1219,36 @@ function ProviderFormFull({
       return;
     }
 
+    // Kimi live config cannot work without these fields. Keep this as a hard
+    // validation so "save anyway" can never persist a provider that would
+    // later erase a valid live credential during switching.
+    if (appId === "kimi") {
+      if (!kimiBaseUrl.trim()) {
+        toast.error(
+          t("providerForm.endpointRequired", {
+            defaultValue: "请填写 API 端点",
+          }),
+        );
+        return;
+      }
+      if (!apiKey.trim()) {
+        toast.error(
+          t("providerForm.apiKeyRequired", {
+            defaultValue: "请填写 API Key",
+          }),
+        );
+        return;
+      }
+      if (!kimiProviderName.trim()) {
+        toast.error(
+          t("providerForm.kimiProviderNameRequired", {
+            defaultValue: "请填写 Kimi Provider 名称",
+          }),
+        );
+        return;
+      }
+    }
+
     // OMO Other Fields JSON：B 类（格式错了保存下去数据就坏了）
     if (
       appId === "opencode" &&
@@ -1787,6 +1839,30 @@ function ProviderFormFull({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,
         websiteUrl: preset.websiteUrl ?? "",
         settingsConfig: JSON.stringify(preset.settingsConfig, null, 2),
+        icon: preset.icon ?? "",
+        iconColor: preset.iconColor ?? "",
+      });
+      return;
+    }
+
+    if (appId === "kimi") {
+      const preset = entry.preset as KimiProviderPreset;
+      const config = applyTemplateValues(preset.settingsConfig, undefined);
+      const env = (config as { env?: Record<string, unknown> }).env ?? {};
+
+      // Presets intentionally contain no credential. When applying one while
+      // editing, retain the user's credential and provider identity instead of
+      // replacing them with the preset's empty/default values.
+      if (initialData) {
+        env.KIMI_API_KEY = apiKey;
+        env.KIMI_PROVIDER_NAME = kimiProviderName;
+      }
+      (config as { env?: Record<string, unknown> }).env = env;
+
+      form.reset({
+        name: preset.nameKey ? t(preset.nameKey) : preset.name,
+        websiteUrl: preset.websiteUrl ?? "",
+        settingsConfig: JSON.stringify(config, null, 2),
         icon: preset.icon ?? "",
         iconColor: preset.iconColor ?? "",
       });
