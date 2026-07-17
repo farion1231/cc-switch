@@ -48,6 +48,7 @@ import {
   updateGrokBuildConfig,
   validateGrokBuildConfig,
 } from "@/utils/grokBuildConfig";
+import { resolveProviderIcon } from "@/utils/providerIcon";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
@@ -161,7 +162,12 @@ export function GrokBuildProviderForm({
       websiteUrl: initialData?.websiteUrl ?? "",
       notes: initialData?.notes ?? "",
       settingsConfig: JSON.stringify({ config: rawConfig }),
-      icon: initialData?.icon ?? "grok",
+      icon:
+        resolveProviderIcon(
+          "grokbuild",
+          initialData?.icon,
+          initialData?.iconColor,
+        ) ?? "",
       iconColor: initialData?.iconColor ?? "",
     },
     mode: "onSubmit",
@@ -247,7 +253,7 @@ export function GrokBuildProviderForm({
 
     form.setValue("name", presetName);
     form.setValue("websiteUrl", preset.websiteUrl ?? "");
-    form.setValue("icon", preset.icon ?? "grok");
+    form.setValue("icon", preset.icon ?? "");
     form.setValue("iconColor", preset.iconColor ?? "");
     setCategory(preset.category ?? "custom");
     setIsPartner(preset.isPartner ?? false);

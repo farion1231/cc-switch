@@ -70,6 +70,7 @@ describe("GrokBuildProviderForm", () => {
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.icon).toBe("");
     const settings = JSON.parse(submitted.settingsConfig);
     const config = parseToml(settings.config) as any;
 
