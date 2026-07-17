@@ -111,6 +111,14 @@ fn should_normalize_anthropic_tool_thinking_history(
         return false;
     }
 
+    // OpenRouter's Anthropic endpoint validates native thinking signatures.
+    // A routed model ID such as `moonshotai/kimi-k3` identifies the upstream
+    // model, not a direct Kimi endpoint, so direct-provider normalization must
+    // not strip those signatures or inject unsigned thinking placeholders.
+    if ClaudeAdapter::new().is_openrouter(provider) {
+        return false;
+    }
+
     if body
         .get("model")
         .and_then(|m| m.as_str())
@@ -2221,6 +2229,45 @@ mod tests {
         assert_eq!(content[0]["type"], "thinking");
         assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
         assert_eq!(content[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_openrouter_kimi_anthropic_tool_history_preserves_signed_thinking() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "moonshotai/kimi-k3",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Need to inspect the file.",
+                        "signature": "openrouter-signature"
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "call_123",
+                        "name": "read_file",
+                        "input": {"path": "README.md"}
+                    }
+                ]
+            }]
+        });
+        let original = body.clone();
+
+        let changed = normalize_anthropic_tool_thinking_history_for_provider(
+            &mut body,
+            &provider,
+            "anthropic",
+        );
+
+        assert!(!changed);
+        assert_eq!(body, original);
     }
 
     #[test]
