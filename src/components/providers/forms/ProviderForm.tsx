@@ -371,6 +371,9 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setSubagentRouteProviderId(
+      initialData?.meta?.claudeSubagentRoute?.providerId?.trim() ?? "",
+    );
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
