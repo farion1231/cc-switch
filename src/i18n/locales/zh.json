@@ -885,12 +885,7 @@
     "hermes": "Hermes"
   },
   "grokBuild": {
-    "baseUrl": "API 端点",
-    "apiKeyPlaceholder": "输入供应商 API Key",
-    "model": "模型",
-    "modelRequired": "请填写模型名称",
     "apiBackend": "API Backend",
-    "apiBackendRequired": "请填写 API Backend",
     "contextWindow": "上下文窗口",
     "contextWindowInvalid": "上下文窗口必须是正整数",
     "profile": "客户端模型档位",
@@ -899,7 +894,7 @@
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、OpenCode、OpenClaw、Hermes 与 Gemini CLI 会话记录",
+    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",

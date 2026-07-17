@@ -58,6 +58,12 @@ const grokPresetEntries: Array<{
   .map((preset, index) => ({ id: `grokbuild-${index}`, preset }))
   .filter(({ preset }) => preset.category !== "official" && !preset.isOfficial);
 
+export const grokApiBackendFromApiFormat = (format: CodexApiFormat): string => {
+  if (format === "openai_chat") return "chat_completions";
+  if (format === "anthropic") return "messages";
+  return "responses";
+};
+
 export function GrokBuildProviderForm({
   providerId,
   submitLabel,
@@ -192,9 +198,8 @@ export function GrokBuildProviderForm({
     add(baseUrl);
     presetEndpoints.forEach(add);
     draftCustomEndpoints.forEach(add);
-    Object.keys(initialData?.meta?.custom_endpoints ?? {}).forEach(add);
     return Array.from(urls).map((url) => ({ url }));
-  }, [baseUrl, draftCustomEndpoints, initialData?.meta, presetEndpoints]);
+  }, [baseUrl, draftCustomEndpoints, presetEndpoints]);
 
   const syncStructuredConfig = (
     overrides: Partial<ReturnType<typeof parseGrokBuildConfig>>,
@@ -238,6 +243,7 @@ export function GrokBuildProviderForm({
       "auth" in preset && typeof preset.auth?.OPENAI_API_KEY === "string"
         ? preset.auth.OPENAI_API_KEY
         : "";
+    const presetApiBackend = grokApiBackendFromApiFormat(presetApiFormat);
 
     form.setValue("name", presetName);
     form.setValue("websiteUrl", preset.websiteUrl ?? "");
@@ -250,6 +256,7 @@ export function GrokBuildProviderForm({
     setApiKey(presetApiKey);
     setUpstreamModel(presetModel);
     setApiFormat(presetApiFormat);
+    setApiBackend(presetApiBackend);
     setPresetEndpoints(preset.endpointCandidates ?? []);
     setRawConfig(
       buildGrokBuildConfig({
@@ -258,7 +265,7 @@ export function GrokBuildProviderForm({
         baseUrl: presetBaseUrl,
         name: presetName,
         apiKey: presetApiKey,
-        apiBackend,
+        apiBackend: presetApiBackend,
         contextWindow: Number.parseInt(contextWindow, 10),
       }),
     );
@@ -280,7 +287,13 @@ export function GrokBuildProviderForm({
   const handleSubmit = async (values: ProviderFormData) => {
     const name = values.name.trim();
     const parsedContextWindow = Number.parseInt(contextWindow, 10);
-    if (!name || !baseUrl.trim() || !apiKey.trim() || !profile.trim()) {
+    const envKey = parseGrokBuildConfig(rawConfig).envKey?.trim();
+    if (
+      !name ||
+      !baseUrl.trim() ||
+      (!apiKey.trim() && !envKey) ||
+      !profile.trim()
+    ) {
       toast.error(
         t("providerForm.requiredFields", {
           defaultValue: "请填写供应商名称、API 地址、API Key 和模型",
@@ -326,18 +339,17 @@ export function GrokBuildProviderForm({
       return;
     }
 
-    const endpointUrls = new Set(
-      speedTestEndpoints.map(({ url }) => url.trim()).filter(Boolean),
-    );
     const customEndpoints = Object.fromEntries(
-      Array.from(endpointUrls).map((url) => [
+      draftCustomEndpoints.map((url) => [
         url,
         { url, addedAt: Date.now(), lastUsed: undefined },
       ]),
     );
     const parsedMaxOutputTokens = Number.parseInt(maxOutputTokens, 10);
+    const initialMeta = { ...(initialData?.meta ?? {}) };
+    delete initialMeta.custom_endpoints;
     const meta: ProviderMeta = {
-      ...(initialData?.meta ?? {}),
+      ...initialMeta,
       apiFormat,
       apiKeyField: anthropicAuthField,
       isFullUrl,
@@ -353,8 +365,10 @@ export function GrokBuildProviderForm({
         Number.isInteger(parsedMaxOutputTokens) && parsedMaxOutputTokens > 0
           ? parsedMaxOutputTokens
           : undefined,
-      custom_endpoints: customEndpoints,
     };
+    if (!providerId && Object.keys(customEndpoints).length > 0) {
+      meta.custom_endpoints = customEndpoints;
+    }
     const payload: ProviderFormValues = {
       ...values,
       name,
@@ -479,7 +493,12 @@ export function GrokBuildProviderForm({
             syncStructuredConfig({ upstreamModel: value });
           }}
           apiFormat={apiFormat}
-          onApiFormatChange={setApiFormat}
+          onApiFormatChange={(value) => {
+            const backend = grokApiBackendFromApiFormat(value);
+            setApiFormat(value);
+            setApiBackend(backend);
+            syncStructuredConfig({ apiBackend: backend });
+          }}
           anthropicAuthField={anthropicAuthField}
           onAnthropicAuthFieldChange={setAnthropicAuthField}
           impersonateClaudeCode={impersonateClaudeCode}
@@ -513,7 +532,12 @@ export function GrokBuildProviderForm({
             language="javascript"
           />
           {rawConfigError && (
-            <p className="text-xs text-destructive">{rawConfigError}</p>
+            <p className="text-xs text-destructive">
+              {t("grokBuild.invalidToml", {
+                error: rawConfigError,
+                defaultValue: `Invalid config.toml: ${rawConfigError}`,
+              })}
+            </p>
           )}
         </div>
 

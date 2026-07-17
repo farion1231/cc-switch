@@ -12,6 +12,7 @@ export interface GrokBuildConfigValues {
   baseUrl: string;
   name: string;
   apiKey: string;
+  envKey?: string;
   apiBackend: string;
   contextWindow: number;
 }
@@ -54,6 +55,7 @@ export function parseGrokBuildConfig(
       baseUrl: asString(selectedModel?.base_url),
       name: asString(selectedModel?.name, fallbackName),
       apiKey: asString(selectedModel?.api_key),
+      envKey: asString(selectedModel?.env_key),
       apiBackend: asString(
         selectedModel?.api_backend,
         GROK_BUILD_DEFAULT_API_BACKEND,
@@ -97,20 +99,28 @@ export function updateGrokBuildConfig(
     asRecord(modelTables[profile]) ??
     asRecord(modelTables[previousProfile]) ??
     {};
+  const apiKey = values.apiKey.trim();
+  const envKey =
+    values.envKey?.trim() || asString(existingSelected.env_key).trim();
+  const updatedSelected: Record<string, unknown> = {
+    ...existingSelected,
+    model: upstreamModel,
+    base_url: values.baseUrl.trim(),
+    name: values.name.trim(),
+    api_backend: values.apiBackend.trim() || GROK_BUILD_DEFAULT_API_BACKEND,
+    context_window:
+      Number.isInteger(values.contextWindow) && values.contextWindow > 0
+        ? values.contextWindow
+        : GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
+  };
+  if (apiKey) updatedSelected.api_key = apiKey;
+  else delete updatedSelected.api_key;
+  if (envKey) updatedSelected.env_key = envKey;
+  else delete updatedSelected.env_key;
+
   config.model = {
     ...modelTables,
-    [profile]: {
-      ...existingSelected,
-      model: upstreamModel,
-      base_url: values.baseUrl.trim(),
-      name: values.name.trim(),
-      api_key: values.apiKey.trim(),
-      api_backend: values.apiBackend.trim() || GROK_BUILD_DEFAULT_API_BACKEND,
-      context_window:
-        Number.isInteger(values.contextWindow) && values.contextWindow > 0
-          ? values.contextWindow
-          : GROK_BUILD_DEFAULT_CONTEXT_WINDOW,
-    },
+    [profile]: updatedSelected,
   };
 
   if (previousProfile !== profile && previousProfile in modelTables) {
@@ -128,14 +138,14 @@ export function validateGrokBuildConfig(configToml: string): string | null {
     const profile = asString(models?.default).trim();
     const selected = asRecord(asRecord(root?.model)?.[profile]);
     if (!profile || !selected) return "Missing [models] default model table";
-    for (const field of [
-      "model",
-      "base_url",
-      "name",
-      "api_key",
-      "api_backend",
-    ]) {
+    for (const field of ["model", "base_url", "name", "api_backend"]) {
       if (!asString(selected[field]).trim()) return `Missing ${field}`;
+    }
+    if (
+      !asString(selected.api_key).trim() &&
+      !asString(selected.env_key).trim()
+    ) {
+      return "Missing api_key or env_key";
     }
     const contextWindow = selected.context_window;
     if (

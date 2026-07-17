@@ -885,12 +885,7 @@
     "hermes": "Hermes"
   },
   "grokBuild": {
-    "baseUrl": "API エンドポイント",
-    "apiKeyPlaceholder": "プロバイダーの API Key を入力",
-    "model": "モデル",
-    "modelRequired": "モデル名を入力してください",
     "apiBackend": "API Backend",
-    "apiBackendRequired": "API Backend を入力してください",
     "contextWindow": "コンテキストウィンドウ",
     "contextWindowInvalid": "コンテキストウィンドウは正の整数で指定してください",
     "profile": "クライアントモデルプロファイル",
@@ -899,7 +894,7 @@
   },
   "sessionManager": {
     "title": "セッション管理",
-    "subtitle": "Claude Code / Codex / OpenCode / OpenClaw / Hermes / Gemini CLI のセッションを管理",
+    "subtitle": "Claude Code / Codex / Gemini CLI / Grok Build / OpenCode / OpenClaw / Hermes のセッションを管理",
     "searchPlaceholder": "内容・ディレクトリ・ID で検索",
     "searchSessions": "セッションを検索",
     "providerFilterAll": "すべて",
