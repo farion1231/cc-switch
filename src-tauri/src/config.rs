@@ -314,10 +314,9 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
         .as_nanos();
     tmp.push(format!("{file_name}.tmp.{ts}"));
 
-    {
-        let mut f = fs::File::create(&tmp).map_err(|e| AppError::io(&tmp, e))?;
-        f.write_all(data).map_err(|e| AppError::io(&tmp, e))?;
-        f.flush().map_err(|e| AppError::io(&tmp, e))?;
+    if let Err(e) = fs::write(&tmp, data) {
+        let _ = fs::remove_file(&tmp);
+        return Err(AppError::io(&tmp, e));
     }
 
     #[cfg(unix)]
@@ -335,20 +334,96 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
         if path.exists() {
             let _ = fs::remove_file(path);
         }
-        fs::rename(&tmp, path).map_err(|e| AppError::IoContext {
-            context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
-            source: e,
-        })?;
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(AppError::IoContext {
+                context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+                source: e,
+            });
+        }
     }
 
     #[cfg(not(windows))]
     {
-        fs::rename(&tmp, path).map_err(|e| AppError::IoContext {
-            context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
-            source: e,
-        })?;
+        if let Err(e) = fs::rename(&tmp, path) {
+            let _ = fs::remove_file(&tmp);
+            // 单文件 bind mount（Flatpak/容器把宿主机文件挂进沙箱）下目标是挂载点，
+            // rename 无法替换挂载点，返回 EBUSY。事前无法可靠检测（同设备 bind mount
+            // 的 st_dev 与父目录相同），只能失败后回退为原地覆盖。
+            if is_resource_busy(&e) && path.exists() {
+                return overwrite_in_place_with_backup(path, data);
+            }
+            return Err(AppError::IoContext {
+                context: format!("原子替换失败: {} -> {}", tmp.display(), path.display()),
+                source: e,
+            });
+        }
     }
     Ok(())
+}
+
+/// rename 因目标被系统占用（如挂载点）而失败。EBUSY 在 Linux/macOS 上均为 16。
+#[cfg(not(windows))]
+fn is_resource_busy(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::ResourceBusy || err.raw_os_error() == Some(16)
+}
+
+/// bind mount 场景的回退写入：先备份原文件，再原地截断覆盖。
+///
+/// 该路径不具备 rename 的原子性：写入中途崩溃会留下半写文件。
+/// 因此覆盖前先把原内容备份到同目录，成功后删除备份；
+/// 失败时尝试用备份恢复原内容，并保留备份文件供手动恢复。
+/// 原地写入不更换 inode，目标文件的权限、xattr 与挂载关系均保持不变。
+#[cfg(not(windows))]
+fn overwrite_in_place_with_backup(path: &Path, data: &[u8]) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::Config("无效的路径".to_string()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| AppError::Config("无效的文件名".to_string()))?
+        .to_string_lossy()
+        .to_string();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let backup = parent.join(format!("{file_name}.bak.{ts}"));
+
+    fs::copy(path, &backup).map_err(|e| AppError::IoContext {
+        context: format!("创建备份失败: {} -> {}", path.display(), backup.display()),
+        source: e,
+    })?;
+
+    match write_in_place(path, data) {
+        Ok(()) => {
+            let _ = fs::remove_file(&backup);
+            Ok(())
+        }
+        Err(e) => {
+            // 尽力恢复原内容；无论恢复是否成功都保留备份文件
+            let _ = fs::read(&backup).and_then(|orig| write_in_place(path, &orig));
+            Err(AppError::IoContext {
+                context: format!(
+                    "原地覆盖失败: {}（原内容已备份至 {}）",
+                    path.display(),
+                    backup.display()
+                ),
+                source: e,
+            })
+        }
+    }
+}
+
+/// 原地截断覆盖（不新建文件、不更换 inode）
+#[cfg(not(windows))]
+fn write_in_place(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let mut f = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)?;
+    f.write_all(data)?;
+    f.sync_all()
 }
 
 #[cfg(test)]
@@ -520,6 +595,98 @@ mod tests {
             serde_json::to_string(&sorted_a).unwrap(),
             serde_json::to_string(&sorted_b).unwrap(),
         );
+    }
+
+    fn leftover_files(dir: &Path, marker: &str) -> Vec<PathBuf> {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().contains(marker))
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.json");
+        fs::write(&target, "old").unwrap();
+
+        atomic_write(&target, b"new").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        assert!(leftover_files(dir.path(), ".tmp.").is_empty());
+    }
+
+    #[test]
+    fn atomic_write_cleans_temp_file_when_rename_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        // 目标是非空目录：rename 必然失败，且不属于 EBUSY 回退场景
+        let target = dir.path().join("occupied");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep"), "x").unwrap();
+
+        assert!(atomic_write(&target, b"data").is_err());
+        assert!(leftover_files(dir.path(), ".tmp.").is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn is_resource_busy_matches_ebusy_only() {
+        assert!(is_resource_busy(&std::io::Error::from_raw_os_error(16)));
+        assert!(!is_resource_busy(&std::io::Error::from_raw_os_error(2)));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn overwrite_in_place_writes_content_and_removes_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.json");
+        fs::write(&target, "old-content").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        overwrite_in_place_with_backup(&target, b"new-content").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new-content");
+        assert!(leftover_files(dir.path(), ".bak.").is_empty());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "原地覆盖应保留目标文件权限");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwrite_in_place_keeps_original_and_backup_when_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("config.json");
+        fs::write(&target, "old-content").unwrap();
+        // 只读目标：打开写句柄失败，触发失败路径（root 用户不受权限限制，跳过）
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o400)).unwrap();
+        if fs::OpenOptions::new().write(true).open(&target).is_ok() {
+            return;
+        }
+
+        assert!(overwrite_in_place_with_backup(&target, b"new-content").is_err());
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "old-content");
+        let backups = leftover_files(dir.path(), ".bak.");
+        assert_eq!(backups.len(), 1, "失败时应保留备份文件");
+        assert_eq!(fs::read_to_string(&backups[0]).unwrap(), "old-content");
     }
 }
 
