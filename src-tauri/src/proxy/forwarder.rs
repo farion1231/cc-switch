@@ -1165,6 +1165,10 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Token Count 必须始终按 Anthropic `/v1/messages/count_tokens` 透传：
+        // 不能走 openai/gemini 格式转换，也不能被 media prevention 改写 body。
+        let is_count_tokens = is_count_tokens_endpoint(endpoint);
+
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
         let mut mapped_body = normalize_thinking_type(mapped_body);
 
@@ -1328,12 +1332,23 @@ impl RequestForwarder {
                     provider,
                     api_format,
                 );
-                self.apply_media_prevention(&mut mapped_body, provider);
+                // count_tokens 的 body 结构本身就是计数输入，不能做 media 剥离，
+                // 否则 Desktop 看到的上下文占用会系统性偏低。
+                if !is_count_tokens {
+                    self.apply_media_prevention(&mut mapped_body, provider);
+                }
             }
         }
-        let needs_transform = match resolved_claude_api_format.as_deref() {
-            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
-            None => adapter.needs_transform(provider),
+        // count_tokens 永远透传：忽略 apiFormat 的 openai/gemini 转换开关。
+        let needs_transform = if is_count_tokens {
+            false
+        } else {
+            match resolved_claude_api_format.as_deref() {
+                Some(api_format) => {
+                    super::providers::claude_api_format_needs_transform(api_format)
+                }
+                None => adapter.needs_transform(provider),
+            }
         };
         // Codex → Anthropic: Claude Code emulation is off by default and only
         // enabled when the user explicitly turns it on in the UI, so requests can
@@ -1376,7 +1391,16 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let url = if is_count_tokens
+            && (is_full_url || codex_anthropic_base_is_full_endpoint)
+            && base_url_is_full_endpoint(&base_url, "/v1/messages")
+        {
+            // full URL 配成了 `.../v1/messages` 时，count_tokens 要改写到
+            // `.../v1/messages/count_tokens`，避免把计数请求打到 messages 端点。
+            rewrite_full_messages_url_to_count_tokens(&base_url, passthrough_query.as_deref())
+        } else if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native"))
+            && !is_count_tokens
+        {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -4051,6 +4075,16 @@ mod tests {
         ));
         assert!(!is_count_tokens_endpoint("/v1/messages"));
         assert!(!is_count_tokens_endpoint("/v1/messages/count"));
+    }
+
+    #[test]
+    fn is_count_tokens_endpoint_rejects_plain_messages() {
+        // 关键回归:普通 messages 端点绝不能被识别成 count_tokens,
+        // 否则 needs_transform 会被错误强制为 false,破坏格式转换。
+        assert!(!is_count_tokens_endpoint("/v1/messages"));
+        assert!(!is_count_tokens_endpoint("/claude/v1/messages"));
+        assert!(!is_count_tokens_endpoint("/claude-desktop/v1/messages"));
+        assert!(!is_count_tokens_endpoint("/chat/completions"));
     }
 
     #[test]
