@@ -534,6 +534,38 @@ experimental_bearer_token = "sk-rightcode"
 }
 
 #[test]
+fn test_parse_and_merge_config_grokbuild() {
+    let config_toml = r#"[models]
+default = "grok-profile"
+
+[model."grok-profile"]
+model = "grok-upstream"
+base_url = "https://grok.example/v1"
+name = "Grok Relay"
+api_key = "sk-grok"
+api_backend = "responses"
+context_window = 500000
+"#;
+    let config_json = serde_json::json!({ "config": config_toml }).to_string();
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Grok Relay".to_string()),
+        config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge Grok Build config");
+
+    assert_eq!(merged.api_key.as_deref(), Some("sk-grok"));
+    assert_eq!(merged.endpoint.as_deref(), Some("https://grok.example/v1"));
+    assert_eq!(merged.model.as_deref(), Some("grok-upstream"));
+    assert_eq!(merged.homepage.as_deref(), Some("https://grok.example"));
+}
+
+#[test]
 fn test_parse_and_merge_config_url_override() {
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-old","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1"}}"#;
     let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
@@ -742,6 +774,11 @@ fn test_parse_mcp_apps() {
     assert!(!apps.codex);
     assert!(apps.gemini);
 
+    let apps = parse_mcp_apps("grokbuild,opencode,hermes").unwrap();
+    assert!(apps.grokbuild);
+    assert!(apps.opencode);
+    assert!(apps.hermes);
+
     let err = parse_mcp_apps("invalid").unwrap_err();
     assert!(err.to_string().contains("Invalid app"));
 }
@@ -765,6 +802,18 @@ fn test_parse_prompt_deeplink() {
 }
 
 #[test]
+fn test_parse_grokbuild_prompt_deeplink() {
+    let content_b64 = BASE64_STANDARD.encode("Grok instructions");
+    let url = format!(
+        "ccswitch://v1/import?resource=prompt&app=grokbuild&name=test&content={content_b64}"
+    );
+
+    let request = parse_deeplink_url(&url).expect("parse Grok Build prompt deeplink");
+
+    assert_eq!(request.app.as_deref(), Some("grokbuild"));
+}
+
+#[test]
 fn test_parse_mcp_deeplink() {
     let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
     let config_b64 = BASE64_STANDARD.encode(config);
@@ -778,6 +827,19 @@ fn test_parse_mcp_deeplink() {
     assert_eq!(request.apps.unwrap(), "claude,codex");
     assert_eq!(request.config.unwrap(), config_b64);
     assert!(request.enabled.unwrap());
+}
+
+#[test]
+fn test_parse_grokbuild_mcp_deeplink() {
+    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config);
+    let url = format!(
+        "ccswitch://v1/import?resource=mcp&apps=grokbuild&config={config_b64}&enabled=true"
+    );
+
+    let request = parse_deeplink_url(&url).expect("parse Grok Build MCP deeplink");
+
+    assert_eq!(request.apps.as_deref(), Some("grokbuild"));
 }
 
 #[test]

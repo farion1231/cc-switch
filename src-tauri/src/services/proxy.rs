@@ -437,6 +437,7 @@ impl ProxyService {
         previous_provider_id: Option<&str>,
         should_sync_backup: bool,
         live_taken_over: bool,
+        previous_live_before_direct_write: Option<&Value>,
     ) {
         if !should_sync_backup {
             return;
@@ -452,6 +453,16 @@ impl ProxyService {
         };
         if let Err(error) = rollback_result {
             log::error!("{} 热切换失败后恢复原备份失败: {error}", app_type.as_str());
+        }
+
+        if let Some(previous_live) = previous_live_before_direct_write {
+            if let Err(error) = self.write_codex_live_verbatim(previous_live) {
+                log::error!(
+                    "{} 热切换失败后恢复直接写入前的 Live 配置失败: {error}",
+                    app_type.as_str()
+                );
+            }
+            return;
         }
 
         let Some(previous_provider_id) = previous_provider_id else {
@@ -1185,8 +1196,8 @@ impl ProxyService {
                             .get("config")
                             .and_then(Value::as_str)
                             .unwrap_or_default();
-                        if let Some((_, token)) =
-                            crate::grok_config::extract_credentials(live_config_toml)
+                        if let Some(token) =
+                            crate::grok_config::extract_inline_api_key(live_config_toml)
                         {
                             if !token.is_empty() && token != PROXY_TOKEN_PLACEHOLDER {
                                 if let Some(provider_config) = provider
@@ -2444,6 +2455,15 @@ impl ProxyService {
         } else {
             None
         };
+        let previous_live_before_direct_write =
+            if has_backup && !live_taken_over && matches!(app_type_enum, AppType::Codex) {
+                Some(
+                    self.read_codex_live()
+                        .map_err(|error| format!("读取 Codex 原 Live 配置失败: {error}"))?,
+                )
+            } else {
+                None
+            };
 
         let prepare_result: Result<(), String> = async {
             if should_sync_backup {
@@ -2497,6 +2517,7 @@ impl ProxyService {
                 previous_provider_id.as_deref(),
                 should_sync_backup,
                 live_taken_over,
+                previous_live_before_direct_write.as_ref(),
             )
             .await;
             return Err(error);
@@ -2510,6 +2531,7 @@ impl ProxyService {
                 previous_provider_id.as_deref(),
                 should_sync_backup,
                 live_taken_over,
+                previous_live_before_direct_write.as_ref(),
             )
             .await;
             return Err(format!("更新本地当前供应商失败: {error}"));
@@ -2530,6 +2552,7 @@ impl ProxyService {
                 previous_provider_id.as_deref(),
                 should_sync_backup,
                 live_taken_over,
+                previous_live_before_direct_write.as_ref(),
             )
             .await;
             return Err(format!("更新当前供应商失败: {error}"));
@@ -6495,6 +6518,107 @@ requires_openai_auth = true
         assert!(
             message.contains("写入 Codex 配置失败") || message.contains("原子替换失败"),
             "switch should surface catalog write failure, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn codex_direct_live_write_rolls_back_when_provider_commit_fails() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = crate::store::AppState::new(db.clone());
+        db.update_proxy_config(ProxyConfig {
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("set test proxy config");
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy server");
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "Provider A".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "key-a" },
+                "config": "model_provider = \"provider-a\"\nmodel = \"model-a\"\n\n[model_providers.provider-a]\nname = \"Provider A\"\nbase_url = \"https://a.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+            }),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "b".to_string(),
+            "Provider B".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "key-b" },
+                "config": "model_provider = \"provider-b\"\nmodel = \"model-b\"\n\n[model_providers.provider-b]\nname = \"Provider B\"\nbase_url = \"https://b.example/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+            }),
+            None,
+        );
+        db.save_provider("codex", &provider_a)
+            .expect("save provider a");
+        db.save_provider("codex", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("codex", "a")
+            .expect("set current provider a");
+        crate::settings::set_current_provider(&AppType::Codex, Some("a"))
+            .expect("set local current provider a");
+        state
+            .proxy_service
+            .write_codex_live_for_provider(&provider_a.settings_config, Some(&provider_a))
+            .expect("seed direct live config");
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed restored backup");
+        let original_live = state
+            .proxy_service
+            .read_codex_live()
+            .expect("read original live config");
+
+        {
+            let conn = db.conn.lock().expect("lock database");
+            conn.execute_batch(
+                "CREATE TRIGGER reject_codex_current_update
+                 BEFORE UPDATE OF is_current ON providers
+                 WHEN NEW.app_type = 'codex'
+                 BEGIN
+                   SELECT RAISE(ABORT, 'forced current-provider commit failure');
+                 END;",
+            )
+            .expect("install failure trigger");
+        }
+
+        let error = crate::services::provider::ProviderService::switch(&state, AppType::Codex, "b")
+            .expect_err("database commit should fail");
+        state.proxy_service.stop().await.expect("stop proxy server");
+
+        assert!(error
+            .to_string()
+            .contains("forced current-provider commit failure"));
+        assert_eq!(
+            state
+                .proxy_service
+                .read_codex_live()
+                .expect("read rolled-back live config"),
+            original_live,
+            "commit failure must restore the exact direct Live snapshot"
+        );
+        assert_eq!(
+            db.get_current_provider("codex")
+                .expect("read current provider")
+                .as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Codex).as_deref(),
+            Some("a")
         );
     }
 

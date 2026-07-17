@@ -682,7 +682,7 @@ impl ProviderAdapter for CodexAdapter {
 
             // 尝试解析 TOML 字符串格式
             if let Some(config_str) = config.as_str() {
-                if let Some((url, _)) = crate::grok_config::extract_credentials(config_str) {
+                if let Some(url) = crate::grok_config::extract_base_url(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
                 if let Some(start) = config_str.find("base_url = \"") {

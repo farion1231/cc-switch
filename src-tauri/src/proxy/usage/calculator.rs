@@ -59,7 +59,7 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read = matches!(app_type, "codex" | "gemini");
+        let input_includes_cache_read = matches!(app_type, "codex" | "gemini" | "grokbuild");
         Self::calculate_with_cache_semantics(
             usage,
             pricing,
@@ -209,6 +209,25 @@ mod tests {
             Decimal::from_str("0.000375").unwrap()
         );
         assert_eq!(cost.total_cost, Decimal::from_str("0.010035").unwrap());
+    }
+
+    #[test]
+    fn grokbuild_does_not_double_bill_cached_input() {
+        let usage = TokenUsage {
+            input_tokens: 1000,
+            output_tokens: 0,
+            cache_read_tokens: 600,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+        let pricing = ModelPricing::from_strings("10", "0", "1", "0").unwrap();
+
+        let cost = CostCalculator::calculate_for_app("grokbuild", &usage, &pricing, Decimal::ONE);
+
+        assert_eq!(cost.input_cost, Decimal::from_str("0.004").unwrap());
+        assert_eq!(cost.cache_read_cost, Decimal::from_str("0.0006").unwrap());
+        assert_eq!(cost.total_cost, Decimal::from_str("0.0046").unwrap());
     }
 
     #[test]

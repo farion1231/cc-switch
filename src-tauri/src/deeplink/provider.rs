@@ -631,6 +631,7 @@ pub fn parse_and_merge_config(
         "claude" => merge_claude_config(&mut merged, &config_value)?,
         "codex" => merge_codex_config(&mut merged, &config_value)?,
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
+        "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
@@ -799,6 +800,56 @@ fn merge_gemini_config(
             if request.homepage.is_none() {
                 request.homepage = Some("https://ai.google.dev".to_string());
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_grokbuild_config(
+    request: &mut DeepLinkImportRequest,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    let config_toml = if let Some(config_toml) = config.get("config").and_then(|v| v.as_str()) {
+        config_toml.to_string()
+    } else {
+        let toml_value: toml::Value = serde_json::from_value(config.clone()).map_err(|error| {
+            AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
+        })?;
+        toml::to_string(&toml_value).map_err(|error| {
+            AppError::InvalidInput(format!("Invalid Grok Build config: {error}"))
+        })?
+    };
+    let model = crate::grok_config::extract_model_config(&config_toml).ok_or_else(|| {
+        AppError::InvalidInput("Invalid Grok Build config.toml model profile".to_string())
+    })?;
+
+    if request
+        .api_key
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.api_key = model.api_key.or_else(|| {
+            crate::grok_config::extract_credentials(&config_toml).map(|(_, api_key)| api_key)
+        });
+    }
+    if request
+        .endpoint
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.endpoint = Some(model.base_url);
+    }
+    if request.model.is_none() {
+        request.model = Some(model.model);
+    }
+    if request
+        .homepage
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        if let Some(endpoint) = request.endpoint.as_deref() {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
         }
     }
 

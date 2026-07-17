@@ -833,6 +833,16 @@ fn restore_live_settings_for_provider_backfill(
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
         return settings;
     }
+    if matches!(app_type, AppType::GrokBuild) {
+        let mut settings = live_settings;
+        if let Err(err) = crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings) {
+            log::warn!(
+                "Failed to strip Grok Build mcp_servers while backfilling '{}': {err}",
+                provider.id
+            );
+        }
+        return settings;
+    }
     if !matches!(app_type, AppType::Codex) {
         return live_settings;
     }
@@ -1447,7 +1457,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
-        AppType::GrokBuild => crate::grok_config::read_grok_live_settings()?,
+        AppType::GrokBuild => {
+            let mut settings = crate::grok_config::read_grok_live_settings()?;
+            crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings)?;
+            settings
+        }
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
             if !settings_path.exists() {
@@ -2548,5 +2562,33 @@ base_url = "https://a.example/v1"
             config_text.contains("model = \"gpt-5.5\""),
             "non-MCP content must survive the strip"
         );
+    }
+
+    #[test]
+    fn grok_switch_backfill_strips_synced_mcp_servers() {
+        let provider = Provider::with_id(
+            "grok".to_string(),
+            "Grok".to_string(),
+            json!({
+                "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n"
+            }),
+            None,
+        );
+        let live_settings = json!({
+            "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n\n[mcp_servers.echo]\ncommand = \"echo\"\n"
+        });
+
+        let result = restore_live_settings_for_provider_backfill(
+            &AppType::GrokBuild,
+            &provider,
+            live_settings,
+        );
+        let config_text = result
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+
+        assert!(!config_text.contains("mcp_servers"));
+        assert!(config_text.contains("model = \"grok-4.5\""));
     }
 }

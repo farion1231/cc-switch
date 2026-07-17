@@ -89,7 +89,13 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
-pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if !path.starts_with(root) {
+        return Err(format!(
+            "Grok Build session source is outside the session root: {}",
+            path.display()
+        ));
+    }
     if path.file_name().and_then(|name| name.to_str()) != Some("summary.json") {
         return Err(format!(
             "Unexpected Grok Build session source: {}",
@@ -106,6 +112,12 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
     let session_dir = path
         .parent()
         .ok_or_else(|| format!("Invalid Grok Build session path: {}", path.display()))?;
+    if session_dir == root || !session_dir.starts_with(root) {
+        return Err(format!(
+            "Refusing to delete Grok Build session directory outside its root: {}",
+            session_dir.display()
+        ));
+    }
     if session_dir.file_name().and_then(|name| name.to_str()) != Some(session_id) {
         return Err(format!(
             "Grok Build session directory does not match session ID: {}",
@@ -238,5 +250,47 @@ mod tests {
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].content, "Hi there");
+    }
+
+    #[test]
+    fn delete_session_removes_only_the_matching_session_directory() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let session_id = "session-to-delete";
+        let session_dir = root.join("project").join(session_id);
+        let sibling_dir = root.join("project").join("session-to-keep");
+        std::fs::create_dir_all(&session_dir).expect("create session directory");
+        std::fs::create_dir_all(&sibling_dir).expect("create sibling directory");
+        let summary_path = session_dir.join("summary.json");
+        std::fs::write(
+            &summary_path,
+            format!(r#"{{"info":{{"id":"{session_id}"}}}}"#),
+        )
+        .expect("write summary");
+        std::fs::write(sibling_dir.join("keep.txt"), "keep").expect("write sibling file");
+
+        let deleted = delete_session(&root, &summary_path, session_id).expect("delete session");
+
+        assert!(deleted);
+        assert!(!session_dir.exists());
+        assert!(sibling_dir.exists());
+    }
+
+    #[test]
+    fn delete_session_rejects_remove_dir_all_target_outside_root() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("sessions");
+        let outside_dir = temp.path().join("outside").join("session-outside");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::create_dir_all(&outside_dir).expect("create outside directory");
+        let summary_path = outside_dir.join("summary.json");
+        std::fs::write(&summary_path, r#"{"info":{"id":"session-outside"}}"#)
+            .expect("write summary");
+
+        let error = delete_session(&root, &summary_path, "session-outside")
+            .expect_err("outside path must be rejected");
+
+        assert!(error.contains("outside the session root"));
+        assert!(outside_dir.exists());
     }
 }
