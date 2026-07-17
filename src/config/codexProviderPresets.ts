@@ -583,6 +583,11 @@ requires_openai_auth = true`,
         displayName: "Kimi K2.7 Code",
         contextWindow: 262144,
       },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
+      },
     ]),
     codexChatReasoning: {
       supportsThinking: true,

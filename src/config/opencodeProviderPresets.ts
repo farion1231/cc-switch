@@ -64,6 +64,13 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       modalities: { input: ["text", "image", "video"], output: ["text"] },
     },
     {
+      id: "kimi-k3",
+      name: "Kimi K3",
+      contextLimit: 1048576,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image", "video"], output: ["text"] },
+    },
+    {
       id: "step-3.5-flash-2603",
       name: "Step 3.5 Flash 2603",
       contextLimit: 262144,
@@ -828,6 +835,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k3": { name: "Kimi K3" },
       },
     },
     category: "cn_official",

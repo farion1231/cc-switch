@@ -795,6 +795,12 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           contextWindow: 262144,
           cost: { input: 0.002, output: 0.006 },
         },
+        {
+          id: "kimi-k3",
+          name: "Kimi K3",
+          contextWindow: 1048576,
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+        },
       ],
     },
     category: "cn_official",
