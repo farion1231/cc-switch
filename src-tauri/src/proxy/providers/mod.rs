@@ -192,10 +192,8 @@ impl ProviderType {
                 }
                 ProviderType::Gemini
             }
-            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-                // These apps don't support proxy, fallback to Codex-like type
-                ProviderType::Codex
-            }
+            AppType::GrokBuild => ProviderType::Codex,
+            AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
         }
     }
 
@@ -246,10 +244,8 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
-            // These apps don't support proxy, fallback to Codex adapter
-            Box::new(CodexAdapter::new())
-        }
+        AppType::GrokBuild => Box::new(CodexAdapter::new()),
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
     }
 }
 
