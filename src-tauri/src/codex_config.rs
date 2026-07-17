@@ -891,13 +891,49 @@ fn load_codex_native_responses_template() -> Value {
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 
+/// Fields Codex's external-catalog parser REQUIRES (no serde default): when
+/// one is missing Codex rejects the whole catalog file at startup ("missing
+/// field ..."). `base_instructions` is the other known required field; the
+/// templates always carry it and `codex_catalog_model_entry` handles it.
+/// When Codex requires a new field, add it here AND to the static templates.
+const CODEX_CATALOG_PARSER_REQUIRED_FIELDS: &[&str] = &["supports_reasoning_summaries"];
+
+/// `models_cache.json` is shared by every Codex install on the machine (npm
+/// CLI, desktop-bundled binary, ...), and each version serializes its own
+/// `ModelInfo` shape — the cache's field set follows whichever process wrote
+/// it last, so it cannot be assumed to satisfy the current external-catalog
+/// schema (observed live: 0.144.5 requires `supports_reasoning_summaries`
+/// while a coexisting build kept rewriting the cache without it). Backfill
+/// ONLY parser-required fields from the bundled static template: optional
+/// capability fields keep their missing-means-default semantics, and existing
+/// values always win.
+fn fill_template_fields_from_static(template: &mut Value) {
+    let Some(static_template) = load_codex_model_template_static() else {
+        return;
+    };
+    let (Some(template_obj), Some(static_obj)) =
+        (template.as_object_mut(), static_template.as_object())
+    else {
+        return;
+    };
+    for key in CODEX_CATALOG_PARSER_REQUIRED_FIELDS {
+        if !template_obj.contains_key(*key) {
+            if let Some(value) = static_obj.get(*key) {
+                template_obj.insert((*key).to_string(), value.clone());
+            }
+        }
+    }
+}
+
 fn load_codex_model_catalog_template_uncached() -> Result<Value, AppError> {
     // ① models_cache.json (created by Codex when it connects to OpenAI)
-    if let Some(template) = load_codex_model_template_from_cache()? {
+    if let Some(mut template) = load_codex_model_template_from_cache()? {
+        fill_template_fields_from_static(&mut template);
         return Ok(template);
     }
     // ② codex CLI (PATH + platform-specific common paths)
-    if let Some(template) = load_codex_model_template_from_bundled()? {
+    if let Some(mut template) = load_codex_model_template_from_bundled()? {
+        fill_template_fields_from_static(&mut template);
         return Ok(template);
     }
     // ③ Static fallback bundled at compile time
@@ -2695,6 +2731,68 @@ base_url = "https://production.api/v1"
             .and_then(|v| v.get("base_url"))
             .and_then(|v| v.as_str());
         assert_eq!(base_url, Some("https://production.api/v1"));
+    }
+
+    #[test]
+    fn dynamic_template_backfills_parser_required_fields_from_static() {
+        // Simulate a template cloned from a models_cache.json written by a
+        // Codex build whose ModelInfo lacks parser-side required fields such
+        // as `supports_reasoning_summaries` (codex >= 0.144.5 rejects the
+        // whole catalog file without it).
+        let mut template = json!({
+            "slug": "gpt-5.5",
+            "context_window": 272_000,
+            "supports_parallel_tool_calls": false
+        });
+        fill_template_fields_from_static(&mut template);
+
+        assert_eq!(
+            template
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        // Keys already present in the dynamic template are never overwritten.
+        assert_eq!(
+            template
+                .get("supports_parallel_tool_calls")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            template.get("context_window").and_then(Value::as_u64),
+            Some(272_000)
+        );
+        // Optional capability fields must NOT be backfilled: for the catalog
+        // parser "missing" means the parser default, not the static
+        // template's value.
+        assert!(template.get("supports_search_tool").is_none());
+        assert!(template.get("supports_image_detail_original").is_none());
+        assert!(template.get("web_search_tool_type").is_none());
+    }
+
+    #[test]
+    fn proxy_chat_catalog_entries_carry_reasoning_summaries_flag() {
+        // End to end: a stale dynamic template, once backfilled, must yield
+        // catalog entries codex 0.144.5+ can parse.
+        let mut template = json!({ "slug": "gpt-5.5" });
+        fill_template_fields_from_static(&mut template);
+        let specs = vec![CodexCatalogModelSpec {
+            model: "k3".to_string(),
+            display_name: "Kimi K3".to_string(),
+            context_window: 262_144,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        }];
+        let catalog =
+            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        assert_eq!(
+            catalog["models"][0]
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
