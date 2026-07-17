@@ -478,6 +478,7 @@ type CodexCredentials = (
 /// freshest copy when macOS Keychain and ~/.codex/auth.json diverge.
 struct CodexCredentialSource {
     credentials: CodexCredentials,
+    #[cfg(target_os = "macos")]
     last_refresh: Option<String>,
 }
 
@@ -494,7 +495,7 @@ fn read_codex_credentials() -> CodexCredentials {
     {
         let keychain = read_codex_credentials_from_keychain();
         let file = read_codex_credentials_from_file_source();
-        return choose_codex_credentials(file, keychain);
+        choose_codex_credentials(file, keychain)
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -553,16 +554,16 @@ fn read_codex_credentials_from_file_source() -> Option<CodexCredentialSource> {
 }
 
 fn codex_credential_source_from_content(content: &str) -> CodexCredentialSource {
-    let last_refresh = serde_json::from_str::<CodexAuthJson>(content)
-        .ok()
-        .and_then(|auth| auth.last_refresh);
-
     CodexCredentialSource {
         credentials: parse_codex_credentials_json(content),
-        last_refresh,
+        #[cfg(target_os = "macos")]
+        last_refresh: serde_json::from_str::<CodexAuthJson>(content)
+            .ok()
+            .and_then(|auth| auth.last_refresh),
     }
 }
 
+#[cfg(target_os = "macos")]
 fn credential_quality(status: &CredentialStatus) -> u8 {
     match status {
         CredentialStatus::Valid => 3,
@@ -572,6 +573,7 @@ fn credential_quality(status: &CredentialStatus) -> u8 {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn refresh_timestamp(source: &CodexCredentialSource) -> Option<i64> {
     source
         .last_refresh
@@ -584,6 +586,7 @@ fn refresh_timestamp(source: &CodexCredentialSource) -> Option<i64> {
 ///
 /// A fresh file copy must win over an old Keychain copy, while still allowing
 /// a newer Keychain copy to win when the file is stale or missing.
+#[cfg(target_os = "macos")]
 fn choose_codex_credentials(
     file: Option<CodexCredentialSource>,
     keychain: Option<CodexCredentialSource>,
@@ -1440,6 +1443,7 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     fn test_source(
         token: &str,
         status: CredentialStatus,
@@ -1452,6 +1456,7 @@ mod tests {
                 status,
                 None,
             ),
+            #[cfg(target_os = "macos")]
             last_refresh: last_refresh.map(str::to_string),
         }
     }
@@ -1469,6 +1474,7 @@ mod tests {
         assert_eq!(window_seconds_to_tier_name(86400), "1_day");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn newer_valid_file_wins_over_stale_keychain() {
         let selected = choose_codex_credentials(
@@ -1488,6 +1494,7 @@ mod tests {
         assert_eq!(selected.0.as_deref(), Some("file-token"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn newest_source_wins_when_both_credentials_are_valid() {
         let selected = choose_codex_credentials(
