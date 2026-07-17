@@ -235,6 +235,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             claude: false,
                             codex: true,
                             gemini: false,
+                            grokbuild: false,
                             opencode: false,
                             hermes: false,
                         },
@@ -556,7 +557,7 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
 /// 1. 核心字段（type, command, args, url, headers, env, cwd）使用强类型处理
 /// 2. 扩展字段（timeout、retry 等）通过白名单列表自动转换
 /// 3. 其他未知字段使用通用转换器尝试转换
-fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
+pub(super) fn json_server_to_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
     use toml_edit::{Array, Item, Table};
 
     let mut t = Table::new();

@@ -16,7 +16,7 @@
 /// style provider not added here) shows up loudly as a too-low cache hit
 /// rate, which is easier to catch than the silent over-deduction that
 /// would happen with the opposite default.
-const CACHE_INCLUSIVE_APP_TYPES: &[&str] = &["codex", "gemini"];
+const CACHE_INCLUSIVE_APP_TYPES: &[&str] = &["codex", "gemini", "grokbuild"];
 
 pub(crate) const INPUT_TOKEN_SEMANTICS_LEGACY: i64 = 0;
 pub(crate) const INPUT_TOKEN_SEMANTICS_TOTAL: i64 = 1;
@@ -93,6 +93,7 @@ mod tests {
         assert!(!sql.contains("."));
         assert!(sql.contains("'codex'"));
         assert!(sql.contains("'gemini'"));
+        assert!(sql.contains("'grokbuild'"));
     }
 
     #[test]
@@ -112,6 +113,13 @@ mod tests {
             [],
         )
         .unwrap();
+        // Grok Build uses OpenAI Responses semantics too.
+        conn.execute(
+            "INSERT INTO proxy_request_logs (request_id, app_type, input_tokens, cache_read_tokens)
+             VALUES ('grok-1', 'grokbuild', 700, 250)",
+            [],
+        )
+        .unwrap();
         // Claude row: Anthropic semantics — input_tokens already excludes cache.
         conn.execute(
             "INSERT INTO proxy_request_logs (request_id, app_type, input_tokens, cache_read_tokens)
@@ -123,8 +131,8 @@ mod tests {
         let expr = fresh_input_sql("l");
         let sql = format!("SELECT COALESCE(SUM({expr}), 0) FROM proxy_request_logs l");
         let total: i64 = conn.query_row(&sql, [], |r| r.get(0)).unwrap();
-        // Codex: 1000-600=400; Gemini: 800-300=500; Claude: 200 unchanged.
-        assert_eq!(total, 400 + 500 + 200);
+        // Codex: 400; Gemini: 500; Grok Build: 450; Claude: 200 unchanged.
+        assert_eq!(total, 400 + 500 + 450 + 200);
     }
 
     #[test]
