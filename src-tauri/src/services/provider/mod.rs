@@ -2564,6 +2564,24 @@ impl ProviderService {
         }
 
         if should_hot_switch {
+            let mut result = SwitchResult::default();
+            if !app_type.is_additive_mode() {
+                if let Some(current_id) =
+                    crate::settings::get_effective_current_provider(&state.db, &app_type)?
+                {
+                    if current_id != id {
+                        if let Some(current_provider) = providers.get(&current_id) {
+                            Self::sync_common_config_snippet_for_hot_switch(
+                                state,
+                                &app_type,
+                                current_provider,
+                                &mut result,
+                            );
+                        }
+                    }
+                }
+            }
+
             // Proxy takeover mode: hot-switch without restoring upstream Live config.
             // The proxy layer may still refresh proxy-safe Live fields so client labels
             // follow the selected provider while endpoints remain local.
@@ -2582,7 +2600,7 @@ impl ProviderService {
 
             // The proxy server will route requests to the new provider via is_current.
             // MCP sync is intentionally skipped while Live config is owned by takeover.
-            return Ok(SwitchResult::default());
+            return Ok(result);
         }
 
         // Normal mode: full switch with Live config write
@@ -2967,6 +2985,58 @@ impl ProviderService {
                 .warnings
                 .push(format!("common_config_sync_failed:{}", provider.id));
         }
+    }
+
+    fn sync_common_config_snippet_for_hot_switch(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        result: &mut SwitchResult,
+    ) {
+        let source_settings = match read_live_settings(app_type.clone()) {
+            Ok(settings) => settings,
+            Err(live_error) => {
+                match futures::executor::block_on(state.db.get_live_backup(app_type.as_str())) {
+                    Ok(Some(backup)) => {
+                        match serde_json::from_str::<Value>(&backup.original_config) {
+                            Ok(settings) => settings,
+                            Err(backup_error) => {
+                                log::warn!(
+                            "Failed to parse takeover backup for {} provider '{}' after live read failed ({live_error}): {backup_error}",
+                            app_type.as_str(),
+                            provider.id
+                        );
+                                return;
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!(
+                        "Failed to read live config for {} provider '{}' during hot-switch common config sync: {live_error}",
+                        app_type.as_str(),
+                        provider.id
+                    );
+                        return;
+                    }
+                    Err(backup_error) => {
+                        log::warn!(
+                        "Failed to read live config for {} provider '{}' during hot-switch common config sync: {live_error}; backup read also failed: {backup_error}",
+                        app_type.as_str(),
+                        provider.id
+                    );
+                        return;
+                    }
+                }
+            }
+        };
+
+        Self::sync_common_config_snippet_from_live(
+            state,
+            app_type,
+            provider,
+            &source_settings,
+            result,
+        );
     }
 
     /// Extract common config snippet from current provider
