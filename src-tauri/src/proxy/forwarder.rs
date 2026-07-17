@@ -2726,6 +2726,36 @@ fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
 
+/// Anthropic Token Count API 路径(含本地 gateway 前缀形态)。
+///
+/// 用于在转发器内部判定 count_tokens 请求:这类请求必须始终透传,
+/// 不参与 messages 的 openai/gemini 格式转换,也不做 media 剥离。
+fn is_count_tokens_endpoint(endpoint: &str) -> bool {
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(
+        path,
+        "/v1/messages/count_tokens"
+            | "/claude/v1/messages/count_tokens"
+            | "/claude-desktop/v1/messages/count_tokens"
+    ) || path.ends_with("/messages/count_tokens")
+}
+
+/// 把 full-url 形态的 `.../v1/messages` 改写为 `.../v1/messages/count_tokens`。
+///
+/// 保留原 URL 上的 query / fragment,并合并额外透传 query(`append_query_to_full_url`
+/// 负责 `?`/`&` 拼接)。用于 base_url 直接配成完整 messages 端点时,
+/// 把计数请求打到正确的 count_tokens 端点而非 messages 端点。
+fn rewrite_full_messages_url_to_count_tokens(base_url: &str, extra_query: Option<&str>) -> String {
+    let trimmed = base_url.trim();
+    let (path_part, suffix) = match trimmed.find(['?', '#']) {
+        Some(idx) => (&trimmed[..idx], &trimmed[idx..]),
+        None => (trimmed, ""),
+    };
+    let path = path_part.trim_end_matches('/');
+    let rewritten = format!("{path}/count_tokens{suffix}");
+    append_query_to_full_url(&rewritten, extra_query)
+}
+
 fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
@@ -4006,6 +4036,46 @@ mod tests {
 
         assert_eq!(endpoint, "/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn is_count_tokens_endpoint_matches_known_paths() {
+        assert!(is_count_tokens_endpoint("/v1/messages/count_tokens"));
+        assert!(is_count_tokens_endpoint(
+            "/claude-desktop/v1/messages/count_tokens?x=1"
+        ));
+        assert!(is_count_tokens_endpoint("/claude/v1/messages/count_tokens"));
+        // 任意前缀的 .../messages/count_tokens 也算命中(覆盖中转网关)
+        assert!(is_count_tokens_endpoint(
+            "https://relay.example/api/v1/messages/count_tokens"
+        ));
+        assert!(!is_count_tokens_endpoint("/v1/messages"));
+        assert!(!is_count_tokens_endpoint("/v1/messages/count"));
+    }
+
+    #[test]
+    fn rewrite_full_messages_url_to_count_tokens_preserves_query() {
+        assert_eq!(
+            rewrite_full_messages_url_to_count_tokens(
+                "https://relay.example/api/v1/messages",
+                None
+            ),
+            "https://relay.example/api/v1/messages/count_tokens"
+        );
+        assert_eq!(
+            rewrite_full_messages_url_to_count_tokens(
+                "https://relay.example/api/v1/messages?beta=true",
+                Some("x=1")
+            ),
+            "https://relay.example/api/v1/messages/count_tokens?beta=true&x=1"
+        );
+        assert_eq!(
+            rewrite_full_messages_url_to_count_tokens(
+                "https://relay.example/api/v1/messages/",
+                None
+            ),
+            "https://relay.example/api/v1/messages/count_tokens"
+        );
     }
 
     #[test]
