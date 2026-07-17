@@ -145,6 +145,8 @@ pub struct RequestForwarder {
     /// `max_attempts = max_retries + 1`，所以 max_retries=0 表示仅尝试一家、
     /// max_retries=3（默认）表示最多 4 家。loop 同时受 providers.len() 自然限制。
     max_attempts: usize,
+    /// 跨供应商子代理路由等场景：禁止因“实际使用供应商 ≠ 全局当前”而触发 UI/托盘热切换。
+    suppress_global_provider_switch: bool,
 }
 
 impl RequestForwarder {
@@ -212,6 +214,7 @@ impl RequestForwarder {
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
         max_retries: u32,
+        suppress_global_provider_switch: bool,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
         // saturating_add 防止 u32::MAX + 1 溢出。
@@ -235,7 +238,16 @@ impl RequestForwarder {
                 streaming_first_byte_timeout,
             ),
             max_attempts,
+            suppress_global_provider_switch,
         }
+    }
+
+    /// 成功使用了与请求开始时不同的供应商时，是否应触发全局当前供应商热切换。
+    ///
+    /// 跨供应商子代理路由故意使用目标供应商，不得改写全局 current / UI / 托盘。
+    pub(crate) fn should_trigger_global_provider_switch(&self, used_provider_id: &str) -> bool {
+        !self.suppress_global_provider_switch
+            && self.current_provider_id_at_start.as_str() != used_provider_id
     }
 
     async fn record_success_result(
@@ -510,7 +522,7 @@ impl RequestForwarder {
                         status.success_requests += 1;
                         status.last_error = None;
                         let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                            self.should_trigger_global_provider_switch(&provider.id);
                         if should_switch {
                             status.failover_count += 1;
 
@@ -612,9 +624,8 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                        let should_switch = self
+                                            .should_trigger_global_provider_switch(&provider.id);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -758,9 +769,10 @@ impl RequestForwarder {
                                             let mut status = self.status.write().await;
                                             status.success_requests += 1;
                                             status.last_error = None;
-                                            let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                            let should_switch = self
+                                                .should_trigger_global_provider_switch(
+                                                    &provider.id,
+                                                );
                                             if should_switch {
                                                 status.failover_count += 1;
 
@@ -922,9 +934,8 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                        let should_switch = self
+                                            .should_trigger_global_provider_switch(&provider.id);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -3493,6 +3504,21 @@ mod tests {
         non_streaming_timeout: Duration,
         streaming_first_byte_timeout: Duration,
     ) -> RequestForwarder {
+        // Keep historical default (empty current id) for existing forwarder unit tests.
+        test_forwarder_with_switch_policy(
+            non_streaming_timeout,
+            streaming_first_byte_timeout,
+            "",
+            false,
+        )
+    }
+
+    fn test_forwarder_with_switch_policy(
+        non_streaming_timeout: Duration,
+        streaming_first_byte_timeout: Duration,
+        current_provider_id_at_start: &str,
+        suppress_global_provider_switch: bool,
+    ) -> RequestForwarder {
         let db = Arc::new(Database::memory().expect("memory db"));
 
         RequestForwarder {
@@ -3503,7 +3529,7 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
-            current_provider_id_at_start: String::new(),
+            current_provider_id_at_start: current_provider_id_at_start.to_string(),
             session_id: String::new(),
             session_client_provided: false,
             rectifier_config: RectifierConfig::default(),
@@ -3512,7 +3538,34 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
+            suppress_global_provider_switch,
         }
+    }
+
+    #[test]
+    fn should_trigger_global_provider_switch_suppressed_for_intentional_target() {
+        let forwarder = test_forwarder_with_switch_policy(
+            Duration::from_secs(30),
+            Duration::from_secs(30),
+            "active",
+            true,
+        );
+        // Intentional cross-provider subagent target must not flip UI/current/tray
+        assert!(!forwarder.should_trigger_global_provider_switch("target-b"));
+        // Same id is never a switch either
+        assert!(!forwarder.should_trigger_global_provider_switch("active"));
+    }
+
+    #[test]
+    fn should_trigger_global_provider_switch_for_ordinary_failover() {
+        let forwarder = test_forwarder_with_switch_policy(
+            Duration::from_secs(30),
+            Duration::from_secs(30),
+            "active",
+            false,
+        );
+        assert!(forwarder.should_trigger_global_provider_switch("failover-b"));
+        assert!(!forwarder.should_trigger_global_provider_switch("active"));
     }
 
     #[test]

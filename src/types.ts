@@ -231,6 +231,14 @@ export interface ProviderMeta {
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // Claude Code 子代理跨供应商路由（仅本地代理接管模式生效）
+  // 同供应商/默认选择应省略该字段
+  claudeSubagentRoute?: ClaudeSubagentRoute;
+}
+
+/** Claude 子代理路由：主会话仍用当前供应商，子代理请求改走目标供应商 */
+export interface ClaudeSubagentRoute {
+  providerId: string;
 }
 
 // Skill 同步方式
