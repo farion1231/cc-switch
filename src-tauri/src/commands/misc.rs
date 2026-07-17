@@ -2112,6 +2112,28 @@ fn sibling_bin(bin_path: &str, exe: &str) -> Option<String> {
     }
 }
 
+/// Build an npm command anchored to the same Node installation as `bin_path`.
+///
+/// npm's POSIX launcher is normally a JavaScript file with an
+/// `#!/usr/bin/env node` shebang. Calling npm by absolute path therefore does
+/// not make it independent of PATH: `env` still needs to find `node`. GUI apps
+/// commonly inherit only the system PATH, while nvm/fnm/mise keep Node in a
+/// user directory. Prefixing npm's sibling directory makes both npm and its
+/// transitive Node interpreter resolve to the installation we selected.
+#[cfg(not(target_os = "windows"))]
+fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
+    let dir = parent_dir(bin_path);
+    if dir.is_empty() {
+        return None;
+    }
+    let npm = sibling_bin(bin_path, "npm")?;
+    Some(format!(
+        "PATH={}:\"$PATH\" {} {args}",
+        shell_single_quote(&dir),
+        quote_path_if_spaced(&npm)
+    ))
+}
+
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
@@ -2158,9 +2180,10 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 /// 二进制。唯一实测可靠的修复是先 `uninstall` 清掉残骸、再 `install` 装回完整的主包 + 平台二进制
 /// （实测输出 `added 2 packages`）。
 ///
-/// 锚定到与 codex 入口同目录的 npm（与升级路径一致，不依赖 GUI 非登录进程的 PATH）。`|| true`
-/// 让 uninstall 失败（如 nvm 上对半损坏包静默返回非 0）不触发外层 `set -e` 中止，但随后的
-/// install 若失败仍会被 `set -e` 捕获并上报给前端 toast。
+/// 锚定到与 codex 入口同目录的 npm，并把该目录放到每条 npm 命令的 PATH 首位，使 npm
+/// 的 `#!/usr/bin/env node` 能找到同一安装下的 node，不依赖 GUI 非登录进程的 PATH。
+/// `|| true` 让 uninstall 失败（如 nvm 上对半损坏包静默返回非 0）不触发外层 `set -e`
+/// 中止，但随后的 install 若失败仍会被 `set -e` 捕获并上报给前端 toast。
 ///
 /// **仅对会锚定到 sibling npm 的 node 管理器来源（nvm/fnm/mise/homebrew npm）生效**：
 /// `runnable=false` 是宽信号（权限 / node 版本 / 任意 `--version` 失败皆可触发），非 npm
@@ -2187,12 +2210,10 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
     ) {
         return None;
     }
-    let npm = sibling_bin(bin_path, "npm")?;
-    let npm = quote_path_if_spaced(&npm);
     let pkg = "@openai/codex";
-    Some(format!(
-        "{npm} uninstall -g {pkg} || true; {npm} i -g {pkg}@latest"
-    ))
+    let uninstall = anchored_npm_command(bin_path, &format!("uninstall -g {pkg}"))?;
+    let install = anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))?;
+    Some(format!("{uninstall} || true; {install}"))
 }
 
 /// Windows 暂不做平台分发自愈：Windows 上 codex 的破坏模式不同（EPERM 文件锁 / 版本 bump
@@ -2232,8 +2253,7 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    let npm = sibling_bin(bin_path, "npm")?;
-    Some(format!("{} i -g {pkg}@latest", quote_path_if_spaced(&npm)))
+    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -2242,7 +2262,8 @@ fn package_manager_anchored_command_from_paths(
 /// 便于单测覆盖各包管理器分支。Windows 版同名函数因 sibling 扩展名歧义必须读 fs,
 /// 是刻意保留的平台差异(详见 Windows 版本 doc)。
 ///
-/// **关键不变量：返回的命令必须用绝对路径调用执行体，不依赖 PATH**。
+/// **关键不变量：返回的命令必须用绝对路径调用执行体；若执行体通过
+/// `#!/usr/bin/env` 查找解释器，还必须把其同级 bin 目录显式放到 PATH 首位**。
 /// 这条命令最终在 `run_tool_lifecycle_silently` 的非登录 `bash -c` 里执行——
 /// GUI App 启动的进程 PATH 由 launchd / Windows Service / systemd 给,通常**不含**
 /// `~/.local/bin` / `/opt/homebrew/bin` / `~/.volta/bin` 等用户级 bin 目录;而探测
@@ -4428,7 +4449,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
                 )
             );
         }
@@ -4460,7 +4481,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -4475,7 +4496,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/opt/homebrew/bin/openclaw update --yes || /opt/homebrew/bin/npm i -g openclaw@latest")
+                Some("/opt/homebrew/bin/openclaw update --yes || PATH='/opt/homebrew/bin':\"$PATH\" /opt/homebrew/bin/npm i -g openclaw@latest")
             );
         }
 
@@ -4602,7 +4623,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                    "PATH='/Users/me/.local/share/fnm_multishells/12345_abc/bin':\"$PATH\" /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
             );
         }
@@ -4616,7 +4637,62 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+                Some("PATH='/Users/my name/.nvm/versions/node/v22/bin':\"$PATH\" '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+            );
+        }
+
+        #[test]
+        fn npm_anchor_supplies_sibling_node_to_env_shebang() {
+            use std::os::unix::fs::PermissionsExt;
+            use std::process::Command;
+
+            let temp = tempfile::tempdir().expect("temp dir should be created");
+            let bin = temp.path().join("home dir/.nvm/versions/node/v22.14.0/bin");
+            std::fs::create_dir_all(&bin).expect("node bin should be created");
+
+            let marker = temp.path().join("sibling-node-used");
+            let node = bin.join("node");
+            let npm = bin.join("npm");
+            std::fs::write(
+                &node,
+                format!(
+                    "#!/bin/sh\nprintf sibling-node > {}\n",
+                    shell_single_quote(&marker.to_string_lossy())
+                ),
+            )
+            .expect("fake node should be written");
+            std::fs::write(&npm, "#!/usr/bin/env node\n").expect("fake npm should be written");
+            for executable in [&node, &npm] {
+                let mut permissions = std::fs::metadata(executable)
+                    .expect("fake executable metadata should exist")
+                    .permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(executable, permissions)
+                    .expect("fake executable should be executable");
+            }
+
+            let codex = bin.join("codex").to_string_lossy().into_owned();
+            let real = temp
+                .path()
+                .join("home dir/.nvm/versions/node/v22.14.0/lib/node_modules/@openai/codex/bin/codex.js")
+                .to_string_lossy()
+                .into_owned();
+            let command = anchored_command_from_paths("codex", &codex, &real)
+                .expect("nvm codex should produce an anchored npm command");
+            let output = Command::new("/bin/bash")
+                .args(["-c", &command])
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .expect("anchored npm command should start");
+
+            assert!(
+                output.status.success(),
+                "anchored npm command failed: {}",
+                decode_command_output(&output.stderr)
+            );
+            assert_eq!(
+                std::fs::read_to_string(marker).expect("sibling node should leave a marker"),
+                "sibling-node"
             );
         }
 
@@ -4723,7 +4799,7 @@ mod tests {
             broken.runnable = false;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -4735,7 +4811,7 @@ mod tests {
             let cmd = installs_anchored_command("codex", &[healthy]);
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("uninstall"));
         }
