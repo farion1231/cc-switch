@@ -181,6 +181,7 @@ impl StreamCheckService {
             }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
+            AppType::Kimi => Self::extract_kimi_base_url(provider),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),
@@ -319,6 +320,24 @@ impl StreamCheckService {
                     "hermes_base_url_missing",
                     "Hermes 供应商缺少 base_url",
                     "Hermes provider is missing `base_url`",
+                )
+            })
+    }
+
+    /// Kimi: `{ env: { KIMI_BASE_URL, KIMI_API_KEY, ... } }`
+    fn extract_kimi_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("env")
+            .and_then(|e| e.get("KIMI_BASE_URL"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "kimi_base_url_missing",
+                    "Kimi 供应商缺少 KIMI_BASE_URL",
+                    "Kimi provider is missing `KIMI_BASE_URL`",
                 )
             })
     }

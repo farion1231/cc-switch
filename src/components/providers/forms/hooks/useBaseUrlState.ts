@@ -30,6 +30,7 @@ export function useBaseUrlState({
   const [baseUrl, setBaseUrl] = useState("");
   const [codexBaseUrl, setCodexBaseUrl] = useState("");
   const [geminiBaseUrl, setGeminiBaseUrl] = useState("");
+  const [kimiBaseUrl, setKimiBaseUrl] = useState("");
   const isUpdatingRef = useRef(false);
 
   // 从配置同步到 state（Claude / Claude Desktop）
@@ -82,6 +83,25 @@ export function useBaseUrlState({
       // ignore
     }
   }, [appType, category, settingsConfig, geminiBaseUrl]);
+
+  // 从配置同步到 state（Kimi）
+  useEffect(() => {
+    if (appType !== "kimi") return;
+    if (category === "official") return;
+    if (isUpdatingRef.current) return;
+
+    try {
+      const config = JSON.parse(settingsConfig || "{}");
+      const envUrl: unknown = config?.env?.KIMI_BASE_URL;
+      const nextUrl = typeof envUrl === "string" ? envUrl.trim() : "";
+      if (nextUrl !== kimiBaseUrl) {
+        setKimiBaseUrl(nextUrl);
+        setBaseUrl(nextUrl);
+      }
+    } catch {
+      // ignore
+    }
+  }, [appType, category, settingsConfig, kimiBaseUrl]);
 
   // 处理 Claude Base URL 变化
   const handleClaudeBaseUrlChange = useCallback(
@@ -158,6 +178,32 @@ export function useBaseUrlState({
     [settingsConfig, onSettingsConfigChange],
   );
 
+  // 处理 Kimi Base URL 变化
+  const handleKimiBaseUrlChange = useCallback(
+    (url: string) => {
+      const sanitized = url.trim();
+      setKimiBaseUrl(sanitized);
+      setBaseUrl(sanitized);
+      isUpdatingRef.current = true;
+
+      try {
+        const config = JSON.parse(settingsConfig || "{}");
+        if (!config.env) {
+          config.env = {};
+        }
+        config.env.KIMI_BASE_URL = sanitized;
+        onSettingsConfigChange(JSON.stringify(config, null, 2));
+      } catch {
+        // ignore
+      } finally {
+        setTimeout(() => {
+          isUpdatingRef.current = false;
+        }, 0);
+      }
+    },
+    [settingsConfig, onSettingsConfigChange],
+  );
+
   return {
     baseUrl,
     setBaseUrl,
@@ -165,8 +211,11 @@ export function useBaseUrlState({
     setCodexBaseUrl,
     geminiBaseUrl,
     setGeminiBaseUrl,
+    kimiBaseUrl,
+    setKimiBaseUrl,
     handleClaudeBaseUrlChange,
     handleCodexBaseUrlChange,
     handleGeminiBaseUrlChange,
+    handleKimiBaseUrlChange,
   };
 }

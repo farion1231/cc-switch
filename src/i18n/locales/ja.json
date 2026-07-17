@@ -760,6 +760,8 @@
     "opencodeConfigDirDescription": "OpenCode の設定ディレクトリ（opencode.json）を上書きします。",
     "openclawConfigDir": "OpenClaw 設定ディレクトリ",
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
+    "kimiConfigDir": "Kimi 設定ディレクトリ",
+    "kimiConfigDirDescription": "Kimi の設定ディレクトリ（config.toml）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
@@ -767,6 +769,7 @@
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
+    "browsePlaceholderKimi": "例: /home/<your-username>/.kimi-code",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
@@ -875,6 +878,7 @@
     "claude-desktop": "Claude Desktop",
     "codex": "Codex",
     "gemini": "Gemini",
+    "kimi": "Kimi Code",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
     "hermes": "Hermes"
@@ -1719,6 +1723,7 @@
         "claude": "Claude",
         "codex": "Codex",
         "gemini": "Gemini",
+        "kimi": "Kimi Code",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
         "hermes": "Hermes"

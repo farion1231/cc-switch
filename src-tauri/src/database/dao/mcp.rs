@@ -48,6 +48,7 @@ impl Database {
                             gemini: enabled_gemini,
                             opencode: enabled_opencode,
                             hermes: enabled_hermes,
+                            kimi: false,
                         },
                         description,
                         homepage,

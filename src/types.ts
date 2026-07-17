@@ -280,6 +280,7 @@ export interface VisibleApps {
   "claude-desktop": boolean;
   codex: boolean;
   gemini: boolean;
+  kimi: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
@@ -398,6 +399,8 @@ export interface Settings {
   opencodeConfigDir?: string;
   // 覆盖 OpenClaw 配置目录（可选）
   openclawConfigDir?: string;
+  // 覆盖 Kimi 配置目录（可选）
+  kimiConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
 
@@ -488,6 +491,7 @@ export interface McpApps {
   "claude-desktop"?: boolean;
   codex: boolean;
   gemini: boolean;
+  kimi: boolean;
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;

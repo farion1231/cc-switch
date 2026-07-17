@@ -192,6 +192,10 @@ impl ProviderType {
                 }
                 ProviderType::Gemini
             }
+            AppType::Kimi => {
+                // Kimi uses OpenAI-compatible API, fallback to Codex type
+                ProviderType::Codex
+            }
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
                 // These apps don't support proxy, fallback to Codex-like type
                 ProviderType::Codex
@@ -246,6 +250,10 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
         AppType::Codex => Box::new(CodexAdapter::new()),
         AppType::Gemini => Box::new(GeminiAdapter::new()),
+        AppType::Kimi => {
+            // Kimi uses OpenAI-compatible API, use Codex adapter
+            Box::new(CodexAdapter::new())
+        }
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             // These apps don't support proxy, fallback to Codex adapter
             Box::new(CodexAdapter::new())

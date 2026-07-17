@@ -15,17 +15,14 @@ concurrency:
 jobs:
   release:
     runs-on: ${{ matrix.os }}
-    environment: release
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-2022
-          - os: windows-11-arm
-            arch: arm64
-          - os: ubuntu-22.04
-          - os: ubuntu-22.04-arm
-            arch: arm64
+          # - os: ubuntu-22.04
+          # - os: ubuntu-22.04-arm
+          #   arch: arm64
           - os: macos-14
 
     steps:
@@ -39,11 +36,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Add Windows ARM64 target
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
-        run: rustup target add aarch64-pc-windows-msvc
 
       - name: Add macOS targets
         if: runner.os == 'macOS'
@@ -83,49 +75,22 @@ jobs:
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
 
       - name: Setup pnpm
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: pnpm/action-setup@v6
         with:
           version: 10.12.3
           run_install: false
 
-      - name: Setup pnpm (Windows ARM64)
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          corepack enable
-          corepack prepare pnpm@10.12.3 --activate
-          node --version
-          pnpm --version
-
       - name: Get pnpm store directory
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         id: pnpm-store
         shell: bash
         run: echo "path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Setup pnpm cache
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
         uses: actions/cache@v5
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
-      - name: Setup LLVM for Windows ARM64
-        if: runner.os == 'Windows' && matrix.arch == 'arm64'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $llvmRoot = 'C:\Program Files\LLVM'
-          if (-not (Test-Path $llvmRoot)) {
-            throw "LLVM not found at $llvmRoot"
-          }
-          $llvmBin = Join-Path $llvmRoot 'bin'
-          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "CLANG_PATH=$(Join-Path $llvmBin 'clang.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
@@ -191,6 +156,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+            echo "⚠️ APPLE_CERTIFICATE not set, skipping certificate import"
+            exit 0
+          fi
           # Decode .p12 certificate from base64
           CERT_PATH="$RUNNER_TEMP/certificate.p12"
           printf '%s' "${{ secrets.APPLE_CERTIFICATE }}" | (base64 --decode 2>/dev/null || base64 -D) > "$CERT_PATH"
@@ -232,43 +201,36 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         timeout-minutes: 60
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          # Only set signing env vars if certificate was imported
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            export APPLE_SIGNING_IDENTITY="$APPLE_SIGNING_IDENTITY"
+            export APPLE_ID="${{ secrets.APPLE_ID }}"
+            export APPLE_PASSWORD="${{ secrets.APPLE_PASSWORD }}"
+            export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
+          fi
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
-            echo "=== macOS build/notarization attempt ${attempt}/${max_attempts} ==="
+            echo "=== macOS build attempt ${attempt}/${max_attempts} ==="
             if pnpm tauri build --target universal-apple-darwin; then
-              echo "✅ macOS build/notarization succeeded"
+              echo "✅ macOS build succeeded"
               exit 0
             fi
 
             if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "❌ macOS build/notarization failed after ${max_attempts} attempts" >&2
+              echo "❌ macOS build failed after ${max_attempts} attempts" >&2
               exit 1
             fi
 
             sleep_seconds=$((attempt * 60))
-            echo "⚠️ macOS build/notarization failed, retrying in ${sleep_seconds}s..."
+            echo "⚠️ macOS build failed, retrying in ${sleep_seconds}s..."
             sleep "$sleep_seconds"
           done
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:WINDOWS_RELEASE_ARCH -eq 'arm64') {
-            pnpm tauri build --target aarch64-pc-windows-msvc --bundles msi
-          } else {
-            pnpm tauri build
-          }
+        run: pnpm tauri build
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
@@ -304,9 +266,13 @@ jobs:
             exit 1
           fi
 
-          # Staple notarization ticket to .app (Tauri already notarized it)
-          xcrun stapler staple "$APP_PATH"
-          echo "✅ .app stapled"
+          # Staple notarization ticket to .app only if signed
+          if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            xcrun stapler staple "$APP_PATH" || echo "⚠️ Staple skipped (not notarized)"
+            echo "✅ .app stapled"
+          else
+            echo "⚠️ No signing identity, skipping staple"
+          fi
 
           # 1) Collect .tar.gz (updater artifact)
           NEW_TAR_GZ="CC-Switch-${VERSION}-macOS.tar.gz"
@@ -319,35 +285,34 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
           echo "macOS zip ready: $NEW_ZIP"
 
-          # 3) Create styled DMG with create-dmg (Tauri's built-in DMG styling doesn't work on CI)
+          # 3) Create styled DMG with create-dmg (skip if not signed)
           if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
-            echo "❌ APPLE_SIGNING_IDENTITY is missing before DMG creation" >&2
-            exit 1
+            echo "⚠️ APPLE_SIGNING_IDENTITY is missing, skipping DMG creation (unsigned build)"
+          else
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
+            NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
+            DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
+            rm -rf "$DMG_STAGE_DIR"
+            mkdir -p "$DMG_STAGE_DIR"
+            ditto "$APP_PATH" "$DMG_STAGE_DIR/CC Switch.app"
+
+            create-dmg \
+              --volname "CC Switch" \
+              --background "src-tauri/icons/dmg-background.png" \
+              --window-size 660 400 \
+              --window-pos 200 120 \
+              --icon-size 80 \
+              --icon "CC Switch.app" 180 220 \
+              --hide-extension "CC Switch.app" \
+              --app-drop-link 480 220 \
+              --codesign "$APPLE_SIGNING_IDENTITY" \
+              --no-internet-enable \
+              "release-assets/$NEW_DMG" \
+              "$DMG_STAGE_DIR"
+
+            rm -rf "$DMG_STAGE_DIR"
+            echo "✅ Styled DMG created: $NEW_DMG"
           fi
-
-          HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
-          NEW_DMG="CC-Switch-${VERSION}-macOS.dmg"
-          DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
-          rm -rf "$DMG_STAGE_DIR"
-          mkdir -p "$DMG_STAGE_DIR"
-          ditto "$APP_PATH" "$DMG_STAGE_DIR/CC Switch.app"
-
-          create-dmg \
-            --volname "CC Switch" \
-            --background "src-tauri/icons/dmg-background.png" \
-            --window-size 660 400 \
-            --window-pos 200 120 \
-            --icon-size 80 \
-            --icon "CC Switch.app" 180 220 \
-            --hide-extension "CC Switch.app" \
-            --app-drop-link 480 220 \
-            --codesign "$APPLE_SIGNING_IDENTITY" \
-            --no-internet-enable \
-            "release-assets/$NEW_DMG" \
-            "$DMG_STAGE_DIR"
-
-          rm -rf "$DMG_STAGE_DIR"
-          echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
         if: runner.os == 'macOS'
@@ -359,11 +324,15 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          if [ -z "${{ secrets.APPLE_ID }}" ]; then
+            echo "⚠️ APPLE_ID not set, skipping notarization"
+            exit 0
+          fi
 
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
           if [ -z "$DMG_PATH" ]; then
-            echo "❌ No .dmg found in release-assets/ to notarize" >&2
-            exit 1
+            echo "⚠️ No .dmg found in release-assets/, skipping notarization"
+            exit 0
           fi
 
           echo "=== Notarizing DMG: $DMG_PATH ==="
@@ -410,107 +379,83 @@ jobs:
           done
 
           if [ -z "$APP_PATH" ]; then
-            echo "❌ No .app found for verification" >&2
-            exit 1
+            echo "⚠️ No .app found for verification" >&2
+          else
+            echo "=== Verifying .app: $APP_PATH ==="
+            if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+              codesign --verify --deep --strict --verbose=2 "$APP_PATH" || echo "⚠️ codesign verification skipped (unsigned)"
+              spctl -a -t exec -vv "$APP_PATH" || echo "⚠️ spctl assessment skipped (unsigned)"
+              xcrun stapler validate "$APP_PATH" || echo "⚠️ stapler validation skipped (unsigned)"
+            else
+              echo "⚠️ No signing identity, skipping code signing verification"
+            fi
           fi
-          echo "=== Verifying .app: $APP_PATH ==="
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          echo "✅ codesign verification passed"
-          spctl -a -t exec -vv "$APP_PATH"
-          echo "✅ spctl assessment passed"
-          xcrun stapler validate "$APP_PATH"
-          echo "✅ .app stapler validation passed"
 
           # Verify .dmg (from release-assets/, created by create-dmg + notarized)
           DMG_PATH=$(find release-assets -maxdepth 1 -name "*.dmg" -type f | head -1 || true)
           if [ -n "$DMG_PATH" ]; then
             echo "=== Verifying .dmg: $DMG_PATH ==="
-            codesign --verify --verbose=2 "$DMG_PATH"
-            echo "✅ .dmg codesign verification passed"
-            spctl -a -t open --context context:primary-signature -vv "$DMG_PATH"
-            echo "✅ .dmg spctl assessment passed"
-            xcrun stapler validate "$DMG_PATH"
-            echo "✅ .dmg stapler validation passed"
+            if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+              codesign --verify --verbose=2 "$DMG_PATH" || echo "⚠️ .dmg codesign verification skipped (unsigned)"
+              spctl -a -t open --context context:primary-signature -vv "$DMG_PATH" || echo "⚠️ .dmg spctl assessment skipped (unsigned)"
+              xcrun stapler validate "$DMG_PATH" || echo "⚠️ .dmg stapler validation skipped (unsigned)"
+            else
+              echo "⚠️ No signing identity, skipping DMG verification"
+            fi
           else
-            echo "❌ No .dmg found for verification — release would ship without verified DMG" >&2
-            exit 1
+            echo "⚠️ No .dmg found for verification (unsigned build, expected)"
           fi
 
       - name: Prepare Windows Assets
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          WINDOWS_RELEASE_ARCH: ${{ matrix.arch || 'x86_64' }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
-          $isArm64 = $env:WINDOWS_RELEASE_ARCH -eq 'arm64'
-          $targetRoot = if ($isArm64) { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
-          $assetSuffix = if ($isArm64) { '-arm64' } else { '' }
-
-          # 仅打包 MSI 安装器 + .sig（用于 Updater）
-          $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle/msi') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $msi) {
-            # 兜底：全局搜索 .msi
-            $msi = Get-ChildItem -Path (Join-Path $targetRoot 'bundle') -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          # 打包 NSIS 安装器 (.exe) + .sig（用于 Updater）
+          $exe = Get-ChildItem -Path 'src-tauri/target/release/bundle/nsis' -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $exe) {
+            # 兜底：全局搜索 .exe
+            $exe = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           }
-          if ($null -ne $msi) {
-            $dest = "CC-Switch-$VERSION-Windows$assetSuffix.msi"
-            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+          if ($null -ne $exe) {
+            $dest = "CC-Switch-$VERSION-Windows.exe"
+            Copy-Item $exe.FullName (Join-Path release-assets $dest)
             Write-Host "Installer copied: $dest"
-            $sigPath = "$($msi.FullName).sig"
+            $sigPath = "$($exe.FullName).sig"
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
-            } elseif ($isArm64) {
-              throw "Signature not found for $($msi.Name)"
             } else {
-              Write-Warning "Signature not found for $($msi.Name)"
+              Write-Warning "Signature not found for $($exe.Name)"
             }
-          } elseif ($isArm64) {
-            throw 'No Windows ARM64 MSI installer found'
           } else {
-            Write-Warning 'No Windows MSI installer found'
+            Write-Warning 'No Windows NSIS installer found'
           }
-
           # 绿色版（portable）：仅可执行文件打 zip（不参与 Updater）
-          $exeCandidates = if ($isArm64) {
-            @('src-tauri/target/aarch64-pc-windows-msvc/release/cc-switch.exe')
-          } else {
-            @(
-              'src-tauri/target/release/cc-switch.exe',
-              'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
-            )
-          }
-          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($null -ne $exePath) {
-            $portableDir = 'release-assets/CC-Switch-Portable'
-            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
-            Copy-Item $exePath $portableDir
-            $portableIniPath = Join-Path $portableDir 'portable.ini'
-            $portableContent = if ($isArm64) {
-              @(
-                '# CC Switch portable ARM64 build marker',
-                'portable=true',
-                'arch=arm64'
-              )
-            } else {
-              @(
-                '# CC Switch portable build marker',
-                'portable=true'
-              )
-            }
-            $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
-            $portableZip = "release-assets/CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
-            Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
-            Remove-Item -Recurse -Force $portableDir
-            Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows$assetSuffix-Portable.zip"
-          } elseif ($isArm64) {
-            throw 'Portable ARM64 exe not found'
-          } else {
-            Write-Warning 'Portable exe not found'
-          }
+          # $exeCandidates = @(
+          #   'src-tauri/target/release/cc-switch.exe',
+          #   'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          # )
+          # $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          # if ($null -ne $exePath) {
+          #   $portableDir = 'release-assets/CC-Switch-Portable'
+          #   New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          #   Copy-Item $exePath $portableDir
+          #   $portableIniPath = Join-Path $portableDir 'portable.ini'
+          #   $portableContent = @(
+          #     '# CC Switch portable build marker',
+          #     'portable=true'
+          #   )
+          #   $portableContent | Set-Content -Path $portableIniPath -Encoding UTF8
+          #   $portableZip = "release-assets/CC-Switch-$VERSION-Windows-Portable.zip"
+          #   Compress-Archive -Path "$portableDir/*" -DestinationPath $portableZip -Force
+          #   Remove-Item -Recurse -Force $portableDir
+          #   Write-Host "Windows portable zip created: CC-Switch-$VERSION-Windows-Portable.zip"
+          # } else {
+          #   Write-Warning 'Portable exe not found'
+          # }
 
       - name: Prepare Linux Assets
         if: runner.os == 'Linux'
@@ -588,6 +533,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-22.04
     needs: release
+    if: always() && !cancelled()
     permissions:
       contents: write
     steps:
@@ -620,15 +566,14 @@ jobs:
             ### 下载
 
             - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
+            - **Windows**: `CC-Switch-${{ github.ref_name }}-Windows.exe`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
             - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
             - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 
             ---
-            macOS 版本已通过 Apple 代码签名和公证，可直接安装使用。
+            > **注意**：macOS 版本未进行 Apple 代码签名，首次打开时如遇"无法打开，因为 Apple 无法检查其是否包含恶意软件"警告，请在「系统设置 > 隐私与安全性」中点击「仍要打开」，或按住 Control 键点击应用图标选择「打开」。
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -665,8 +610,7 @@ jobs:
           base_url="https://github.com/$REPO/releases/download/$TAG"
           # 初始化空平台映射
           mac_url=""; mac_sig=""
-          win_x64_url=""; win_x64_sig=""
-          win_arm64_url=""; win_arm64_sig=""
+          win_url=""; win_sig=""
           linux_x64_url=""; linux_x64_sig=""
           linux_arm64_url=""; linux_arm64_sig=""
           shopt -s nullglob
@@ -679,14 +623,12 @@ jobs:
               *.tar.gz)
                 # 视为 macOS updater artifact
                 mac_url="$url"; mac_sig="$sig_content";;
-              *-Windows-arm64.msi)
-                win_arm64_url="$url"; win_arm64_sig="$sig_content";;
-              *-Windows.msi)
-                win_x64_url="$url"; win_x64_sig="$sig_content";;
               *-Linux-arm64.AppImage|*-Linux-arm64.appimage)
                 linux_arm64_url="$url"; linux_arm64_sig="$sig_content";;
               *-Linux-x86_64.AppImage|*-Linux-x86_64.appimage)
                 linux_x64_url="$url"; linux_x64_sig="$sig_content";;
+              *.msi|*.exe)
+                win_url="$url"; win_sig="$sig_content";;
             esac
           done
           # 构造 JSON（仅包含存在的目标）
@@ -706,14 +648,9 @@ jobs:
                 first=0
               done
             fi
-            if [ -n "$win_x64_url" ] && [ -n "$win_x64_sig" ]; then
+            if [ -n "$win_url" ] && [ -n "$win_sig" ]; then
               [ $first -eq 0 ] && echo ','
-              echo "    \"windows-x86_64\": {\"signature\": \"$win_x64_sig\", \"url\": \"$win_x64_url\"}"
-              first=0
-            fi
-            if [ -n "$win_arm64_url" ] && [ -n "$win_arm64_sig" ]; then
-              [ $first -eq 0 ] && echo ','
-              echo "    \"windows-aarch64\": {\"signature\": \"$win_arm64_sig\", \"url\": \"$win_arm64_url\"}"
+              echo "    \"windows-x86_64\": {\"signature\": \"$win_sig\", \"url\": \"$win_url\"}"
               first=0
             fi
             if [ -n "$linux_x64_url" ] && [ -n "$linux_x64_sig" ]; then

@@ -526,6 +526,11 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::Kimi => {
+                if let Some(custom) = crate::settings::get_kimi_override_dir() {
+                    return Ok(custom.join("skills"));
+                }
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -541,6 +546,7 @@ impl SkillService {
             AppType::OpenCode => home.join(".config").join("opencode").join("skills"),
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
+            AppType::Kimi => home.join(".kimi-code").join("skills"),
         })
     }
 

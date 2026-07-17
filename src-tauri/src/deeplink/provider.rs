@@ -148,6 +148,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Kimi => build_kimi_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -440,6 +441,18 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     if let Some(model) = &request.model {
         env.insert("GEMINI_MODEL".to_string(), json!(model));
     }
+
+    json!({ "env": env })
+}
+
+/// Build Kimi settings configuration
+fn build_kimi_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let mut env = serde_json::Map::new();
+    env.insert("KIMI_API_KEY".to_string(), json!(request.api_key));
+    env.insert(
+        "KIMI_BASE_URL".to_string(),
+        json!(get_primary_endpoint(request)),
+    );
 
     json!({ "env": env })
 }
