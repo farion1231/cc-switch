@@ -6,6 +6,7 @@ mod claude_mcp;
 mod claude_plugin;
 mod codex_config;
 mod codex_history_migration;
+mod codex_state_db;
 mod commands;
 mod config;
 mod database;
@@ -13,12 +14,14 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -41,17 +44,21 @@ pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_l
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
-pub use database::Database;
+pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_gemini, remove_server_from_claude,
-    remove_server_from_codex, remove_server_from_gemini, sync_enabled_to_claude,
-    sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
-    sync_single_server_to_codex, sync_single_server_to_gemini,
+    import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
+    remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
+    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
+    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
+pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 pub use services::{
+    profile::{ProfilePayload, ProfileScope, ProfileService},
+    provider::reapply_current_codex_official_live,
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -270,6 +277,16 @@ pub fn run() {
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
+                let in_db_recovery = crate::init_status::get_init_error()
+                    .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
+                    .unwrap_or(false);
+                if in_db_recovery {
+                    api.prevent_close();
+                    window.app_handle().exit(0);
+                    return;
+                }
+
                 let settings = crate::settings::get_settings();
 
                 if settings.minimize_to_tray_on_close {
@@ -403,6 +420,35 @@ pub fn run() {
             // 说明：从 v3.8.* 升级的用户通常会走到这里的 SQLite schema 迁移，
             // 若迁移失败（数据库损坏/权限不足/user_version 过新等），需要给用户明确提示，
             // 否则表现可能只是“应用打不开/闪退”。
+            //
+            // 预检：数据库版本过新时，必须先于任何 schema 写操作（create_tables 内含
+            // DROP/ALTER 等 DDL）进入恢复界面，避免旧应用对读不懂的更新版 DB 落写。
+            match crate::database::Database::stored_user_version_exceeds_supported(&db_path) {
+                Ok(Some(version)) => {
+                    log::warn!("数据库版本过新（v{version}），引导用户在应用内升级应用");
+                    crate::init_status::set_init_error(crate::init_status::InitErrorPayload {
+                        path: db_path.display().to_string(),
+                        error: format!(
+                            "数据库版本过新（{version}），当前应用仅支持 {}，请升级应用后再尝试。",
+                            crate::database::SCHEMA_VERSION
+                        ),
+                        kind: Some("db_version_too_new".to_string()),
+                        db_version: Some(version),
+                        supported_version: Some(crate::database::SCHEMA_VERSION),
+                    });
+                    // 主窗口默认 visible:false，恢复界面必须强制显示
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    return Ok(());
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    log::warn!("预检数据库版本失败，继续正常初始化流程: {e}");
+                }
+            }
+
             let db = loop {
                 match crate::database::Database::init() {
                     Ok(db) => break Arc::new(db),
@@ -630,32 +676,33 @@ pub fn run() {
 
             // 1.6. 自动同步 OpenCode / OpenClaw 的 live providers 到数据库
             //
-            // additive 模式（OpenCode / OpenClaw）的 import 函数本身按 id 幂等，
-            // 已有的 provider 会被跳过，所以每次启动都跑是安全的——既保证新装
-            // 用户开箱可见 live 中的供应商，也让外部修改的 live 文件能在重启
-            // 后同步到数据库（与之前依赖前端"导入当前配置"按钮手动触发不同）。
+            // additive 模式（OpenCode / OpenClaw）的 import 函数按 id 幂等——
+            // 新 id 执行导入，已有 id 则更新 settings 和 display name，所以每次
+            // 启动都跑是安全的：既保证新装用户开箱可见 live 中的供应商，也让外部
+            // 修改的 live 文件能在重启后同步到数据库（与之前依赖前端"导入当前配置"
+            // 按钮手动触发不同）。
             //
             // 底层 read_*_config 在文件不存在时返回默认空配置，因此新装且无
             // live 文件的用户走 Ok(0) 路径，不会产生错误日志噪音。
             match crate::services::provider::import_opencode_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenCode provider(s) from live config");
+                    log::info!("✓ Synced {count} OpenCode provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new OpenCode providers to import"),
+                Ok(_) => log::debug!("○ No OpenCode provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import OpenCode providers: {e}"),
             }
             match crate::services::provider::import_openclaw_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} OpenClaw provider(s) from live config");
+                    log::info!("✓ Synced {count} OpenClaw provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new OpenClaw providers to import"),
+                Ok(_) => log::debug!("○ No OpenClaw provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import OpenClaw providers: {e}"),
             }
             match crate::services::provider::import_hermes_providers_from_live(&app_state) {
                 Ok(count) if count > 0 => {
-                    log::info!("✓ Imported {count} Hermes provider(s) from live config");
+                    log::info!("✓ Synced {count} Hermes provider(s) from live config");
                 }
-                Ok(_) => log::debug!("○ No new Hermes providers to import"),
+                Ok(_) => log::debug!("○ No Hermes provider changes from live config"),
                 Err(e) => log::warn!("✗ Failed to import Hermes providers: {e}"),
             }
 
@@ -738,6 +785,14 @@ pub fn run() {
                     Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
                 }
 
+                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
+                    }
+                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
+                }
+
                 match crate::services::mcp::McpService::import_from_opencode(&app_state) {
                     Ok(count) if count > 0 => {
                         log::info!("✓ Imported {count} MCP server(s) from OpenCode");
@@ -763,6 +818,7 @@ pub fn run() {
                     crate::app_config::AppType::Claude,
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
+                    crate::app_config::AppType::GrokBuild,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
@@ -1155,6 +1211,7 @@ pub fn run() {
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
+            commands::ensure_codex_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -1171,6 +1228,7 @@ pub fn run() {
             commands::set_claude_common_config_snippet,
             commands::get_common_config_snippet,
             commands::set_common_config_snippet,
+            commands::update_toml_common_config_snippet,
             commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
@@ -1187,6 +1245,7 @@ pub fn run() {
             commands::set_log_config,
             commands::restart_app,
             commands::install_update_and_restart,
+            commands::check_app_update_available,
             commands::check_for_updates,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
@@ -1229,6 +1288,13 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            // Profile management (项目配置方案)
+            commands::list_profiles,
+            commands::create_profile,
+            commands::update_profile,
+            commands::delete_profile,
+            commands::clear_current_profile,
+            commands::apply_profile,
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
             // ours: endpoint speed test + custom endpoint management
@@ -1685,16 +1751,25 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 ///
 /// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
 /// 则自动启动代理服务并接管对应应用的 Live 配置。
-async fn restore_proxy_state_on_startup(state: &store::AppState) {
-    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
-    let mut apps_to_restore = Vec::new();
-    for app_type in ["claude", "codex", "gemini"] {
-        if let Ok(config) = state.db.get_proxy_config_for_app(app_type).await {
-            if config.enabled {
-                apps_to_restore.push(app_type);
-            }
+const PROXY_STARTUP_APP_TYPES: [&str; 4] = ["claude", "codex", "gemini", "grokbuild"];
+
+async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static str> {
+    let mut apps = Vec::new();
+    for app_type in PROXY_STARTUP_APP_TYPES {
+        if db
+            .get_proxy_config_for_app(app_type)
+            .await
+            .is_ok_and(|config| config.enabled)
+        {
+            apps.push(app_type);
         }
     }
+    apps
+}
+
+async fn restore_proxy_state_on_startup(state: &store::AppState) {
+    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
+    let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
 
     if apps_to_restore.is_empty() {
         log::debug!("启动时无需恢复代理状态");
@@ -2012,7 +2087,8 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_exit_request, ExitRequestAction};
+    use super::{classify_exit_request, enabled_proxy_apps_on_startup, ExitRequestAction};
+    use crate::database::Database;
 
     #[test]
     fn no_code_keeps_app_alive_in_tray() {
@@ -2037,5 +2113,22 @@ mod tests {
             classify_exit_request(Some(1)),
             ExitRequestAction::CleanupAndExit
         );
+    }
+
+    #[tokio::test]
+    async fn startup_restore_includes_enabled_grokbuild_route() {
+        let db = Database::memory().expect("initialize database");
+        let mut config = db
+            .get_proxy_config_for_app("grokbuild")
+            .await
+            .expect("read Grok Build proxy config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable Grok Build proxy config");
+
+        let apps = enabled_proxy_apps_on_startup(&db).await;
+
+        assert_eq!(apps, vec!["grokbuild"]);
     }
 }

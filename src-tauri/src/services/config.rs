@@ -88,6 +88,7 @@ impl ConfigService {
         Self::sync_current_provider_for_app(config, &AppType::Claude)?;
         Self::sync_current_provider_for_app(config, &AppType::Codex)?;
         Self::sync_current_provider_for_app(config, &AppType::Gemini)?;
+        Self::sync_current_provider_for_app(config, &AppType::GrokBuild)?;
         Ok(())
     }
 
@@ -125,6 +126,7 @@ impl ConfigService {
                 // Claude Desktop 3P profiles are managed by claude_desktop_config.
             }
             AppType::Gemini => Self::sync_gemini_live(config, &current_id, &provider)?,
+            AppType::GrokBuild => crate::grok_config::write_grok_provider_live(&provider)?,
             AppType::OpenCode => {
                 // OpenCode uses additive mode, no live sync needed
                 // OpenCode providers are managed directly in the config file
@@ -159,11 +161,14 @@ impl ConfigService {
         }
         let cfg_text = settings.get("config").and_then(Value::as_str);
 
+        let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(provider);
+
         crate::codex_config::write_codex_provider_live_with_catalog(
             &provider.settings_config,
             provider.category.as_deref(),
             auth,
             cfg_text,
+            profile,
         )?;
         // 注意：MCP 同步在 v3.7.0 中已通过 McpService 进行，不再在此调用
         // sync_enabled_to_codex 使用旧的 config.mcp.codex 结构，在新架构中为空

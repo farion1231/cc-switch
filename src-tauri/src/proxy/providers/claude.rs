@@ -24,6 +24,13 @@ const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
 // Keep hints lowercase; matching lowercases only the input value.
 const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
 
+// ChatGPT Codex 后端按 originator+version 组合做模型 cohort 路由：非官方身份会把
+// gpt-5.6-luna 解析到未部署的内部引擎（HTTP 404 Model not found，openai/codex#31967，
+// 本机 A/B 实测确认）。两个头必须成对发送，缺一即 404；version 需 ≥ 目标模型
+// catalog 的 minimal_client_version（luna=0.144.0），新模型抬门槛时同步 bump。
+const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
+const CODEX_OAUTH_CLIENT_VERSION: &str = "0.144.1";
+
 /// 获取 Claude 供应商的 API 格式
 ///
 /// 供 handler/forwarder 外部使用的公开函数。
@@ -666,7 +673,7 @@ impl ProviderAdapter for ClaudeAdapter {
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
         // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
         if self.is_codex_oauth(provider) {
-            return Ok("https://chatgpt.com/backend-api/codex".to_string());
+            return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
         // 1. 从 env 中获取
@@ -778,9 +785,9 @@ impl ProviderAdapter for ClaudeAdapter {
 
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
         // Codex OAuth: 所有请求统一走 /responses 端点
-        if base_url == "https://chatgpt.com/backend-api/codex" {
+        if base_url == super::CHATGPT_CODEX_BASE_URL {
             let _ = endpoint; // 忽略原始 endpoint
-            return "https://chatgpt.com/backend-api/codex/responses".to_string();
+            return format!("{}/responses", super::CHATGPT_CODEX_BASE_URL);
         }
 
         // NOTE:
@@ -843,7 +850,11 @@ impl ProviderAdapter for ClaudeAdapter {
                     (HeaderName::from_static("authorization"), hv(&bearer)?),
                     (
                         HeaderName::from_static("originator"),
-                        HeaderValue::from_static("cc-switch"),
+                        HeaderValue::from_static(CODEX_OAUTH_ORIGINATOR),
+                    ),
+                    (
+                        HeaderName::from_static("version"),
+                        HeaderValue::from_static(CODEX_OAUTH_CLIENT_VERSION),
                     ),
                 ]
             }

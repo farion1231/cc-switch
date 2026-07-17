@@ -242,6 +242,124 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
+  it("warns when switching a Codex Anthropic-format provider without proxy", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { apiFormat: "anthropic" },
+    });
+
+    const { result } = renderHook(() => useProviderActions("codex", false), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Anthropic Messages"),
+    );
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("warns for Grok providers that require the Responses router", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const providers = [
+      createProvider({
+        id: "grok-chat",
+        category: "custom",
+        meta: { apiFormat: "openai_chat" },
+      }),
+      createProvider({
+        id: "grok-anthropic",
+        category: "custom",
+        meta: { apiFormat: "anthropic" },
+      }),
+      createProvider({
+        id: "grok-full-url",
+        category: "custom",
+        meta: { isFullUrl: true },
+      }),
+    ];
+
+    const { result } = renderHook(
+      () => useProviderActions("grokbuild", false),
+      { wrapper },
+    );
+
+    for (const provider of providers) {
+      await act(async () => {
+        await result.current.switchProvider(provider);
+      });
+    }
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(3);
+    expect(switchProviderMutateAsync).toHaveBeenCalledTimes(3);
+  });
+
+  it("allows the built-in Codex official provider during takeover", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      id: "codex-official",
+      category: "official",
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("codex", true, true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith("codex-official");
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("continues blocking other official providers during takeover", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      id: "claude-official",
+      category: "official",
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude", true, true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not grant routing capability to a UUID Codex official copy", async () => {
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      id: "generated-uuid",
+      category: "official",
+    });
+    const { result } = renderHook(
+      () => useProviderActions("codex", true, true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(switchProviderMutateAsync).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+  });
+
   it("should sync plugin config when switching Claude provider with integration enabled", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     settingsApiGetMock.mockResolvedValueOnce({

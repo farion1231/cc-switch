@@ -152,6 +152,9 @@ export interface UsageRangeSelection {
   preset: UsageRangePreset;
   customStartDate?: number;
   customEndDate?: number;
+  /** When true (custom mode only), endDate resolves to "now" instead of the
+   *  fixed customEndDate snapshot, and the end-time field becomes read-only. */
+  liveEndTime?: boolean;
 }
 
 /**
@@ -169,7 +172,7 @@ export interface UsageRangeSelection {
  * `opencode` / `openclaw` / `hermes` have no proxy handler at all — they
  * appear only as managed apps elsewhere.
  */
-export type AppType = "claude" | "codex" | "gemini" | "opencode";
+export type AppType = "claude" | "codex" | "gemini" | "grokbuild" | "opencode";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -177,6 +180,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "claude",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
 ];
 
@@ -195,6 +199,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
 export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
+  "grokbuild",
 ]);
 
 /** Subset of request-log fields needed to derive cache-normalized input. */

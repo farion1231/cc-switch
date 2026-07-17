@@ -25,6 +25,7 @@ pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
+    update_toml_common_config_snippet,
 };
 
 // Internal re-exports (pub(crate))
@@ -41,6 +42,14 @@ use live::{
     remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
+
+/// The built-in Codex official provider is safe to select during takeover:
+/// Codex keeps ownership of its ChatGPT login and the proxy only forwards the
+/// authenticated request. Other official providers retain the existing block.
+pub fn official_provider_supports_proxy_takeover(app_type: &AppType, provider: &Provider) -> bool {
+    matches!(app_type, AppType::Codex)
+        && crate::proxy::providers::is_codex_official_provider(provider)
+}
 
 /// 统一会话开关变更后，立即按新开关状态重写当前官方 Codex 供应商的
 /// live 配置，使开关即时生效（无需等下一次切换）。
@@ -81,6 +90,18 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     }
 
     live::write_live_with_common_config(&state.db, &AppType::Codex, provider)?;
+    // 重写 live 会整体替换 config.toml（有意设计），[mcp_servers] 随之丢失，
+    // 写完必须立刻从 DB 重新投影启用的 MCP。只投影 Codex 而非
+    // sync_all_enabled：后者按 AppType::all() 顺序逐应用短路，排在 Codex
+    // 前面的无关应用 live 损坏（如 ~/.claude.json 坏 JSON）会阻断 Codex
+    // 的重投影，让刚被清掉的 [mcp_servers] 无人补回。
+    // 投影失败降级为警告：走到这里 live 已按新开关状态落盘，开关事实上
+    // 已生效；若把错误上抛，save_settings 会回滚开关设置，制造"设置=旧值、
+    // live=新桶"的会话分裂——正是该回滚要防止的状态。MCP 投影可自愈
+    // （下次切换 / 任一 MCP 启停操作都会重新投影）。
+    if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Codex) {
+        log::warn!("统一会话开关重写 live 后重投影 Codex MCP 失败（将在下次同步时自愈）: {err}");
+    }
     Ok(true)
 }
 
@@ -101,9 +122,9 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
-    use crate::provider::ProviderMeta;
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
+    use crate::provider::{ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -226,6 +247,70 @@ mod tests {
         result
     }
 
+    fn codex_settings(base_url: &str, api_key: &str) -> Value {
+        json!({
+            "auth": {
+                "OPENAI_API_KEY": api_key
+            },
+            "config": format!(
+                "model_provider = \"custom\"\n\
+                 [model_providers.custom]\n\
+                 name = \"custom\"\n\
+                 base_url = \"{base_url}\"\n\
+                 wire_api = \"chat\"\n"
+            )
+        })
+    }
+
+    fn usage_script_with_credentials(
+        api_key: Option<&str>,
+        base_url: Option<&str>,
+        template_type: Option<&str>,
+    ) -> UsageScript {
+        UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: "return { remaining: 1, unit: 'USD' };".to_string(),
+            timeout: Some(10),
+            api_key: api_key.map(str::to_string),
+            base_url: base_url.map(str::to_string),
+            access_token: None,
+            user_id: None,
+            template_type: template_type.map(str::to_string),
+            auto_query_interval: None,
+            coding_plan_provider: None,
+            access_key_id: Some("ak-test".to_string()),
+            secret_access_key: Some("sk-test".to_string()),
+            team_organization_id: None,
+            team_project_id: None,
+        }
+    }
+
+    fn codex_provider_with_usage(
+        id: &str,
+        base_url: &str,
+        api_key: &str,
+        usage_api_key: Option<&str>,
+        usage_base_url: Option<&str>,
+        template_type: Option<&str>,
+    ) -> Provider {
+        let mut provider = Provider::with_id(
+            id.to_string(),
+            format!("Provider {id}"),
+            codex_settings(base_url, api_key),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            usage_script: Some(usage_script_with_credentials(
+                usage_api_key,
+                usage_base_url,
+                template_type,
+            )),
+            ..Default::default()
+        });
+        provider
+    }
+
     fn openclaw_provider(id: &str) -> Provider {
         Provider {
             id: id.to_string(),
@@ -235,6 +320,32 @@ mod tests {
                 "apiKey": "test-key",
                 "api": "openai-completions",
                 "models": [],
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(1),
+            sort_index: Some(0),
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn hermes_provider(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({
+                "api": "openai-chat",
+                "base_url": "https://api.example.com/v1",
+                "api_key": "test-key",
+                "models": {
+                    "gpt-4o": {
+                        "name": "GPT-4o"
+                    }
+                }
             }),
             website_url: None,
             category: Some("custom".to_string()),
@@ -327,6 +438,255 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn add_clears_usage_credentials_that_match_provider_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-a",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some(" sk-a "),
+                Some(" https://api.a.example/v1/ "),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-a", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key, None);
+            assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_preserves_usage_credentials_that_only_match_previous_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-usage-old",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some("sk-a"),
+                Some("https://api.a.example/v1/"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider with explicit usage credentials");
+
+            let mut updated = provider.clone();
+            updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+
+            ProviderService::update(state, AppType::Codex, None, updated)
+                .expect("update provider main credentials");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-usage-old", AppType::Codex.as_str())
+                .expect("query updated provider")
+                .expect("updated provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-a"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://api.a.example/v1/")
+            );
+            assert_eq!(
+                saved.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn copied_provider_uses_edited_credentials_after_add_clears_mirrored_usage_credentials() {
+        with_test_home(|state, _| {
+            let copied_provider = codex_provider_with_usage(
+                "codex-copy",
+                "https://api.a.example/v1/",
+                "sk-a",
+                Some("sk-a"),
+                Some("https://api.a.example/v1/"),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, copied_provider, false)
+                .expect("add copied provider");
+
+            let saved_after_add = state
+                .db
+                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query copied provider")
+                .expect("copied provider should exist");
+            let script_after_add = saved_after_add
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+            assert_eq!(script_after_add.api_key, None);
+            assert_eq!(script_after_add.base_url, None);
+
+            let mut edited_provider = saved_after_add.clone();
+            edited_provider.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+
+            ProviderService::update(state, AppType::Codex, None, edited_provider)
+                .expect("edit copied provider credentials");
+
+            let saved_after_update = state
+                .db
+                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .expect("query edited provider")
+                .expect("edited provider should exist");
+            let script_after_update = saved_after_update
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script_after_update.api_key, None);
+            assert_eq!(script_after_update.base_url, None);
+            assert_eq!(
+                saved_after_update.resolve_usage_credentials(&AppType::Codex),
+                ("https://api.b.example/v1".to_string(), "sk-b".to_string())
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn update_clears_usage_credentials_that_match_current_config() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-current",
+                "https://api.a.example/v1",
+                "sk-a",
+                Some("sk-usage"),
+                Some("https://usage.example/api"),
+                None,
+            );
+            state
+                .db
+                .save_provider(AppType::Codex.as_str(), &provider)
+                .expect("seed provider with distinct usage credentials");
+
+            let mut updated = provider.clone();
+            updated.settings_config = codex_settings("https://api.b.example/v1/", "sk-b");
+            updated.meta = Some(ProviderMeta {
+                usage_script: Some(usage_script_with_credentials(
+                    Some(" sk-b "),
+                    Some(" https://api.b.example/v1/ "),
+                    None,
+                )),
+                ..Default::default()
+            });
+
+            ProviderService::update(state, AppType::Codex, None, updated)
+                .expect("update provider with redundant usage credentials");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-current", AppType::Codex.as_str())
+                .expect("query updated provider")
+                .expect("updated provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key, None);
+            assert_eq!(script.base_url, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_preserves_distinct_usage_credentials() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-distinct",
+                "https://api.main.example/v1",
+                "sk-main",
+                Some("sk-usage"),
+                Some("https://usage.example/api"),
+                None,
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-distinct", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://usage.example/api")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_does_not_clear_token_plan_credentials() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-token-plan",
+                "https://api.plan.example/v1",
+                "sk-plan",
+                Some("sk-plan"),
+                Some("https://api.plan.example/v1"),
+                Some("token_plan"),
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-token-plan", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(script.api_key.as_deref(), Some("sk-plan"));
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://api.plan.example/v1")
+            );
+            assert_eq!(script.access_key_id.as_deref(), Some("ak-test"));
+            assert_eq!(script.secret_access_key.as_deref(), Some("sk-test"));
+        });
+    }
+
+    #[test]
     fn validate_provider_settings_rejects_missing_auth() {
         let provider = Provider::with_id(
             "codex".into(),
@@ -340,6 +700,145 @@ mod tests {
             err.to_string().contains("auth"),
             "expected auth error, got {err:?}"
         );
+    }
+
+    #[test]
+    fn extract_claude_common_config_strips_all_credentials_keeps_shareable() {
+        // env 混入多种凭据（Anthropic/OpenRouter/Google/OpenAI/Gemini + AWS/Vertex）
+        // 与可共享配置；顶层混入非标准的 apiKey/api_key 凭据与正常设置。
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-ant",
+                "ANTHROPIC_AUTH_TOKEN": "tok-ant",
+                "OPENROUTER_API_KEY": "sk-or",
+                "GOOGLE_API_KEY": "g-key",
+                "OPENAI_API_KEY": "sk-oai",
+                "GEMINI_API_KEY": "g-gem",
+                "AWS_ACCESS_KEY_ID": "AKIA",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+                "AWS_SESSION_TOKEN": "sess",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/path/creds.json",
+                "AWS_BEARER_TOKEN_BEDROCK": "bedrock-tok",
+                "ANTHROPIC_BASE_URL": "https://example.com",
+                "ANTHROPIC_MODEL": "claude-x",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini",
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
+                // 可共享、非机密配置（复数 _TOKENS 不应被误剥）
+                "ENABLE_TOOL_SEARCH": "true",
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"
+            },
+            "apiKey": "sk-top",
+            "api_key": "sk-top2",
+            "theme": "dark",
+            "includeCoAuthoredBy": false
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+
+        // 所有凭据都不得出现在共享片段里
+        let env = value.get("env");
+        for leaked in [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "OPENROUTER_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "AWS_BEARER_TOKEN_BEDROCK",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(leaked)).is_none(),
+                "credential {leaked} must not leak into common config"
+            );
+        }
+        assert!(
+            value.get("apiKey").is_none() && value.get("api_key").is_none(),
+            "top-level credentials must be stripped"
+        );
+
+        // 端点/模型（provider-specific 非机密）也应剥掉
+        assert!(env.and_then(|e| e.get("ANTHROPIC_BASE_URL")).is_none());
+        assert!(env.and_then(|e| e.get("ANTHROPIC_MODEL")).is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_SUBAGENT_MODEL"))
+            .is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
+            .is_none());
+        assert!(env
+            .and_then(|e| e.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"))
+            .is_none());
+
+        // 可共享的非机密配置必须保留（含复数 _TOKENS 不被误剥）
+        assert_eq!(
+            env.and_then(|e| e.get("ENABLE_TOOL_SEARCH"))
+                .and_then(|v| v.as_str()),
+            Some("true")
+        );
+        assert_eq!(
+            env.and_then(|e| e.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS"))
+                .and_then(|v| v.as_str()),
+            Some("8192")
+        );
+        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
+        assert_eq!(value.get("includeCoAuthoredBy"), Some(&json!(false)));
+    }
+
+    /// Regression for issue #4272: Fable tier env keys must not enter the shared
+    /// Claude common-config snippet (same class as haiku/sonnet/opus model pins).
+    #[test]
+    fn extract_claude_common_config_strips_fable_model_env_keys() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "Haiku Mapped",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped[1M]",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet Mapped",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped[1M]",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus Mapped",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-flash[1M]",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "deepseek-v4-flash",
+                "ANTHROPIC_MODEL": "default-mapped",
+                "ENABLE_TOOL_SEARCH": "true"
+            },
+            "theme": "dark"
+        });
+
+        let snippet = ProviderService::extract_claude_common_config(&settings)
+            .expect("extract should succeed");
+        let value: Value = serde_json::from_str(&snippet).expect("snippet is valid JSON");
+        let env = value.get("env");
+
+        for stripped in [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "ANTHROPIC_MODEL",
+        ] {
+            assert!(
+                env.and_then(|e| e.get(stripped)).is_none(),
+                "provider-specific model key {stripped} must not enter common config"
+            );
+        }
+
+        assert_eq!(
+            env.and_then(|e| e.get("ENABLE_TOOL_SEARCH"))
+                .and_then(|v| v.as_str()),
+            Some("true")
+        );
+        assert_eq!(value.get("theme").and_then(|v| v.as_str()), Some("dark"));
     }
 
     #[test]
@@ -391,10 +890,18 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_common_config_preserves_mcp_servers_base_url() {
+    fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
+        // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
+        // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
+        // 顶层 wire_api 模拟无 model_provider 时的 fallback 写法；
+        // [mcp.servers] 是历史错误格式，sync_all_enabled 清不掉它。
         let config_toml = r#"model_provider = "azure"
 model = "gpt-4"
+wire_api = "chat"
 disable_response_storage = true
+experimental_bearer_token = "sk-live-secret"
+model_catalog_json = "cc-switch-model-catalog.json"
+web_search = "disabled"
 
 [model_providers.azure]
 name = "Azure OpenAI"
@@ -403,6 +910,9 @@ wire_api = "responses"
 
 [mcp_servers.my_server]
 base_url = "http://localhost:8080"
+
+[mcp.servers.legacy_server]
+command = "legacy-cmd"
 "#;
 
         let settings = json!({ "config": config_toml });
@@ -425,9 +935,51 @@ base_url = "http://localhost:8080"
             !extracted.contains("[model_providers"),
             "should remove entire model_providers table"
         );
+        // MCP 归 DB mcp_servers 表所有，不得进共享片段（含历史错误格式 [mcp.servers]）
         assert!(
-            extracted.contains("http://localhost:8080"),
-            "should keep mcp_servers.* base_url"
+            !extracted.contains("mcp_servers") && !extracted.contains("http://localhost:8080"),
+            "should strip mcp_servers from the shared snippet, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("[mcp") && !extracted.contains("legacy-cmd"),
+            "should strip the legacy [mcp.servers] form from the shared snippet, got: {extracted}"
+        );
+        // 顶层 wire_api 是供应商路由语义（model_providers 整表已剥，
+        // 剩余任何 wire_api 都意味着泄漏）
+        assert!(
+            !extracted.contains("wire_api"),
+            "should strip top-level wire_api from the shared snippet, got: {extracted}"
+        );
+        // 注入产物不得进共享片段（bearer token 泄漏为密钥级问题）
+        assert!(
+            !extracted.contains("experimental_bearer_token")
+                && !extracted.contains("sk-live-secret"),
+            "should strip top-level fallback bearer token, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("model_catalog_json"),
+            "should strip catalog projection pointer, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("web_search"),
+            "should strip the cc-switch web_search disabled sentinel, got: {extracted}"
+        );
+        // 真正可共享的键保留
+        assert!(
+            extracted.contains("disable_response_storage = true"),
+            "shareable keys must survive extraction, got: {extracted}"
+        );
+    }
+
+    #[test]
+    fn extract_codex_common_config_keeps_user_set_web_search() {
+        let config_toml = "web_search = \"enabled\"\ndisable_response_storage = true\n";
+        let settings = json!({ "config": config_toml });
+        let extracted = ProviderService::extract_codex_common_config(&settings)
+            .expect("extract should succeed");
+        assert!(
+            extracted.contains("web_search = \"enabled\""),
+            "a user-set web_search value is a shareable preference, got: {extracted}"
         );
     }
 
@@ -463,6 +1015,7 @@ base_url = "http://localhost:8080"
 
         db.update_proxy_config(ProxyConfig {
             live_takeover_active: true,
+            listen_port: 0,
             ..Default::default()
         })
         .await
@@ -491,7 +1044,7 @@ base_url = "http://localhost:8080"
         )
         .expect("seed taken-over live file");
 
-        state
+        let proxy_info = state
             .proxy_service
             .start()
             .await
@@ -544,7 +1097,7 @@ base_url = "http://localhost:8080"
             live.get("env")
                 .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
                 .and_then(|v| v.as_str()),
-            Some("http://127.0.0.1:15721"),
+            Some(format!("http://127.0.0.1:{}", proxy_info.port).as_str()),
             "proxy base URL should stay intact"
         );
         assert!(
@@ -553,6 +1106,135 @@ base_url = "http://localhost:8080"
                 .is_none(),
             "model override should be removed in takeover live config"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn update_current_codex_provider_refreshes_and_clears_catalog_during_takeover() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let mut original = Provider::with_id(
+            "p1".into(),
+            "Codex A".into(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "token-a" },
+                "config": r#"model_provider = "custom"
+model = "old-model"
+
+[model_providers.custom]
+name = "Codex A"
+base_url = "https://api.a.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#,
+                "modelCatalog": {
+                    "models": [{ "model": "old-model" }]
+                }
+            }),
+            None,
+        );
+        original.meta = Some(ProviderMeta {
+            api_format: Some("openai_responses".into()),
+            ..Default::default()
+        });
+        db.save_provider("codex", &original).expect("save provider");
+        db.set_current_provider("codex", "p1")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
+            .expect("set local current provider");
+
+        db.update_proxy_config(ProxyConfig {
+            live_takeover_active: true,
+            listen_port: 0,
+            ..Default::default()
+        })
+        .await
+        .expect("update proxy config");
+        {
+            let mut config = db
+                .get_proxy_config_for_app("codex")
+                .await
+                .expect("get app proxy config");
+            config.enabled = true;
+            db.update_proxy_config_for_app(config)
+                .await
+                .expect("enable Codex proxy config");
+        }
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&original.settings_config).expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup");
+
+        state
+            .proxy_service
+            .start()
+            .await
+            .expect("start proxy service");
+        state
+            .proxy_service
+            .sync_codex_live_from_provider_while_proxy_active(&original)
+            .await
+            .expect("seed taken-over Codex live config");
+        assert!(
+            state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(&AppType::Codex),
+            "seeded Codex live config should be recognized as takeover-owned"
+        );
+
+        let mut updated = original.clone();
+        updated.settings_config["config"] = json!(
+            r#"model_provider = "custom"
+model = "gpt-5.4"
+
+[model_providers.custom]
+name = "Codex A"
+base_url = "https://api.updated.example/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        );
+        updated.settings_config["modelCatalog"] = json!({
+            "models": [{ "model": "gpt-5.4", "displayName": "GPT 5.4" }]
+        });
+
+        ProviderService::update(&state, AppType::Codex, None, updated.clone())
+            .expect("update current Codex provider mapping");
+
+        let catalog_path = crate::codex_config::get_codex_model_catalog_path();
+        let catalog: Value = read_json_file(&catalog_path).expect("read generated catalog");
+        assert_eq!(catalog["models"][0]["slug"], "gpt-5.4");
+        assert_eq!(
+            catalog["models"][0]["input_modalities"],
+            json!(["text", "image"]),
+            "unknown/GPT models must fail open to image input"
+        );
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read Codex config.toml");
+        assert!(live_config.contains("model_catalog_json"));
+
+        updated.settings_config["modelCatalog"] = json!({ "models": [] });
+        ProviderService::update(&state, AppType::Codex, None, updated)
+            .expect("remove current Codex provider mapping");
+
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read Codex config.toml after mapping removal");
+        assert!(
+            !live_config.contains("model_catalog_json"),
+            "removing mappings during takeover must clear the stale catalog pointer"
+        );
+
+        state
+            .proxy_service
+            .stop()
+            .await
+            .expect("stop proxy service");
     }
 
     #[cfg(any(target_os = "macos", windows))]
@@ -903,6 +1585,40 @@ base_url = "http://localhost:8080"
 
     #[test]
     #[serial]
+    fn import_opencode_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = opencode_provider("existing-opencode");
+            state
+                .db
+                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .expect("seed existing opencode provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings.as_object_mut().unwrap().remove("name");
+            live_settings["npm"] = Value::String("@ai-sdk/anthropic".to_string());
+            live_settings["models"]["gpt-4o"]["name"] = Value::String("Claude Sonnet".to_string());
+            crate::opencode_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live opencode provider");
+
+            let updated = import_opencode_providers_from_live(state)
+                .expect("import opencode providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .expect("query updated opencode provider")
+                .expect("opencode provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(saved.settings_config["npm"], json!("@ai-sdk/anthropic"));
+            assert_eq!(
+                saved.settings_config["models"]["gpt-4o"]["name"],
+                json!("Claude Sonnet")
+            );
+        });
+    }
+    #[test]
+    #[serial]
     fn import_openclaw_providers_from_live_marks_provider_as_live_managed() {
         with_test_home(|state, _| {
             let mut provider = openclaw_provider("imported-openclaw");
@@ -932,6 +1648,89 @@ base_url = "http://localhost:8080"
                 Some(true),
                 "providers imported from live should be treated as live-managed"
             );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_openclaw_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let mut provider = openclaw_provider("existing-openclaw");
+            provider.settings_config["models"] = json!([
+                {
+                    "id": "claude-sonnet-4",
+                    "name": "Claude Sonnet 4"
+                }
+            ]);
+            state
+                .db
+                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .expect("seed existing openclaw provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["baseUrl"] = Value::String("https://api.example.com/v1".to_string());
+            live_settings["models"][0]["name"] = Value::String("Claude Sonnet 4.1".to_string());
+            crate::openclaw_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live openclaw provider");
+
+            let updated = import_openclaw_providers_from_live(state)
+                .expect("import openclaw providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .expect("query updated openclaw provider")
+                .expect("openclaw provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["baseUrl"],
+                json!("https://api.example.com/v1")
+            );
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("Claude Sonnet 4.1")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_hermes_providers_from_live_updates_existing_provider_from_live() {
+        with_test_home(|state, _| {
+            let provider = hermes_provider("existing-hermes");
+            state
+                .db
+                .save_provider(AppType::Hermes.as_str(), &provider)
+                .expect("seed existing hermes provider");
+
+            let mut live_settings = provider.settings_config.clone();
+            live_settings["base_url"] = Value::String("https://api.hermes.example/v1".to_string());
+            live_settings["models"]["gpt-4o"]["name"] = Value::String("GPT-4o Updated".to_string());
+            crate::hermes_config::set_provider(&provider.id, live_settings)
+                .expect("seed edited live hermes provider");
+
+            let updated = import_hermes_providers_from_live(state)
+                .expect("import hermes providers from live");
+            assert_eq!(updated, 1);
+
+            let saved = state
+                .db
+                .get_provider_by_id(&provider.id, AppType::Hermes.as_str())
+                .expect("query updated hermes provider")
+                .expect("hermes provider should exist");
+            assert_eq!(saved.name, provider.name);
+            assert_eq!(
+                saved.settings_config["base_url"],
+                json!("https://api.hermes.example/v1")
+            );
+            // models are denormalized from YAML dict to UI-friendly array by
+            // get_providers(), so access by index rather than dict key
+            assert_eq!(
+                saved.settings_config["models"][0]["name"],
+                json!("GPT-4o Updated")
+            );
+            assert_eq!(saved.settings_config["models"][0]["id"], json!("gpt-4o"));
         });
     }
 
@@ -1195,6 +1994,72 @@ impl ProviderService {
             .live_config_managed = Some(managed);
     }
 
+    fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
+        let current_credentials = provider.resolve_usage_credentials(app_type);
+
+        let Some(usage_script) = provider
+            .meta
+            .as_mut()
+            .and_then(|meta| meta.usage_script.as_mut())
+        else {
+            return;
+        };
+
+        if usage_script.template_type.as_deref() == Some("token_plan") {
+            return;
+        }
+
+        if usage_script.api_key.as_deref().is_some_and(|api_key| {
+            Self::should_clear_usage_api_key_override(api_key, &current_credentials)
+        }) {
+            usage_script.api_key = None;
+        }
+
+        if usage_script.base_url.as_deref().is_some_and(|base_url| {
+            Self::should_clear_usage_base_url_override(base_url, &current_credentials)
+        }) {
+            usage_script.base_url = None;
+        }
+    }
+
+    fn should_clear_usage_api_key_override(
+        script_api_key: &str,
+        current_credentials: &(String, String),
+    ) -> bool {
+        let candidate = script_api_key.trim();
+        if candidate.is_empty() {
+            return true;
+        }
+
+        let matches_provider_key = |api_key: &str| {
+            let api_key = api_key.trim();
+            !api_key.is_empty() && api_key == candidate
+        };
+
+        matches_provider_key(&current_credentials.1)
+    }
+
+    fn should_clear_usage_base_url_override(
+        script_base_url: &str,
+        current_credentials: &(String, String),
+    ) -> bool {
+        let candidate = Self::normalize_usage_base_url_for_compare(script_base_url);
+        if candidate.is_empty() {
+            return true;
+        }
+
+        let matches_provider_base_url = |base_url: &str| {
+            let base_url = Self::normalize_usage_base_url_for_compare(base_url);
+            !base_url.is_empty() && base_url == candidate
+        };
+
+        matches_provider_base_url(&current_credentials.0)
+    }
+
+    fn normalize_usage_base_url_for_compare(base_url: &str) -> String {
+        base_url.trim().trim_end_matches('/').to_string()
+    }
+
     /// List all providers for an app type
     pub fn list(
         state: &AppState,
@@ -1231,6 +2096,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
@@ -1285,6 +2151,7 @@ impl ProviderService {
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
+        Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
             if !app_type.is_additive_mode() {
@@ -1453,20 +2320,41 @@ impl ProviderService {
                     .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
                 }
 
-                if matches!(app_type, AppType::Claude)
-                    && futures::executor::block_on(state.proxy_service.is_running())
-                {
-                    futures::executor::block_on(
-                        state
-                            .proxy_service
-                            .sync_claude_live_from_provider_while_proxy_active(&provider),
-                    )
-                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                if futures::executor::block_on(state.proxy_service.is_running()) {
+                    if matches!(app_type, AppType::Claude) {
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_claude_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| {
+                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
+                        })?;
+                    } else if live_taken_over && matches!(app_type, AppType::Codex) {
+                        // Codex model mappings are projected into a generated
+                        // model_catalog_json file. Refresh takeover-owned Live
+                        // immediately so adding/removing mappings cannot leave
+                        // the previous catalog pointer and capabilities active.
+                        futures::executor::block_on(
+                            state
+                                .proxy_service
+                                .sync_codex_live_from_provider_while_proxy_active(&provider),
+                        )
+                        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
+                    }
                 }
             } else {
                 write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // Sync MCP
-                McpService::sync_all_enabled(state)?;
+                // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
+                // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
+                // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
+                // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
+                // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+                if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                    log::warn!(
+                        "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
+                    );
+                }
             }
         }
 
@@ -1639,14 +2527,16 @@ impl ProviderService {
         // restore backup. Serialize them per app, then decide from the locked
         // current state so a just-started takeover cannot be overwritten by a
         // normal live write.
-        let _switch_guard =
-            if matches!(app_type, AppType::Claude | AppType::Codex | AppType::Gemini) {
-                Some(futures::executor::block_on(
-                    state.proxy_service.lock_switch_for_app(app_type.as_str()),
-                ))
-            } else {
-                None
-            };
+        let _switch_guard = if matches!(
+            app_type,
+            AppType::Claude | AppType::Codex | AppType::Gemini | AppType::GrokBuild
+        ) {
+            Some(futures::executor::block_on(
+                state.proxy_service.lock_switch_for_app(app_type.as_str()),
+            ))
+        } else {
+            None
+        };
 
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
@@ -1664,7 +2554,10 @@ impl ProviderService {
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
-        if should_hot_switch && _provider.category.as_deref() == Some("official") {
+        if should_hot_switch
+            && _provider.category.as_deref() == Some("official")
+            && !official_provider_supports_proxy_takeover(&app_type, _provider)
+        {
             return Err(AppError::localized(
                 "switch.official_blocked_by_proxy",
                 "代理接管模式下不能切换到官方供应商，使用代理访问官方 API 可能导致账号被封禁。请先关闭代理接管，或选择第三方供应商。",
@@ -1742,6 +2635,17 @@ impl ProviderService {
                     // Only backfill when switching to a different provider
                     if let Ok(live_config) = read_live_settings(app_type.clone()) {
                         if let Some(mut current_provider) = providers.get(&current_id).cloned() {
+                            // 切走前先把 live 里的可共享改动（含用户直接在应用内
+                            // 装插件/加 hook/改偏好）同步进通用配置片段，再做剥离回填。
+                            // 详见 sync_common_config_snippet_from_live 的文档。
+                            Self::sync_common_config_snippet_from_live(
+                                state,
+                                &app_type,
+                                &current_provider,
+                                &live_config,
+                                &mut result,
+                            );
+
                             current_provider.settings_config =
                                 strip_common_config_from_live_settings(
                                     state.db.as_ref(),
@@ -1829,8 +2733,16 @@ impl ProviderService {
             }
         }
 
-        // Sync MCP
-        McpService::sync_all_enabled(state)?;
+        // 切换重写了目标应用的 live，只重投影该应用的 MCP（Codex 的
+        // [mcp_servers] 与 live 同文件，整体替换后必须补回；其余应用的
+        // MCP 文件独立于 live，投影是幂等维护）。不用全量 sync_all_enabled：
+        // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）不该阻断切换。
+        // 走到这里 DB is_current 与 live 都已落盘，切换事实上已成功；
+        // 投影失败上抛会让前端报"切换失败"制造分裂假象，故降级为警告
+        // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+        if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+            log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+        }
 
         Ok(result)
     }
@@ -1962,6 +2874,103 @@ impl ProviderService {
         Self::migrate_legacy_common_config_usage(state, app_type, &snippet)
     }
 
+    /// 切走某供应商前，把它 live 配置里的可共享部分重新提取并**整体替换**到
+    /// 通用配置片段，使在 live 应用里直接做的改动不会因切换而丢失。
+    ///
+    /// 采用"整体重提取 + 替换"而非"只合并新增"，是为了同时覆盖三种情况：
+    /// - **新增**：用户直接在应用里装了插件、加了 hook、改了 env/主题/权限等共享
+    ///   偏好，被捕获进通用配置，切到别的供应商也带得过去；
+    /// - **删除**：被删掉的键不在新提取结果里，于是从片段里消失、下次切换不会被
+    ///   重新注入——否则会出现"插件怎么删也删不掉"的反直觉 bug；
+    /// - **密钥安全**：提取器已剥掉 auth / model / endpoint，密钥永不进共享片段。
+    ///
+    /// 之所以"整体替换"是安全的：每次写 live 都会把当前片段合并进去，所以切走时
+    /// 读到的 live 一定是"片段 + 本地改动"的超集，重提取只会丢掉用户真正删掉的键，
+    /// 不会误删其它供应商共享的内容。
+    ///
+    /// **作用域**：Claude + Codex。Codex 提取器（`extract_codex_common_config`）
+    /// 已剥离全部供应商专属与 cc-switch 注入内容：`model` / `model_provider` /
+    /// 顶层 `base_url` / 整张 `model_providers` 表（含端点与统一会话桶）、
+    /// `mcp_servers`（SSOT 在 DB 表）、顶层 `experimental_bearer_token`
+    /// fallback、`model_catalog_json`、`web_search = "disabled"` 哨兵——密钥与
+    /// 注入产物不会进共享片段。Gemini 暂未纳入，如需支持应单独验证后再加。
+    ///
+    /// 仅对**显式勾选"写入通用配置"**（`meta.common_config_enabled == Some(true)`）的
+    /// 供应商生效；用户**显式清空**过片段（`_cleared`）时跳过，避免把用户主动清掉的
+    /// 配置又塞回来。所有失败均为非致命，只记 warning，绝不阻断切换。
+    fn sync_common_config_snippet_from_live(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+        live_config: &Value,
+        result: &mut SwitchResult,
+    ) {
+        // 作用域限定 Claude + Codex（见函数文档）。
+        if !matches!(app_type, AppType::Claude | AppType::Codex) {
+            return;
+        }
+
+        let opted_in = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.common_config_enabled)
+            == Some(true);
+        if !opted_in {
+            return;
+        }
+
+        match state.db.is_config_snippet_cleared(app_type.as_str()) {
+            Ok(true) => return, // 用户显式清空过通用配置，尊重其选择，不再自动塞回
+            Ok(false) => {}
+            Err(err) => {
+                log::warn!(
+                    "Failed to read common config cleared flag for {}: {err}",
+                    app_type.as_str()
+                );
+                return;
+            }
+        }
+
+        let new_snippet = match Self::extract_common_config_snippet_from_settings(
+            app_type.clone(),
+            live_config,
+        ) {
+            Ok(snippet) => snippet,
+            Err(err) => {
+                log::warn!(
+                    "Failed to extract common config from live for {} provider '{}': {err}",
+                    app_type.as_str(),
+                    provider.id
+                );
+                return;
+            }
+        };
+
+        // 未变化则跳过，避免无谓写库（不切 live 配置时这是常态路径）。
+        let current = state
+            .db
+            .get_config_snippet(app_type.as_str())
+            .ok()
+            .flatten();
+        if current.as_deref() == Some(new_snippet.as_str()) {
+            return;
+        }
+
+        if let Err(err) = state
+            .db
+            .set_config_snippet(app_type.as_str(), Some(new_snippet))
+        {
+            log::warn!(
+                "Failed to persist synced common config for {} provider '{}': {err}",
+                app_type.as_str(),
+                provider.id
+            );
+            result
+                .warnings
+                .push(format!("common_config_sync_failed:{}", provider.id));
+        }
+    }
+
     /// Extract common config snippet from current provider
     ///
     /// Extracts the current provider's configuration and removes provider-specific fields
@@ -1986,6 +2995,7 @@ impl ProviderService {
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(&provider.settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(&provider.settings_config),
+            AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
@@ -2002,22 +3012,70 @@ impl ProviderService {
             AppType::ClaudeDesktop => Ok(String::new()),
             AppType::Codex => Self::extract_codex_common_config(settings_config),
             AppType::Gemini => Self::extract_gemini_common_config(settings_config),
+            AppType::GrokBuild => Ok(String::new()),
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
         }
     }
 
+    /// 判断一个 env / 顶层配置键名是否为凭据/机密：凡命中一律不得写入共享的
+    /// 通用配置片段。**故意从严**——多剥一个非机密键只是它不被共享（可恢复的小
+    /// 不便），漏剥一个凭据则会把密钥注入到每个供应商（不可恢复的泄漏）。因此用
+    /// 模式匹配覆盖整类，而非枚举具体名字（枚举永远会漏掉下一个 `*_API_KEY`）。
+    ///
+    /// 覆盖：Anthropic / OpenRouter / Google / OpenAI / Gemini 等 `*_API_KEY`
+    /// （Claude provider 的凭据见 `Provider::resolve_usage_credentials`，确实支持
+    /// `OPENROUTER_API_KEY` / `GOOGLE_API_KEY` 等回退）、各类 `*_AUTH_TOKEN` /
+    /// 单数 `*_TOKEN`、AWS Bedrock / Vertex 凭据、以及通用 secret / password /
+    /// 私钥命名。
+    fn is_sensitive_config_key(name: &str) -> bool {
+        let upper = name.to_ascii_uppercase();
+
+        // 单数 `_TOKEN` 命中 AWS_SESSION_TOKEN 等，但**不**误伤复数 `_TOKENS`
+        // （CLAUDE_CODE_MAX_OUTPUT_TOKENS / MAX_THINKING_TOKENS 是正常可共享配置）。
+        const SENSITIVE_SUFFIXES: &[&str] = &[
+            "_API_KEY",
+            "_APIKEY",
+            "_AUTH_TOKEN",
+            "_TOKEN",
+            "_ACCESS_KEY",
+            "_ACCESS_KEY_ID",
+            "_KEY_ID",
+            "_PRIVATE_KEY",
+        ];
+        const SENSITIVE_EXACT: &[&str] = &[
+            "APIKEY",
+            "API_KEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "CREDENTIALS",
+        ];
+        // contains：覆盖 AWS_SECRET_ACCESS_KEY / *_CLIENT_SECRET /
+        // GOOGLE_APPLICATION_CREDENTIALS / AWS_BEARER_TOKEN_BEDROCK 等变体。
+        const SENSITIVE_CONTAINS: &[&str] = &[
+            "SECRET",
+            "PASSWORD",
+            "PASSWD",
+            "CREDENTIAL",
+            "PRIVATE_KEY",
+            "BEARER_TOKEN",
+        ];
+
+        SENSITIVE_EXACT.contains(&upper.as_str())
+            || SENSITIVE_SUFFIXES.iter().any(|s| upper.ends_with(s))
+            || SENSITIVE_CONTAINS.iter().any(|c| upper.contains(c))
+    }
+
     /// Extract common config for Claude (JSON format)
     fn extract_claude_common_config(settings: &Value) -> Result<String, AppError> {
         let mut config = settings.clone();
 
-        // Fields to exclude from common config
-        const ENV_EXCLUDES: &[&str] = &[
-            // Auth
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            // Models and Claude Code model-menu display names
+        // 供应商专属的**非机密**字段（模型 + 端点），不应共享。凭据/机密不在此列举，
+        // 改由 `is_sensitive_config_key`（模式匹配）统一剥离，新供应商的 `*_API_KEY`
+        // 等无需再手工补名单即可被覆盖。
+        const ENV_PROVIDER_SPECIFIC_EXCLUDES: &[&str] = &[
             "ANTHROPIC_MODEL",
             "ANTHROPIC_REASONING_MODEL", // legacy: 已废弃，但旧配置可能残留
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -2026,7 +3084,16 @@ impl ProviderService {
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            // Endpoint
+            // Fable 是 v3.16.3 新增的第四档模型映射，与 haiku/sonnet/opus 同属供应商专属，
+            // 不得进入通用配置片段，否则会污染其它供应商（issue #4272）。
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            // Context limits follow the actual upstream model. Sharing these
+            // across providers can cap GPT/Kimi to the wrong window and make
+            // Claude Code compact too early or miss the upstream limit.
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
             "ANTHROPIC_BASE_URL",
         ];
 
@@ -2037,10 +3104,18 @@ impl ProviderService {
             "smallFastModel",
         ];
 
-        // Remove env fields
+        // Remove env fields: provider-specific (models/endpoint) + 任何凭据键。
         if let Some(env) = config.get_mut("env").and_then(|v| v.as_object_mut()) {
-            for key in ENV_EXCLUDES {
+            let sensitive: Vec<String> = env
+                .keys()
+                .filter(|k| Self::is_sensitive_config_key(k))
+                .cloned()
+                .collect();
+            for key in ENV_PROVIDER_SPECIFIC_EXCLUDES {
                 env.remove(*key);
+            }
+            for key in &sensitive {
+                env.remove(key);
             }
             // If env is empty after removal, remove the env object itself
             if env.is_empty() {
@@ -2048,10 +3123,19 @@ impl ProviderService {
             }
         }
 
-        // Remove top-level fields
+        // Remove top-level fields: legacy model fields + 任何凭据键
+        // （例如非标准的顶层 apiKey / api_key / *_TOKEN）。
         if let Some(obj) = config.as_object_mut() {
+            let sensitive: Vec<String> = obj
+                .keys()
+                .filter(|k| Self::is_sensitive_config_key(k))
+                .cloned()
+                .collect();
             for key in TOP_LEVEL_EXCLUDES {
                 obj.remove(*key);
+            }
+            for key in &sensitive {
+                obj.remove(key);
             }
         }
 
@@ -2086,9 +3170,47 @@ impl ProviderService {
         root.remove("model_provider");
         // Legacy/alt formats might use a top-level base_url.
         root.remove("base_url");
+        // wire_api 与 base_url 同属供应商路由语义：无 model_provider 时
+        // update_codex_toml_field / 前端 setCodexWireApi 都会把它落在顶层，
+        // 进了片段会改写其它供应商的协议选择（chat vs responses）。
+        root.remove("wire_api");
 
         // Remove entire model_providers table (provider-specific configuration)
         root.remove("model_providers");
+
+        // MCP 服务器归 DB mcp_servers 表所有：进了共享片段会绕过按应用的
+        // 启用状态被合并进所有勾选通用配置的供应商，且在通用配置编辑框里
+        // 显示为一份"重复"的 MCP 配置。
+        root.remove("mcp_servers");
+        // 历史错误格式 [mcp.servers] 一并剥离（与 strip_codex_mcp_servers_from_settings
+        // 一致）：sync_all_enabled 只管理 [mcp_servers.*]，legacy 形态一旦进了
+        // 片段就会被合并进所有供应商，且没有任何同步路径能清掉这个孤儿。
+        if let Some(mcp_tbl) = root
+            .get_mut("mcp")
+            .and_then(|item| item.as_table_like_mut())
+        {
+            mcp_tbl.remove("servers");
+            if mcp_tbl.is_empty() {
+                root.remove("mcp");
+            }
+        }
+
+        // cc-switch 写 live 时注入的产物一律不进共享片段：
+        // - experimental_bearer_token 正常写在 [model_providers.<id>] 内（上面
+        //   整表已剥），但无活跃路由 / 内建保留 id / 路由表缺失三种 fallback
+        //   会落在顶层——不剥等于把 API 密钥写进共享片段。
+        root.remove("experimental_bearer_token");
+        // - model_catalog_json 指向按供应商生成的 catalog 投影文件（DB 为 SSOT）。
+        root.remove("model_catalog_json");
+        // - web_search 只剥 cc-switch 注入的 "disabled" 哨兵；用户手设的其它值
+        //   属于可共享偏好，保留。
+        if root
+            .get(crate::codex_config::CODEX_WEB_SEARCH_FIELD)
+            .and_then(|item| item.as_str())
+            == Some(crate::codex_config::CODEX_WEB_SEARCH_DISABLED)
+        {
+            root.remove(crate::codex_config::CODEX_WEB_SEARCH_FIELD);
+        }
 
         // Clean up multiple empty lines (keep at most one blank line).
         let mut cleaned = String::new();
@@ -2361,6 +3483,26 @@ impl ProviderService {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
             }
+            AppType::GrokBuild => {
+                let settings = provider.settings_config.as_object().ok_or_else(|| {
+                    AppError::localized(
+                        "provider.grokbuild.settings.not_object",
+                        "Grok Build 配置必须是 JSON 对象",
+                        "Grok Build configuration must be a JSON object",
+                    )
+                })?;
+                let config = settings
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grokbuild.config.missing",
+                            "Grok Build 配置缺少 config 字段",
+                            "Grok Build configuration is missing the config field",
+                        )
+                    })?;
+                crate::grok_config::validate_config_toml(config)?;
+            }
             AppType::OpenCode => {
                 // OpenCode uses a different config structure: { npm, options, models }
                 // Basic validation - must be an object
@@ -2455,6 +3597,28 @@ impl ProviderService {
                     })?
                     .to_string();
 
+                Ok((api_key, base_url))
+            }
+            AppType::GrokBuild => {
+                let config_toml = provider
+                    .settings_config
+                    .get("config")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grokbuild.config.missing",
+                            "Grok Build 配置缺少 config 字段",
+                            "Grok Build configuration is missing the config field",
+                        )
+                    })?;
+                let (base_url, api_key) = crate::grok_config::extract_credentials(config_toml)
+                    .ok_or_else(|| {
+                        AppError::localized(
+                            "provider.grokbuild.credentials.missing",
+                            "Grok Build 配置缺少 Base URL 或 API Key",
+                            "Grok Build configuration is missing the base URL or API key",
+                        )
+                    })?;
                 Ok((api_key, base_url))
             }
             AppType::ClaudeDesktop => {

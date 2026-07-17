@@ -4,8 +4,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_settings_path, import_default_config_test_hook, AppError,
-    AppType, McpApps, McpServer, McpService, MultiAppConfig,
+    get_claude_mcp_path, get_claude_mcp_status, get_claude_settings_path,
+    import_default_config_test_hook, read_claude_mcp_config, update_settings, AppError,
+    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig,
 };
 
 #[path = "support.rs"]
@@ -226,6 +227,7 @@ command = "echo"
                 claude: false,
                 codex: true,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -286,6 +288,56 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
     );
 }
 
+/// "从应用导入"是 best-effort：单个应用的坏配置文件不阻断其余应用的
+/// 导入，但失败必须聚合上报——历史实现逐应用 `unwrap_or(0)` 吞错，
+/// 坏 config.toml 只会表现为"导入成功 0 个"，用户无从得知出了什么问题。
+#[test]
+fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
+    use support::create_test_state;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // 好的 ~/.claude.json：应正常导入
+    let claude_json = json!({
+        "mcpServers": {
+            "alpha": { "type": "stdio", "command": "echo" }
+        }
+    });
+    fs::write(
+        get_claude_mcp_path(),
+        serde_json::to_string_pretty(&claude_json).expect("serialize claude mcp"),
+    )
+    .expect("seed ~/.claude.json");
+
+    // 坏的 ~/.codex/config.toml：解析必然失败
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(codex_dir.join("config.toml"), "not = = valid toml")
+        .expect("seed broken codex config");
+
+    let state = create_test_state().expect("create test state");
+
+    let err = McpService::import_from_all_apps(&state)
+        .expect_err("broken codex config must surface, not be swallowed as zero imports");
+    let message = err.to_string();
+    assert!(
+        message.contains("codex"),
+        "aggregated error should name the failing app, got: {message}"
+    );
+
+    // Codex 的失败不阻断 Claude：alpha 应已入库并启用 Claude
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers
+        .get("alpha")
+        .expect("claude server imported despite codex failure");
+    assert!(
+        entry.apps.claude,
+        "imported server should have Claude app enabled"
+    );
+}
+
 #[test]
 fn set_mcp_enabled_for_codex_writes_live_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -320,6 +372,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 claude: false,
                 codex: false, // 初始未启用
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -385,6 +438,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -430,6 +484,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -464,6 +519,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -597,6 +653,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -652,6 +709,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -670,6 +728,277 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     assert!(
         !home.join(".claude.json").exists(),
         "~/.claude.json should still not exist after skipped sync"
+    );
+}
+
+#[test]
+fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).expect("create explicit default claude dir");
+
+    update_settings(AppSettings {
+        claude_config_dir: Some(claude_dir.to_string_lossy().to_string()),
+        ..AppSettings::default()
+    })
+    .expect("set explicit default claude config dir");
+
+    assert_eq!(
+        get_claude_mcp_path(),
+        home.join(".claude.json"),
+        "explicit default Claude dir should keep Claude Code's split MCP path"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "claude-default".to_string(),
+            name: "Claude Default".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                grokbuild: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("sync default Claude MCP");
+
+    assert!(
+        home.join(".claude.json").exists(),
+        "default split MCP file should be written at home/.claude.json"
+    );
+    assert!(
+        !claude_dir.join(".claude.json").exists(),
+        "explicit default dir should not use nested .claude/.claude.json"
+    );
+}
+
+#[test]
+fn custom_claude_dir_writes_mcp_inside_config_dir() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let custom_dir = home.join("profiles").join(".claude");
+    fs::create_dir_all(&custom_dir).expect("create custom claude dir");
+
+    update_settings(AppSettings {
+        claude_config_dir: Some(custom_dir.to_string_lossy().to_string()),
+        ..AppSettings::default()
+    })
+    .expect("set custom claude config dir");
+
+    let expected_mcp_path = custom_dir.join(".claude.json");
+    assert_eq!(
+        get_claude_mcp_path(),
+        expected_mcp_path,
+        "custom Claude dir should keep MCP state inside the config dir"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "claude-custom".to_string(),
+            name: "Claude Custom".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "echo"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                grokbuild: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("sync custom Claude MCP");
+
+    assert!(
+        expected_mcp_path.exists(),
+        "custom Claude MCP file should be written inside custom dir"
+    );
+    assert!(
+        !home.join("profiles").join(".claude.json").exists(),
+        "custom Claude dir should not write sibling .claude.json"
+    );
+}
+
+#[test]
+fn custom_claude_dir_sync_does_not_copy_default_profile() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let home_mcp_path = home.join(".claude.json");
+    let default_profile = json!({
+        "hasCompletedOnboarding": true,
+        "projects": {
+            "/home-project": {
+                "hasTrustDialogAccepted": true
+            }
+        },
+        "mcpServers": {
+            "home-only": {
+                "type": "stdio",
+                "command": "home-command"
+            }
+        },
+        "profileSentinel": "home-profile"
+    });
+    let default_profile_text =
+        serde_json::to_string_pretty(&default_profile).expect("serialize default profile");
+    fs::write(&home_mcp_path, &default_profile_text).expect("seed default Claude profile");
+
+    let custom_dir = home.join("profiles").join("work").join(".claude");
+    fs::create_dir_all(&custom_dir).expect("create custom claude dir");
+    update_settings(AppSettings {
+        claude_config_dir: Some(custom_dir.to_string_lossy().to_string()),
+        ..AppSettings::default()
+    })
+    .expect("set custom claude config dir");
+
+    let expected_mcp_path = custom_dir.join(".claude.json");
+    assert_eq!(
+        get_claude_mcp_path(),
+        expected_mcp_path,
+        "custom Claude dir should use nested .claude.json"
+    );
+    assert!(
+        !expected_mcp_path.exists(),
+        "custom profile should start without a live MCP file"
+    );
+
+    let state = create_test_state().expect("create test state");
+    McpService::upsert_server(
+        &state,
+        McpServer {
+            id: "custom-only".to_string(),
+            name: "Custom Only".to_string(),
+            server: json!({
+                "type": "stdio",
+                "command": "custom-command"
+            }),
+            apps: McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                grokbuild: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: Vec::new(),
+        },
+    )
+    .expect("sync custom Claude MCP");
+
+    let text = fs::read_to_string(&expected_mcp_path).expect("read custom Claude MCP");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("parse custom Claude MCP");
+    let servers = value
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .expect("custom profile should contain mcpServers");
+    assert!(
+        servers.contains_key("custom-only"),
+        "custom profile should contain DB-managed Claude server"
+    );
+    assert!(
+        !servers.contains_key("home-only"),
+        "custom profile should not inherit default profile MCP servers"
+    );
+    assert!(
+        value.get("hasCompletedOnboarding").is_none(),
+        "custom profile should not inherit onboarding state"
+    );
+    assert!(
+        value.get("projects").is_none(),
+        "custom profile should not inherit project trust state"
+    );
+    assert!(
+        value.get("profileSentinel").is_none(),
+        "custom profile should not inherit unrelated default profile fields"
+    );
+    assert_eq!(
+        fs::read_to_string(&home_mcp_path).expect("reread default Claude profile"),
+        default_profile_text,
+        "default Claude profile should remain unchanged"
+    );
+}
+
+#[test]
+fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let home_mcp_path = home.join(".claude.json");
+    fs::write(
+        &home_mcp_path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "home-only": {
+                    "type": "stdio",
+                    "command": "home-command"
+                }
+            },
+            "profileSentinel": "home-profile"
+        }))
+        .expect("serialize default profile"),
+    )
+    .expect("seed default Claude profile");
+
+    let custom_dir = home.join("profiles").join("work").join(".claude");
+    fs::create_dir_all(&custom_dir).expect("create custom claude dir");
+    update_settings(AppSettings {
+        claude_config_dir: Some(custom_dir.to_string_lossy().to_string()),
+        ..AppSettings::default()
+    })
+    .expect("set custom claude config dir");
+
+    let expected_mcp_path = custom_dir.join(".claude.json");
+    assert!(
+        !expected_mcp_path.exists(),
+        "custom profile should start without a live MCP file"
+    );
+
+    let status =
+        futures::executor::block_on(get_claude_mcp_status()).expect("get Claude MCP status");
+    assert_eq!(
+        status.user_config_path,
+        expected_mcp_path.to_string_lossy(),
+        "status should report the custom profile MCP path"
+    );
+    assert!(
+        !status.user_config_exists,
+        "status should report missing custom profile MCP file"
+    );
+    let text =
+        futures::executor::block_on(read_claude_mcp_config()).expect("read Claude MCP config");
+    assert_eq!(text, None, "missing custom profile should read as None");
+    assert!(
+        !expected_mcp_path.exists(),
+        "read-only MCP queries should not copy or create the custom profile"
     );
 }
 
@@ -713,6 +1042,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -735,6 +1065,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },

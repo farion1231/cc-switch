@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
+import { Play, Wand2, Eye, EyeOff, Save, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,10 +8,13 @@ import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
+import { parseGrokBuildConfig } from "@/utils/grokBuildConfig";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
@@ -29,6 +32,16 @@ import {
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
+
+/**
+ * 火山引擎账号级 AccessKey 的密钥管理页（IAM）。
+ * 用量查询走控制面 OpenAPI，需要 AK/SK 签名，与推理 API Key 是两套凭据，
+ * 直接给用户一个可点击的直达地址，省得在控制台里翻菜单。
+ */
+const VOLCENGINE_KEY_CONSOLE_URL =
+  "https://console.volcengine.com/iam/keymanage";
+// 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
+const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
 
 interface UsageScriptModalProps {
   provider: Provider;
@@ -196,6 +209,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const queryClient = useQueryClient();
   const { data: settingsData } = useSettingsQuery();
   const [showUsageConfirm, setShowUsageConfirm] = useState(false);
+  const isDarkMode = useDarkMode();
 
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
@@ -248,6 +262,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           return {
             apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
             baseUrl: env.GOOGLE_GEMINI_BASE_URL,
+          };
+        } else if (appId === "grokbuild") {
+          const grokConfig = parseGrokBuildConfig(
+            (config as any).config,
+            provider.name,
+          );
+          return {
+            apiKey: grokConfig.apiKey,
+            baseUrl: grokConfig.baseUrl,
           };
         } else if (appId === "hermes") {
           // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）
@@ -538,8 +561,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // Coding Plan 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN) {
-        // ZenMux 使用用户在脚本配置中手动填入的 API Key 和 Base URL
+        // ZenMux 手填 baseUrl/apiKey；火山是 native 供应商，baseUrl 走推理配置，
+        // 另用账号 AK/SK 签名查询控制面用量。
         const isZenMux = script.codingPlanProvider === "zenmux";
+        const isVolcengine = script.codingPlanProvider === "volcengine";
+        const isZhipuTeam = script.codingPlanProvider === "zhipu_team";
         const baseUrl = isZenMux
           ? (script.baseUrl ?? "")
           : (providerCredentials.baseUrl ?? "");
@@ -547,7 +573,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ? (script.apiKey ?? "")
           : (providerCredentials.apiKey ?? "");
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const quota = await subscriptionApi.getCodingPlanQuota(baseUrl, apiKey);
+        const quota = await subscriptionApi.getCodingPlanQuota(
+          baseUrl,
+          apiKey,
+          isVolcengine ? script.accessKeyId : undefined,
+          isVolcengine ? script.secretAccessKey : undefined,
+          isZhipuTeam ? script.codingPlanProvider : undefined,
+          isZhipuTeam ? script.teamOrganizationId : undefined,
+          isZhipuTeam ? script.teamProjectId : undefined,
+        );
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -646,8 +680,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         );
       }
     } catch (error: any) {
+      // 后端命令 Err(String) 时 invoke 以裸字符串 reject（如瞬时网络失败），
+      // 直接读 .message 会得到 undefined。
       toast.error(
-        `${t("usageScript.testFailed")}: ${error?.message || t("common.unknown")}`,
+        `${t("usageScript.testFailed")}: ${extractErrorMessage(error) || t("common.unknown")}`,
         {
           duration: 5000,
         },
@@ -726,8 +762,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           providerCredentials.baseUrl,
         );
         const provider = script.codingPlanProvider || autoDetected || "kimi";
-        // ZenMux 允许手动填写 API Key 和 Base URL，不清除
+        // ZenMux 保留手填 baseUrl/apiKey；火山保留账号 AK/SK；智谱团队保留组织/项目 ID；其余清除。
         const isZenMux = provider === "zenmux";
+        const isVolcengine = provider === "volcengine";
+        const isZhipuTeam = provider === "zhipu_team";
         setScript({
           ...script,
           code: "",
@@ -735,6 +773,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           baseUrl: isZenMux ? script.baseUrl : undefined,
           accessToken: undefined,
           userId: undefined,
+          accessKeyId: isVolcengine ? script.accessKeyId : undefined,
+          secretAccessKey: isVolcengine ? script.secretAccessKey : undefined,
+          teamOrganizationId: isZhipuTeam
+            ? script.teamOrganizationId
+            : undefined,
+          teamProjectId: isZhipuTeam ? script.teamProjectId : undefined,
           codingPlanProvider: provider,
         });
       } else if (presetName === TEMPLATE_TYPES.BALANCE) {
@@ -1246,6 +1290,166 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               </div>
             )}
 
+            {/* 火山方舟：控制面用量查询需账号 AK/SK（与推理 Key 是两套凭据） */}
+            {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+              script.codingPlanProvider === "volcengine" && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      {t("usageScript.credentialsConfig")}
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {t("usageScript.volcengineAkSkHint")}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {t("usageScript.volcengineKeyConsoleLink")}{" "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          settingsApi.openExternal(VOLCENGINE_KEY_CONSOLE_URL)
+                        }
+                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                      >
+                        {VOLCENGINE_KEY_CONSOLE_URL}
+                        <ExternalLink size={12} className="shrink-0" />
+                      </button>
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-volcengine-ak">
+                        {t("usageScript.accessKeyId")}
+                      </Label>
+                      <Input
+                        id="usage-volcengine-ak"
+                        type="text"
+                        value={script.accessKeyId || ""}
+                        onChange={(e) =>
+                          setScript({
+                            ...script,
+                            accessKeyId: e.target.value,
+                          })
+                        }
+                        placeholder="AKLT..."
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-volcengine-sk">
+                        {t("usageScript.secretAccessKey")}
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="usage-volcengine-sk"
+                          type={showApiKey ? "text" : "password"}
+                          value={script.secretAccessKey || ""}
+                          onChange={(e) =>
+                            setScript({
+                              ...script,
+                              secretAccessKey: e.target.value,
+                            })
+                          }
+                          placeholder="••••••••"
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                        {script.secretAccessKey && (
+                          <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                            aria-label={
+                              showApiKey
+                                ? t("apiKeyInput.hide")
+                                : t("apiKeyInput.show")
+                            }
+                          >
+                            {showApiKey ? (
+                              <EyeOff size={16} />
+                            ) : (
+                              <Eye size={16} />
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            {/* 智谱团队套餐：需组织 ID + 项目 ID（api_key 沿用供应商推理凭据） */}
+            {selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
+              script.codingPlanProvider === "zhipu_team" && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">
+                      {t("usageScript.credentialsConfig")}
+                    </h4>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {t("usageScript.zhipuTeamHint")}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {t("usageScript.zhipuTeamConsoleLink")}{" "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          settingsApi.openExternal(ZHIPU_TEAM_USAGE_URL)
+                        }
+                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                      >
+                        {ZHIPU_TEAM_USAGE_URL}
+                        <ExternalLink size={12} className="shrink-0" />
+                      </button>
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-zhipu-team-org">
+                        {t("usageScript.organizationId")}
+                      </Label>
+                      <Input
+                        id="usage-zhipu-team-org"
+                        type="text"
+                        value={script.teamOrganizationId || ""}
+                        onChange={(e) =>
+                          setScript({
+                            ...script,
+                            teamOrganizationId: e.target.value,
+                          })
+                        }
+                        placeholder={t("usageScript.organizationIdPlaceholder")}
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="usage-zhipu-team-project">
+                        {t("usageScript.projectId")}
+                      </Label>
+                      <Input
+                        id="usage-zhipu-team-project"
+                        type="text"
+                        value={script.teamProjectId || ""}
+                        onChange={(e) =>
+                          setScript({
+                            ...script,
+                            teamProjectId: e.target.value,
+                          })
+                        }
+                        placeholder={t("usageScript.projectIdPlaceholder")}
+                        autoComplete="off"
+                        className="border-white/10"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
             {/* 通用配置（始终显示） */}
             <div className="grid gap-4 md:grid-cols-2 pt-4 border-t border-white/10">
               {/* 超时时间 */}
@@ -1333,6 +1537,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 height={480}
                 language="javascript"
                 showMinimap={false}
+                darkMode={isDarkMode}
               />
             </div>
           )}

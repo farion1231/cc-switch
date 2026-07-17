@@ -4,7 +4,7 @@
 //! 复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
-    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_WEEKLY_LIMIT,
+    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,6 +17,9 @@ enum CodingPlanProvider {
     MiniMaxCn,
     MiniMaxEn,
     ZenMux,
+    /// 火山方舟 Agent Plan / Coding Plan（base_url 形如
+    /// `https://ark.cn-beijing.volces.com/api/coding[/v3]`）。
+    Volcengine,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -33,6 +36,10 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::MiniMaxEn)
     } else if url.contains("zenmux") {
         Some(CodingPlanProvider::ZenMux)
+    } else if url.contains("volces.com/api/coding") {
+        // 仅匹配 Coding/Agent Plan 入口；DouBaoSeed 按量付费走 /api/v3 与
+        // /api/compatible，没有套餐额度，不在此命中。
+        Some(CodingPlanProvider::Volcengine)
     } else {
         None
     }
@@ -59,6 +66,10 @@ fn extract_reset_time(value: &serde_json::Value) -> Option<String> {
         return Some(s.to_string());
     }
     if let Some(n) = value.as_i64() {
+        // 0/负时间戳（如火山 session 无活跃窗口回 -1）视为无重置时间
+        if n <= 0 {
+            return None;
+        }
         // 区分秒和毫秒：秒级时间戳 < 1e12，毫秒 >= 1e12
         let ms = if n < 1_000_000_000_000 { n * 1000 } else { n };
         return millis_to_iso8601(ms);
@@ -88,7 +99,7 @@ fn make_error(msg: String) -> SubscriptionQuota {
 
 // ── Kimi For Coding ─────────────────────────────────────────
 
-async fn query_kimi(api_key: &str) -> SubscriptionQuota {
+async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -101,12 +112,12 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota {
+        return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
             credential_status: CredentialStatus::Expired,
             credential_message: Some("Invalid API key".to_string()),
@@ -115,17 +126,23 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
             extra_usage: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
-        };
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     let mut tiers = Vec::new();
@@ -176,7 +193,7 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
         });
     }
 
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -185,7 +202,7 @@ async fn query_kimi(api_key: &str) -> SubscriptionQuota {
         extra_usage: None,
         error: None,
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── 智谱 GLM ────────────────────────────────────────────────
@@ -296,7 +313,7 @@ fn zhipu_quota_base(base_url: &str) -> &'static str {
     }
 }
 
-async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
+async fn query_zhipu(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
     let url = format!(
         "{}/api/monitor/usage/quota/limit",
@@ -314,12 +331,12 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota {
+        return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
             credential_status: CredentialStatus::Expired,
             credential_message: Some("Invalid API key".to_string()),
@@ -328,19 +345,32 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
             extra_usage: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
-        };
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
+    Ok(zhipu_quota_from_body(&body))
+}
+
+/// 解析智谱额度响应体（个人版与团队版共用同一 shape）。
+/// 仅在 HTTP 成功、body 已完整读取并解析为 JSON 后调用——本函数不做任何网络 IO，
+/// 故无瞬时失败通道，确定性失败直接落进 `Ok(success:false)`。
+fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
     // 检查业务级别错误
     if body.get("success").and_then(|v| v.as_bool()) == Some(false) {
         let msg = body
@@ -377,7 +407,7 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> SubscriptionQuota {
 
 // ── MiniMax ─────────────────────────────────────────────────
 
-async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
+async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     let api_domain = if is_cn {
@@ -397,12 +427,12 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota {
+        return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
             credential_status: CredentialStatus::Expired,
             credential_message: Some("Invalid API key".to_string()),
@@ -411,17 +441,23 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
             extra_usage: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
-        };
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     // 检查业务级别错误
@@ -435,14 +471,14 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
                 .get("status_msg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Unknown error");
-            return make_error(format!("API error (code {status_code}): {msg}"));
+            return Ok(make_error(format!("API error (code {status_code}): {msg}")));
         }
     }
 
     // 提取纯函数便于无 mock 单元测试;新接口直接给"剩余百分比",反转为已用百分比
     let tiers = parse_minimax_tiers(&body);
 
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: None,
@@ -451,12 +487,12 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> SubscriptionQuota {
         extra_usage: None,
         error: None,
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 // ── ZenMux ──────────────────────────────────────────────────
 
-async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
+async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
     let resp = client
@@ -469,12 +505,12 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
 
     let resp = match resp {
         Ok(r) => r,
-        Err(e) => return make_error(format!("Network error: {e}")),
+        Err(e) => return Err(format!("Network error: {e}")),
     };
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return SubscriptionQuota {
+        return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
             credential_status: CredentialStatus::Expired,
             credential_message: Some("Invalid API key".to_string()),
@@ -483,17 +519,23 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
             extra_usage: None,
             error: Some(format!("Authentication failed (HTTP {status})")),
             queried_at: Some(now_millis()),
-        };
+        });
     }
 
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return make_error(format!("API error (HTTP {status}): {body}"));
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
     }
 
-    let body: serde_json::Value = match resp.json().await {
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
         Ok(v) => v,
-        Err(e) => return make_error(format!("Failed to parse response: {e}")),
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
     };
 
     // 检查业务级别错误
@@ -502,12 +544,12 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return make_error(format!("API error: {msg}"));
+        return Ok(make_error(format!("API error: {msg}")));
     }
 
     let data = match body.get("data") {
         Some(d) => d,
-        None => return make_error("Missing 'data' field in response".to_string()),
+        None => return Ok(make_error("Missing 'data' field in response".to_string())),
     };
 
     let mut tiers = Vec::new();
@@ -570,7 +612,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
         String::new()
     };
 
-    SubscriptionQuota {
+    Ok(SubscriptionQuota {
         tool: "coding_plan".to_string(),
         credential_status: CredentialStatus::Valid,
         credential_message: if plan_info.is_empty() {
@@ -583,7 +625,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> SubscriptionQuota {
         extra_usage: None,
         error: None,
         queried_at: Some(now_millis()),
-    }
+    })
 }
 
 /// 从 `/coding_plan/remains` 响应中解析 MiniMax 编程套餐的额度 tier。
@@ -652,44 +694,632 @@ fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     tiers
 }
 
+// ── 火山方舟 Agent Plan / Coding Plan ───────────────────────
+//
+// 与 Kimi/MiniMax（数据面 Bearer 余额接口）不同，火山用量接口是**控制面
+// OpenAPI**：统一网关 `open.volcengineapi.com`（**不是**数据面推理域名
+// `ark.cn-beijing.volces.com`），形如
+// `POST https://open.volcengineapi.com/?Action=...&Version=2024-01-01&Region=cn-beijing`，
+// **强制火山引擎签名 V4（AK/SK）**——实测复用推理 Bearer Key 会被网关以
+// `400 InvalidAuthorization` 拒绝（格式层拒绝，非权限问题）。因此用户需在用量查询
+// 里另填火山账号的 AccessKey ID + Secret（与推理 Key 是两套凭据）。两个 plan 用
+// 同一份 AK/SK，故鉴权类错误直接停、不再试另一个 plan。
+//
+// 自动探测：先调 `GetAFPUsage`（Agent Plan，回绝对额度 Quota/Used），未订阅再调
+// `GetCodingPlanUsage`（Coding Plan，回百分比）。
+
+/// 控制面 OpenAPI 统一网关（区别于数据面推理域名 ark.cn-beijing.volces.com）。
+const VOLCENGINE_OPENAPI_HOST: &str = "open.volcengineapi.com";
+const VOLCENGINE_API_VERSION: &str = "2024-01-01";
+/// ark 控制面 OpenAPI 的默认 Region（Agent/Coding Plan 目前在 cn-beijing）。
+const VOLCENGINE_DEFAULT_REGION: &str = "cn-beijing";
+
+/// 单次 OpenAPI 调用的归类结果。
+enum VolcCall {
+    /// 2xx 且 JSON 可解析、无 OpenAPI 级错误（业务 Result 仍可能为空=未订阅）。
+    Body(serde_json::Value),
+    /// 硬鉴权失败（HTTP 401/403 或 AccessDenied/Signature 等错误码）——两个 plan
+    /// 共用凭据，命中即停。
+    Auth(String),
+    /// 非鉴权 HTTP 错误 / 响应体非法 JSON——记录后可继续尝试另一个 plan。
+    Soft(String),
+    /// 瞬时传输失败（网络/超时/读体中断）——同 host 的另一个 plan 大概率同样
+    /// 失败，调用方应立即以 `Err` 传播（前端 reject → retry + 保留上次成功值）。
+    Transient(String),
+}
+
+/// 从数据面 base_url 提取控制面 OpenAPI 所需的 Region（如
+/// `ark.cn-beijing.volces.com` → `cn-beijing`）；无法识别时回落 cn-beijing。
+/// 控制面 Host 是固定网关（`VOLCENGINE_OPENAPI_HOST`），不随 base_url 变化。
+fn volcengine_region(base_url: &str) -> String {
+    let host = base_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(base_url)
+        .split('/')
+        .next()
+        .unwrap_or("");
+    host.split('.')
+        .find(|p| p.starts_with("cn-") || p.starts_with("ap-"))
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| VOLCENGINE_DEFAULT_REGION.to_string())
+}
+
+/// 判断 OpenAPI 错误码是否属于鉴权类（需要硬停并提示换 AK/SK）。
+fn volcengine_is_auth_error_code(code: &str) -> bool {
+    let c = code.to_lowercase();
+    c.contains("auth")
+        || c.contains("signature")
+        || c.contains("accessdenied")
+        || c.contains("denied")
+        || c.contains("unauthorized")
+        || c.contains("forbidden")
+        || c.contains("credential")
+        || c.contains("token")
+}
+
+/// 提取火山 OpenAPI 响应里的 `ResponseMetadata.Error`（或顶层 `Error`）。
+fn volcengine_response_error(body: &serde_json::Value) -> Option<(String, String)> {
+    let err = body
+        .get("ResponseMetadata")
+        .and_then(|m| m.get("Error"))
+        .or_else(|| body.get("Error"))?;
+    let code = err
+        .get("Code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let msg = err
+        .get("Message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if code.is_empty() && msg.is_empty() {
+        None
+    } else {
+        Some((code, msg))
+    }
+}
+
+/// 鉴权失败时的引导文案，附加在错误后。
+const VOLCENGINE_AKSK_HINT: &str =
+    "Check the AccessKey ID / Secret are correct and the account has Ark usage-query (OpenAPI) permission.";
+
+// ── 火山引擎签名 V4（AK/SK）─────────────────────────────────
+//
+// 算法是 AWS SigV4 的火山变体（对照官方 volc-openapi-demos/signature/java/Sign.java）。
+// **两处致命差异，照搬 s3.rs 的标准 SigV4 会签名失败**：
+//   1. canonical headers 与 SignedHeaders 用**固定顺序**
+//      `host;x-date;x-content-sha256;content-type`（**不按字母序**，s3.rs 是字母序）；
+//   2. algorithm 串 `HMAC-SHA256`（无 `AWS4` 前缀）、credential scope 结尾 `request`
+//      （非 `aws4_request`）、签名密钥 `kDate=HMAC(SK, date)`（SK 不加 `AWS4` 前缀）。
+// canonical query 仍按 key 字母序（与标准 SigV4 一致）；service=`ark`、POST、空 body。
+
+const VOLCENGINE_SERVICE: &str = "ark";
+const VOLCENGINE_CONTENT_TYPE: &str = "application/json; charset=utf-8";
+const VOLCENGINE_SIGNED_HEADERS: &str = "host;x-date;x-content-sha256;content-type";
+
+fn volc_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    type HmacSha256 = Hmac<sha2::Sha256>;
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+fn volc_sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(data))
+}
+
+/// RFC3986 unreserved 之外全部按 `%XX` 编码（用于 canonical query string）。
+fn volc_uri_encode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
+}
+
+/// 构造按 key 字母序排序、逐段 URL 编码的 canonical query string。
+/// 同一份字符串既用于签名也用于实际请求 URL，保证两者完全一致。
+fn volcengine_canonical_query(action: &str, region: &str) -> String {
+    let mut pairs = [
+        ("Action", action),
+        ("Region", region),
+        ("Version", VOLCENGINE_API_VERSION),
+    ];
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", volc_uri_encode(k), volc_uri_encode(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// 生成火山引擎签名 V4 的鉴权头，返回 `(Authorization, X-Date, X-Content-Sha256)`，
+/// 三者都要塞进请求头；`canonical_query` 必须与实际请求 URL 的 query 完全一致。
+/// `now` 作参数传入便于写确定性单测。
+fn volcengine_sign(
+    access_key_id: &str,
+    secret_access_key: &str,
+    region: &str,
+    canonical_query: &str,
+    body: &[u8],
+    now: chrono::DateTime<chrono::Utc>,
+) -> (String, String, String) {
+    let x_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let short_date = now.format("%Y%m%d").to_string();
+    let x_content_sha256 = volc_sha256_hex(body);
+
+    // 固定顺序 canonical headers（火山特有，**不排序**）。
+    let canonical_headers = format!(
+        "host:{VOLCENGINE_OPENAPI_HOST}\nx-date:{x_date}\nx-content-sha256:{x_content_sha256}\ncontent-type:{VOLCENGINE_CONTENT_TYPE}\n"
+    );
+    let canonical_request = format!(
+        "POST\n/\n{canonical_query}\n{canonical_headers}\n{VOLCENGINE_SIGNED_HEADERS}\n{x_content_sha256}"
+    );
+
+    let credential_scope = format!("{short_date}/{region}/{VOLCENGINE_SERVICE}/request");
+    let string_to_sign = format!(
+        "HMAC-SHA256\n{x_date}\n{credential_scope}\n{}",
+        volc_sha256_hex(canonical_request.as_bytes())
+    );
+
+    // 签名密钥派生：kDate=HMAC(SK, date)（SK **不加** AWS4 前缀），终止串 `request`。
+    let k_date = volc_hmac_sha256(secret_access_key.as_bytes(), short_date.as_bytes());
+    let k_region = volc_hmac_sha256(&k_date, region.as_bytes());
+    let k_service = volc_hmac_sha256(&k_region, VOLCENGINE_SERVICE.as_bytes());
+    let k_signing = volc_hmac_sha256(&k_service, b"request");
+    let signature: String = volc_hmac_sha256(&k_signing, string_to_sign.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+
+    let authorization = format!(
+        "HMAC-SHA256 Credential={access_key_id}/{credential_scope}, SignedHeaders={VOLCENGINE_SIGNED_HEADERS}, Signature={signature}"
+    );
+    (authorization, x_date, x_content_sha256)
+}
+
+async fn volcengine_openapi_call(
+    region: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+    action: &str,
+) -> VolcCall {
+    let client = crate::proxy::http_client::get();
+    // canonical query 同时用于签名与实际 URL，确保两者逐字一致（否则签名不匹配）。
+    let canonical_query = volcengine_canonical_query(action, region);
+    let url = format!("https://{VOLCENGINE_OPENAPI_HOST}/?{canonical_query}");
+    let body: &[u8] = b"";
+    let (authorization, x_date, x_content_sha256) = volcengine_sign(
+        access_key_id,
+        secret_access_key,
+        region,
+        &canonical_query,
+        body,
+        chrono::Utc::now(),
+    );
+
+    let resp = client
+        .post(&url)
+        .header("X-Date", x_date)
+        .header("X-Content-Sha256", x_content_sha256)
+        .header("Content-Type", VOLCENGINE_CONTENT_TYPE)
+        .header("Authorization", authorization)
+        .body(body.to_vec())
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return VolcCall::Transient(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return VolcCall::Auth(format!(
+            "Authentication failed (HTTP {status}). {VOLCENGINE_AKSK_HINT}"
+        ));
+    }
+    if !status.is_success() {
+        // 火山 OpenAPI 网关对签名/凭据类错误常返 4xx（多为 HTTP 400）并携带与 200
+        // 路径相同的 ResponseMetadata.Error 信封，而非 401/403。这里也解析信封，让
+        // Bearer 被拒时仍能给出 AK/SK 引导并标记凭据失效，而不是当成普通 API 错误。
+        let raw = resp.text().await.unwrap_or_default();
+        if let Ok(body) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some((code, msg)) = volcengine_response_error(&body) {
+                if volcengine_is_auth_error_code(&code) {
+                    return VolcCall::Auth(format!(
+                        "Authentication failed (HTTP {status}, {code}): {msg}. {VOLCENGINE_AKSK_HINT}"
+                    ));
+                }
+                return VolcCall::Soft(format!("API error (HTTP {status}, {code}): {msg}"));
+            }
+        }
+        return VolcCall::Soft(format!("API error (HTTP {status}): {raw}"));
+    }
+
+    // 同 Bearer 路径：先 bytes() 再解析——读体失败是瞬时（Transient），解析失败
+    // 是确定性（Soft）。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return VolcCall::Transient(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return VolcCall::Soft(format!("Failed to parse response: {e}")),
+    };
+
+    // 火山 OpenAPI 业务错误常以 200 + ResponseMetadata.Error 返回。
+    if let Some((code, msg)) = volcengine_response_error(&body) {
+        if volcengine_is_auth_error_code(&code) {
+            return VolcCall::Auth(format!(
+                "Authentication failed ({code}): {msg}. {VOLCENGINE_AKSK_HINT}"
+            ));
+        }
+        return VolcCall::Soft(format!("API error ({code}): {msg}"));
+    }
+
+    VolcCall::Body(body)
+}
+
+/// 解析 `GetAFPUsage` 的 `Result` 为 tier 列表。
+///
+/// 展示 5h / 周 / 月三个窗口（与控制台一致）；`AFPDaily` 被官方控制台隐藏
+/// （其 Quota 常高于周上限，属历史默认值而非强制限额），故跳过。
+/// `Quota`/`Used` 是绝对 AFP 值，已用百分比 = Used/Quota×100；`Quota<=0` 视为
+/// 该窗口未订阅/未启用，跳过——也用于把"已鉴权但无 Agent Plan"识别为空结果，
+/// 从而回落到 Coding Plan 探测。
+fn parse_afp_tiers(result: &serde_json::Value) -> Vec<QuotaTier> {
+    let mut tiers = Vec::new();
+    for (key, name) in [
+        ("AFPFiveHour", TIER_FIVE_HOUR),
+        ("AFPWeekly", TIER_WEEKLY_LIMIT),
+        ("AFPMonthly", TIER_MONTHLY),
+    ] {
+        let Some(win) = result.get(key) else { continue };
+        let quota = win.get("Quota").and_then(parse_f64).unwrap_or(0.0);
+        if quota <= 0.0 {
+            continue;
+        }
+        let used = win.get("Used").and_then(parse_f64).unwrap_or(0.0);
+        // 已用百分比；不做范围裁剪，与 parse_zhipu_token_tiers/parse_minimax_tiers
+        // 的约定一致（下游渲染层负责显示策略）。
+        let utilization = used / quota * 100.0;
+        let resets_at = win.get("ResetTime").and_then(extract_reset_time);
+        tiers.push(QuotaTier {
+            name: name.to_string(),
+            utilization,
+            resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+/// 把 `GetCodingPlanUsage` 的 window 标签归一到 tier 名。
+fn volcengine_coding_window(label: &str) -> Option<&'static str> {
+    match label.to_lowercase().as_str() {
+        "session" | "5h" | "fivehour" | "five_hour" | "rolling_5h" => Some(TIER_FIVE_HOUR),
+        "weekly" | "week" | "7d" => Some(TIER_WEEKLY_LIMIT),
+        "monthly" | "month" => Some(TIER_MONTHLY),
+        _ => None,
+    }
+}
+
+/// 解析 `GetCodingPlanUsage` 的 `Result` 为 tier 列表（防御式）。
+///
+/// 该接口官方文档未给出逐字段规格，依据官方 ark-cli 描述：回 session/weekly/
+/// monthly 窗口、**只给百分比**（已用）、重置时间是秒级。这里宽松匹配
+/// `QuotaUsage`/`Usages`/`Details` 数组及多种字段名，命中即用、未命中跳过。
+fn parse_coding_plan_tiers(result: &serde_json::Value) -> Vec<QuotaTier> {
+    let mut tiers = Vec::new();
+    let arr = result
+        .get("QuotaUsage")
+        .and_then(|v| v.as_array())
+        .or_else(|| result.get("Usages").and_then(|v| v.as_array()))
+        .or_else(|| result.get("Details").and_then(|v| v.as_array()));
+    let Some(arr) = arr else { return tiers };
+
+    for item in arr {
+        // 真实字段是 `Level`（实测 2026-06-21：session/weekly/monthly）；其余作防御式 fallback。
+        let label = item
+            .get("Level")
+            .and_then(|v| v.as_str())
+            .or_else(|| item.get("Type").and_then(|v| v.as_str()))
+            .or_else(|| item.get("Period").and_then(|v| v.as_str()))
+            .or_else(|| item.get("Label").and_then(|v| v.as_str()))
+            .or_else(|| item.get("Window").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        let Some(name) = volcengine_coding_window(label) else {
+            continue;
+        };
+        let utilization = item
+            .get("Percent")
+            .and_then(parse_f64)
+            .or_else(|| item.get("UsedPercent").and_then(parse_f64))
+            .or_else(|| item.get("UsagePercent").and_then(parse_f64))
+            .unwrap_or(0.0);
+        // 兼容秒/毫秒/字符串（extract_reset_time 内部已区分秒与毫秒）。
+        let resets_at = item
+            .get("ResetTime")
+            .or_else(|| item.get("ResetTimestamp"))
+            .and_then(extract_reset_time);
+        tiers.push(QuotaTier {
+            name: name.to_string(),
+            utilization,
+            resets_at,
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+fn volcengine_success(tiers: Vec<QuotaTier>, plan: Option<String>) -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: plan,
+        success: true,
+        tiers,
+        extra_usage: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    }
+}
+
+fn volcengine_auth_error(detail: String) -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Expired,
+        credential_message: Some("Invalid API key".to_string()),
+        success: false,
+        tiers: vec![],
+        extra_usage: None,
+        error: Some(detail),
+        queried_at: Some(now_millis()),
+    }
+}
+
+async fn query_volcengine(
+    base_url: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<SubscriptionQuota, String> {
+    let region = volcengine_region(base_url);
+    let mut soft_errors: Vec<String> = Vec::new();
+    // 2xx + 无 Error 信封但解析不出额度时，截断原始响应用于诊断（区分"真没订阅"
+    // 与"字段名/包裹层猜错"）。签名若不通会走 Auth/Soft 分支，到不了这里。
+    let mut empty_responses: Vec<String> = Vec::new();
+    let summarize = |action: &str, body: &serde_json::Value| -> String {
+        let raw: String = body.to_string().chars().take(700).collect();
+        format!("{action}={raw}")
+    };
+
+    // 1) Agent Plan：GetAFPUsage
+    match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage").await {
+        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+        VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
+        VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
+        VolcCall::Body(body) => {
+            let result = body.get("Result").unwrap_or(&body);
+            let tiers = parse_afp_tiers(result);
+            if !tiers.is_empty() {
+                let plan = result
+                    .get("PlanType")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| format!("Agent Plan {s}"));
+                return Ok(volcengine_success(tiers, plan));
+            }
+            empty_responses.push(summarize("GetAFPUsage", &body));
+        }
+    }
+
+    // 2) Coding Plan：GetCodingPlanUsage
+    match volcengine_openapi_call(
+        &region,
+        access_key_id,
+        secret_access_key,
+        "GetCodingPlanUsage",
+    )
+    .await
+    {
+        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+        VolcCall::Transient(detail) => return Err(format!("GetCodingPlanUsage: {detail}")),
+        VolcCall::Soft(detail) => soft_errors.push(format!("GetCodingPlanUsage: {detail}")),
+        VolcCall::Body(body) => {
+            let result = body.get("Result").unwrap_or(&body);
+            let tiers = parse_coding_plan_tiers(result);
+            if !tiers.is_empty() {
+                return Ok(volcengine_success(tiers, Some("Coding Plan".to_string())));
+            }
+            empty_responses.push(summarize("GetCodingPlanUsage", &body));
+        }
+    }
+
+    if !soft_errors.is_empty() {
+        Ok(make_error(soft_errors.join("; ")))
+    } else if !empty_responses.is_empty() {
+        // 签名已通过、请求到达业务层，但响应里没有可解析的额度。带上原始响应，
+        // 便于核对真实字段名/包裹层，或确认确实未订阅。
+        Ok(make_error(format!(
+            "No active subscription found (signature OK). Raw: {}",
+            empty_responses.join(" || ")
+        )))
+    } else {
+        Ok(make_error(
+            "No active Agent Plan or Coding Plan subscription found for this credential"
+                .to_string(),
+        ))
+    }
+}
+
 // ── 公开入口 ────────────────────────────────────────────────
 
-pub async fn get_coding_plan_quota(
-    base_url: &str,
+/// 构造"凭据缺失 / 域名未命中"的失败结果（NotFound 状态 + 明确错误文案）。
+fn coding_plan_not_found(error: &str) -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::NotFound,
+        credential_message: None,
+        success: false,
+        tiers: vec![],
+        extra_usage: None,
+        error: Some(error.to_string()),
+        queried_at: None,
+    }
+}
+
+// ── 智谱团队套餐（Team Plan）──────────────────────────────────
+//
+// 与个人版的差异仅在请求构造（参考 token-monitor/src/shared/zaiTeamLimits.js）：
+// - 固定走国内站 open.bigmodel.cn（团队版仅存在于国内站，z.ai 国际站无 team 档）
+// - 同一 quota 路径加 `?type=2`
+// - 额外请求头 bigmodel-organization / bigmodel-project（两者 + api_key 缺一不可）
+// 响应 shape 与个人版完全一致 → 复用 zhipu_quota_from_body / parse_zhipu_token_tiers。
+const ZHIPU_TEAM_QUOTA_URL: &str = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
+
+async fn query_zhipu_team(
     api_key: &str,
+    organization_id: &str,
+    project_id: &str,
 ) -> Result<SubscriptionQuota, String> {
-    if api_key.trim().is_empty() {
+    query_zhipu_team_at(ZHIPU_TEAM_QUOTA_URL, api_key, organization_id, project_id).await
+}
+
+/// 团队版额度查询。`quota_url_base` 为不含 query 的 quota 端点；团队版与个人版同路径，
+/// 靠 `?type=2` 区分（在此拼上）。拆出 url 参数便于用本地 server 测试请求形状。
+async fn query_zhipu_team_at(
+    quota_url_base: &str,
+    api_key: &str,
+    organization_id: &str,
+    project_id: &str,
+) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+    let url = format!("{quota_url_base}?type=2");
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", api_key) // 与个人版一致：智谱不加 Bearer 前缀
+        .header("bigmodel-organization", organization_id)
+        .header("bigmodel-project", project_id)
+        .header("Content-Type", "application/json")
+        .header("Accept-Language", "en-US,en")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Ok(SubscriptionQuota {
             tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::NotFound,
-            credential_message: None,
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
             success: false,
             tiers: vec![],
             extra_usage: None,
-            // 与 balance::get_balance 一致：给出明确错误，避免 footer 显示无信息的失败
-            error: Some("API key is empty".to_string()),
-            queried_at: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
         });
+    }
+
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
+    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    Ok(zhipu_quota_from_body(&body))
+}
+
+/// 查询编程套餐额度。瞬时传输失败（网络/超时/读体中断）返回 `Err`（前端 reject →
+/// retry + 保留上次成功值）；确定性失败（凭据缺失/未知域名/鉴权/非 2xx/业务错误）
+/// 返回 `Ok(success:false)` 立即透出文案。判定按 reqwest 错误种类在折叠点完成。
+///
+/// `coding_plan_provider` 显式标识用于无法靠 base_url 区分的供应商（当前为智谱团队版
+/// `zhipu_team`——其 base_url 与个人版智谱相同）；其余情况走 `detect_provider`。
+pub async fn get_coding_plan_quota(
+    base_url: &str,
+    api_key: &str,
+    access_key_id: Option<&str>,
+    secret_access_key: Option<&str>,
+    coding_plan_provider: Option<&str>,
+    team_organization_id: Option<&str>,
+    team_project_id: Option<&str>,
+) -> Result<SubscriptionQuota, String> {
+    // 智谱团队版：base_url 与个人版智谱（open.bigmodel.cn）相同，detect_provider 无法
+    // 区分，必须靠显式 coding_plan_provider == "zhipu_team" 路由。需 api_key + 组织 ID
+    // + 项目 ID 三者齐全，缺任一返回 NotFound 引导补全。
+    if coding_plan_provider
+        .map(|p| p.eq_ignore_ascii_case("zhipu_team"))
+        .unwrap_or(false)
+    {
+        let organization_id = team_organization_id.unwrap_or("").trim();
+        let project_id = team_project_id.unwrap_or("").trim();
+        if api_key.trim().is_empty() || organization_id.is_empty() || project_id.is_empty() {
+            return Ok(coding_plan_not_found(
+                "Zhipu team plan needs the API key + organization ID + project ID",
+            ));
+        }
+        return query_zhipu_team(api_key, organization_id, project_id).await;
     }
 
     let provider = match detect_provider(base_url) {
         Some(p) => p,
-        None => {
-            return Ok(SubscriptionQuota {
-                tool: "coding_plan".to_string(),
-                credential_status: CredentialStatus::NotFound,
-                credential_message: None,
-                success: false,
-                tiers: vec![],
-                extra_usage: None,
-                // 域名未命中已知套餐供应商（如第三方中转站）：给出明确错误而非静默失败
-                error: Some("Unknown coding plan provider".to_string()),
-                queried_at: None,
-            });
-        }
+        // 域名未命中已知套餐供应商（如第三方中转站）：给出明确错误而非静默失败
+        None => return Ok(coding_plan_not_found("Unknown coding plan provider")),
     };
 
-    let quota = match provider {
+    // 火山方舟走控制面 AK/SK 签名（区别于其他供应商的数据面 Bearer api_key），凭据
+    // 校验与查询路径都不同，单独分支提前处理。
+    if let CodingPlanProvider::Volcengine = provider {
+        let ak = access_key_id.unwrap_or("").trim();
+        let sk = secret_access_key.unwrap_or("").trim();
+        if ak.is_empty() || sk.is_empty() {
+            return Ok(coding_plan_not_found(
+                "Volcengine usage query needs the account AccessKey ID + Secret (not the inference API key)",
+            ));
+        }
+        return query_volcengine(base_url, ak, sk).await;
+    }
+
+    // 其余供应商：数据面 Bearer api_key。
+    // 与 balance::get_balance 一致：给出明确错误，避免 footer 显示无信息的失败
+    if api_key.trim().is_empty() {
+        return Ok(coding_plan_not_found("API key is empty"));
+    }
+
+    match provider {
         CodingPlanProvider::Kimi => query_kimi(api_key).await,
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => {
             query_zhipu(base_url, api_key).await
@@ -697,16 +1327,20 @@ pub async fn get_coding_plan_quota(
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
-    };
-
-    Ok(quota)
+        // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
+        CodingPlanProvider::Volcengine => {
+            unreachable!("volcengine handled via AK/SK branch above")
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_minimax_tiers, parse_zhipu_token_tiers, zhipu_quota_base, TIER_FIVE_HOUR,
-        TIER_WEEKLY_LIMIT,
+        parse_afp_tiers, parse_coding_plan_tiers, parse_minimax_tiers, parse_zhipu_token_tiers,
+        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_quota_base,
+        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1134,5 +1768,470 @@ mod tests {
             zhipu_quota_base("https://Open.BigModel.cn/api/paas/v4"),
             "https://open.bigmodel.cn"
         );
+    }
+
+    // ── 火山方舟 Agent Plan / Coding Plan ──
+
+    #[test]
+    fn volcengine_afp_three_windows_from_official_example() {
+        // 官方文档 GetAFPUsage 返回示例（逐字）：5h 25% / weekly 30% / monthly
+        // 42.525%；AFPDaily 被控制台隐藏，应跳过。
+        let result = json!({
+            "PlanType": "Large",
+            "AFPFiveHour": { "Quota": 50.0,   "Used": 12.5,  "SubscribeTime": 1778788800000_i64, "ResetTime": 1778806800000_i64 },
+            "AFPDaily":    { "Quota": 100.0,  "Used": 22.5,  "SubscribeTime": 1778716800000_i64, "ResetTime": 1778803200000_i64 },
+            "AFPWeekly":   { "Quota": 500.0,  "Used": 150.0, "SubscribeTime": 1778457600000_i64, "ResetTime": 1779062400000_i64 },
+            "AFPMonthly":  { "Quota": 2000.0, "Used": 850.5, "SubscribeTime": 1777939200000_i64, "ResetTime": 1780531200000_i64 }
+        });
+        let tiers = parse_afp_tiers(&result);
+        assert_eq!(tiers.len(), 3, "daily 应被跳过，只剩 5h/周/月");
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 25.0).abs() < 1e-9);
+        assert!(tiers[0].resets_at.is_some());
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 30.0).abs() < 1e-9);
+        assert_eq!(tiers[2].name, TIER_MONTHLY);
+        assert!((tiers[2].utilization - 42.525).abs() < 1e-9);
+        assert!(tiers[2].resets_at.is_some());
+    }
+
+    #[test]
+    fn volcengine_afp_zero_quota_windows_treated_as_unbound() {
+        // 已鉴权但无 Agent Plan：窗口 Quota=0 → 空结果，调用方据此回落 Coding Plan。
+        let result = json!({
+            "PlanType": "",
+            "AFPFiveHour": { "Quota": 0.0, "Used": 0.0 },
+            "AFPWeekly":   { "Quota": 0.0, "Used": 0.0 },
+            "AFPMonthly":  { "Quota": 0.0, "Used": 0.0 }
+        });
+        assert!(parse_afp_tiers(&result).is_empty());
+    }
+
+    #[test]
+    fn volcengine_afp_partial_windows_only_subscribed_ones() {
+        // 仅 5h 窗口有额度（缺周/月）→ 只产出一个 tier。
+        let result = json!({
+            "AFPFiveHour": { "Quota": 40.0, "Used": 10.0, "ResetTime": 1778806800000_i64 },
+            "AFPWeekly":   { "Quota": 0.0,  "Used": 0.0 }
+        });
+        let tiers = parse_afp_tiers(&result);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 25.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn volcengine_coding_plan_real_response_levels() {
+        // 真实 GetCodingPlanUsage 响应（用户实测 2026-06-21）：字段名是 `Level`（非 `Type`），
+        // 仅百分比，秒级 ResetTimestamp；session 无活跃窗口回 -1 → 无重置时间。
+        let result = json!({
+            "Status": "Running",
+            "UpdateTimestamp": 1782053286_i64,
+            "QuotaUsage": [
+                { "Level": "session", "Percent": 0.0,      "ResetTimestamp": -1_i64 },
+                { "Level": "weekly",  "Percent": 1.672568, "ResetTimestamp": 1782057600_i64 },
+                { "Level": "monthly", "Percent": 0.836284, "ResetTimestamp": 1784303999_i64 }
+            ]
+        });
+        let tiers = parse_coding_plan_tiers(&result);
+        assert_eq!(tiers.len(), 3);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 0.0).abs() < 1e-9);
+        assert!(
+            tiers[0].resets_at.is_none(),
+            "session ResetTimestamp=-1 应无重置时间"
+        );
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 1.672568).abs() < 1e-6);
+        assert!(tiers[1].resets_at.is_some());
+        assert_eq!(tiers[2].name, TIER_MONTHLY);
+        assert!((tiers[2].utilization - 0.836284).abs() < 1e-6);
+    }
+
+    #[test]
+    fn volcengine_coding_plan_unknown_window_skipped_and_missing_array_empty() {
+        let result = json!({
+            "QuotaUsage": [
+                { "Level": "daily", "Percent": 9.0 },
+                { "Level": "weekly", "Percent": 20.0 }
+            ]
+        });
+        let tiers = parse_coding_plan_tiers(&result);
+        assert_eq!(tiers.len(), 1, "未知 daily 窗口跳过");
+        assert_eq!(tiers[0].name, TIER_WEEKLY_LIMIT);
+
+        assert!(parse_coding_plan_tiers(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn volcengine_region_derivation() {
+        assert_eq!(
+            volcengine_region("https://ark.cn-beijing.volces.com/api/coding"),
+            "cn-beijing"
+        );
+        // 其他 region 的数据面域名按段提取。
+        assert_eq!(
+            volcengine_region("https://ark.cn-shanghai.volces.com/api/coding/v3"),
+            "cn-shanghai"
+        );
+        // 无可识别 region 段时回落默认 cn-beijing。
+        assert_eq!(
+            volcengine_region("https://example.com/api/coding"),
+            "cn-beijing"
+        );
+    }
+
+    #[test]
+    fn volcengine_canonical_query_is_sorted_and_encoded() {
+        // 按 key 字母序：Action < Region < Version；值含 `-` 属 unreserved，不编码。
+        assert_eq!(
+            volcengine_canonical_query("GetAFPUsage", "cn-beijing"),
+            "Action=GetAFPUsage&Region=cn-beijing&Version=2024-01-01"
+        );
+    }
+
+    #[test]
+    fn volcengine_sign_structure_and_determinism() {
+        // 没有服务端金标准向量时，锁定签名的结构契约 + 确定性（足以抓住 header 顺序、
+        // scope 后缀、algorithm 前缀、空 body hash 等实现错误）。真实正确性靠用户实测。
+        let now = chrono::DateTime::parse_from_rfc3339("2024-06-21T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let region = "cn-beijing";
+        let query = volcengine_canonical_query("GetAFPUsage", region);
+        let (auth, x_date, x_content) =
+            volcengine_sign("AKLTtest", "secretkey", region, &query, b"", now);
+
+        // 空 body 的 SHA-256（固定值），证明走的是空 body。
+        assert_eq!(
+            x_content,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        // X-Date 形如 20240621T000000Z。
+        assert_eq!(x_date, "20240621T000000Z");
+        // Authorization 结构：算法无 AWS4 前缀、scope 结尾 ark/request、固定 SignedHeaders。
+        assert!(
+            auth.starts_with("HMAC-SHA256 Credential=AKLTtest/20240621/cn-beijing/ark/request,"),
+            "unexpected credential/scope: {auth}"
+        );
+        assert!(
+            auth.contains("SignedHeaders=host;x-date;x-content-sha256;content-type,"),
+            "unexpected signed headers: {auth}"
+        );
+        // Signature 是 64 位十六进制。
+        let sig = auth.rsplit("Signature=").next().unwrap();
+        assert_eq!(sig.len(), 64);
+        assert!(sig.bytes().all(|b| b.is_ascii_hexdigit()));
+
+        // 确定性：同输入同输出。
+        let (auth2, _, _) = volcengine_sign("AKLTtest", "secretkey", region, &query, b"", now);
+        assert_eq!(auth, auth2);
+    }
+
+    #[test]
+    fn volcengine_auth_error_code_detection_and_extraction() {
+        assert!(volcengine_is_auth_error_code("AccessDenied"));
+        assert!(volcengine_is_auth_error_code("SignatureDoesNotMatch"));
+        assert!(volcengine_is_auth_error_code("InvalidAuthorization"));
+        assert!(volcengine_is_auth_error_code("Unauthorized"));
+        assert!(!volcengine_is_auth_error_code("InvalidParameter.Action"));
+        assert!(!volcengine_is_auth_error_code("InternalError"));
+
+        // ResponseMetadata.Error 抽取
+        let body = json!({
+            "ResponseMetadata": { "RequestId": "x", "Error": { "Code": "AccessDenied", "Message": "no permission" } }
+        });
+        let (code, msg) = volcengine_response_error(&body).expect("应抽到 Error");
+        assert_eq!(code, "AccessDenied");
+        assert_eq!(msg, "no permission");
+
+        // 无 Error 时返回 None
+        let ok_body = json!({ "ResponseMetadata": { "RequestId": "x" }, "Result": {} });
+        assert!(volcengine_response_error(&ok_body).is_none());
+    }
+
+    // ── 传输层错误通道语义：瞬时 → Err（前端 reject/retry），确定性 → Ok(success:false) ──
+    //
+    // 借 ZenMux 分支可指向任意 base_url 的特性，用本地 listener 驱动真实 HTTP
+    // 路径，锁定 send 失败 / 读体中断 / 4xx / 非法 JSON 各自落在哪条通道。
+    // balance / subscription 服务与本文件共用同一折叠模式，这里的用例同时充当
+    // 三个服务的语义回归锚。
+
+    use super::get_coding_plan_quota;
+    use crate::services::subscription::CredentialStatus;
+    use std::io::{Read, Write};
+
+    /// 测试进程内可能有其他用例临时 set_var HTTP_PROXY（http_client 的
+    /// loopback 检测测试），NO_PROXY 保证本地回环请求始终直连。
+    fn ensure_no_proxy_for_loopback() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+            std::env::set_var("no_proxy", "127.0.0.1,localhost");
+        });
+    }
+
+    /// 起一个只服务一次连接的本地 HTTP server。`response=None` 表示读完请求
+    /// 直接断开（模拟响应前连接中断）。返回可命中 ZenMux 分支的 base_url。
+    fn spawn_once_server(response: Option<String>) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                if let Some(resp) = response {
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}/zenmux"), handle)
+    }
+
+    fn http_response(status_line: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn transient_connection_refused_returns_err() {
+        ensure_no_proxy_for_loopback();
+        // 绑定后立刻释放端口 → 连接被拒（send 失败）
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+
+        let result = get_coding_plan_quota(
+            &format!("http://127.0.0.1:{port}/zenmux"),
+            "k",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        let err = result.expect_err("send 失败必须走 Err 通道（瞬时，前端 reject 后重试）");
+        assert!(err.contains("Network error"), "err={err}");
+    }
+
+    #[tokio::test]
+    async fn transient_connection_closed_before_response_returns_err() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) = spawn_once_server(None);
+
+        let result = get_coding_plan_quota(&base_url, "k", None, None, None, None, None).await;
+        let err = result.expect_err("响应前连接中断必须走 Err 通道（瞬时）");
+        assert!(err.contains("Network error"), "err={err}");
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn transient_truncated_body_returns_err() {
+        ensure_no_proxy_for_loopback();
+        // 声明 content-length: 100 但只写一小段就断开 → 读体中断。
+        // 锁定 bytes() 先于解析：这类失败必须走 Err（瞬时），不能因 reqwest 把
+        // 读体错误包成 decode 而被误判成确定性的 "Failed to parse response"。
+        let (base_url, handle) = spawn_once_server(Some(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\npartial"
+                .to_string(),
+        ));
+
+        let result = get_coding_plan_quota(&base_url, "k", None, None, None, None, None).await;
+        let err = result.expect_err("读体中断必须走 Err 通道（瞬时，前端 reject 后重试）");
+        assert!(err.contains("Failed to read response"), "err={err}");
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn deterministic_http_401_stays_ok_with_auth_error() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) = spawn_once_server(Some(http_response("401 Unauthorized", "{}")));
+
+        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
+            .await
+            .expect("鉴权失败是确定性失败，必须保持 Ok(success:false) 展示文案");
+        assert!(!quota.success);
+        assert!(matches!(quota.credential_status, CredentialStatus::Expired));
+        let err = quota.error.expect("应有错误文案");
+        assert!(err.contains("Authentication failed (HTTP 401"), "err={err}");
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn deterministic_http_429_stays_ok_with_status_in_error() {
+        ensure_no_proxy_for_loopback();
+        let (base_url, handle) =
+            spawn_once_server(Some(http_response("429 Too Many Requests", "slow down")));
+
+        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
+            .await
+            .expect("非 2xx 保持 Ok(success:false)，状态码留在文案里交前端分类");
+        assert!(!quota.success);
+        // 前端 isTransientUsageError 靠 /http\s+(\d{3})/ 提取状态码把 429 归瞬时，
+        // 文案格式是跨层契约，勿改。
+        let err = quota.error.expect("应有错误文案");
+        assert!(err.contains("HTTP 429"), "err={err}");
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn deterministic_invalid_json_body_stays_ok_with_parse_error() {
+        ensure_no_proxy_for_loopback();
+        // 完整读到响应体但不是 JSON → is_decode → 确定性解析失败
+        let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", "not-json")));
+
+        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
+            .await
+            .expect("完整但非法的响应体是确定性失败，必须保持 Ok(success:false)");
+        assert!(!quota.success);
+        let err = quota.error.expect("应有错误文案");
+        assert!(err.contains("Failed to parse response"), "err={err}");
+        handle.join().expect("server thread");
+    }
+
+    // ── 智谱团队套餐（Team Plan）──
+
+    /// 起一个只服务一次连接的本地 HTTP server，捕获原始请求文本（请求行 + 头），
+    /// 用于断言 team 查询发出的 URL query 与组织/项目请求头。`response=None` 时只捕获不回包。
+    fn spawn_request_capturing_server(
+        response: Option<String>,
+    ) -> (
+        String,
+        std::sync::Arc<std::sync::Mutex<Option<String>>>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let captured_clone = captured.clone();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf: Vec<u8> = Vec::new();
+                let mut tmp = [0u8; 4096];
+                // GET 无 body，读到 header 末尾（\r\n\r\n）即可
+                while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match stream.read(&mut tmp) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&tmp[..n]);
+                            if buf.len() > 16 * 1024 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                *captured_clone.lock().unwrap() = Some(String::from_utf8_lossy(&buf).into_owned());
+                if let Some(resp) = response {
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}/team"), captured, handle)
+    }
+
+    #[tokio::test]
+    async fn zhipu_team_missing_creds_returns_not_found() {
+        // 团队版必需 api_key + 组织 ID + 项目 ID，缺任一在触网前返回 NotFound（不联网）。
+        let cases: [(&str, Option<&str>, Option<&str>); 3] = [
+            ("key", Some("org"), None),        // 缺 project
+            ("key", None, Some("proj")),       // 缺 organization
+            ("  ", Some("org"), Some("proj")), // 空 api_key
+        ];
+        for (api_key, org, project) in cases {
+            let q = get_coding_plan_quota(
+                "https://open.bigmodel.cn/api/coding",
+                api_key,
+                None,
+                None,
+                Some("zhipu_team"),
+                org,
+                project,
+            )
+            .await
+            .expect("凭据缺失是确定性失败，保持 Ok(success:false)");
+            assert!(!q.success, "应失败: api_key={api_key:?}");
+            assert!(
+                matches!(q.credential_status, CredentialStatus::NotFound),
+                "应为 NotFound: api_key={api_key:?}"
+            );
+        }
+
+        // 标识大小写不敏感（eq_ignore_ascii_case），大写仍命中 team 分支并返回引导文案。
+        let msg = get_coding_plan_quota(
+            "https://open.bigmodel.cn/api/coding",
+            "key",
+            None,
+            None,
+            Some("Zhipu_Team"),
+            None,
+            None,
+        )
+        .await
+        .expect("ok")
+        .error
+        .expect("应有错误文案");
+        assert!(
+            msg.contains("API key + organization ID + project ID"),
+            "err={msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn zhipu_team_request_carries_type2_and_org_project_headers() {
+        ensure_no_proxy_for_loopback();
+        // 响应 shape 与个人版一致：两条 TOKENS_LIMIT（unit 3/6）→ five_hour + weekly。
+        let body = serde_json::json!({
+            "success": true,
+            "data": {
+                "level": "max",
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 26.0 },
+                    { "type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 5.0 }
+                ]
+            }
+        });
+        let body_str = body.to_string();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body_str}",
+            body_str.len()
+        );
+        let (base, captured, handle) = spawn_request_capturing_server(Some(resp));
+
+        let quota = query_zhipu_team_at(&base, "team-key", "org-xxx", "proj_xxx")
+            .await
+            .expect("2xx + 合法 body 应成功");
+        handle.join().expect("server thread");
+
+        // 请求形状契约（与 token-monitor zaiTeamLimits 对齐）：
+        // 同路径加 ?type=2 + bigmodel-organization / bigmodel-project 头 + 鉴权头。
+        // reqwest/hyper 发头会小写化，故整体转小写做包含匹配。
+        let raw = captured.lock().unwrap().clone().expect("应捕获到请求");
+        let raw_lc = raw.to_lowercase();
+        assert!(raw_lc.contains("/team?type=2"), "缺 ?type=2: {raw}");
+        assert!(
+            raw_lc.contains("bigmodel-organization: org-xxx"),
+            "缺组织头: {raw}"
+        );
+        assert!(
+            raw_lc.contains("bigmodel-project: proj_xxx"),
+            "缺项目头: {raw}"
+        );
+        assert!(
+            raw_lc.contains("authorization: team-key"),
+            "缺鉴权头: {raw}"
+        );
+
+        // 解析复用个人版 zhipu_quota_from_body / parse_zhipu_token_tiers。
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 26.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 5.0);
     }
 }

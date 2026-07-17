@@ -80,7 +80,11 @@ impl CodexToolContext {
             .is_some_and(|spec| matches!(&spec.kind, CodexToolKind::Custom))
     }
 
-    fn chat_name_for_response_function(&self, name: &str, namespace: Option<&str>) -> String {
+    pub(crate) fn chat_name_for_response_function(
+        &self,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> String {
         if let Some(namespace) = namespace.filter(|value| !value.is_empty()) {
             if let Some(chat_name) = self
                 .namespace_name_to_chat_name
@@ -1092,6 +1096,26 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
+/// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
+///
+/// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
+/// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+fn normalize_function_parameters(params: Option<&Value>) -> Value {
+    let mut params = match params {
+        Some(Value::Object(obj)) => Value::Object(obj.clone()),
+        _ => json!({"type": "object", "properties": {}}),
+    };
+    if let Some(obj) = params.as_object_mut() {
+        match obj.get("type").and_then(|v| v.as_str()) {
+            Some("object") => {}
+            _ => {
+                obj.insert("type".to_string(), json!("object"));
+            }
+        }
+    }
+    params
+}
+
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
     if tool.get("type").and_then(|v| v.as_str()) != Some("function") {
         return None;
@@ -1106,6 +1130,14 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .get_mut("function")
             .and_then(|value| value.as_object_mut())
         {
+            // Ensure parameters.type is "object" for strict OpenAI-compatible providers
+            if let Some(params) = obj.get("parameters") {
+                let normalized = normalize_function_parameters(Some(params));
+                if normalized != *params {
+                    obj.insert("parameters".to_string(), normalized);
+                }
+            }
+
             obj.insert("name".to_string(), json!(chat_name));
             if let Some(strict) = tool.get("strict").cloned() {
                 obj.entry("strict".to_string()).or_insert(strict);
@@ -1117,7 +1149,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
     let mut function = json!({
         "name": chat_name,
         "description": tool.get("description").cloned().unwrap_or(Value::Null),
-        "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({}))
+        "parameters": normalize_function_parameters(tool.get("parameters"))
     });
     if let Some(strict) = tool.get("strict") {
         function["strict"] = strict.clone();
@@ -1398,6 +1430,14 @@ fn chat_tool_calls_to_response_output_items(
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
         for (index, tool_call) in tool_calls.iter().enumerate() {
+            // Skip tool calls with missing function names (defensive: some models
+            // may generate tool calls without providing a valid name)
+            let function = tool_call.get("function").unwrap_or(&Value::Null);
+            let name = function.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.is_empty() {
+                log::warn!("[Codex] Skipping tool call with missing name");
+                continue;
+            }
             output.push(chat_tool_call_to_response_item(
                 tool_call,
                 index,
@@ -1406,11 +1446,11 @@ fn chat_tool_calls_to_response_output_items(
             ));
         }
     } else if let Some(function_call) = message.get("function_call") {
-        output.push(chat_legacy_function_call_to_response_item(
-            function_call,
-            reasoning,
-            tool_context,
-        ));
+        if let Some(item) =
+            chat_legacy_function_call_to_response_item(function_call, reasoning, tool_context)
+        {
+            output.push(item);
+        }
     }
 
     output
@@ -1448,7 +1488,7 @@ fn chat_legacy_function_call_to_response_item(
     function_call: &Value,
     reasoning: Option<&str>,
     tool_context: &CodexToolContext,
-) -> Value {
+) -> Option<Value> {
     let call_id = function_call
         .get("id")
         .and_then(|v| v.as_str())
@@ -1458,10 +1498,18 @@ fn chat_legacy_function_call_to_response_item(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+
+    // Skip legacy function calls with missing names (defensive: some models
+    // may generate function_call without providing a valid name)
+    if name.is_empty() {
+        log::warn!("[Codex] Skipping legacy function_call with missing name");
+        return None;
+    }
+
     let arguments = canonicalize_tool_arguments(function_call.get("arguments"));
 
     let item_id = response_tool_call_item_id_from_chat_name(call_id, name, tool_context);
-    response_tool_call_item_from_chat_name(
+    Some(response_tool_call_item_from_chat_name(
         &item_id,
         "completed",
         call_id,
@@ -1469,7 +1517,7 @@ fn chat_legacy_function_call_to_response_item(
         &arguments,
         reasoning,
         tool_context,
-    )
+    ))
 }
 
 pub(crate) fn response_tool_call_item_id_from_chat_name(
@@ -1609,12 +1657,26 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
         "total_tokens": total_tokens
     });
 
-    if let Some(cached) = usage
+    let cached = usage
         .pointer("/prompt_tokens_details/cached_tokens")
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
         .and_then(|v| v.as_u64())
-    {
-        result["input_tokens_details"] = json!({ "cached_tokens": cached });
+        .unwrap_or(0);
+    let cache_write = usage
+        .pointer("/prompt_tokens_details/cache_write_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cache_write_tokens"))
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            usage
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_u64())
+        })
+        .unwrap_or(0);
+    if cached > 0 || cache_write > 0 {
+        result["input_tokens_details"] = json!({
+            "cached_tokens": cached,
+            "cache_write_tokens": cache_write
+        });
     }
 
     if let Some(details) = usage
@@ -1633,8 +1695,8 @@ pub(crate) fn chat_usage_to_responses_usage(usage: Option<&Value>) -> Value {
     if let Some(cache_read) = usage.get("cache_read_input_tokens") {
         result["cache_read_input_tokens"] = cache_read.clone();
     }
-    if let Some(cache_creation) = usage.get("cache_creation_input_tokens") {
-        result["cache_creation_input_tokens"] = cache_creation.clone();
+    if cache_write > 0 {
+        result["cache_creation_input_tokens"] = json!(cache_write);
     }
 
     result
@@ -2715,7 +2777,7 @@ mod tests {
                 "prompt_tokens": 10,
                 "completion_tokens": 5,
                 "total_tokens": 15,
-                "prompt_tokens_details": {"cached_tokens": 3}
+                "prompt_tokens_details": {"cached_tokens": 3, "cache_write_tokens": 2}
             }
         });
 
@@ -2739,6 +2801,10 @@ mod tests {
         assert_eq!(result["usage"]["input_tokens"], 10);
         assert_eq!(result["usage"]["output_tokens"], 5);
         assert_eq!(result["usage"]["input_tokens_details"]["cached_tokens"], 3);
+        assert_eq!(
+            result["usage"]["input_tokens_details"]["cache_write_tokens"],
+            2
+        );
     }
 
     #[test]

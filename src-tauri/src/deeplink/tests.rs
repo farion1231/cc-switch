@@ -88,6 +88,39 @@ fn test_parse_deeplink_with_notes() {
 }
 
 #[test]
+fn test_parse_grokbuild_provider() {
+    use super::provider::build_provider_from_request;
+
+    let url = "ccswitch://v1/import?resource=provider&app=grokbuild&name=Grok%20Relay&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=secret&model=grok-4.5";
+
+    let request = parse_deeplink_url(url).unwrap();
+
+    assert_eq!(request.app.as_deref(), Some("grokbuild"));
+    assert_eq!(request.name.as_deref(), Some("Grok Relay"));
+    assert_eq!(
+        request.endpoint.as_deref(),
+        Some("https://api.example.com/v1")
+    );
+    assert_eq!(request.api_key.as_deref(), Some("secret"));
+    assert_eq!(request.model.as_deref(), Some("grok-4.5"));
+
+    let provider = build_provider_from_request(&AppType::GrokBuild, &request).unwrap();
+    let config = provider.settings_config["config"].as_str().unwrap();
+    let document = config.parse::<toml::Value>().unwrap();
+    let model = &document["model"]["grok-4.5"];
+
+    assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
+    assert_eq!(
+        model["base_url"].as_str(),
+        Some("https://api.example.com/v1")
+    );
+    assert_eq!(model["name"].as_str(), Some("Grok Relay"));
+    assert_eq!(model["api_key"].as_str(), Some("secret"));
+    assert_eq!(model["api_backend"].as_str(), Some("responses"));
+    assert_eq!(model["context_window"].as_integer(), Some(500_000));
+}
+
+#[test]
 fn test_parse_invalid_scheme() {
     let url = "https://v1/import?resource=provider&app=claude&name=Test";
 
@@ -261,6 +294,154 @@ fn test_build_gemini_provider_without_model() {
 }
 
 #[test]
+fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert!(script.enabled);
+    assert_eq!(script.api_key, None);
+    assert_eq!(script.base_url, None);
+}
+
+#[test]
+fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: Some(" sk-main ".to_string()),
+        usage_base_url: Some(" https://api.example.com/v1/ ".to_string()),
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert_eq!(script.api_key, None);
+    assert_eq!(script.base_url, None);
+}
+
+#[test]
+fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: Some(" sk-usage ".to_string()),
+        usage_base_url: Some(" https://usage.example/api/ ".to_string()),
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
+    assert_eq!(
+        script.base_url.as_deref(),
+        Some("https://usage.example/api")
+    );
+}
+
+#[test]
 fn test_parse_and_merge_config_claude() {
     // Prepare Base64 encoded Claude config
     let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
@@ -350,6 +531,38 @@ experimental_bearer_token = "sk-rightcode"
         Some("https://rightcode.example".to_string())
     );
     assert_eq!(merged.model, Some("gpt-5-codex".to_string()));
+}
+
+#[test]
+fn test_parse_and_merge_config_grokbuild() {
+    let config_toml = r#"[models]
+default = "grok-profile"
+
+[model."grok-profile"]
+model = "grok-upstream"
+base_url = "https://grok.example/v1"
+name = "Grok Relay"
+api_key = "sk-grok"
+api_backend = "responses"
+context_window = 500000
+"#;
+    let config_json = serde_json::json!({ "config": config_toml }).to_string();
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Grok Relay".to_string()),
+        config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).expect("merge Grok Build config");
+
+    assert_eq!(merged.api_key.as_deref(), Some("sk-grok"));
+    assert_eq!(merged.endpoint.as_deref(), Some("https://grok.example/v1"));
+    assert_eq!(merged.model.as_deref(), Some("grok-upstream"));
+    assert_eq!(merged.homepage.as_deref(), Some("https://grok.example"));
 }
 
 #[test]
@@ -561,6 +774,11 @@ fn test_parse_mcp_apps() {
     assert!(!apps.codex);
     assert!(apps.gemini);
 
+    let apps = parse_mcp_apps("grokbuild,opencode,hermes").unwrap();
+    assert!(apps.grokbuild);
+    assert!(apps.opencode);
+    assert!(apps.hermes);
+
     let err = parse_mcp_apps("invalid").unwrap_err();
     assert!(err.to_string().contains("Invalid app"));
 }
@@ -584,6 +802,18 @@ fn test_parse_prompt_deeplink() {
 }
 
 #[test]
+fn test_parse_grokbuild_prompt_deeplink() {
+    let content_b64 = BASE64_STANDARD.encode("Grok instructions");
+    let url = format!(
+        "ccswitch://v1/import?resource=prompt&app=grokbuild&name=test&content={content_b64}"
+    );
+
+    let request = parse_deeplink_url(&url).expect("parse Grok Build prompt deeplink");
+
+    assert_eq!(request.app.as_deref(), Some("grokbuild"));
+}
+
+#[test]
 fn test_parse_mcp_deeplink() {
     let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
     let config_b64 = BASE64_STANDARD.encode(config);
@@ -597,6 +827,19 @@ fn test_parse_mcp_deeplink() {
     assert_eq!(request.apps.unwrap(), "claude,codex");
     assert_eq!(request.config.unwrap(), config_b64);
     assert!(request.enabled.unwrap());
+}
+
+#[test]
+fn test_parse_grokbuild_mcp_deeplink() {
+    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
+    let config_b64 = BASE64_STANDARD.encode(config);
+    let url = format!(
+        "ccswitch://v1/import?resource=mcp&apps=grokbuild&config={config_b64}&enabled=true"
+    );
+
+    let request = parse_deeplink_url(&url).expect("parse Grok Build MCP deeplink");
+
+    assert_eq!(request.apps.as_deref(), Some("grokbuild"));
 }
 
 #[test]
