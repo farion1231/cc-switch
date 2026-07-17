@@ -344,6 +344,11 @@ impl ProxyServer {
                 "/codex/v1/responses/compact",
                 post(handlers::handle_responses_compact),
             )
+            // OpenAI Models 列表 (Codex 桌面端在线刷新模型列表用；CLI 走 model_catalog_json，
+            // 不经此端点)。这些是 GET 只读端点，缺失时会在路由层 404，导致桌面端无法切换模型。
+            .route("/v1/models", get(handlers::handle_codex_models))
+            .route("/v1/v1/models", get(handlers::handle_codex_models))
+            .route("/codex/v1/models", get(handlers::handle_codex_models))
             // Gemini API (支持带前缀和不带前缀)
             //
             // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
