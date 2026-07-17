@@ -235,32 +235,30 @@ impl Database {
         Ok(())
     }
 
-    /// 初始化默认的 Skill 仓库（启动时调用，补充缺失的默认仓库）
+    /// 初始化默认的 Skill 仓库（启动时调用，每个数据库仅执行一次）
     pub fn init_default_skill_repos(&self) -> Result<usize, AppError> {
-        // 获取已有仓库列表
-        let existing = self.get_skill_repos()?;
-        let existing_keys: std::collections::HashSet<(String, String)> = existing
-            .iter()
-            .map(|r| (r.owner.clone(), r.name.clone()))
-            .collect();
+        const INITIALIZED_KEY: &str = "default_skill_repos_initialized";
 
-        // 获取默认仓库列表
+        if self.get_bool_flag(INITIALIZED_KEY)? {
+            return Ok(0);
+        }
+
+        // 兼容升级前已经存在的用户选择，并记录初始化状态，避免以后删空后恢复默认值。
+        if !self.get_skill_repos()?.is_empty() {
+            self.set_setting(INITIALIZED_KEY, "true")?;
+            return Ok(0);
+        }
+
         let default_store = crate::services::skill::SkillStore::default();
         let mut count = 0;
 
-        // 仅插入缺失的默认仓库
         for repo in &default_store.repos {
-            let key = (repo.owner.clone(), repo.name.clone());
-            if !existing_keys.contains(&key) {
-                self.save_skill_repo(repo)?;
-                count += 1;
-                log::info!("补充默认 Skill 仓库: {}/{}", repo.owner, repo.name);
-            }
+            self.save_skill_repo(repo)?;
+            count += 1;
+            log::info!("初始化默认 Skill 仓库: {}/{}", repo.owner, repo.name);
         }
 
-        if count > 0 {
-            log::info!("补充默认 Skill 仓库完成，新增 {count} 个");
-        }
+        self.set_setting(INITIALIZED_KEY, "true")?;
         Ok(count)
     }
 }
