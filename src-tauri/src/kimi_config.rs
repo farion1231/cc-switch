@@ -177,8 +177,8 @@ pub fn get_kimi_model_from_config() -> Option<String> {
     let doc = read_kimi_config().ok()??;
     let models = doc.get("models")?.as_table()?;
     let model_key = "kimi-code/kimi-for-coding";
-    let model_table = models.get(model_key)?.as_table()?;
-    // 优先使用完整模型路径（含 namespace），API 端点通常需要这个格式
+    // 仅需确认该模型表存在；优先使用完整模型路径（含 namespace），API 端点通常需要这个格式
+    models.get(model_key)?.as_table()?;
     Some(model_key.to_string())
 }
 

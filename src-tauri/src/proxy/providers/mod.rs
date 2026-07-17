@@ -18,17 +18,21 @@ mod codex;
 pub(crate) mod codex_chat_common;
 pub mod codex_chat_history;
 pub mod codex_oauth_auth;
+pub(crate) mod codex_responses_sse;
 pub mod copilot_auth;
 pub mod copilot_model_map;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub mod models;
+pub(crate) mod reasoning_bridge;
 pub mod streaming;
+pub mod streaming_codex_anthropic;
 pub mod streaming_codex_chat;
 pub mod streaming_gemini;
 pub mod streaming_responses;
 pub mod transform;
+pub mod transform_codex_anthropic;
 pub mod transform_codex_chat;
 pub mod transform_gemini;
 pub mod transform_responses;
@@ -37,19 +41,22 @@ use crate::app_config::AppType;
 use crate::provider::Provider;
 use serde::{Deserialize, Serialize};
 
+pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+
 // 公开导出
 pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
 pub use claude::{
     claude_api_format_needs_transform, get_claude_api_format,
-    normalize_anthropic_tool_thinking_history_for_provider,
-    transform_claude_request_for_api_format, ClaudeAdapter,
+    normalize_anthropic_messages_for_provider, transform_claude_request_for_api_format,
+    ClaudeAdapter,
 };
 pub use codex::CodexAdapter;
 pub use codex::{
-    apply_codex_chat_upstream_model, codex_provider_upstream_model,
-    codex_provider_uses_chat_completions, is_origin_only_url, resolve_codex_chat_reasoning_config,
-    should_convert_codex_responses_to_chat,
+    apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
+    inject_codex_chat_prompt_cache_key, is_codex_official_provider,
+    resolve_codex_catalog_tool_profile, resolve_codex_chat_reasoning_config,
+    should_convert_codex_responses_to_anthropic, should_convert_codex_responses_to_chat,
 };
 pub use gemini::GeminiAdapter;
 
@@ -105,7 +112,7 @@ impl ProviderType {
             }
             ProviderType::OpenRouter => "https://openrouter.ai/api",
             ProviderType::GitHubCopilot => "https://api.githubcopilot.com",
-            ProviderType::CodexOAuth => "https://chatgpt.com/backend-api/codex",
+            ProviderType::CodexOAuth => CHATGPT_CODEX_BASE_URL,
         }
     }
 

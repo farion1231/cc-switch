@@ -9,7 +9,51 @@ use super::DeepLinkImportRequest;
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
-use std::sync::Arc;
+use std::{env, ffi::OsString, sync::Arc};
+
+struct TestHomeGuard {
+    _dir: tempfile::TempDir,
+    original_home: Option<OsString>,
+    original_userprofile: Option<OsString>,
+    original_test_home: Option<OsString>,
+}
+
+impl TestHomeGuard {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("create isolated test home");
+        let original_home = env::var_os("HOME");
+        let original_userprofile = env::var_os("USERPROFILE");
+        let original_test_home = env::var_os("CC_SWITCH_TEST_HOME");
+
+        env::set_var("HOME", dir.path());
+        env::set_var("USERPROFILE", dir.path());
+        env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+
+        Self {
+            _dir: dir,
+            original_home,
+            original_userprofile,
+            original_test_home,
+        }
+    }
+}
+
+impl Drop for TestHomeGuard {
+    fn drop(&mut self) {
+        match &self.original_test_home {
+            Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        match &self.original_userprofile {
+            Some(value) => env::set_var("USERPROFILE", value),
+            None => env::remove_var("USERPROFILE"),
+        }
+        match &self.original_home {
+            Some(value) => env::set_var("HOME", value),
+            None => env::remove_var("HOME"),
+        }
+    }
+}
 
 // =============================================================================
 // Parser Tests
@@ -214,6 +258,154 @@ fn test_build_gemini_provider_without_model() {
     assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
     // Model should not be present
     assert!(env.get("GEMINI_MODEL").is_none());
+}
+
+#[test]
+fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: None,
+        usage_base_url: None,
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert!(script.enabled);
+    assert_eq!(script.api_key, None);
+    assert_eq!(script.base_url, None);
+}
+
+#[test]
+fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1/".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: Some(" sk-main ".to_string()),
+        usage_base_url: Some(" https://api.example.com/v1/ ".to_string()),
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert_eq!(script.api_key, None);
+    assert_eq!(script.base_url, None);
+}
+
+#[test]
+fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test Claude".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("sk-main".to_string()),
+        icon: None,
+        model: None,
+        notes: None,
+        haiku_model: None,
+        sonnet_model: None,
+        opus_model: None,
+        config: None,
+        config_format: None,
+        config_url: None,
+        apps: None,
+        repo: None,
+        directory: None,
+        branch: None,
+        content: None,
+        description: None,
+        enabled: None,
+        usage_enabled: Some(true),
+        usage_script: None,
+        usage_api_key: Some(" sk-usage ".to_string()),
+        usage_base_url: Some(" https://usage.example/api/ ".to_string()),
+        usage_access_token: None,
+        usage_user_id: None,
+        usage_auto_interval: None,
+    };
+
+    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
+    let script = provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.usage_script.as_ref())
+        .expect("usage script should be created");
+
+    assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
+    assert_eq!(
+        script.base_url.as_deref(),
+        Some("https://usage.example/api")
+    );
 }
 
 #[test]
@@ -477,8 +669,12 @@ fn test_build_claude_provider_without_config_unchanged() {
 // Prompt Tests
 // =============================================================================
 
+// Integration-style unit test: prompt import reaches PromptService and resolves
+// live config file paths, so HOME must be isolated before it runs.
 #[test]
+#[serial_test::serial]
 fn test_import_prompt_allows_space_in_base64_content() {
+    let _test_home = TestHomeGuard::new();
     let url = "ccswitch://v1/import?resource=prompt&app=codex&name=PromptPlus&content=Pj4+";
     let request = parse_deeplink_url(url).unwrap();
 

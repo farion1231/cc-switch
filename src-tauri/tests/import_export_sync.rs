@@ -498,6 +498,42 @@ fn sync_enabled_to_codex_returns_error_on_invalid_toml() {
 }
 
 #[test]
+fn sync_single_server_to_codex_fails_closed_on_invalid_toml() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let path = cc_switch_lib::get_codex_config_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create codex dir");
+    }
+    // 含用户内容 + 语法错误的 config.toml：同步必须报错且不得覆盖文件
+    let broken = "model = \"gpt-5.5\"\ninvalid = [\n";
+    fs::write(&path, broken).expect("write invalid config");
+
+    let config = MultiAppConfig::default();
+    let err = cc_switch_lib::sync_single_server_to_codex(
+        &config,
+        "srv",
+        &json!({ "type": "stdio", "command": "echo" }),
+    )
+    .expect_err("sync should fail instead of wiping the file");
+    match err {
+        cc_switch_lib::AppError::McpValidation(msg) => {
+            assert!(
+                msg.contains("config.toml"),
+                "error message should mention config.toml"
+            );
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    let text = fs::read_to_string(&path).expect("read config.toml");
+    assert_eq!(
+        text, broken,
+        "invalid config.toml must be left untouched on sync failure"
+    );
+}
+
+#[test]
 fn sync_codex_provider_missing_auth_returns_error() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
     reset_test_fs();
@@ -714,6 +750,7 @@ command = "echo"
                 gemini: false,
                 opencode: false,
                 hermes: false,
+                kimi: false,
             },
             description: None,
             homepage: None,
@@ -843,6 +880,7 @@ fn import_from_claude_merges_into_config() {
                 gemini: false,
                 opencode: false,
                 hermes: false,
+                kimi: false,
             },
             description: None,
             homepage: None,

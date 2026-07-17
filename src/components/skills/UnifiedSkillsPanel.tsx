@@ -90,8 +90,9 @@ const UnifiedSkillsPanel = React.forwardRef<
   const toggleAppMutation = useToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
+  // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
-    useScanUnmanagedSkills();
+    useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
