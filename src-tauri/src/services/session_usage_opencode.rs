@@ -17,12 +17,13 @@ use crate::opencode_config::get_opencode_db_path;
 use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    get_sync_state, is_recently_modified, metadata_modified_nanos, update_sync_state,
+    SessionSyncResult, DEFAULT_AUTO_SYNC_MIN_FILE_AGE,
 };
 use crate::services::usage_stats::{find_model_pricing, should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
 use std::fs;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// 从 opencode message.data JSON 中提取的 token 和费用数据
 struct OpenCodeMessageData {
@@ -43,6 +44,17 @@ struct OpenCodeMessageQueryResult {
 
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_opencode_usage_with_min_file_age(db, None)
+}
+
+pub fn sync_opencode_usage_auto(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_opencode_usage_with_min_file_age(db, Some(DEFAULT_AUTO_SYNC_MIN_FILE_AGE))
+}
+
+fn sync_opencode_usage_with_min_file_age(
+    db: &Database,
+    min_file_age: Option<Duration>,
+) -> Result<SessionSyncResult, AppError> {
     let db_path = get_opencode_db_path();
 
     if !db_path.exists() {
@@ -63,10 +75,29 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     let metadata = fs::metadata(&db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
+    let mut file_is_recent = min_file_age
+        .map(|min_age| is_recently_modified(&metadata, min_age))
+        .unwrap_or(false);
 
     let wal_path = db_path.with_extension("db-wal");
     if let Ok(wal_meta) = fs::metadata(&wal_path) {
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
+        if let Some(min_age) = min_file_age {
+            file_is_recent |= is_recently_modified(&wal_meta, min_age);
+        }
+    }
+
+    if file_is_recent {
+        log::debug!(
+            "[OPENCODE-SYNC] skipping active OpenCode database: {}",
+            db_path.display()
+        );
+        return Ok(SessionSyncResult {
+            imported: 0,
+            skipped: 0,
+            files_scanned: 1,
+            errors: vec![],
+        });
     }
 
     let (last_modified, _last_offset) = get_sync_state(db, &db_path_str)?;
