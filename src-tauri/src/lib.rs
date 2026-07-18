@@ -1079,6 +1079,10 @@ pub fn run() {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
                         PERIODIC_MAINTENANCE_INTERVAL_SECS,
                     ));
+                    // Windows 上 tokio 计时器在系统休眠期间照常累积，默认的 Burst 策略会在
+                    // 唤醒后一次性补发所有错过的 tick。Skip 策略丢弃错过的 tick，唤醒后仅按
+                    // 正常周期恢复。
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     interval.tick().await; // skip immediate first tick (already checked above)
                     loop {
                         interval.tick().await;
@@ -1099,53 +1103,55 @@ pub fn run() {
                         }
                     }
 
-                    let db = &db_for_session_sync;
+                    // 一轮会话用量同步会对成千上万个日志文件做阻塞式 stat + SQLite 查询，
+                    // 必须放到 spawn_blocking 线程执行（见下方调用），避免阻塞 tokio 异步
+                    // 运行时线程、拖累前端命令与其它异步任务。
+                    fn run_usage_sync(db: &crate::database::Database, phase: &str) {
+                        run_step(
+                            &format!("Session usage {phase} sync"),
+                            crate::services::session_usage::sync_claude_session_logs(db),
+                        );
+                        run_step(
+                            &format!("Codex usage {phase} sync"),
+                            crate::services::session_usage_codex::sync_codex_usage(db),
+                        );
+                        run_step(
+                            &format!("Gemini usage {phase} sync"),
+                            crate::services::session_usage_gemini::sync_gemini_usage(db),
+                        );
+                        run_step(
+                            &format!("OpenCode usage {phase} sync"),
+                            crate::services::session_usage_opencode::sync_opencode_usage(db),
+                        );
+                    }
 
-                    // 首次同步
-                    run_step(
-                        "Usage cost startup backfill",
-                        db.backfill_missing_usage_costs(),
-                    );
-                    run_step(
-                        "Session usage initial sync",
-                        crate::services::session_usage::sync_claude_session_logs(db),
-                    );
-                    run_step(
-                        "Codex usage initial sync",
-                        crate::services::session_usage_codex::sync_codex_usage(db),
-                    );
-                    run_step(
-                        "Gemini usage initial sync",
-                        crate::services::session_usage_gemini::sync_gemini_usage(db),
-                    );
-                    run_step(
-                        "OpenCode usage initial sync",
-                        crate::services::session_usage_opencode::sync_opencode_usage(db),
-                    );
+                    // 首次同步（含费用回填）——同样放到阻塞线程，避免拖住异步运行时。
+                    let db_initial = db_for_session_sync.clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        run_step(
+                            "Usage cost startup backfill",
+                            db_initial.backfill_missing_usage_costs(),
+                        );
+                        run_usage_sync(&db_initial, "initial");
+                    })
+                    .await;
 
                     // 定期同步
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
                         SESSION_SYNC_INTERVAL_SECS,
                     ));
+                    // Windows 上 tokio 计时器在系统休眠期间照常累积，默认的 Burst 策略会在
+                    // 唤醒后一次性补发所有错过的 tick，导致密集触发上面这轮全量文件扫描、
+                    // CPU 飙升且不回落。Skip 策略丢弃错过的 tick，唤醒后仅按正常周期恢复。
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     interval.tick().await; // skip immediate first tick
                     loop {
                         interval.tick().await;
-                        run_step(
-                            "Session usage periodic sync",
-                            crate::services::session_usage::sync_claude_session_logs(db),
-                        );
-                        run_step(
-                            "Codex usage periodic sync",
-                            crate::services::session_usage_codex::sync_codex_usage(db),
-                        );
-                        run_step(
-                            "Gemini usage periodic sync",
-                            crate::services::session_usage_gemini::sync_gemini_usage(db),
-                        );
-                        run_step(
-                            "OpenCode usage periodic sync",
-                            crate::services::session_usage_opencode::sync_opencode_usage(db),
-                        );
+                        let db_cycle = db_for_session_sync.clone();
+                        let _ = tauri::async_runtime::spawn_blocking(move || {
+                            run_usage_sync(&db_cycle, "periodic");
+                        })
+                        .await;
                     }
                 });
             });
