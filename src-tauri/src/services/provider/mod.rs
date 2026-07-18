@@ -2475,22 +2475,24 @@ impl ProviderService {
     ///
     /// Holds the per-app switch lock for the whole sample → mutate sequence so
     /// concurrent takeover enable/disable cannot interleave with a stale snapshot.
+    ///
+    /// Important: acquire the lock with a *discrete* `block_on`, then run the
+    /// body with discrete `block_on`s as well. Wrapping the whole body in
+    /// `block_on(async { ... })` nests executors when `write_live_with_common_config`
+    /// (Claude Desktop) itself calls `block_on` — that panics with EnterError
+    /// and is what broke the Windows/macOS-only Claude Desktop update test.
     fn sync_current_provider_live_after_update(
         state: &AppState,
         app_type: &AppType,
         provider: &Provider,
     ) -> Result<(), AppError> {
-        futures::executor::block_on(async {
-            let _guard = state
-                .proxy_service
-                .lock_switch_for_app(app_type.as_str())
-                .await;
-            Self::sync_current_provider_live_after_update_locked(state, app_type, provider).await
-        })
+        let _guard =
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+        Self::sync_current_provider_live_after_update_locked(state, app_type, provider)
     }
 
     /// Caller must already hold the per-app switch lock for `app_type`.
-    async fn sync_current_provider_live_after_update_locked(
+    fn sync_current_provider_live_after_update_locked(
         state: &AppState,
         app_type: &AppType,
         provider: &Provider,
@@ -2503,13 +2505,11 @@ impl ProviderService {
         //
         // 必须在持锁后采样：takeover 启停与 hot_switch 共用同一把锁，
         // 持锁前的 has_live_backup / live_taken_over 快照可能已过期。
-        let has_live_backup = state
-            .db
-            .get_live_backup(app_type.as_str())
-            .await
-            .ok()
-            .flatten()
-            .is_some();
+        let has_live_backup =
+            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                .ok()
+                .flatten()
+                .is_some();
         let live_taken_over = state
             .proxy_service
             .detect_takeover_in_live_config_for_app(app_type);
@@ -2523,32 +2523,33 @@ impl ProviderService {
                 write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
             } else {
                 // 已持锁：走 inner，避免 update_live_backup_from_provider 再次拿锁死锁。
-                state
-                    .proxy_service
-                    .update_live_backup_from_provider_inner(app_type.as_str(), provider)
-                    .await
-                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
-            }
-
-            if state.proxy_service.is_running().await {
-                if matches!(app_type, AppType::Claude) {
+                futures::executor::block_on(
                     state
                         .proxy_service
-                        .sync_claude_live_from_provider_while_proxy_active(provider)
-                        .await
-                        .map_err(|e| {
-                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
-                        })?;
+                        .update_live_backup_from_provider_inner(app_type.as_str(), provider),
+                )
+                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            }
+
+            if futures::executor::block_on(state.proxy_service.is_running()) {
+                if matches!(app_type, AppType::Claude) {
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .sync_claude_live_from_provider_while_proxy_active(provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
                 } else if live_taken_over && matches!(app_type, AppType::Codex) {
                     // Codex model mappings are projected into a generated
                     // model_catalog_json file. Refresh takeover-owned Live
                     // immediately so adding/removing mappings cannot leave
                     // the previous catalog pointer and capabilities active.
-                    state
-                        .proxy_service
-                        .sync_codex_live_from_provider_while_proxy_active(provider)
-                        .await
-                        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .sync_codex_live_from_provider_while_proxy_active(provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
                 }
             }
 
