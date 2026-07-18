@@ -523,7 +523,11 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
             }
             _ => false,
         },
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => false,
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => false,
     }
 }
 
@@ -593,9 +597,11 @@ pub(crate) fn remove_common_config_from_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -650,9 +656,11 @@ fn apply_common_config_to_settings(
             }
             Ok(result)
         }
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ClaudeDesktop => {
-            Ok(settings.clone())
-        }
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::OpenClaw
+        | AppType::Hermes
+        | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
 
@@ -823,6 +831,16 @@ fn restore_live_settings_for_provider_backfill(
         let mut settings = live_settings;
         strip_injected_codex_oauth_context_defaults(&mut settings, provider);
         strip_injected_kimi_for_coding_context_defaults(&mut settings, provider);
+        return settings;
+    }
+    if matches!(app_type, AppType::GrokBuild) {
+        let mut settings = live_settings;
+        if let Err(err) = crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings) {
+            log::warn!(
+                "Failed to strip Grok Build mcp_servers while backfilling '{}': {err}",
+                provider.id
+            );
+        }
         return settings;
     }
     if !matches!(app_type, AppType::Codex) {
@@ -1036,6 +1054,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Gemini => {
             // Delegate to write_gemini_live which handles env file writing correctly
             write_gemini_live(provider)?;
+        }
+        AppType::GrokBuild => {
+            crate::grok_config::write_grok_provider_live(provider)?;
         }
         AppType::OpenCode => {
             // OpenCode uses additive mode - write provider to config
@@ -1367,6 +1388,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = read_opencode_config()?;
             Ok(config)
         }
+        AppType::GrokBuild => crate::grok_config::read_grok_live_settings(),
         AppType::OpenClaw => {
             use crate::openclaw_config::{get_openclaw_config_path, read_openclaw_config};
 
@@ -1435,6 +1457,11 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
+        AppType::GrokBuild => {
+            let mut settings = crate::grok_config::read_grok_live_settings()?;
+            crate::grok_config::strip_grok_mcp_servers_from_settings(&mut settings)?;
+            settings
+        }
         AppType::Claude => {
             let settings_path = get_claude_settings_path();
             if !settings_path.exists() {
@@ -2535,5 +2562,33 @@ base_url = "https://a.example/v1"
             config_text.contains("model = \"gpt-5.5\""),
             "non-MCP content must survive the strip"
         );
+    }
+
+    #[test]
+    fn grok_switch_backfill_strips_synced_mcp_servers() {
+        let provider = Provider::with_id(
+            "grok".to_string(),
+            "Grok".to_string(),
+            json!({
+                "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n"
+            }),
+            None,
+        );
+        let live_settings = json!({
+            "config": "[models]\ndefault = \"grok-4.5\"\n\n[model.\"grok-4.5\"]\nmodel = \"grok-4.5\"\nbase_url = \"https://example.com/v1\"\nname = \"Example\"\napi_key = \"secret\"\napi_backend = \"responses\"\ncontext_window = 500000\n\n[mcp_servers.echo]\ncommand = \"echo\"\n"
+        });
+
+        let result = restore_live_settings_for_provider_backfill(
+            &AppType::GrokBuild,
+            &provider,
+            live_settings,
+        );
+        let config_text = result
+            .get("config")
+            .and_then(Value::as_str)
+            .expect("config text");
+
+        assert!(!config_text.contains("mcp_servers"));
+        assert!(config_text.contains("model = \"grok-4.5\""));
     }
 }
