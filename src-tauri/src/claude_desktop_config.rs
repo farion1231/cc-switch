@@ -371,7 +371,7 @@ pub fn validate_direct_provider(provider: &Provider) -> Result<(), AppError> {
 
         if matches!(
             meta.provider_type.as_deref(),
-            Some("github_copilot") | Some("codex_oauth")
+            Some("github_copilot") | Some("codex_oauth") | Some("xai_oauth")
         ) {
             return Err(AppError::localized(
                 "claude_desktop.provider.type_unsupported",
@@ -476,7 +476,12 @@ fn is_managed_oauth_proxy_provider(provider: &Provider) -> bool {
         .meta
         .as_ref()
         .and_then(|meta| meta.provider_type.as_deref())
-        .is_some_and(|provider_type| matches!(provider_type, "github_copilot" | "codex_oauth"))
+        .is_some_and(|provider_type| {
+            matches!(
+                provider_type,
+                "github_copilot" | "codex_oauth" | "xai_oauth"
+            )
+        })
 }
 
 pub fn validate_provider(provider: &Provider) -> Result<(), AppError> {
@@ -1583,6 +1588,7 @@ mod tests {
         for (provider_type, api_format) in [
             ("github_copilot", "openai_chat"),
             ("codex_oauth", "openai_responses"),
+            ("xai_oauth", "openai_responses"),
         ] {
             let provider = oauth_proxy_provider(provider_type, provider_type, api_format);
             validate_proxy_provider(&provider).expect("oauth proxy provider should validate");
