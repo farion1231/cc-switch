@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -30,7 +31,15 @@ import {
   Download,
   Loader2,
   Wand2,
+  RefreshCw,
+  Info,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -158,6 +167,8 @@ interface ClaudeFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+  settingsConfig?: string;
+  onSettingsConfigChange?: (config: string) => void;
 }
 
 export function ClaudeFormFields({
@@ -223,6 +234,8 @@ export function ClaudeFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  settingsConfig,
+  onSettingsConfigChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasRequestOverrides = Boolean(
@@ -243,6 +256,31 @@ export function ClaudeFormFields({
   const [advancedExpanded, setAdvancedExpanded] = useState(
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
+  // 自动同步上下文窗口开关
+  const autoSyncContextWindow = (() => {
+    if (!settingsConfig) return true;
+    try {
+      const parsed = JSON.parse(settingsConfig);
+      return (parsed as Record<string, unknown>).autoSyncContextWindow !== false;
+    } catch {
+      return true;
+    }
+  })();
+
+  const handleAutoSyncChange = useCallback(
+    (checked: boolean) => {
+      if (!onSettingsConfigChange) return;
+      try {
+        const parsed = settingsConfig ? JSON.parse(settingsConfig) : {};
+        parsed.autoSyncContextWindow = checked;
+        onSettingsConfigChange(JSON.stringify(parsed, null, 2));
+      } catch (err) {
+        console.error("Failed to update autoSyncContextWindow:", err);
+      }
+    },
+    [settingsConfig, onSettingsConfigChange],
+  );
+
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
@@ -1054,6 +1092,34 @@ export function ClaudeFormFields({
                 );
               })}
             </div>
+
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="mt-3 flex items-center gap-2 rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 w-fit">
+                    <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-foreground">
+                      {t("providerForm.autoSyncContextWindow", { defaultValue: "自动同步" })}
+                    </span>
+                    <Switch
+                      checked={autoSyncContextWindow}
+                      onCheckedChange={handleAutoSyncChange}
+                      aria-label={t("providerForm.autoSyncContextWindow", { defaultValue: "自动同步" })}
+                      className="h-5 w-9"
+                    />
+                    <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-xs">
+                  <p className="text-xs leading-relaxed">
+                    {t("providerForm.autoSyncContextWindowTooltip", {
+                      defaultValue:
+                        "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。",
+                    })}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
             <div className="space-y-2 border-t pt-4">
               <FormLabel htmlFor="claudeModel">
