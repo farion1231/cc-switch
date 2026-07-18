@@ -1,7 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { providersApi } from "@/lib/api";
+import { getOpenCodeModels } from "@/lib/api/model-fetch";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { OpenCodeProviderConfig } from "@/types";
 import { OPENCODE_PRESET_MODEL_VARIANTS } from "@/config/opencodeProviderPresets";
@@ -45,6 +47,19 @@ export function useOmoModelSource({
 }: UseOmoModelSourceParams): OmoModelSourceResult {
   const { t } = useTranslation();
 
+  const {
+    data: discoveredModels = [],
+    isError: runtimeModelsFailed,
+    error: runtimeModelsError,
+  } = useQuery({
+    queryKey: ["opencode", "runtime-models"],
+    queryFn: getOpenCodeModels,
+    enabled: isOmoCategory,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+
   const { data: opencodeProvidersData } = useProvidersQuery("opencode");
   const existingOpencodeKeys = useMemo(() => {
     if (!opencodeProvidersData?.providers) return [];
@@ -58,6 +73,7 @@ export function useOmoModelSource({
   >(null);
   const [omoLiveIdsLoadFailed, setOmoLiveIdsLoadFailed] = useState(false);
   const lastOmoModelSourceWarningRef = useRef<string>("");
+  const lastRuntimeModelsWarningRef = useRef<string>("");
 
   useEffect(() => {
     let active = true;
@@ -107,20 +123,6 @@ export function useOmoModelSource({
       return empty;
     }
 
-    const allProviders = opencodeProvidersData?.providers;
-    if (!allProviders) {
-      return empty;
-    }
-
-    const shouldFilterByLive = !omoLiveIdsLoadFailed;
-    if (shouldFilterByLive && enabledOpencodeProviderIds === null) {
-      return empty;
-    }
-    const liveSet =
-      shouldFilterByLive && enabledOpencodeProviderIds
-        ? new Set(enabledOpencodeProviderIds)
-        : null;
-
     const dedupedOptions = new Map<string, string>();
     const variantsMap: Record<string, string[]> = {};
     const presetMetaMap: Record<
@@ -132,88 +134,108 @@ export function useOmoModelSource({
     > = {};
     const parseFailedProviders: string[] = [];
 
-    for (const [providerKey, provider] of Object.entries(allProviders)) {
-      if (provider.category === "omo" || provider.category === "omo-slim") {
-        continue;
-      }
-      if (liveSet && !liveSet.has(providerKey)) {
-        continue;
-      }
+    const allProviders = opencodeProvidersData?.providers;
+    const liveReady = omoLiveIdsLoadFailed || enabledOpencodeProviderIds !== null;
 
-      let parsedConfig: OpenCodeProviderConfig;
-      try {
-        parsedConfig = parseOpencodeConfigStrict(provider.settingsConfig);
-      } catch (error) {
-        parseFailedProviders.push(providerKey);
-        console.warn(
-          "[OMO_MODEL_SOURCE_PARSE_FAILED] failed to parse provider settings",
-          {
-            providerKey,
-            error,
-          },
-        );
-        continue;
-      }
-      for (const [modelId, model] of Object.entries(
-        parsedConfig.models || {},
-      )) {
-        const modelName =
-          typeof model.name === "string" && model.name.trim()
-            ? model.name
-            : modelId;
-        const providerDisplayName =
-          typeof provider.name === "string" && provider.name.trim()
-            ? provider.name
-            : providerKey;
-        const value = `${providerKey}/${modelId}`;
-        const label = `${providerDisplayName} / ${modelName} (${modelId})`;
-        if (!dedupedOptions.has(value)) {
-          dedupedOptions.set(value, label);
+    // Configured providers are filtered by live ids when available.
+    // Runtime models are merged regardless, so OAuth/Zen entries still show
+    // while live/provider queries are in flight.
+    if (allProviders && liveReady) {
+      const liveSet =
+        !omoLiveIdsLoadFailed && enabledOpencodeProviderIds
+          ? new Set(enabledOpencodeProviderIds)
+          : null;
+
+      for (const [providerKey, provider] of Object.entries(allProviders)) {
+        if (provider.category === "omo" || provider.category === "omo-slim") {
+          continue;
+        }
+        if (liveSet && !liveSet.has(providerKey)) {
+          continue;
         }
 
-        const rawVariants = model.variants;
-        if (
-          rawVariants &&
-          typeof rawVariants === "object" &&
-          !Array.isArray(rawVariants)
-        ) {
-          const variantKeys = Object.keys(rawVariants).filter(Boolean);
-          if (variantKeys.length > 0) {
-            variantsMap[value] = variantKeys;
+        let parsedConfig: OpenCodeProviderConfig;
+        try {
+          parsedConfig = parseOpencodeConfigStrict(provider.settingsConfig);
+        } catch (error) {
+          parseFailedProviders.push(providerKey);
+          console.warn(
+            "[OMO_MODEL_SOURCE_PARSE_FAILED] failed to parse provider settings",
+            {
+              providerKey,
+              error,
+            },
+          );
+          continue;
+        }
+        for (const [modelId, model] of Object.entries(
+          parsedConfig.models || {},
+        )) {
+          const modelName =
+            typeof model.name === "string" && model.name.trim()
+              ? model.name
+              : modelId;
+          const providerDisplayName =
+            typeof provider.name === "string" && provider.name.trim()
+              ? provider.name
+              : providerKey;
+          const value = `${providerKey}/${modelId}`;
+          const label = `${providerDisplayName} / ${modelName} (${modelId})`;
+          if (!dedupedOptions.has(value)) {
+            dedupedOptions.set(value, label);
           }
-        }
-      }
 
-      // Preset fallback: for models without config-defined variants,
-      // check if the npm package has preset variant definitions.
-      // Also collect preset metadata (options, limit) for enrichment.
-      const presetModels = OPENCODE_PRESET_MODEL_VARIANTS[parsedConfig.npm];
-      if (presetModels) {
-        for (const modelId of Object.keys(parsedConfig.models || {})) {
-          const fullKey = `${providerKey}/${modelId}`;
-          const preset = presetModels.find((p) => p.id === modelId);
-          if (!preset) continue;
-
-          // Variant fallback
-          if (!variantsMap[fullKey] && preset.variants) {
-            const presetKeys = Object.keys(preset.variants).filter(Boolean);
-            if (presetKeys.length > 0) {
-              variantsMap[fullKey] = presetKeys;
+          const rawVariants = model.variants;
+          if (
+            rawVariants &&
+            typeof rawVariants === "object" &&
+            !Array.isArray(rawVariants)
+          ) {
+            const variantKeys = Object.keys(rawVariants).filter(Boolean);
+            if (variantKeys.length > 0) {
+              variantsMap[value] = variantKeys;
             }
           }
+        }
 
-          // Collect preset metadata for model enrichment
-          const meta: (typeof presetMetaMap)[string] = {};
-          if (preset.options) meta.options = preset.options;
-          if (preset.contextLimit || preset.outputLimit) {
-            meta.limit = {};
-            if (preset.contextLimit) meta.limit.context = preset.contextLimit;
-            if (preset.outputLimit) meta.limit.output = preset.outputLimit;
-          }
-          if (Object.keys(meta).length > 0) {
-            presetMetaMap[fullKey] = meta;
+        // Preset fallback: for models without config-defined variants,
+        // check if the npm package has preset variant definitions.
+        // Also collect preset metadata (options, limit) for enrichment.
+        const presetModels = OPENCODE_PRESET_MODEL_VARIANTS[parsedConfig.npm];
+        if (presetModels) {
+          for (const modelId of Object.keys(parsedConfig.models || {})) {
+            const fullKey = `${providerKey}/${modelId}`;
+            const preset = presetModels.find((p) => p.id === modelId);
+            if (!preset) continue;
+
+            // Variant fallback
+            if (!variantsMap[fullKey] && preset.variants) {
+              const presetKeys = Object.keys(preset.variants).filter(Boolean);
+              if (presetKeys.length > 0) {
+                variantsMap[fullKey] = presetKeys;
+              }
+            }
+
+            // Collect preset metadata for model enrichment
+            const meta: (typeof presetMetaMap)[string] = {};
+            if (preset.options) meta.options = preset.options;
+            if (preset.contextLimit || preset.outputLimit) {
+              meta.limit = {};
+              if (preset.contextLimit) meta.limit.context = preset.contextLimit;
+              if (preset.outputLimit) meta.limit.output = preset.outputLimit;
+            }
+            if (Object.keys(meta).length > 0) {
+              presetMetaMap[fullKey] = meta;
+            }
           }
         }
+      }
+    }
+
+    for (const model of discoveredModels) {
+      const value = `${model.providerId}/${model.modelId}`;
+      if (!dedupedOptions.has(value)) {
+        dedupedOptions.set(value, `${model.providerId} / ${model.modelId}`);
       }
     }
 
@@ -231,6 +253,7 @@ export function useOmoModelSource({
     opencodeProvidersData?.providers,
     enabledOpencodeProviderIds,
     omoLiveIdsLoadFailed,
+    discoveredModels,
   ]);
 
   // Warning toast for parse failures / fallback
@@ -270,6 +293,32 @@ export function useOmoModelSource({
     omoModelBuild.usedFallbackSource,
     t,
   ]);
+
+  // Warning toast when OpenCode runtime model discovery fails
+  useEffect(() => {
+    if (!isOmoCategory || !runtimeModelsFailed) {
+      if (!isOmoCategory) {
+        lastRuntimeModelsWarningRef.current = "";
+      }
+      return;
+    }
+
+    const detail = String(
+      (runtimeModelsError as { message?: string } | null)?.message ||
+        runtimeModelsError ||
+        "",
+    );
+    const signature = detail || "runtime-models-failed";
+    if (lastRuntimeModelsWarningRef.current === signature) return;
+    lastRuntimeModelsWarningRef.current = signature;
+
+    toast.warning(
+      t("omo.runtimeModelsFailedWarning", {
+        defaultValue:
+          "Failed to load OpenCode runtime models. Showing configured providers only.",
+      }),
+    );
+  }, [isOmoCategory, runtimeModelsFailed, runtimeModelsError, t]);
 
   return {
     omoModelOptions: omoModelBuild.options,

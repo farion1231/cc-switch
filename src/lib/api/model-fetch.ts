@@ -29,6 +29,16 @@ export async function fetchModelsForConfig(
   });
 }
 
+export interface OpenCodeModelRef {
+  providerId: string;
+  modelId: string;
+}
+
+/** 获取 OpenCode 当前运行时可用模型（包含 OAuth 与 Zen 免费模型）。 */
+export async function getOpenCodeModels(): Promise<OpenCodeModelRef[]> {
+  return invoke("get_opencode_models");
+}
+
 /**
  * 获取 Codex OAuth (ChatGPT Plus/Pro 反代) 可用模型列表
  *

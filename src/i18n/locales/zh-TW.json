@@ -2772,6 +2772,7 @@
     "noEnabledModelsWarning": "目前沒有可用的已設定模型，請先設定 OpenCode 模型",
     "modelSourcePartialWarning": "部分供應商模型設定無效，已自動跳過。",
     "modelSourceFallbackWarning": "讀取 live 供應商狀態失敗，已回退至已設定供應商清單。",
+    "runtimeModelsFailedWarning": "讀取 OpenCode 執行時模型失敗，已僅顯示已設定供應商模型。",
     "importLocalReplaceSuccess": "已從本地檔案匯入並覆寫 Agent/Category/Other Fields",
     "importLocalFailed": "讀取本地檔案失敗：{{error}}",
     "agentKeyPlaceholder": "agent 鍵名",

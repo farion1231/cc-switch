@@ -2800,6 +2800,7 @@
     "noEnabledModelsWarning": "No configured models available. Configure OpenCode models first.",
     "modelSourcePartialWarning": "Some provider model configs are invalid and were skipped.",
     "modelSourceFallbackWarning": "Failed to load live provider state. Falling back to configured providers.",
+    "runtimeModelsFailedWarning": "Failed to load OpenCode runtime models. Showing configured providers only.",
     "importLocalReplaceSuccess": "Imported local file and replaced Agents/Categories/Other Fields",
     "importLocalFailed": "Failed to read local file: {{error}}",
     "agentKeyPlaceholder": "agent key",

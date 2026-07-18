@@ -271,7 +271,7 @@ fn last_lines(text: &str, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-fn decode_command_output(bytes: &[u8]) -> String {
+pub(crate) fn decode_command_output(bytes: &[u8]) -> String {
     #[cfg(target_os = "windows")]
     {
         decode_windows_command_output(bytes)
@@ -1645,15 +1645,29 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
 }
 
 #[cfg(target_os = "windows")]
-fn run_windows_tool_version_command(
+fn run_windows_tool_command(
     tool_path: &Path,
+    args: &[&str],
     new_path: &str,
 ) -> std::io::Result<std::process::Output> {
     use std::process::Command;
 
     if is_windows_command_script(tool_path) {
         let path = tool_path.to_string_lossy();
-        let command = format!("call {} --version", win_quote_path_for_batch(&path));
+        let args = args
+            .iter()
+            .map(|arg| windows_cmd_double_quote_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = format!(
+            "call {}{}",
+            win_quote_path_for_batch(&path),
+            if args.is_empty() {
+                String::new()
+            } else {
+                format!(" {args}")
+            }
+        );
         let mut cmd = Command::new("cmd");
         return cmd
             .args(["/D", "/S", "/C"])
@@ -1664,10 +1678,18 @@ fn run_windows_tool_version_command(
     }
 
     Command::new(tool_path)
-        .arg("--version")
+        .args(args)
         .env("PATH", new_path)
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_version_command(
+    tool_path: &Path,
+    new_path: &str,
+) -> std::io::Result<std::process::Output> {
+    run_windows_tool_command(tool_path, &["--version"], new_path)
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
@@ -2372,6 +2394,231 @@ fn default_install(installs: &[ToolInstallation]) -> Option<&ToolInstallation> {
             installs.first()
         } else {
             None
+        }
+    })
+}
+
+fn wait_child_output(
+    mut child: std::process::Child,
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_handle = stdout_pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let stderr_handle = stderr_pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+
+    let status = match timeout {
+        None => child
+            .wait()
+            .map_err(|e| format!("Failed to wait for command: {e}"))?,
+        Some(limit) => {
+            let started = std::time::Instant::now();
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {
+                        if started.elapsed() >= limit {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            let _ = stdout_handle.map(|handle| handle.join());
+                            let _ = stderr_handle.map(|handle| handle.join());
+                            return Err(format!(
+                                "Command timed out after {}s",
+                                limit.as_secs()
+                            ));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to wait for command: {e}"));
+                    }
+                }
+            }
+        }
+    };
+
+    let stdout = stdout_handle
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+pub(crate) fn run_detected_tool_command(
+    tool: &str,
+    args: &[&str],
+) -> Result<std::process::Output, String> {
+    run_detected_tool_command_with_timeout(tool, args, None)
+}
+
+pub(crate) fn run_detected_tool_command_with_timeout(
+    tool: &str,
+    args: &[&str],
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    if !VALID_TOOLS.contains(&tool) {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    if args.iter().any(|arg| {
+        arg.is_empty()
+            || !arg
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    }) {
+        return Err("Invalid tool command arguments".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(distro) = wsl_distro_for_tool(tool) {
+        return run_wsl_tool_command(tool, args, &distro, timeout);
+    }
+
+    let installs = enumerate_tool_installations(tool);
+    let install = default_install(&installs).ok_or_else(|| {
+        format!("{tool} is not installed or its default installation is ambiguous")
+    })?;
+    if !install.runnable {
+        return Err(install
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("{tool} is installed but not executable")));
+    }
+
+    let tool_path = Path::new(&install.path);
+    let dir = tool_path
+        .parent()
+        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+    let current_path = std::env::var_os("PATH")
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    {
+        return run_windows_tool_command_capture(
+            tool_path,
+            args,
+            &format!("{};{current_path}", dir.display()),
+            timeout,
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::process::{Command, Stdio};
+
+        let mut cmd = Command::new(tool_path);
+        cmd.args(args)
+            .env("PATH", format!("{}:{current_path}", dir.display()))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to run {tool}: {e}"))?;
+        wait_child_output(child, timeout)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_command_capture(
+    tool_path: &Path,
+    args: &[&str],
+    new_path: &str,
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+
+    let mut cmd = if is_windows_command_script(tool_path) {
+        let path = tool_path.to_string_lossy();
+        let args = args
+            .iter()
+            .map(|arg| windows_cmd_double_quote_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = format!(
+            "call {}{}",
+            win_quote_path_for_batch(&path),
+            if args.is_empty() {
+                String::new()
+            } else {
+                format!(" {args}")
+            }
+        );
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/D", "/S", "/C"])
+            .raw_arg(&command)
+            .env("PATH", new_path)
+            .creation_flags(CREATE_NO_WINDOW);
+        cmd
+    } else {
+        let mut cmd = Command::new(tool_path);
+        cmd.args(args)
+            .env("PATH", new_path)
+            .creation_flags(CREATE_NO_WINDOW);
+        cmd
+    };
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to run tool: {e}"))?;
+    wait_child_output(child, timeout)
+}
+
+#[cfg(target_os = "windows")]
+fn run_wsl_tool_command(
+    tool: &str,
+    args: &[&str],
+    distro: &str,
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+
+    if !is_valid_wsl_distro_name(distro) {
+        return Err(format!("[WSL:{distro}] invalid distro name"));
+    }
+
+    let invocation = std::iter::once(tool)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let command = format!(
+        "for flag in -lic -lc -c; do if \"${{SHELL:-sh}}\" \"$flag\" 'command -v {tool}' >/dev/null 2>&1; then exec \"${{SHELL:-sh}}\" \"$flag\" '{invocation}'; fi; done; exit 127"
+    );
+    let mut cmd = Command::new("wsl.exe");
+    cmd.args(["-d", distro, "--", "sh", "-c", &command])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("[WSL:{distro}] failed to run {tool}: {e}"))?;
+    wait_child_output(child, timeout).map_err(|e| {
+        if e.starts_with("Command timed out") {
+            format!("[WSL:{distro}] {e}")
+        } else {
+            e
         }
     })
 }
