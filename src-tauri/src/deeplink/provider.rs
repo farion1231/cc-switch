@@ -405,8 +405,14 @@ fn build_codex_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let model_name = toml_edit::Value::from(model_name.as_str()).to_string();
     let endpoint = toml_edit::Value::from(endpoint.as_str()).to_string();
 
-    // Build config.toml content
-    let config_toml = format!(
+    // Preserve safe common Codex settings carried by the inline config. This
+    // uses the same sanitizer as provider switching, so credentials, routing,
+    // model catalog paths, and CC Switch-managed MCP entries are excluded.
+    let common_config = extract_codex_common_config(request);
+
+    // Keep the historical template byte-for-byte stable when no inline config
+    // is present. Existing provider deeplinks should not churn stored config.
+    let provider_config = format!(
         r#"model_provider = "custom"
 model = {model_name}
 model_reasoning_effort = "high"
@@ -419,6 +425,22 @@ wire_api = "responses"
 requires_openai_auth = true
 "#
     );
+    let config_toml = match common_config {
+        Some(common) if !common.trim().is_empty() => {
+            let mut common_doc = match common.parse::<toml_edit::DocumentMut>() {
+                Ok(doc) => doc,
+                Err(_) => return build_codex_settings_without_common(request, provider_config),
+            };
+            let provider_doc = provider_config
+                .parse::<toml_edit::DocumentMut>()
+                .expect("generated Codex provider config must be valid TOML");
+            for (key, item) in provider_doc.as_table().iter() {
+                common_doc[key] = item.clone();
+            }
+            common_doc.to_string()
+        }
+        _ => provider_config,
+    };
 
     json!({
         "auth": {
@@ -426,6 +448,29 @@ requires_openai_auth = true
         },
         "config": config_toml
     })
+}
+
+fn build_codex_settings_without_common(
+    request: &DeepLinkImportRequest,
+    config_toml: String,
+) -> serde_json::Value {
+    json!({
+        "auth": {
+            "OPENAI_API_KEY": request.api_key,
+        },
+        "config": config_toml
+    })
+}
+
+fn extract_codex_common_config(request: &DeepLinkImportRequest) -> Option<String> {
+    let config_b64 = request.config.as_ref()?;
+    if request.config_format.as_deref().unwrap_or("json") != "json" {
+        return None;
+    }
+
+    let decoded = decode_base64_param("config", config_b64).ok()?;
+    let config: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    ProviderService::extract_common_config_snippet_from_settings(AppType::Codex, &config).ok()
 }
 
 /// Build Gemini settings configuration
