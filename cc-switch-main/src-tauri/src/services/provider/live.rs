@@ -734,6 +734,20 @@ pub(crate) fn build_effective_settings_with_common_config(
         apply_context_window_defaults(&mut effective_settings, provider);
     }
 
+
+    // 启动 settings.json 监听器，在后台自动同步 ACW/MAX 当用户 /model 切换时
+    if matches!(app_type, AppType::Claude) {
+        let settings_path = get_claude_settings_path();
+        if settings_path.exists() {
+            let provider_arc = std::sync::Arc::new(provider.clone());
+            if let Err(e) = crate::claude_settings_watcher::spawn_claude_settings_watcher(
+                settings_path,
+                provider_arc,
+            ) {
+                log::warn!("[ClaudeSettingsWatcher] spawn failed: {e}");
+            }
+        }
+    }
     Ok(effective_settings)
 }
 
