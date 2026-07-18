@@ -326,7 +326,8 @@
       "description": "Use your other subscriptions in Claude Code — please be mindful of compliance risks.",
       "beta": "Beta",
       "copilotDescription": "Manage GitHub Copilot accounts",
-      "codexOauthDescription": "Manage ChatGPT accounts"
+      "codexOauthDescription": "Manage ChatGPT accounts",
+      "xaiOauthDescription": "Manage xAI / Grok accounts"
     },
     "advanced": {
       "configDir": {
@@ -1014,6 +1015,7 @@
     "customApiKeyHint": "💡 Custom configuration requires manually filling all necessary fields",
     "omoHint": "💡 OMO config manages Agent model assignments and supports both oh-my-openagent.jsonc and oh-my-opencode.jsonc",
     "officialHint": "💡 Official provider uses browser login, no API Key needed",
+    "providerKeyStatusLoading": "Provider identifier status is still loading. Please try again shortly.",
     "getApiKey": "Get API Key",
     "partnerPromotion": {
       "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 4.8, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
@@ -1221,6 +1223,31 @@
     "copyCode": "Copy code",
     "fastMode": "FAST mode",
     "fastModeDescription": "Send service_tier=\"priority\" for lower latency. Off by default — enabling it consumes your ChatGPT quota at a higher rate."
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth authentication",
+    "accountCount": "Usable accounts: {{count}}",
+    "reauthRequired": "Sign-in required",
+    "notAuthenticated": "Not authenticated",
+    "selectAccount": "Select account",
+    "selectAccountPlaceholder": "Select an xAI account",
+    "useDefaultAccount": "Use default account",
+    "accounts": "xAI accounts",
+    "defaultAccount": "Default",
+    "expired": "Credentials expired",
+    "setAsDefault": "Set as default",
+    "removeAccount": "Remove account",
+    "addOrReauth": "Add account or sign in again",
+    "login": "Sign in with xAI",
+    "waitingForAuth": "Waiting for xAI authorization…",
+    "enterCode": "If the browser did not fill it in automatically, enter:",
+    "retry": "Retry",
+    "logoutAll": "Remove all xAI accounts",
+    "loginRequired": "Sign in to an xAI account first"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "The linked account is missing or needs you to sign in again",
+    "selectedAccountUnavailable": "The linked account is missing or needs you to sign in again. Select another account."
   },
   "endpointTest": {
     "title": "API Endpoint Management",

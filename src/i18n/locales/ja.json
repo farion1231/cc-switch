@@ -326,7 +326,8 @@
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
-      "codexOauthDescription": "ChatGPT アカウントを管理します"
+      "codexOauthDescription": "ChatGPT アカウントを管理します",
+      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -1014,6 +1015,7 @@
     "customApiKeyHint": "💡 カスタム設定では必要な項目をすべて手動で入力してください",
     "omoHint": "💡 OMO 設定は Agent のモデル割り当てを管理し、oh-my-openagent.jsonc / oh-my-opencode.jsonc の両方に対応します",
     "officialHint": "💡 公式プロバイダーはブラウザログインで、API Key は不要です",
+    "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
       "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 4.8、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
@@ -1221,6 +1223,31 @@
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
     "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 認証",
+    "accountCount": "利用可能なアカウント: {{count}} 件",
+    "reauthRequired": "再ログインが必要です",
+    "notAuthenticated": "未認証",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "xAI アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "accounts": "xAI アカウント",
+    "defaultAccount": "デフォルト",
+    "expired": "認証情報が失効しました",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "login": "xAI でログイン",
+    "waitingForAuth": "xAI の認証を待っています…",
+    "enterCode": "ブラウザに自動入力されていない場合は、次を入力してください：",
+    "retry": "再試行",
+    "logoutAll": "すべての xAI アカウントを削除",
+    "loginRequired": "先に xAI アカウントへログインしてください"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",
+    "selectedAccountUnavailable": "リンクされたアカウントが存在しないか、再ログインが必要です。別のアカウントを選択してください"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",

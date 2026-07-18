@@ -326,7 +326,8 @@
       "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
-      "codexOauthDescription": "管理 ChatGPT 帳號"
+      "codexOauthDescription": "管理 ChatGPT 帳號",
+      "xaiOauthDescription": "管理 xAI / Grok 帳號"
     },
     "advanced": {
       "configDir": {
@@ -985,6 +986,7 @@
     "customApiKeyHint": "自訂設定需手動填寫所有必要欄位",
     "omoHint": "OMO 設定管理 Agent 模型指派，相容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
     "officialHint": "官方供應商使用瀏覽器登入，無需設定 API Key",
+    "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
       "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 4.8，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
@@ -1193,6 +1195,31 @@
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
     "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 驗證",
+    "accountCount": "{{count}} 個可用帳號",
+    "reauthRequired": "需要重新登入",
+    "notAuthenticated": "尚未驗證",
+    "selectAccount": "選擇帳號",
+    "selectAccountPlaceholder": "選擇 xAI 帳號",
+    "useDefaultAccount": "使用預設帳號",
+    "accounts": "xAI 帳號",
+    "defaultAccount": "預設",
+    "expired": "憑證已失效",
+    "setAsDefault": "設為預設",
+    "removeAccount": "移除帳號",
+    "addOrReauth": "新增帳號或重新登入",
+    "login": "使用 xAI 登入",
+    "waitingForAuth": "正在等待 xAI 授權…",
+    "enterCode": "若瀏覽器未自動填入，請輸入：",
+    "retry": "重試",
+    "logoutAll": "移除所有 xAI 帳號",
+    "loginRequired": "請先登入 xAI 帳號"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "已綁定的帳號不存在或需要重新登入",
+    "selectedAccountUnavailable": "已綁定的帳號不存在或需要重新登入，請重新選擇帳號"
   },
   "endpointTest": {
     "title": "請求位址管理",
