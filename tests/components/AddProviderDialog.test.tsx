@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import type { ProviderFormValues } from "@/components/providers/forms/ProviderForm";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => (
@@ -124,5 +125,97 @@ describe("AddProviderDialog", () => {
         lastUsed: undefined,
       },
     });
+  });
+
+  it("submits the managed account selected from the Codex Official preset", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    const officialPresetIndex = codexProviderPresets.findIndex(
+      (preset) =>
+        preset.category === "official" && preset.providerType === "codex_oauth",
+    );
+    expect(officialPresetIndex).toBeGreaterThanOrEqual(0);
+
+    mockFormValues = {
+      name: "OpenAI Official",
+      websiteUrl: "https://chatgpt.com/codex",
+      settingsConfig: JSON.stringify({ auth: {}, config: "" }),
+      presetId: `codex-${officialPresetIndex}`,
+      presetCategory: "official",
+      meta: {
+        providerType: "codex_oauth",
+        authBinding: {
+          source: "managed_account",
+          authProvider: "codex_oauth",
+          accountId: "acct-managed",
+        },
+      },
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="codex"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "official",
+        ensureCodexOfficialSeed: true,
+        meta: expect.objectContaining({
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codex_oauth",
+            accountId: "acct-managed",
+          },
+        }),
+      }),
+    );
+  });
+
+  it("新建 Grok Build 自定义供应商时不补默认 Grok 图标", async () => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+
+    mockFormValues = {
+      name: "tes 1",
+      websiteUrl: "",
+      icon: "",
+      iconColor: "",
+      settingsConfig: JSON.stringify({
+        config: `[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "https://grok.example.com/v1"
+name = "tes 1"
+api_key = "secret"
+api_backend = "responses"
+context_window = 500000
+`,
+      }),
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="grokbuild"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "common.add" }));
+
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    const submitted = handleSubmit.mock.calls[0][0];
+    expect(submitted.icon).toBeUndefined();
+    expect(submitted.iconColor).toBeUndefined();
   });
 });

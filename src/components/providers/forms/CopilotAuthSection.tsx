@@ -22,6 +22,8 @@ import {
   X,
   User,
   Settings2,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { useCopilotAuth } from "./hooks/useCopilotAuth";
 import { copyText } from "@/lib/clipboard";
@@ -72,6 +74,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     defaultAccountId,
     migrationError,
     isStatusSuccess,
+    isStatusError,
     hasAnyAccount,
     pollingState,
     deviceCode,
@@ -85,6 +88,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     logout,
+    refetchStatus,
   } = useCopilotAuth(effectiveGithubDomain);
 
   // 复制用户码
@@ -135,7 +139,8 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
     return <CopilotAccountAvatar account={account} />;
   };
 
-  const accountSelect = onAccountSelect &&
+  const accountSelect = isStatusSuccess &&
+    onAccountSelect &&
     (mode === "select" || hasAnyAccount) && (
       <div className="space-y-2">
         <Label className="text-sm text-muted-foreground">
@@ -181,16 +186,62 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
         <div className="flex items-center justify-between">
           <Label>{t("copilot.authStatus", "GitHub Copilot 认证")}</Label>
           <Badge
-            variant={hasAnyAccount ? "default" : "secondary"}
-            className={hasAnyAccount ? "bg-green-500 hover:bg-green-600" : ""}
+            variant={
+              isStatusError
+                ? "destructive"
+                : hasAnyAccount
+                  ? "default"
+                  : "secondary"
+            }
+            className={
+              isStatusSuccess && hasAnyAccount
+                ? "bg-green-500 hover:bg-green-600"
+                : ""
+            }
           >
-            {hasAnyAccount
-              ? t("copilot.accountCount", {
-                  count: accounts.length,
-                  defaultValue: `${accounts.length} 个账号`,
-                })
-              : t("copilot.notAuthenticated", "未认证")}
+            {isStatusError
+              ? t("copilot.statusUnavailable", "状态不可用")
+              : !isStatusSuccess
+                ? t("copilot.statusLoading", "正在加载...")
+                : hasAnyAccount
+                  ? t("copilot.accountCount", {
+                      count: accounts.length,
+                      defaultValue: `${accounts.length} 个账号`,
+                    })
+                  : t("copilot.notAuthenticated", "未认证")}
           </Badge>
+        </div>
+      )}
+
+      {isStatusError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {t(
+              "copilot.statusLoadFailed",
+              "无法加载 GitHub Copilot 账号状态，请重试。",
+            )}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0"
+            onClick={() => void refetchStatus()}
+          >
+            <RefreshCw className="mr-1 h-3.5 w-3.5" />
+            {t("copilot.retry", "重试")}
+          </Button>
+        </div>
+      )}
+
+      {!isStatusSuccess && !isStatusError && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t("copilot.statusLoading", "正在加载...")}
         </div>
       )}
 
@@ -261,7 +312,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       )}
 
       {/* 已登录账号列表 */}
-      {mode === "manage" && hasAnyAccount && (
+      {mode === "manage" && isStatusSuccess && hasAnyAccount && (
         <div className="space-y-2">
           <Label className="text-sm text-muted-foreground">
             {t("copilot.loggedInAccounts", "已登录账号")}
@@ -324,35 +375,43 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       )}
 
       {/* 未认证状态 - 登录按钮 */}
-      {mode === "manage" && !hasAnyAccount && pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={addAccount}
-          className="w-full"
-          variant="outline"
-          disabled={deploymentType === "enterprise" && !enterpriseDomain.trim()}
-        >
-          <Github className="mr-2 h-4 w-4" />
-          {t("copilot.loginWithGitHub", "使用 GitHub 登录")}
-        </Button>
-      )}
+      {mode === "manage" &&
+        isStatusSuccess &&
+        !hasAnyAccount &&
+        pollingState === "idle" && (
+          <Button
+            type="button"
+            onClick={addAccount}
+            className="w-full"
+            variant="outline"
+            disabled={
+              deploymentType === "enterprise" && !enterpriseDomain.trim()
+            }
+          >
+            <Github className="mr-2 h-4 w-4" />
+            {t("copilot.loginWithGitHub", "使用 GitHub 登录")}
+          </Button>
+        )}
 
       {/* 已有账号 - 添加更多账号按钮 */}
-      {mode === "manage" && hasAnyAccount && pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={addAccount}
-          className="w-full"
-          variant="outline"
-          disabled={
-            isAddingAccount ||
-            (deploymentType === "enterprise" && !enterpriseDomain.trim())
-          }
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t("copilot.addAnotherAccount", "添加其他账号")}
-        </Button>
-      )}
+      {mode === "manage" &&
+        isStatusSuccess &&
+        hasAnyAccount &&
+        pollingState === "idle" && (
+          <Button
+            type="button"
+            onClick={addAccount}
+            className="w-full"
+            variant="outline"
+            disabled={
+              isAddingAccount ||
+              (deploymentType === "enterprise" && !enterpriseDomain.trim())
+            }
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {t("copilot.addAnotherAccount", "添加其他账号")}
+          </Button>
+        )}
 
       {/* 轮询中状态 */}
       {mode === "manage" && isPolling && deviceCode && (
@@ -440,17 +499,20 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       )}
 
       {/* 注销所有账号按钮 */}
-      {mode === "manage" && hasAnyAccount && accounts.length > 1 && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={logout}
-          className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-        >
-          <LogOut className="mr-2 h-4 w-4" />
-          {t("copilot.logoutAll", "注销所有账号")}
-        </Button>
-      )}
+      {mode === "manage" &&
+        isStatusSuccess &&
+        hasAnyAccount &&
+        accounts.length > 1 && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={logout}
+            className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            {t("copilot.logoutAll", "注销所有账号")}
+          </Button>
+        )}
     </div>
   );
 };

@@ -69,6 +69,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     accounts,
     defaultAccountId,
     isStatusSuccess,
+    isStatusError,
     hasAnyAccount,
     pollingState,
     deviceCode,
@@ -82,6 +83,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     logout,
+    refetchStatus,
   } = useCodexOauth();
 
   const copyUserCode = async () => {
@@ -132,7 +134,8 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       (account) => account.id === selectedAccountId && account.reauth_required,
     );
 
-  const accountSelect = onAccountSelect &&
+  const accountSelect = isStatusSuccess &&
+    onAccountSelect &&
     (mode === "select" || hasAnyAccount || noneOptionLabel) && (
       <div className="space-y-2">
         <Label className="text-sm text-muted-foreground">
@@ -185,16 +188,62 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         <div className="flex items-center justify-between">
           <Label>{t("codexOauth.authStatus", "认证状态")}</Label>
           <Badge
-            variant={hasAnyAccount ? "default" : "secondary"}
-            className={hasAnyAccount ? "bg-green-500 hover:bg-green-600" : ""}
+            variant={
+              isStatusError
+                ? "destructive"
+                : hasAnyAccount
+                  ? "default"
+                  : "secondary"
+            }
+            className={
+              isStatusSuccess && hasAnyAccount
+                ? "bg-green-500 hover:bg-green-600"
+                : ""
+            }
           >
-            {hasAnyAccount
-              ? t("codexOauth.accountCount", {
-                  count: accounts.length,
-                  defaultValue: `${accounts.length} 个账号`,
-                })
-              : t("codexOauth.notAuthenticated", "未认证")}
+            {isStatusError
+              ? t("codexOauth.statusUnavailable", "状态不可用")
+              : !isStatusSuccess
+                ? t("codexOauth.statusLoading", "正在加载...")
+                : hasAnyAccount
+                  ? t("codexOauth.accountCount", {
+                      count: accounts.length,
+                      defaultValue: `${accounts.length} 个账号`,
+                    })
+                  : t("codexOauth.notAuthenticated", "未认证")}
           </Badge>
+        </div>
+      )}
+
+      {isStatusError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {t(
+              "codexOauth.statusLoadFailed",
+              "无法加载 ChatGPT 账号状态，请重试。",
+            )}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0"
+            onClick={() => void refetchStatus()}
+          >
+            <RefreshCw className="mr-1 h-3.5 w-3.5" />
+            {t("codexOauth.retry", "重试")}
+          </Button>
+        </div>
+      )}
+
+      {!isStatusSuccess && !isStatusError && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {t("codexOauth.statusLoading", "正在加载...")}
         </div>
       )}
 
@@ -280,7 +329,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       )}
 
       {/* 已登录账号列表 */}
-      {mode === "manage" && hasAnyAccount && (
+      {mode === "manage" && isStatusSuccess && hasAnyAccount && (
         <div className="space-y-2">
           <Label className="text-sm text-muted-foreground">
             {t("codexOauth.loggedInAccounts", "已登录账号")}
@@ -365,31 +414,37 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       )}
 
       {/* 未认证 - 登录按钮 */}
-      {mode === "manage" && !hasAnyAccount && pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={addAccount}
-          className="w-full"
-          variant="outline"
-        >
-          <Sparkles className="mr-2 h-4 w-4" />
-          {t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
-        </Button>
-      )}
+      {mode === "manage" &&
+        isStatusSuccess &&
+        !hasAnyAccount &&
+        pollingState === "idle" && (
+          <Button
+            type="button"
+            onClick={addAccount}
+            className="w-full"
+            variant="outline"
+          >
+            <Sparkles className="mr-2 h-4 w-4" />
+            {t("codexOauth.loginWithChatGPT", "使用 ChatGPT 登录")}
+          </Button>
+        )}
 
       {/* 已有账号 - 添加更多按钮 */}
-      {mode === "manage" && hasAnyAccount && pollingState === "idle" && (
-        <Button
-          type="button"
-          onClick={addAccount}
-          className="w-full"
-          variant="outline"
-          disabled={isAddingAccount}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t("codexOauth.addAnotherAccount", "添加其他账号")}
-        </Button>
-      )}
+      {mode === "manage" &&
+        isStatusSuccess &&
+        hasAnyAccount &&
+        pollingState === "idle" && (
+          <Button
+            type="button"
+            onClick={addAccount}
+            className="w-full"
+            variant="outline"
+            disabled={isAddingAccount}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {t("codexOauth.addAnotherAccount", "添加其他账号")}
+          </Button>
+        )}
 
       {/* 轮询中状态 */}
       {mode === "manage" && isPolling && deviceCode && (
@@ -474,17 +529,20 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       )}
 
       {/* 注销所有账号 */}
-      {mode === "manage" && hasAnyAccount && accounts.length > 1 && (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={logout}
-          className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-        >
-          <LogOut className="mr-2 h-4 w-4" />
-          {t("codexOauth.logoutAll", "注销所有账号")}
-        </Button>
-      )}
+      {mode === "manage" &&
+        isStatusSuccess &&
+        hasAnyAccount &&
+        accounts.length > 1 && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={logout}
+            className="w-full text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            {t("codexOauth.logoutAll", "注销所有账号")}
+          </Button>
+        )}
     </div>
   );
 };

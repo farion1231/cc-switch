@@ -10,6 +10,7 @@ import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { usageKeys } from "@/lib/query/usage";
+import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -21,12 +22,14 @@ export const useAddProviderMutation = (appId: AppId) => {
         providerKey?: string;
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
+        ensureCodexOfficialSeed?: boolean;
       },
     ) => {
       const {
         providerKey: _providerKey,
         addToLive,
         ensureClaudeDesktopOfficialSeed,
+        ensureCodexOfficialSeed,
         ...rest
       } = providerInput;
 
@@ -38,6 +41,32 @@ export const useAddProviderMutation = (appId: AppId) => {
           throw new Error("Claude Desktop official provider was not created");
         }
         return officialProvider;
+      }
+
+      if (appId === "codex" && ensureCodexOfficialSeed) {
+        await providersApi.ensureCodexOfficialProvider();
+        const providers = await providersApi.getAll(appId);
+        const officialProvider = providers[CODEX_OFFICIAL_PROVIDER_ID];
+        if (!officialProvider) {
+          throw new Error("Codex official provider was not created");
+        }
+
+        // The fixed seed supplies identity/order, while the Add Provider form
+        // supplies the selected managed-account binding and editable metadata.
+        // Returning the seed directly would silently discard meta.authBinding,
+        // making the Official account selector appear to save while doing
+        // nothing. Persist the merged fixed-id row through the normal update
+        // path so current-provider live sync and managed auth preflight run too.
+        const updatedOfficialProvider: Provider = {
+          ...officialProvider,
+          ...rest,
+          id: CODEX_OFFICIAL_PROVIDER_ID,
+          category: "official",
+          createdAt: officialProvider.createdAt,
+          sortIndex: officialProvider.sortIndex,
+        };
+        await providersApi.update(updatedOfficialProvider, appId);
+        return updatedOfficialProvider;
       }
 
       let id: string;

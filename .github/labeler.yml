@@ -1,0 +1,74 @@
+# Configuration for actions/labeler v5
+# Automatically labels PRs based on changed file paths
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/**"
+          - "index.html"
+          - "vite.config.ts"
+          - "vitest.config.ts"
+          - "tailwind.config.cjs"
+          - "postcss.config.cjs"
+          - "tsconfig.json"
+          - "tsconfig.node.json"
+          - "components.json"
+          - "tests/**"
+
+backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src-tauri/**"
+
+i18n:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/locales/**"
+
+actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "package.json"
+          - "pnpm-lock.yaml"
+          - "pnpm-workspace.yaml"
+          - "src-tauri/Cargo.toml"
+          - "src-tauri/Cargo.lock"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "*.md"
+          - "docs/**"
+          - "LICENSE"
+
+mcp:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/components/mcp/**"
+          - "src/lib/api/mcp.ts"
+          - "src-tauri/src/mcp/**"
+          - "src-tauri/src/claude_mcp.rs"
+          - "src-tauri/src/gemini_mcp.rs"
+          - "src-tauri/src/commands/mcp.rs"
+
+skills:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/components/skills/**"
+          - "src/lib/api/skills.ts"
+          - "src-tauri/src/commands/skill.rs"
+          - "src-tauri/src/services/skill.rs"
+          - "src-tauri/src/database/dao/skills.rs"
+
+proxy:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/components/proxy/**"
+          - "src/lib/api/proxy.ts"
+          - "src-tauri/src/proxy/**"
+          - "src-tauri/src/commands/proxy.rs"

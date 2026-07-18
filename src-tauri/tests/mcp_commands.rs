@@ -227,6 +227,7 @@ command = "echo"
                 claude: false,
                 codex: true,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -287,6 +288,56 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
     );
 }
 
+/// "从应用导入"是 best-effort：单个应用的坏配置文件不阻断其余应用的
+/// 导入，但失败必须聚合上报——历史实现逐应用 `unwrap_or(0)` 吞错，
+/// 坏 config.toml 只会表现为"导入成功 0 个"，用户无从得知出了什么问题。
+#[test]
+fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
+    use support::create_test_state;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    // 好的 ~/.claude.json：应正常导入
+    let claude_json = json!({
+        "mcpServers": {
+            "alpha": { "type": "stdio", "command": "echo" }
+        }
+    });
+    fs::write(
+        get_claude_mcp_path(),
+        serde_json::to_string_pretty(&claude_json).expect("serialize claude mcp"),
+    )
+    .expect("seed ~/.claude.json");
+
+    // 坏的 ~/.codex/config.toml：解析必然失败
+    let codex_dir = home.join(".codex");
+    fs::create_dir_all(&codex_dir).expect("create codex dir");
+    fs::write(codex_dir.join("config.toml"), "not = = valid toml")
+        .expect("seed broken codex config");
+
+    let state = create_test_state().expect("create test state");
+
+    let err = McpService::import_from_all_apps(&state)
+        .expect_err("broken codex config must surface, not be swallowed as zero imports");
+    let message = err.to_string();
+    assert!(
+        message.contains("codex"),
+        "aggregated error should name the failing app, got: {message}"
+    );
+
+    // Codex 的失败不阻断 Claude：alpha 应已入库并启用 Claude
+    let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
+    let entry = servers
+        .get("alpha")
+        .expect("claude server imported despite codex failure");
+    assert!(
+        entry.apps.claude,
+        "imported server should have Claude app enabled"
+    );
+}
+
 #[test]
 fn set_mcp_enabled_for_codex_writes_live_config() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -321,6 +372,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 claude: false,
                 codex: false, // 初始未启用
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -386,6 +438,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -431,6 +484,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -465,6 +519,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -598,6 +653,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -653,6 +709,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -708,6 +765,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -764,6 +822,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -843,6 +902,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -982,6 +1042,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 claude: false,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
@@ -1004,6 +1065,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 claude: true,
                 codex: false,
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
