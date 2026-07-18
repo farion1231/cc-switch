@@ -261,6 +261,8 @@ fn build_provider_meta(request: &DeepLinkImportRequest) -> Result<Option<Provide
         timeout: Some(10),
         api_key: usage_api_key_override(request),
         base_url: usage_base_url_override(request),
+        account_email: None,
+        account_password: None,
         access_token: request.usage_access_token.clone(),
         user_id: request.usage_user_id.clone(),
         template_type: None, // Deeplink providers don't specify template type (will use backward compatibility logic)

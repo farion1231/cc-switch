@@ -15,6 +15,7 @@ use std::str::FromStr;
 const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
+const TEMPLATE_TYPE_SUB2API: &str = "sub2api";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
@@ -424,6 +425,29 @@ fn resolve_native_credentials(app_type: &AppType, provider: Option<&Provider>) -
         .unwrap_or_default()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct Sub2ApiQuery<'a> {
+    base_url: &'a str,
+    email: &'a str,
+    password: &'a str,
+    timeout: u64,
+}
+
+fn resolve_sub2api_query<'a>(
+    template_type: Option<&str>,
+    base_url: Option<&'a str>,
+    email: Option<&'a str>,
+    password: Option<&'a str>,
+    timeout: u64,
+) -> Option<Sub2ApiQuery<'a>> {
+    (template_type == Some(TEMPLATE_TYPE_SUB2API)).then(|| Sub2ApiQuery {
+        base_url: base_url.unwrap_or_default(),
+        email: email.unwrap_or_default(),
+        password: password.unwrap_or_default(),
+        timeout,
+    })
+}
+
 fn resolve_coding_plan_credentials(
     app_type: &AppType,
     provider: Option<&Provider>,
@@ -478,6 +502,22 @@ async fn query_provider_usage_inner(
     let template_type = usage_script
         .and_then(|s| s.template_type.as_deref())
         .unwrap_or("");
+
+    if let Some(query) = resolve_sub2api_query(
+        Some(template_type),
+        usage_script.and_then(|s| s.base_url.as_deref()),
+        usage_script.and_then(|s| s.account_email.as_deref()),
+        usage_script.and_then(|s| s.account_password.as_deref()),
+        usage_script.and_then(|s| s.timeout).unwrap_or(10),
+    ) {
+        return crate::services::sub2api::get_usage(
+            query.base_url,
+            query.email,
+            query.password,
+            query.timeout,
+        )
+        .await;
+    }
 
     // ── GitHub Copilot 专用路径 ──
     if template_type == TEMPLATE_TYPE_GITHUB_COPILOT {
@@ -685,14 +725,33 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] accessToken: Option<String>,
     #[allow(non_snake_case)] userId: Option<String>,
     #[allow(non_snake_case)] templateType: Option<String>,
+    #[allow(non_snake_case)] accountEmail: Option<String>,
+    #[allow(non_snake_case)] accountPassword: Option<String>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let timeout = timeout.unwrap_or(10);
+    if let Some(query) = resolve_sub2api_query(
+        templateType.as_deref(),
+        baseUrl.as_deref(),
+        accountEmail.as_deref(),
+        accountPassword.as_deref(),
+        timeout,
+    ) {
+        return crate::services::sub2api::get_usage(
+            query.base_url,
+            query.email,
+            query.password,
+            query.timeout,
+        )
+        .await;
+    }
+
     ProviderService::test_usage_script(
         state.inner(),
         app_type,
         &providerId,
         &scriptCode,
-        timeout.unwrap_or(10),
+        timeout,
         apiKey.as_deref(),
         baseUrl.as_deref(),
         accessToken.as_deref(),
@@ -1071,7 +1130,9 @@ mod import_claude_desktop_tests {
 
 #[cfg(test)]
 mod native_query_credentials_tests {
-    use super::{resolve_coding_plan_credentials, resolve_native_credentials};
+    use super::{
+        resolve_coding_plan_credentials, resolve_native_credentials, resolve_sub2api_query,
+    };
     use crate::app_config::AppType;
     use crate::provider::{Provider, UsageScript};
     use serde_json::json;
@@ -1088,6 +1149,8 @@ mod native_query_credentials_tests {
             timeout: Some(10),
             api_key: api_key.map(str::to_string),
             base_url: base_url.map(str::to_string),
+            account_email: None,
+            account_password: None,
             access_token: None,
             user_id: None,
             template_type: Some("token_plan".to_string()),
@@ -1123,6 +1186,49 @@ mod native_query_credentials_tests {
         let (base_url, api_key) = resolve_native_credentials(&AppType::Codex, None);
         assert!(base_url.is_empty());
         assert!(api_key.is_empty());
+    }
+
+    #[test]
+    fn resolves_sub2api_account_credentials_only_for_its_native_template() {
+        let query = resolve_sub2api_query(
+            Some("sub2api"),
+            Some("https://console.example.com/"),
+            Some("person@example.com"),
+            Some("account-password"),
+            17,
+        )
+        .expect("Sub2API query config");
+
+        assert_eq!(query.base_url, "https://console.example.com/");
+        assert_eq!(query.email, "person@example.com");
+        assert_eq!(query.password, "account-password");
+        assert_eq!(query.timeout, 17);
+        assert!(resolve_sub2api_query(
+            Some("general"),
+            Some("https://console.example.com"),
+            Some("person@example.com"),
+            Some("account-password"),
+            10,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn usage_script_round_trips_sub2api_account_fields() {
+        let script: UsageScript = serde_json::from_value(json!({
+            "enabled": true,
+            "language": "javascript",
+            "code": "",
+            "templateType": "sub2api",
+            "baseUrl": "https://console.example.com",
+            "accountEmail": "person@example.com",
+            "accountPassword": "account-password"
+        }))
+        .expect("deserialize usage script");
+
+        let serialized = serde_json::to_value(script).expect("serialize usage script");
+        assert_eq!(serialized["accountEmail"], "person@example.com");
+        assert_eq!(serialized["accountPassword"], "account-password");
     }
 
     #[test]

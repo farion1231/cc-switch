@@ -274,6 +274,8 @@ mod tests {
             timeout: Some(10),
             api_key: api_key.map(str::to_string),
             base_url: base_url.map(str::to_string),
+            account_email: None,
+            account_password: None,
             access_token: None,
             user_id: None,
             template_type: template_type.map(str::to_string),

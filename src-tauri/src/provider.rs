@@ -236,6 +236,14 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "baseUrl")]
     pub base_url: Option<String>,
+    /// Account email used by native Sub2API usage queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "accountEmail")]
+    pub account_email: Option<String>,
+    /// Account password used by native Sub2API usage queries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "accountPassword")]
+    pub account_password: Option<String>,
     /// 访问令牌（用于需要登录的接口，NewAPI 模板使用）
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "accessToken")]

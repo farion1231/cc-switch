@@ -26,7 +26,11 @@ import { Switch } from "@/components/ui/switch";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { cn } from "@/lib/utils";
-import { TEMPLATE_TYPES, PROVIDER_TYPES } from "@/config/constants";
+import {
+  TEMPLATE_TYPES,
+  PROVIDER_TYPES,
+  type TemplateType,
+} from "@/config/constants";
 import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
@@ -124,6 +128,9 @@ const generatePresetTemplates = (
   // 官方余额查询模板不需要脚本，使用专用 Rust 查询
   [TEMPLATE_TYPES.BALANCE]: "",
 
+  // Sub2API uses a native account login and usage query.
+  [TEMPLATE_TYPES.SUB2API]: "",
+
   // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据调用官方 API
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]: "",
 });
@@ -136,6 +143,7 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.GITHUB_COPILOT]: "usageScript.templateCopilot",
   [TEMPLATE_TYPES.TOKEN_PLAN]: "usageScript.templateTokenPlan",
   [TEMPLATE_TYPES.BALANCE]: "usageScript.templateBalance",
+  [TEMPLATE_TYPES.SUB2API]: "usageScript.templateSub2API",
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
     "usageScript.templateOfficialSubscription",
 };
@@ -195,6 +203,7 @@ const NATIVE_USAGE_TEMPLATES = new Set<string>([
   TEMPLATE_TYPES.GITHUB_COPILOT,
   TEMPLATE_TYPES.TOKEN_PLAN,
   TEMPLATE_TYPES.BALANCE,
+  TEMPLATE_TYPES.SUB2API,
   TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION,
 ]);
 
@@ -433,6 +442,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       if (existingScript?.accessToken || existingScript?.userId) {
         return TEMPLATE_TYPES.NEW_API;
       }
+      if (existingScript?.accountEmail || existingScript?.accountPassword) {
+        return TEMPLATE_TYPES.SUB2API;
+      }
       // 检测 GENERAL 模板（有 apiKey 或 baseUrl）
       if (existingScript?.apiKey || existingScript?.baseUrl) {
         return TEMPLATE_TYPES.GENERAL;
@@ -452,6 +464,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [showAccessToken, setShowAccessToken] = useState(false);
+  const [showAccountPassword, setShowAccountPassword] = useState(false);
 
   const handleEnableToggle = (checked: boolean) => {
     if (checked && !settingsData?.usageConfirmed) {
@@ -490,15 +503,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
       ...script,
-      templateType: selectedTemplate as
-        | "custom"
-        | "general"
-        | "newapi"
-        | "github_copilot"
-        | "token_plan"
-        | "balance"
-        | "official_subscription"
-        | undefined,
+      templateType: selectedTemplate as TemplateType | undefined,
     };
     onSave(scriptWithTemplate);
     onClose();
@@ -652,7 +657,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.baseUrl,
         script.accessToken,
         script.userId,
-        selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        selectedTemplate as TemplateType | undefined,
+        script.accountEmail,
+        script.accountPassword,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
@@ -721,11 +728,22 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleUsePreset = (presetName: string) => {
     const preset = PRESET_TEMPLATES[presetName];
     if (preset !== undefined) {
+      const setPresetScript = (nextScript: UsageScript) => {
+        setScript(
+          presetName === TEMPLATE_TYPES.SUB2API
+            ? nextScript
+            : {
+                ...nextScript,
+                accountEmail: undefined,
+                accountPassword: undefined,
+              },
+        );
+      };
       if (presetName === TEMPLATE_TYPES.CUSTOM) {
         // 自定义模板没有凭证输入框：清空显式覆盖值后，测试与真实查询
         // 都会在后端回退到供应商配置（Provider::resolve_usage_credentials），
         // 与下方“支持的变量”区域展示的 {{apiKey}}/{{baseUrl}} 取值一致。
-        setScript({
+        setPresetScript({
           ...script,
           code: preset,
           apiKey: undefined,
@@ -734,21 +752,21 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           userId: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.GENERAL) {
-        setScript({
+        setPresetScript({
           ...script,
           code: preset,
           accessToken: undefined,
           userId: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.NEW_API) {
-        setScript({
+        setPresetScript({
           ...script,
           code: preset,
           apiKey: undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.GITHUB_COPILOT) {
         // Copilot 模板不需要脚本和凭证，使用专用 API
-        setScript({
+        setPresetScript({
           ...script,
           code: "",
           apiKey: undefined,
@@ -766,7 +784,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         const isZenMux = provider === "zenmux";
         const isVolcengine = provider === "volcengine";
         const isZhipuTeam = provider === "zhipu_team";
-        setScript({
+        setPresetScript({
           ...script,
           code: "",
           apiKey: isZenMux ? script.apiKey : undefined,
@@ -783,7 +801,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         });
       } else if (presetName === TEMPLATE_TYPES.BALANCE) {
         // 官方余额查询模板不需要脚本，使用 Rust 原生查询
-        setScript({
+        setPresetScript({
           ...script,
           code: "",
           apiKey: undefined,
@@ -791,9 +809,29 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           accessToken: undefined,
           userId: undefined,
         });
+      } else if (presetName === TEMPLATE_TYPES.SUB2API) {
+        const preserveCredentials = selectedTemplate === TEMPLATE_TYPES.SUB2API;
+        setPresetScript({
+          ...script,
+          code: "",
+          apiKey: undefined,
+          baseUrl: preserveCredentials ? script.baseUrl : undefined,
+          accountEmail: preserveCredentials ? script.accountEmail : undefined,
+          accountPassword: preserveCredentials
+            ? script.accountPassword
+            : undefined,
+          accessToken: undefined,
+          userId: undefined,
+          accessKeyId: undefined,
+          secretAccessKey: undefined,
+          teamOrganizationId: undefined,
+          teamProjectId: undefined,
+          codingPlanProvider: undefined,
+          autoQueryInterval: preserveCredentials ? script.autoQueryInterval : 0,
+        });
       } else if (presetName === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据
-        setScript({
+        setPresetScript({
           ...script,
           code: "",
           apiKey: undefined,
@@ -809,6 +847,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
+    selectedTemplate === TEMPLATE_TYPES.SUB2API ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
 
@@ -1076,7 +1115,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     {t("usageScript.credentialsConfig")}
                   </h4>
                   <p className="text-xs text-muted-foreground">
-                    {t("usageScript.credentialsHint")}
+                    {selectedTemplate === TEMPLATE_TYPES.SUB2API
+                      ? t("usageScript.sub2apiCredentialsHint")
+                      : t("usageScript.credentialsHint")}
                   </p>
                 </div>
 
@@ -1141,6 +1182,93 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                           autoComplete="off"
                           className="border-white/10"
                         />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedTemplate === TEMPLATE_TYPES.SUB2API && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-sub2api-base-url">
+                          {t("usageScript.baseUrl")}
+                        </Label>
+                        <Input
+                          id="usage-sub2api-base-url"
+                          type="url"
+                          value={script.baseUrl || ""}
+                          onChange={(e) =>
+                            setScript({ ...script, baseUrl: e.target.value })
+                          }
+                          placeholder={t(
+                            "usageScript.sub2apiBaseUrlPlaceholder",
+                          )}
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-sub2api-email">
+                          {t("usageScript.accountEmail")}
+                        </Label>
+                        <Input
+                          id="usage-sub2api-email"
+                          type="email"
+                          value={script.accountEmail || ""}
+                          onChange={(e) =>
+                            setScript({
+                              ...script,
+                              accountEmail: e.target.value,
+                            })
+                          }
+                          placeholder={t("usageScript.accountEmailPlaceholder")}
+                          autoComplete="off"
+                          className="border-white/10"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="usage-sub2api-password">
+                          {t("usageScript.accountPassword")}
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="usage-sub2api-password"
+                            type={showAccountPassword ? "text" : "password"}
+                            value={script.accountPassword || ""}
+                            onChange={(e) =>
+                              setScript({
+                                ...script,
+                                accountPassword: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              "usageScript.accountPasswordPlaceholder",
+                            )}
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                          {script.accountPassword && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowAccountPassword(!showAccountPassword)
+                              }
+                              className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                              aria-label={
+                                showAccountPassword
+                                  ? t("apiKeyInput.hide")
+                                  : t("apiKeyInput.show")
+                              }
+                            >
+                              {showAccountPassword ? (
+                                <EyeOff size={16} />
+                              ) : (
+                                <Eye size={16} />
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </>
                   )}
