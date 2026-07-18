@@ -44,10 +44,12 @@ export function ProxyTabContent({
   const handleToggleProxy = async (checked: boolean) => {
     try {
       if (!checked) {
+        await onAutoSave({ proxyEnabled: false });
         await stopWithRestore();
       } else if (!settings?.proxyConfirmed) {
         setShowProxyConfirm(true);
       } else {
+        await onAutoSave({ proxyEnabled: true });
         await startProxyServer();
       }
     } catch (error) {
@@ -58,7 +60,10 @@ export function ProxyTabContent({
   const handleProxyConfirm = async () => {
     setShowProxyConfirm(false);
     try {
-      await onAutoSave({ proxyConfirmed: true });
+      await onAutoSave({
+        proxyConfirmed: true,
+        proxyEnabled: true,
+      });
       await startProxyServer();
     } catch (error) {
       console.error("Proxy confirm failed:", error);
