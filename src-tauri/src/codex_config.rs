@@ -805,10 +805,24 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
 }
 
 fn load_codex_model_template_from_bundled() -> Result<Option<Value>, AppError> {
+    // `debug models --bundled` must not parse the user's live config. In
+    // particular, this lookup is used to repair catalogs that may already make
+    // the configured `model_catalog_json` unreadable to the current CLI.
+    let isolated_codex_home = match tempfile::tempdir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            log::warn!(
+                "Failed to create isolated CODEX_HOME for model catalog lookup; using static fallback: {err}"
+            );
+            return Ok(None);
+        }
+    };
+
     for candidate in codex_cli_candidates() {
         let candidate_label = candidate.to_string_lossy();
         let output = match Command::new(&candidate)
             .args(["debug", "models", "--bundled"])
+            .env("CODEX_HOME", isolated_codex_home.path())
             .output()
         {
             Ok(output) => output,
@@ -864,17 +878,59 @@ fn load_codex_native_responses_template() -> Value {
     serde_json::from_str(text).expect("bundled codex native responses template must be valid JSON")
 }
 
+/// Overlay `preferred` onto `baseline`, recursively merging objects.
+///
+/// Codex's `models_cache.json` may have been written by an older CLI and omit
+/// fields that a newer Codex requires when parsing a custom model catalog. The
+/// selected CLI/static template is the schema baseline, while cache values remain
+/// authoritative wherever they are present. Arrays and scalar values are
+/// replaced as a whole; only JSON objects need key-by-key completion.
+fn merge_codex_model_template(baseline: &mut Value, preferred: Value) {
+    match (baseline, preferred) {
+        (Value::Object(baseline), Value::Object(preferred)) => {
+            for (key, preferred_value) in preferred {
+                match baseline.get_mut(&key) {
+                    Some(baseline_value) => {
+                        merge_codex_model_template(baseline_value, preferred_value)
+                    }
+                    None => {
+                        baseline.insert(key, preferred_value);
+                    }
+                }
+            }
+        }
+        (baseline, preferred) => *baseline = preferred,
+    }
+}
+
+/// Choose the newest available schema baseline, then overlay cache values.
+///
+/// The current CLI is authoritative for the schema. The compile-time template
+/// keeps catalog generation working when the CLI is unavailable or fails. A
+/// cache is never a schema baseline because it may have been written by an
+/// older Codex, but its present values remain preferred over either baseline.
+fn select_codex_model_catalog_template(
+    cli_template: Option<Value>,
+    static_template: Option<Value>,
+    cached_template: Option<Value>,
+) -> Option<Value> {
+    let mut baseline = cli_template.or(static_template)?;
+    if let Some(cached) = cached_template {
+        merge_codex_model_template(&mut baseline, cached);
+    }
+    Some(baseline)
+}
+
 fn load_codex_model_catalog_template() -> Result<Value, AppError> {
-    // ① models_cache.json (created by Codex when it connects to OpenAI)
-    if let Some(template) = load_codex_model_template_from_cache()? {
-        return Ok(template);
-    }
-    // ② codex CLI (PATH + platform-specific common paths)
-    if let Some(template) = load_codex_model_template_from_bundled()? {
-        return Ok(template);
-    }
-    // ③ Static fallback bundled at compile time
-    if let Some(template) = load_codex_model_template_static() {
+    let cli_template = load_codex_model_template_from_bundled()?;
+    let static_template = load_codex_model_template_static();
+    // Keep the existing behavior for a malformed cache: loading it is
+    // fallible even when another baseline is available.
+    let cached_template = load_codex_model_template_from_cache()?;
+
+    if let Some(template) =
+        select_codex_model_catalog_template(cli_template, static_template, cached_template)
+    {
         return Ok(template);
     }
 
@@ -2744,6 +2800,138 @@ base_url = "https://production.api/v1"
                 .get("availability_nux")
                 .is_some_and(|value| value.is_null()),
             "generated third-party entries should not inherit GPT-5.5 launch messaging"
+        );
+    }
+
+    #[test]
+    fn cli_codex_template_is_preferred_and_completed_with_cached_values() {
+        let cli_template = json!({
+            "slug": "gpt-5.5",
+            "description": "cli description",
+            "supports_reasoning_summaries": true,
+            "model_messages": {
+                "instructions_template": "cli instructions",
+                "instructions_variables": {
+                    "personality_default": "",
+                    "personality_friendly": "friendly"
+                }
+            }
+        });
+        let static_template = json!({
+            "slug": "gpt-5.5",
+            "description": "static description",
+            "supports_reasoning_summaries": false,
+            "static_only": true
+        });
+        let stale_cache = json!({
+            "slug": "gpt-5.5",
+            "description": "cached description",
+            "model_messages": {
+                "instructions_variables": {
+                    "personality_default": "cached default"
+                }
+            }
+        });
+
+        let selected = select_codex_model_catalog_template(
+            Some(cli_template),
+            Some(static_template),
+            Some(stale_cache),
+        )
+        .expect("CLI template should provide a baseline");
+
+        assert_eq!(
+            selected.get("description").and_then(Value::as_str),
+            Some("cached description"),
+            "values present in models_cache.json should remain authoritative"
+        );
+        assert_eq!(
+            selected
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true),
+            "new required top-level fields should be supplied by the CLI baseline"
+        );
+        assert_eq!(
+            selected
+                .pointer("/model_messages/instructions_variables/personality_default")
+                .and_then(Value::as_str),
+            Some("cached default")
+        );
+        assert_eq!(
+            selected
+                .pointer("/model_messages/instructions_variables/personality_friendly")
+                .and_then(Value::as_str),
+            Some("friendly"),
+            "nested required fields should also be supplied recursively"
+        );
+        assert_eq!(
+            selected
+                .pointer("/model_messages/instructions_template")
+                .and_then(Value::as_str),
+            Some("cli instructions")
+        );
+        assert!(
+            selected.get("static_only").is_none(),
+            "the static fallback must not be merged into an available CLI baseline"
+        );
+    }
+
+    #[test]
+    fn static_codex_template_is_used_when_cli_baseline_is_unavailable() {
+        let selected = select_codex_model_catalog_template(
+            None,
+            Some(json!({
+                "slug": "gpt-5.5",
+                "supports_reasoning_summaries": true,
+                "description": "static description"
+            })),
+            Some(json!({
+                "slug": "gpt-5.5",
+                "description": "cached description"
+            })),
+        )
+        .expect("static template should provide a fallback baseline");
+
+        assert_eq!(
+            selected.get("description").and_then(Value::as_str),
+            Some("cached description")
+        );
+        assert_eq!(
+            selected
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(select_codex_model_catalog_template(None, None, None).is_none());
+    }
+
+    #[test]
+    fn cached_codex_template_type_mismatches_and_null_are_preferred() {
+        let selected = select_codex_model_catalog_template(
+            Some(json!({
+                "object_to_null": { "required": true },
+                "scalar_to_object": "old",
+                "nested": { "keep": true, "replace": { "old": true } }
+            })),
+            None,
+            Some(json!({
+                "object_to_null": null,
+                "scalar_to_object": { "cached": true },
+                "nested": { "replace": "cached" }
+            })),
+        )
+        .expect("CLI template should provide a baseline");
+
+        assert!(selected.get("object_to_null").is_some_and(Value::is_null));
+        assert_eq!(
+            selected.pointer("/scalar_to_object/cached"),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(selected.pointer("/nested/keep"), Some(&Value::Bool(true)));
+        assert_eq!(
+            selected.pointer("/nested/replace").and_then(Value::as_str),
+            Some("cached")
         );
     }
 
