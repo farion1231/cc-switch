@@ -360,6 +360,13 @@ export function ClaudeDesktopProviderForm({
     [],
   );
 
+  // AiHubMix 等预设可自定义端点提示，覆盖表单默认提示；未设置则为 undefined
+  const endpointHint = useMemo<string | undefined>(() => {
+    const entry = presetEntries.find((e) => e.id === selectedPresetId);
+    return (entry?.preset as { endpointHint?: string } | undefined)
+      ?.endpointHint;
+  }, [presetEntries, selectedPresetId]);
+
   const presetCategoryLabels: Record<string, string> = useMemo(
     () => ({
       official: t("providerForm.categoryOfficial", { defaultValue: "官方" }),
@@ -801,13 +808,14 @@ export function ClaudeDesktopProviderForm({
               onChange={(v) => setBaseUrl(v)}
               placeholder={t("providerForm.apiEndpointPlaceholder")}
               hint={
-                needsModelMapping && apiFormat === "openai_responses"
+                endpointHint ??
+                (needsModelMapping && apiFormat === "openai_responses"
                   ? t("providerForm.apiHintResponses")
                   : needsModelMapping && apiFormat === "openai_chat"
                     ? t("providerForm.apiHintOAI")
                     : needsModelMapping && apiFormat === "gemini_native"
                       ? t("providerForm.apiHintGeminiNative")
-                      : t("providerForm.apiHint")
+                      : t("providerForm.apiHint"))
               }
               showManageButton={false}
             />
