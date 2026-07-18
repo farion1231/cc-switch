@@ -112,9 +112,6 @@ pub struct DeepLinkImportRequest {
     /// Remote config URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_url: Option<String>,
-    /// Decoded scoped Kimi Code TOML, populated internally after validation.
-    #[serde(skip)]
-    pub kimi_config_toml: Option<String>,
 
     // ============ Usage script fields (v3.9+) ============
     /// Whether to enable usage query (default: true if usage_script is provided)

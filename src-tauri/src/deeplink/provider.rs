@@ -447,7 +447,7 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
 }
 
 fn build_kimicode_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
-    if let Some(config) = request.kimi_config_toml.as_deref() {
+    if let Some(config) = request.config.as_deref() {
         let fragment = crate::kimi_code_config::validate_owned_fragment(config)?;
         return Ok(json!({
             "config": config,
@@ -1000,7 +1000,7 @@ fn merge_kimicode_config(
             request.homepage = infer_homepage_from_endpoint(endpoint);
         }
     }
-    request.kimi_config_toml = Some(effective_config);
+    request.config = Some(effective_config);
     Ok(())
 }
 
