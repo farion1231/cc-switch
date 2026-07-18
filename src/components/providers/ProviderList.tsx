@@ -46,6 +46,10 @@ import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import {
+  buildOpenClawDefaultModel,
+  matchesOpenClawPrimaryModel,
+} from "@/utils/openClawDefaultModel";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -138,9 +142,12 @@ export function ProviderList({
   );
 
   const isProviderDefaultModel = useCallback(
-    (providerId: string): boolean => {
+    (provider: Provider): boolean => {
       if (appId !== "openclaw" || !openclawDefaultModel?.primary) return false;
-      return openclawDefaultModel.primary.startsWith(providerId + "/");
+      return matchesOpenClawPrimaryModel(
+        openclawDefaultModel,
+        buildOpenClawDefaultModel(provider),
+      );
     },
     [appId, openclawDefaultModel],
   );
@@ -429,7 +436,7 @@ export function ProviderList({
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : isProviderDefaultModel(provider)
                 }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
