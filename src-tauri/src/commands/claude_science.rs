@@ -618,7 +618,7 @@ fn padded_claude_ai_loopback_origin(proxy_base_url: &str) -> Result<String, Stri
             "Claude Science managed OAuth bridge requires a 2-5 digit proxy port".to_string(),
         );
     }
-    // WHATWG URL parsers canonicalize an all-zero numeric hostname to
+    // Bun's WHATWG URL parser canonicalizes an all-zero numeric hostname to
     // 0.0.0.0. This keeps the replacement exactly as long as claude.ai while
     // still reaching the loopback-bound CC Switch proxy on macOS.
     let padded_host = "0".repeat(9 - port_digits);
