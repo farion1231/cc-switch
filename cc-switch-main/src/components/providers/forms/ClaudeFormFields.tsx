@@ -247,7 +247,9 @@ export function ClaudeFormFields({
     if (!settingsConfig) return true;
     try {
       const parsed = JSON.parse(settingsConfig);
-      return (parsed as Record<string, unknown>).autoSyncContextWindow !== false;
+      return (
+        (parsed as Record<string, unknown>).autoSyncContextWindow !== false
+      );
     } catch {
       return true;
     }
@@ -266,7 +268,6 @@ export function ClaudeFormFields({
     },
     [settingsConfig, onSettingsConfigChange],
   );
-
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
@@ -1018,12 +1019,16 @@ export function ClaudeFormFields({
                   <div className="mt-3 flex items-center gap-2 rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 w-fit">
                     <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
                     <span className="text-xs font-medium text-foreground">
-                      {t("providerForm.autoSyncContextWindow", { defaultValue: "自动同步" })}
+                      {t("providerForm.autoSyncContextWindow", {
+                        defaultValue: "自动同步",
+                      })}
                     </span>
                     <Switch
                       checked={autoSyncContextWindow}
                       onCheckedChange={handleAutoSyncChange}
-                      aria-label={t("providerForm.autoSyncContextWindow", { defaultValue: "自动同步" })}
+                      aria-label={t("providerForm.autoSyncContextWindow", {
+                        defaultValue: "自动同步",
+                      })}
                       className="h-5 w-9"
                     />
                     <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />

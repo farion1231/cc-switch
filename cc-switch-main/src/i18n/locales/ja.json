@@ -1116,7 +1116,7 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "任意: 既定で使いたい Claude モデルを指定。空欄ならシステム既定を使用します。",
     "modelMappingLabel": "モデルマッピング",
-    "modelMappingHint": "表示名は /model メニューだけに影響します。1M は Claude Code へのコンテキスト能力宣言です。",
+    "modelMappingHint": "表示名は /model メニューにのみ影響します。コンテキスト長はモデルがサポートする最大コンテキストウィンドウを宣言します（例：1M、200K、128K）。空欄でデフォルト値を使用。",
     "modelRoleLabel": "モデル役割",
     "modelRoleSonnet": "Sonnet",
     "modelRoleOpus": "Opus",
@@ -1151,9 +1151,11 @@
     "fetchModelsNotSupported": "このプロバイダーはモデル一覧の取得に対応していません",
     "fetchModelsEndpointNotFound": "利用可能なモデル一覧エンドポイントが見つかりません。Base URL を確認するか、プロバイダーが該当 API を公開しているかご確認ください",
     "fetchModelsTimeout": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
-    "modelContextWindowLabel": "???????????",
+    "modelContextWindowLabel": "コンテキスト長",
     "modelContextWindowPlaceholder": "1M / 200K",
-    "modelContextWindowHint": "?????????????????????????????? 200K"
+    "modelContextWindowHint": "?????????????????????????????? 200K",
+    "autoSyncContextWindow": "自動同期",
+    "autoSyncContextWindowTooltip": "ターミナルでモデルを切り替える際、コンテキスト長と圧縮閾値が選択されたモデルに基づいて settings.json で更新されます。複数の claude ターミナルが異なるモデルを使用する場合、最後に切り替えたモデルのコンテキスト長がグローバル値として使用されます。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",

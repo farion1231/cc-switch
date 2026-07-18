@@ -1116,7 +1116,7 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "Optional: Specify default Claude model to use, leave blank to use system default.",
     "modelMappingLabel": "Model Mapping",
-    "modelMappingHint": "Display names only affect the /model menu; 1M is only a Claude Code context-capability declaration.",
+    "modelMappingHint": "Display names only affect the /model menu; Context Length declares the model's max context window (e.g., 1M, 200K, 128K). Leave empty for default.",
     "modelRoleLabel": "Model role",
     "modelRoleSonnet": "Sonnet",
     "modelRoleOpus": "Opus",
@@ -1151,9 +1151,11 @@
     "fetchModelsNotSupported": "This provider does not support fetching model list",
     "fetchModelsEndpointNotFound": "No reachable models endpoint found. Please check the Base URL or confirm whether the provider exposes this API.",
     "fetchModelsTimeout": "Request timed out, please check network connection",
-    "modelContextWindowLabel": "Context Window",
+    "modelContextWindowLabel": "Context Length",
     "modelContextWindowPlaceholder": "1M / 200K",
-    "modelContextWindowHint": "Declare model context window size; leave empty for default 200K"
+    "modelContextWindowHint": "Declare model context window size; leave empty for default 200K",
+    "autoSyncContextWindow": "Auto Sync",
+    "autoSyncContextWindowTooltip": "When switching models in the terminal, context length and compression threshold are updated in settings.json based on the selected model. With multiple Claude terminals using different models, the most recently switched model's context length is used as the global value."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
