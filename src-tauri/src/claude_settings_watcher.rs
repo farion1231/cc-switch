@@ -133,4 +133,43 @@ mod tests {
         // subagent 没后缀 → 期望 None（无窗口可写）
         assert!(resolve_active_model_window(&settings, &provider).is_none());
     }
+
+    // ========== Task 3: build_env_writes 测试 ==========
+
+    #[test]
+    fn build_writes_for_30k_window() {
+        let writes = build_env_writes(30000);
+        assert_eq!(writes, vec![
+            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "24000".to_string()),
+            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "30000".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn build_writes_for_1m_window() {
+        let writes = build_env_writes(1000000);
+        assert_eq!(writes, vec![
+            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "800000".to_string()),
+            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1000000".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn build_writes_for_200k_window() {
+        let writes = build_env_writes(200000);
+        assert_eq!(writes, vec![
+            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "160000".to_string()),
+            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "200000".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn build_writes_for_1_token_boundary() {
+        // 最小边界：1 token → ACW=0（×0.8 = 0.8，向下取整 = 0）
+        let writes = build_env_writes(1);
+        assert_eq!(writes, vec![
+            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "0".to_string()),
+            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1".to_string()),
+        ]);
+    }
 }
