@@ -701,7 +701,7 @@ pub fn create_tray_menu(
         let providers = app_state.db.get_all_providers(app_type_str)?;
 
         let current_id =
-            effective_current_provider(&app_state, &section.app_type)?.unwrap_or_default();
+            effective_current_provider(app_state, &section.app_type)?.unwrap_or_default();
 
         if providers.is_empty() {
             // 空供应商：显示禁用的菜单项

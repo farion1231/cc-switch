@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::provider::Provider;
 use crate::settings::{effective_backup_retain_count, get_kimi_code_override_dir};
 use chrono::Local;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -513,24 +513,6 @@ pub fn list_live_providers() -> Result<BTreeMap<String, Value>, AppError> {
         for (name, entry) in providers {
             if let Ok(json_val) = toml_to_json(entry) {
                 out.insert(name.clone(), json_val);
-            }
-        }
-    }
-    Ok(out)
-}
-
-/// List live models as alias → table JSON.
-pub fn list_live_models() -> Result<BTreeMap<String, Value>, AppError> {
-    let raw = read_live_config_raw()?;
-    if raw.trim().is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let value: toml::Value = raw.parse().map_err(invalid_toml)?;
-    let mut out = BTreeMap::new();
-    if let Some(models) = value.get("models").and_then(|v| v.as_table()) {
-        for (alias, entry) in models {
-            if let Ok(json_val) = toml_to_json(entry) {
-                out.insert(alias.clone(), json_val);
             }
         }
     }
@@ -1126,83 +1108,6 @@ pub fn read_active_live_settings() -> Result<Value, AppError> {
     }
     // Fallback: return whole raw as non-owned snapshot for diagnostics only.
     Ok(json!({ "config": raw }))
-}
-
-/// Build settings_config Map for a new provider from structured fields.
-#[allow(clippy::too_many_arguments)]
-pub fn build_settings_config(
-    provider_id: &str,
-    provider_type: &str,
-    base_url: Option<&str>,
-    api_key: Option<&str>,
-    custom_headers: Option<&Map<String, Value>>,
-    models: &[(
-        String,
-        String,
-        i64,
-        Option<i64>,
-        Option<Vec<String>>,
-        Option<String>,
-    )],
-    selected_model: &str,
-) -> Result<Value, AppError> {
-    // models: (alias, model_id, max_context_size, max_output_size, capabilities, display_name)
-    let mut doc = DocumentMut::new();
-    doc["selected_model"] = Item::Value(TomlEditValue::from(selected_model));
-
-    let mut providers = Table::new();
-    let mut p = Table::new();
-    p["type"] = Item::Value(TomlEditValue::from(provider_type));
-    if let Some(url) = base_url.map(str::trim).filter(|s| !s.is_empty()) {
-        p["base_url"] = Item::Value(TomlEditValue::from(url));
-    }
-    if let Some(key) = api_key.map(str::trim).filter(|s| !s.is_empty()) {
-        p["api_key"] = Item::Value(TomlEditValue::from(key));
-    }
-    if let Some(headers) = custom_headers {
-        if !headers.is_empty() {
-            let mut h = Table::new();
-            for (k, v) in headers {
-                if let Some(s) = v.as_str() {
-                    h[k.as_str()] = Item::Value(TomlEditValue::from(s));
-                }
-            }
-            p["custom_headers"] = Item::Table(h);
-        }
-    }
-    providers[provider_id] = Item::Table(p);
-    doc["providers"] = Item::Table(providers);
-
-    let mut models_table = Table::new();
-    for (alias, model_id, max_ctx, max_out, caps, display) in models {
-        let mut m = Table::new();
-        m["provider"] = Item::Value(TomlEditValue::from(provider_id));
-        m["model"] = Item::Value(TomlEditValue::from(model_id.as_str()));
-        m["max_context_size"] = Item::Value(TomlEditValue::from(*max_ctx));
-        if let Some(out) = max_out {
-            m["max_output_size"] = Item::Value(TomlEditValue::from(*out));
-        }
-        if let Some(cap_list) = caps {
-            let arr: toml_edit::Array = cap_list
-                .iter()
-                .map(|c| TomlEditValue::from(c.as_str()))
-                .collect();
-            m["capabilities"] = Item::Value(TomlEditValue::Array(arr));
-        }
-        if let Some(name) = display.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            m["display_name"] = Item::Value(TomlEditValue::from(name));
-        }
-        models_table[alias.as_str()] = Item::Table(m);
-    }
-    doc["models"] = Item::Table(models_table);
-
-    let config = doc.to_string();
-    validate_owned_fragment(&config)?;
-    Ok(json!({
-        "config": config,
-        "provider_id": provider_id,
-        "selected_model": selected_model,
-    }))
 }
 
 // ============================================================================
