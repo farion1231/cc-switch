@@ -147,6 +147,10 @@ impl McpService {
             AppType::Hermes => {
                 mcp::sync_single_server_to_hermes(&Default::default(), &server.id, &server.server)?;
             }
+            AppType::KimiCode => {
+                // Phase 1: MCP out of scope for Kimi Code
+                log::debug!("Kimi Code MCP support is out of Phase 1 scope, skipping sync");
+            }
         }
         Ok(())
     }
@@ -182,6 +186,9 @@ impl McpService {
             }
             AppType::Hermes => {
                 mcp::remove_server_from_hermes(id)?;
+            }
+            AppType::KimiCode => {
+                log::debug!("Kimi Code MCP support is out of Phase 1 scope, skipping remove");
             }
         }
         Ok(())

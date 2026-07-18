@@ -78,6 +78,7 @@ import { BasicFormFields } from "./BasicFormFields";
 import { ClaudeFormFields } from "./ClaudeFormFields";
 import { ClaudeDesktopProviderForm } from "./ClaudeDesktopProviderForm";
 import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
+import { KimiCodeProviderForm } from "./KimiCodeProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
@@ -246,6 +247,9 @@ export function ProviderForm(props: ProviderFormProps) {
   }
   if (props.appId === "grokbuild") {
     return <GrokBuildProviderForm {...props} />;
+  }
+  if (props.appId === "kimicode") {
+    return <KimiCodeProviderForm {...props} />;
   }
 
   return <ProviderFormFull {...props} />;

@@ -870,7 +870,9 @@
       "defaultCostMultiplierRequired": "Default multiplier is required",
       "defaultCostMultiplierInvalid": "Invalid multiplier format"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "kimiCodeConfigDir": "Kimi Code config directory",
+    "browsePlaceholderKimiCode": "Choose Kimi Code config directory (default ~/.kimi-code)"
   },
   "apps": {
     "claude": "Claude",
@@ -882,7 +884,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimicode": "Kimi Code"
   },
   "grokBuild": {
     "apiBackend": "API backend",

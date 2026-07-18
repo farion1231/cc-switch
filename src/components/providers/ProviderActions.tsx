@@ -88,7 +88,8 @@ export function ProviderActions({
   const isAdditiveMode =
     (appId === "opencode" && !isOmo) ||
     appId === "openclaw" ||
-    appId === "hermes";
+    appId === "hermes" ||
+    appId === "kimicode";
 
   // 故障转移模式下的按钮逻辑（累加模式和 OMO 应用不支持故障转移）
   const isFailoverMode =
@@ -228,16 +229,16 @@ export function ProviderActions({
 
   return (
     <div className="flex items-center gap-1.5">
-      {(appId === "openclaw" || appId === "hermes") &&
+      {(appId === "openclaw" || appId === "hermes" || appId === "kimicode") &&
         isInConfig &&
         onSetAsDefault &&
         (() => {
           const activeLabel =
-            appId === "hermes"
+            appId === "hermes" || appId === "kimicode"
               ? t("provider.inUse", { defaultValue: "已在用" })
               : t("provider.isDefault", { defaultValue: "当前默认" });
           const inactiveLabel =
-            appId === "hermes"
+            appId === "hermes" || appId === "kimicode"
               ? t("provider.enable", { defaultValue: "启用" })
               : t("provider.setAsDefault", { defaultValue: "设为默认" });
           return (

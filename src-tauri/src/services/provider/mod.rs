@@ -22,8 +22,8 @@ use crate::store::AppState;
 
 // Re-export sub-module functions for external access
 pub use live::{
-    import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_default_config, import_hermes_providers_from_live, import_kimi_code_providers_from_live,
+    import_openclaw_providers_from_live, import_opencode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
     update_toml_common_config_snippet,
 };
@@ -38,8 +38,8 @@ pub(crate) use live::{
 
 // Internal re-exports
 use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_hermes_provider_from_live, remove_kimi_code_provider_from_live,
+    remove_openclaw_provider_from_live, remove_opencode_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -1973,6 +1973,12 @@ impl ProviderService {
         provider_id: &str,
         live_config_managed: Option<bool>,
     ) -> Result<bool, AppError> {
+        // Kimi's live file is shared with user-owned providers. Never turn a
+        // parse failure into "not present", because callers could then claim or
+        // overwrite an entry they could not actually inspect.
+        if matches!(app_type, AppType::KimiCode) {
+            return provider_exists_in_live_config(app_type, provider_id);
+        }
         if live_config_managed == Some(false) {
             Ok(provider_exists_in_live_config(app_type, provider_id).unwrap_or(false))
         } else {
@@ -1992,6 +1998,22 @@ impl ProviderService {
             .meta
             .get_or_insert_with(Default::default)
             .live_config_managed = Some(managed);
+    }
+
+    fn ensure_kimi_provider_is_mutable(
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        if matches!(app_type, AppType::KimiCode)
+            && crate::kimi_code_config::provider_uses_oauth(provider)?
+        {
+            return Err(AppError::localized(
+                "provider.kimicode.oauth.login_owned",
+                "OAuth 供应商由 Kimi Code /login 管理；CC Switch 只能导入并切换，不能创建或编辑",
+                "OAuth providers are managed by Kimi Code /login; CC Switch may import and activate them but cannot create or edit them",
+            ));
+        }
+        Ok(())
     }
 
     fn normalize_usage_script_credential_overrides(app_type: &AppType, provider: &mut Provider) {
@@ -2068,15 +2090,20 @@ impl ProviderService {
         state.db.get_all_providers(app_type.as_str())
     }
 
-    /// Get current provider ID
-    ///
-    /// 使用有效的当前供应商 ID（验证过存在性）。
-    /// 优先从本地 settings 读取，验证后 fallback 到数据库的 is_current 字段。
-    /// 这确保了云同步场景下多设备可以独立选择供应商，且返回的 ID 一定有效。
-    ///
-    /// 对于累加模式应用（OpenCode, OpenClaw），不存在"当前供应商"概念，直接返回空字符串。
+    /// Additive applications normally have no current provider. Kimi Code is the
+    /// exception: its live `default_model` selects one model/provider, so derive
+    /// the current card directly from config.toml instead of stale DB flags.
     pub fn current(state: &AppState, app_type: AppType) -> Result<String, AppError> {
-        // Additive mode apps have no "current" provider concept
+        if matches!(app_type, AppType::KimiCode) {
+            let raw = crate::kimi_code_config::read_live_config_raw()?;
+            let Some(selection) = crate::kimi_code_config::resolve_active_selection(&raw)? else {
+                return Ok(String::new());
+            };
+            return state
+                .db
+                .get_provider_by_id(&selection.provider_id, app_type.as_str())
+                .map(|provider| provider.map(|_| selection.provider_id).unwrap_or_default());
+        }
         if app_type.is_additive_mode() {
             return Ok(String::new());
         }
@@ -2095,8 +2122,37 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
+        Self::ensure_kimi_provider_is_mutable(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
+
+        if matches!(app_type, AppType::KimiCode) {
+            if state
+                .db
+                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .is_some()
+            {
+                return Err(AppError::Message(format!(
+                    "Kimi Code provider '{}' already exists",
+                    provider.id
+                )));
+            }
+            if add_to_live && Self::check_live_config_exists(&app_type, &provider.id, Some(false))?
+            {
+                return Err(AppError::localized(
+                    "provider.kimicode.live.collision",
+                    format!(
+                        "Kimi Code config.toml 中已存在 providers.{}，请先刷新导入或使用其他 ID",
+                        provider.id
+                    ),
+                    format!(
+                        "providers.{} already exists in Kimi Code config.toml; refresh/import it or choose another ID",
+                        provider.id
+                    ),
+                ));
+            }
+        }
+
         if app_type.is_additive_mode() {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
@@ -2117,7 +2173,20 @@ impl ProviderService {
             if !add_to_live {
                 return Ok(true);
             }
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            if let Err(write_error) =
+                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)
+            {
+                if matches!(app_type, AppType::KimiCode) {
+                    if let Err(rollback_error) =
+                        state.db.delete_provider(app_type.as_str(), &provider.id)
+                    {
+                        return Err(AppError::Message(format!(
+                            "Failed to write Kimi Code live config: {write_error}; failed to roll back DB row: {rollback_error}"
+                        )));
+                    }
+                }
+                return Err(write_error);
+            }
             return Ok(true);
         }
 
@@ -2150,6 +2219,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
+        Self::ensure_kimi_provider_is_mutable(&app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
@@ -2279,7 +2349,23 @@ impl ProviderService {
             if !live_config_managed {
                 return Ok(true);
             }
-            write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
+            if let Err(write_error) =
+                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)
+            {
+                if matches!(app_type, AppType::KimiCode) {
+                    let rollback_result = if let Some(previous) = existing_provider.as_ref() {
+                        state.db.save_provider(app_type.as_str(), previous)
+                    } else {
+                        state.db.delete_provider(app_type.as_str(), &provider.id)
+                    };
+                    if let Err(rollback_error) = rollback_result {
+                        return Err(AppError::Message(format!(
+                            "Failed to update Kimi Code live config: {write_error}; failed to roll back DB row: {rollback_error}"
+                        )));
+                    }
+                }
+                return Err(write_error);
+            }
             return Ok(true);
         }
 
@@ -2402,15 +2488,45 @@ impl ProviderService {
             let live_managed = existing
                 .as_ref()
                 .and_then(Self::provider_live_config_managed);
-            if Self::check_live_config_exists(&app_type, id, live_managed)? {
+            let should_remove_live = if matches!(app_type, AppType::KimiCode) {
+                // Kimi startup import can discover arbitrary user-owned entries.
+                // Only an explicit CC Switch write grants live deletion rights.
+                live_managed == Some(true)
+            } else {
+                Self::check_live_config_exists(&app_type, id, live_managed)?
+            };
+            let kimi_live_snapshot = if should_remove_live && matches!(app_type, AppType::KimiCode)
+            {
+                Some(crate::kimi_code_config::read_live_config_raw()?)
+            } else {
+                None
+            };
+            if should_remove_live {
                 match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::KimiCode => {
+                        let provider = existing.as_ref().ok_or_else(|| {
+                            AppError::Message(format!("Kimi Code provider {id} not found"))
+                        })?;
+                        remove_kimi_code_provider_from_live(provider)?;
+                    }
                     _ => {}
                 }
             }
-            state.db.delete_provider(app_type.as_str(), id)?;
+            if let Err(db_error) = state.db.delete_provider(app_type.as_str(), id) {
+                if let Some(snapshot) = kimi_live_snapshot.as_deref() {
+                    if let Err(restore_error) =
+                        crate::kimi_code_config::restore_live_config_raw(snapshot)
+                    {
+                        return Err(AppError::Message(format!(
+                            "Failed to delete Kimi Code DB row: {db_error}; failed to restore live config: {restore_error}"
+                        )));
+                    }
+                }
+                return Err(db_error);
+            }
             return Ok(());
         }
 
@@ -2437,6 +2553,7 @@ impl ProviderService {
         app_type: AppType,
         id: &str,
     ) -> Result<(), AppError> {
+        let mut kimi_live_snapshot: Option<String> = None;
         match app_type {
             AppType::OpenCode => {
                 let provider_category = state
@@ -2472,6 +2589,23 @@ impl ProviderService {
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
             }
+            AppType::KimiCode => {
+                let provider = state
+                    .db
+                    .get_provider_by_id(id, app_type.as_str())?
+                    .ok_or_else(|| {
+                        AppError::Message(format!("Kimi Code provider {id} not found"))
+                    })?;
+                if Self::provider_live_config_managed(&provider) != Some(true) {
+                    return Err(AppError::localized(
+                        "provider.kimicode.live.not_owned",
+                        "该 Kimi Code 条目来自用户现有配置，尚未由 CC Switch 接管，不能删除 live 条目",
+                        "This Kimi Code entry was imported from the user's live config and is not owned by CC Switch",
+                    ));
+                }
+                kimi_live_snapshot = Some(crate::kimi_code_config::read_live_config_raw()?);
+                remove_kimi_code_provider_from_live(&provider)?;
+            }
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -2482,7 +2616,18 @@ impl ProviderService {
 
         if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
             Self::set_provider_live_config_managed(&mut provider, false);
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            if let Err(db_error) = state.db.save_provider(app_type.as_str(), &provider) {
+                if let Some(snapshot) = kimi_live_snapshot.as_deref() {
+                    if let Err(restore_error) =
+                        crate::kimi_code_config::restore_live_config_raw(snapshot)
+                    {
+                        return Err(AppError::Message(format!(
+                            "Failed to update Kimi Code ownership marker: {db_error}; failed to restore live config: {restore_error}"
+                        )));
+                    }
+                }
+                return Err(db_error);
+            }
         }
 
         Ok(())
@@ -2676,8 +2821,42 @@ impl ProviderService {
             state.db.set_current_provider(app_type.as_str(), id)?;
         }
 
-        // Sync to live (write_gemini_live handles security flag internally for Gemini)
-        write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        // Sync to live. Kimi Code must merge provider/model tables and
+        // `default_model` in one atomic write. Persist its ownership marker first
+        // so a DB failure can never leave an untracked live provider behind.
+        if matches!(app_type, AppType::KimiCode) {
+            if crate::kimi_code_config::provider_uses_oauth(provider)? {
+                // OAuth provider/model tables remain `/login`-owned. Activation
+                // may only flip the already-existing model alias.
+                let fragment =
+                    crate::kimi_code_config::extract_owned_fragment(&provider.settings_config)?;
+                crate::kimi_code_config::apply_switch_defaults(&fragment.selected_model)?;
+            } else {
+                let marker_needs_update =
+                    Self::provider_live_config_managed(provider) != Some(true);
+                if marker_needs_update {
+                    let mut updated = provider.clone();
+                    Self::set_provider_live_config_managed(&mut updated, true);
+                    state.db.save_provider(app_type.as_str(), &updated)?;
+                }
+                if let Err(write_error) = crate::kimi_code_config::activate_provider_live(provider)
+                {
+                    if marker_needs_update {
+                        if let Err(rollback_error) =
+                            state.db.save_provider(app_type.as_str(), provider)
+                        {
+                            return Err(AppError::Message(format!(
+                                "Failed to activate Kimi Code provider: {write_error}; failed to roll back ownership marker: {rollback_error}"
+                            )));
+                        }
+                    }
+                    return Err(write_error);
+                }
+            }
+        } else {
+            // write_gemini_live handles its security flag internally.
+            write_live_with_common_config(state.db.as_ref(), &app_type, provider)?;
+        }
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
         // — we instead update the top-level `model:` section to point at this
@@ -2704,7 +2883,9 @@ impl ProviderService {
         //
         // If persisting the marker fails, roll back the just-written live config so we don't leave
         // the provider in a silent inconsistent state (present in live, but still marked DB-only).
-        if app_type.is_additive_mode() && Self::provider_live_config_managed(provider) != Some(true)
+        if app_type.is_additive_mode()
+            && !matches!(app_type, AppType::KimiCode)
+            && Self::provider_live_config_managed(provider) != Some(true)
         {
             let mut updated = provider.clone();
             Self::set_provider_live_config_managed(&mut updated, true);
@@ -2713,6 +2894,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::KimiCode => remove_kimi_code_provider_from_live(provider),
                     _ => Ok(()),
                 };
 
@@ -2999,6 +3181,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::KimiCode => Ok(String::new()),
         }
     }
 
@@ -3016,6 +3199,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::KimiCode => Ok(String::new()),
         }
     }
 
@@ -3535,6 +3719,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::KimiCode => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.kimicode.settings.not_object",
+                        "Kimi Code 配置必须是 JSON 对象",
+                        "Kimi Code configuration must be a JSON object",
+                    ));
+                }
+                crate::kimi_code_config::extract_owned_fragment(&provider.settings_config)?;
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -3739,8 +3933,9 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
+            AppType::OpenClaw | AppType::Hermes | AppType::KimiCode => {
+                // OpenClaw/Hermes use apiKey and baseUrl directly on the object;
+                // Kimi Code resolves via Provider::resolve_usage_credentials
                 let api_key = provider
                     .settings_config
                     .get("apiKey")

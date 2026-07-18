@@ -174,6 +174,35 @@ impl Provider {
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
             ),
+            // Kimi Code stores a scoped TOML fragment under settings_config.config.
+            AppType::KimiCode => {
+                let config = settings.get("config").and_then(Value::as_str).unwrap_or("");
+                let frag = crate::kimi_code_config::validate_owned_fragment(config).ok();
+                if let Some(frag) = frag {
+                    // Best-effort: parse api_key/base_url from owned provider table.
+                    if let Ok(doc) = config.parse::<toml::Value>() {
+                        if let Some(provider) = doc
+                            .get("providers")
+                            .and_then(|v| v.as_table())
+                            .and_then(|t| t.get(&frag.provider_id))
+                            .and_then(|v| v.as_table())
+                        {
+                            let base_url = provider
+                                .get("base_url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let api_key = provider
+                                .get("api_key")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            return (base_url, api_key);
+                        }
+                    }
+                }
+                (String::new(), String::new())
+            }
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
                 str_at(settings.get("baseUrl")),

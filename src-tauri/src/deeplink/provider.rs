@@ -149,6 +149,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::KimiCode => build_kimicode_settings(request),
     };
 
     // Build usage script configuration if provided
@@ -445,6 +446,49 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
+fn build_kimicode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+    let provider_id = request
+        .name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|s| {
+            s.trim()
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "deeplink".to_string());
+    let model = request
+        .model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("default")
+        .trim();
+    let alias = format!("{provider_id}/{model}");
+    let endpoint = get_primary_endpoint(request);
+    let api_key = request.api_key.as_deref().unwrap_or("").trim();
+    let provider_type = "openai";
+
+    let provider_id_toml = toml_edit::Value::from(provider_id.as_str()).to_string();
+    let alias_toml = toml_edit::Value::from(alias.as_str()).to_string();
+    let model_toml = toml_edit::Value::from(model).to_string();
+    let endpoint_toml = toml_edit::Value::from(endpoint.as_str()).to_string();
+    let api_key_toml = toml_edit::Value::from(api_key).to_string();
+    let type_toml = toml_edit::Value::from(provider_type).to_string();
+
+    let config = format!(
+        "selected_model = {alias_toml}\n\n[providers.{provider_id_toml}]\ntype = {type_toml}\nbase_url = {endpoint_toml}\napi_key = {api_key_toml}\n\n[models.{alias_toml}]\nprovider = {provider_id_toml}\nmodel = {model_toml}\nmax_context_size = 128000\n"
+    );
+
+    json!({
+        "config": config,
+        "provider_id": provider_id,
+        "selected_model": alias,
+    })
+}
+
 fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     let model = request
         .model
@@ -635,6 +679,20 @@ pub fn parse_and_merge_config(
         // Additive mode apps use JSON config directly; pass through as-is
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
+        }
+        // Kimi Code stores a scoped TOML fragment under settings_config.config
+        "kimicode" | "kimi-code" | "kimi_code" => {
+            if let Some(config) = config_value.as_str() {
+                if let Some(obj) = merged.as_object_mut() {
+                    obj.insert("config".to_string(), serde_json::json!(config));
+                }
+            } else if let Some(obj) = config_value.as_object() {
+                if let Some(m) = merged.as_object_mut() {
+                    for (k, v) in obj {
+                        m.insert(k.clone(), v.clone());
+                    }
+                }
+            }
         }
         "" => {
             // No app specified, skip merging

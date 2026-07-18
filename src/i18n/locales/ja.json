@@ -870,7 +870,9 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "kimiCodeConfigDir": "Kimi Code 設定ディレクトリ",
+    "browsePlaceholderKimiCode": "Kimi Code 設定ディレクトリを選択（既定 ~/.kimi-code）"
   },
   "apps": {
     "claude": "Claude",
@@ -882,7 +884,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimicode": "Kimi Code"
   },
   "grokBuild": {
     "apiBackend": "API Backend",

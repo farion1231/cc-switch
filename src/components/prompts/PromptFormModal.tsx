@@ -38,6 +38,8 @@ const PromptFormModal: React.FC<PromptFormModalProps> = ({
     grokbuild: "AGENTS.md",
     opencode: "AGENTS.md",
     hermes: "AGENTS.md",
+    // Phase 1: prompt sync unsupported; keep map exhaustive
+    kimicode: "AGENTS.md",
   };
   const filename = filenameMap[appId as Exclude<AppId, "openclaw">];
   const [name, setName] = useState("");

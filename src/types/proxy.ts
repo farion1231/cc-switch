@@ -50,6 +50,8 @@ export interface ProxyTakeoverStatus {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  /** Unsupported in Phase 1; absent from backend takeover status. */
+  kimicode?: boolean;
 }
 
 export interface ProviderHealth {

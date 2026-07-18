@@ -39,6 +39,17 @@ const TIER_LABEL_GROUPS: &[(&str, &[&str])] = &[
     ("l", GEMINI_FLASH_LITE_TIER_NAMES),
 ];
 
+fn effective_current_provider(
+    state: &AppState,
+    app_type: &AppType,
+) -> Result<Option<String>, AppError> {
+    if matches!(app_type, AppType::KimiCode) {
+        return crate::services::ProviderService::current(state, app_type.clone())
+            .map(|id| (!id.is_empty()).then_some(id));
+    }
+    crate::settings::get_effective_current_provider(&state.db, app_type)
+}
+
 /// 每个 app 分区的子菜单句柄，用于 usage 更新时就地改 label 而非整菜单重建。
 /// `create_tray_menu` 每次重建都会整表覆盖写入，保证句柄始终指向当前活跃菜单。
 static TRAY_SECTION_SUBMENUS: Lazy<
@@ -153,7 +164,7 @@ pub struct TrayAppSection {
 pub const AUTO_SUFFIX: &str = "auto";
 pub const TRAY_ID: &str = "cc-switch";
 
-pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
+pub const TRAY_SECTIONS: [TrayAppSection; 5] = [
     TrayAppSection {
         app_type: AppType::Claude,
         prefix: "claude_",
@@ -181,6 +192,13 @@ pub const TRAY_SECTIONS: [TrayAppSection; 4] = [
         empty_id: "grokbuild_empty",
         header_label: "Grok Build",
         log_name: "Grok Build",
+    },
+    TrayAppSection {
+        app_type: AppType::KimiCode,
+        prefix: "kimicode_",
+        empty_id: "kimicode_empty",
+        header_label: "Kimi Code",
+        log_name: "Kimi Code",
     },
 ];
 
@@ -509,8 +527,7 @@ fn handle_auto_click(app: &tauri::AppHandle, app_type: &AppType) -> Result<(), A
         // 若队列为空，则尝试把“当前供应商”自动加入队列作为 P1，避免用户陷入无法开启的死锁。
         let mut queue = app_state.db.get_failover_queue(app_type_str)?;
         if queue.is_empty() {
-            let current_id =
-                crate::settings::get_effective_current_provider(&app_state.db, app_type)?;
+            let current_id = effective_current_provider(&app_state, app_type)?;
             let Some(current_id) = current_id else {
                 return Err(AppError::Message(
                     "故障转移队列为空，且未设置当前供应商，无法启用 Auto 模式".to_string(),
@@ -684,8 +701,7 @@ pub fn create_tray_menu(
         let providers = app_state.db.get_all_providers(app_type_str)?;
 
         let current_id =
-            crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)?
-                .unwrap_or_default();
+            effective_current_provider(&app_state, &section.app_type)?.unwrap_or_default();
 
         if providers.is_empty() {
             // 空供应商：显示禁用的菜单项
@@ -888,9 +904,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
         let Ok(providers) = app_state.db.get_all_providers(section.app_type.as_str()) else {
             continue;
         };
-        let Ok(Some(current_id)) =
-            crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)
-        else {
+        let Ok(Some(current_id)) = effective_current_provider(&app_state, &section.app_type) else {
             continue;
         };
         let Some(provider) = providers.get(&current_id) else {
@@ -1068,16 +1082,14 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
         // 解析 effective current provider；未设置 / 出错都静默跳过，
         // 与 create_tray_menu 的行为保持一致。
-        let current_id =
-            match crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)
-            {
-                Ok(Some(id)) => id,
-                Ok(None) => continue,
-                Err(e) => {
-                    log::warn!("[Tray] 读取{log_name}当前供应商失败: {e}");
-                    continue;
-                }
-            };
+        let current_id = match effective_current_provider(&app_state, &section.app_type) {
+            Ok(Some(id)) => id,
+            Ok(None) => continue,
+            Err(e) => {
+                log::warn!("[Tray] 读取{log_name}当前供应商失败: {e}");
+                continue;
+            }
+        };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停 × 3 sections 的热路径）。
         let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
