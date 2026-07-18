@@ -536,7 +536,8 @@ impl SkillService {
                     "app.skills_unsupported",
                     "Kimi Code 第一阶段暂不支持 Skills 同步",
                     "Kimi Code Skills sync is not supported in Phase 1",
-                ));
+                )
+                .into());
             }
         }
 
@@ -559,7 +560,8 @@ impl SkillService {
                     "app.skills_unsupported",
                     "Kimi Code 第一阶段暂不支持 Skills 同步",
                     "Kimi Code Skills sync is not supported in Phase 1",
-                ));
+                )
+                .into());
             }
         })
     }
