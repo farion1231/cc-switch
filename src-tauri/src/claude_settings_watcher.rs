@@ -172,4 +172,97 @@ mod tests {
             ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1".to_string()),
         ]);
     }
+
+    // ========== Task 4: 无效输入处理测试 ==========
+
+    #[test]
+    fn resolve_returns_none_when_model_field_missing() {
+        let settings = json!({});
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Kimi[30k]"
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_model_value_unknown() {
+        let settings = json!({ "model": "custom-alias" });
+        let provider = make_provider(json!({}));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_model_is_not_string() {
+        let settings = json!({ "model": 123 });
+        let provider = make_provider(json!({}));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_model_is_null() {
+        let settings = json!({ "model": null });
+        let provider = make_provider(json!({}));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_role_env_field_missing() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({}));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_env_value_not_string() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": { "name": "weird" }
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_suffix_invalid() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "model[invalid]"
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_suffix_zero() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "model[0]"
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_suffix_unsupported_unit() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "model[1G]"
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_suffix_decimal() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "model[1.5m]"
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
+
+    #[test]
+    fn resolve_returns_none_when_no_suffix_at_all() {
+        let settings = json!({ "model": "haiku" });
+        let provider = make_provider(json!({
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.6"
+        }));
+        assert!(resolve_active_model_window(&settings, &provider).is_none());
+    }
 }
