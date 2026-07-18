@@ -18,7 +18,7 @@ use tokio::time::timeout;
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
 use crate::config::get_app_config_dir;
 use crate::database::Database;
-use crate::error::format_skill_error;
+use crate::error::{format_skill_error, AppError};
 
 // ========== 数据结构 ==========
 

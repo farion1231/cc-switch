@@ -149,7 +149,7 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
-        AppType::KimiCode => build_kimicode_settings(request),
+        AppType::KimiCode => build_kimicode_settings(request)?,
     };
 
     // Build usage script configuration if provided
@@ -446,7 +446,16 @@ fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
     json!({ "env": env })
 }
 
-fn build_kimicode_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
+fn build_kimicode_settings(request: &DeepLinkImportRequest) -> Result<serde_json::Value, AppError> {
+    if let Some(config) = request.kimi_config_toml.as_deref() {
+        let fragment = crate::kimi_code_config::validate_owned_fragment(config)?;
+        return Ok(json!({
+            "config": config,
+            "provider_id": fragment.provider_id,
+            "selected_model": fragment.selected_model,
+        }));
+    }
+
     let provider_id = request
         .name
         .as_deref()
@@ -482,11 +491,11 @@ fn build_kimicode_settings(request: &DeepLinkImportRequest) -> serde_json::Value
         "selected_model = {alias_toml}\n\n[providers.{provider_id_toml}]\ntype = {type_toml}\nbase_url = {endpoint_toml}\napi_key = {api_key_toml}\n\n[models.{alias_toml}]\nprovider = {provider_id_toml}\nmodel = {model_toml}\nmax_context_size = 128000\n"
     );
 
-    json!({
+    Ok(json!({
         "config": config,
         "provider_id": provider_id,
         "selected_model": alias,
-    })
+    }))
 }
 
 fn build_grokbuild_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
@@ -680,19 +689,10 @@ pub fn parse_and_merge_config(
         "openclaw" | "opencode" | "hermes" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
-        // Kimi Code stores a scoped TOML fragment under settings_config.config
+        // Kimi Code accepts a scoped TOML fragment. Validate it, preserve it
+        // verbatim, and extract the common deeplink fields needed by import.
         "kimicode" | "kimi-code" | "kimi_code" => {
-            if let Some(config) = config_value.as_str() {
-                if let Some(obj) = merged.as_object_mut() {
-                    obj.insert("config".to_string(), serde_json::json!(config));
-                }
-            } else if let Some(obj) = config_value.as_object() {
-                if let Some(m) = merged.as_object_mut() {
-                    for (k, v) in obj {
-                        m.insert(k.clone(), v.clone());
-                    }
-                }
-            }
+            merge_kimicode_config(&mut merged, &config_content)?;
         }
         "" => {
             // No app specified, skip merging
@@ -914,6 +914,96 @@ fn merge_grokbuild_config(
     Ok(())
 }
 
+/// Merge a scoped Kimi Code TOML fragment into deeplink fields while retaining
+/// the validated fragment for the provider builder.
+fn merge_kimicode_config(
+    request: &mut DeepLinkImportRequest,
+    config_toml: &str,
+) -> Result<(), AppError> {
+    let initial = crate::kimi_code_config::validate_owned_fragment(config_toml)?;
+    let mut document = config_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| AppError::InvalidInput(format!("Invalid Kimi Code TOML config: {e}")))?;
+
+    // URL parameters take precedence over inline config, matching the other
+    // deeplink import paths, but changes stay within the owned provider/model.
+    if let Some(api_key) = request.api_key.as_deref().filter(|value| !value.is_empty()) {
+        document["providers"][initial.provider_id.as_str()]["api_key"] = toml_edit::value(api_key);
+    }
+    if let Some(endpoint) = request
+        .endpoint
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        document["providers"][initial.provider_id.as_str()]["base_url"] =
+            toml_edit::value(endpoint);
+    }
+    if let Some(model) = request.model.as_deref().filter(|value| !value.is_empty()) {
+        document["models"][initial.selected_model.as_str()]["model"] = toml_edit::value(model);
+    }
+
+    let effective_config = document.to_string();
+    let fragment = crate::kimi_code_config::validate_owned_fragment(&effective_config)?;
+    let parsed = effective_config
+        .parse::<toml::Value>()
+        .map_err(|e| AppError::InvalidInput(format!("Invalid Kimi Code TOML config: {e}")))?;
+    let provider = parsed
+        .get("providers")
+        .and_then(|value| value.get(&fragment.provider_id))
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| AppError::InvalidInput("Kimi Code provider table is missing".to_string()))?;
+    let model = parsed
+        .get("models")
+        .and_then(|value| value.get(&fragment.selected_model))
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| AppError::InvalidInput("Kimi Code selected model is missing".to_string()))?;
+
+    if request.name.as_ref().is_none_or(|value| value.is_empty()) {
+        request.name = Some(fragment.provider_id.clone());
+    }
+    if request
+        .api_key
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.api_key = provider
+            .get("api_key")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
+    }
+    if request
+        .endpoint
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        request.endpoint = provider
+            .get("base_url")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
+    }
+    if request.model.as_ref().is_none_or(|value| value.is_empty()) {
+        request.model = model
+            .get("model")
+            .and_then(toml::Value::as_str)
+            .map(ToString::to_string);
+    }
+    if request
+        .homepage
+        .as_ref()
+        .is_none_or(|value| value.is_empty())
+    {
+        if let Some(endpoint) = request
+            .endpoint
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            request.homepage = infer_homepage_from_endpoint(endpoint);
+        }
+    }
+    request.kimi_config_toml = Some(effective_config);
+    Ok(())
+}
+
 /// Merge configuration for additive mode apps (OpenClaw, OpenCode)
 ///
 /// These apps use JSON config directly, so we only extract common fields
@@ -1092,5 +1182,62 @@ mod tests {
         let obj = settings.as_object().unwrap();
         assert!(obj.contains_key("baseUrl"));
         assert!(obj.contains_key("apiKey"));
+    }
+
+    #[test]
+    fn kimicode_deeplink_preserves_scoped_toml_and_applies_url_overrides() {
+        let config = r#"# keep this comment
+selected_model = "relay/model-a"
+
+[providers.relay]
+type = "openai"
+base_url = "https://config.example/v1"
+api_key = "config-key"
+
+[providers.relay.custom_headers]
+X-Source = "config"
+
+[models."relay/model-a"]
+provider = "relay"
+model = "config-model"
+max_context_size = 128000
+"#;
+        let mut request = DeepLinkImportRequest {
+            resource: "provider".to_string(),
+            app: Some("kimicode".to_string()),
+            endpoint: Some("https://url.example/v1".to_string()),
+            api_key: Some("url-key".to_string()),
+            model: Some("url-model".to_string()),
+            ..Default::default()
+        };
+
+        merge_kimicode_config(&mut request, config).expect("merge Kimi config");
+        assert_eq!(request.name.as_deref(), Some("relay"));
+        assert_eq!(request.endpoint.as_deref(), Some("https://url.example/v1"));
+        assert_eq!(request.api_key.as_deref(), Some("url-key"));
+        assert_eq!(request.model.as_deref(), Some("url-model"));
+
+        let settings = build_kimicode_settings(&request).expect("build settings");
+        assert_eq!(settings["provider_id"], "relay");
+        assert_eq!(settings["selected_model"], "relay/model-a");
+        let effective = settings["config"].as_str().expect("config text");
+        assert!(effective.contains("# keep this comment"));
+        let parsed: toml::Value = toml::from_str(effective).expect("valid Kimi TOML");
+        assert_eq!(
+            parsed["providers"]["relay"]["base_url"].as_str(),
+            Some("https://url.example/v1")
+        );
+        assert_eq!(
+            parsed["providers"]["relay"]["api_key"].as_str(),
+            Some("url-key")
+        );
+        assert_eq!(
+            parsed["providers"]["relay"]["custom_headers"]["X-Source"].as_str(),
+            Some("config")
+        );
+        assert_eq!(
+            parsed["models"]["relay/model-a"]["model"].as_str(),
+            Some("url-model")
+        );
     }
 }
