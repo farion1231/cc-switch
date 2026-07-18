@@ -13,18 +13,34 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::store::AppState;
+use crate::{
+    proxy::{
+        CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER, CLAUDE_SCIENCE_PROXY_EMAIL,
+        CLAUDE_SCIENCE_PROXY_ORG_ID, CLAUDE_SCIENCE_PROXY_USER_ID,
+    },
+    store::AppState,
+};
 
 const CLAUDE_SCIENCE_BIN_ENV: &str = "CLAUDE_SCIENCE_BIN";
 const MANAGED_PROFILE_DIR: &str = "claude-science-proxy";
-const SCIENCE_PROXY_USER_ID: &str = "00000000-0000-4000-8000-000000157210";
-const SCIENCE_PROXY_ORG_ID: &str = "00000000-0000-4000-8000-000000157211";
-const SCIENCE_PROXY_EMAIL: &str = "cc-switch-proxy@localhost.invalid";
-const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+/// Dedicated marker that lets the local proxy identify requests from the
+/// isolated Claude Science profile without relying on its User-Agent.
+const PROXY_TOKEN_PLACEHOLDER: &str = CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER;
+const PROXY_REFRESH_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED_CLAUDE_SCIENCE_REFRESH";
+const MANAGED_BIN_DIR: &str = "bin";
+const MANAGED_BIN_STAMP: &str = "claude-science-patch.stamp";
+const MANAGED_BIN_PATCH_VERSION: u8 = 3;
+const ANTHROPIC_API_ORIGIN: &str = "https://api.anthropic.com";
+const CLAUDE_AI_ORIGIN: &str = "https://claude.ai";
+const ANTHROPIC_OAUTH_PATHS: &[&str] = &[
+    "/api/oauth/profile",
+    "/api/oauth/account",
+    "/api/oauth/usage",
+];
 const OAUTH_TOKEN_DIR: &str = ".oauth-tokens";
 const ACTIVE_ORG_FILENAME: &str = "active-org.json";
 const OAUTH_HKDF_INFO: &[u8] = b"operon:aes-256-gcm:oauth";
@@ -237,6 +253,7 @@ fn read_status() -> Result<ClaudeScienceStatus, String> {
         });
     }
 
+    let bin = existing_managed_binary(&profile).unwrap_or(bin);
     match run_cli(&bin, &["status"], &[], Some(&profile)) {
         Ok(output) if output.status.success() => {
             let parsed = parse_status_output(&output).unwrap_or_default();
@@ -272,13 +289,14 @@ fn read_status() -> Result<ClaudeScienceStatus, String> {
 }
 
 fn stop_science() -> Result<(), String> {
-    let bin = find_claude_science_binary()
+    let source_bin = find_claude_science_binary()
         .ok_or_else(|| "Claude Science CLI was not found".to_string())?;
     let profile = managed_profile_paths();
     if !profile.config_path.exists() {
         return Ok(());
     }
 
+    let bin = existing_managed_binary(&profile).unwrap_or(source_bin);
     stop_science_for_profile(&bin, &profile)
 }
 
@@ -292,20 +310,28 @@ fn stop_science_for_profile(bin: &Path, profile: &ScienceProfilePaths) -> Result
 }
 
 fn prepare_science_launch() -> Result<PreparedScienceLaunch, String> {
-    let bin = find_claude_science_binary()
+    let source_bin = find_claude_science_binary()
         .ok_or_else(|| "Claude Science CLI was not found".to_string())?;
     let profile = prepare_managed_profile()?;
 
-    stop_science_for_profile(&bin, &profile)?;
+    let stop_bin = existing_managed_binary(&profile).unwrap_or_else(|| source_bin.clone());
+    stop_science_for_profile(&stop_bin, &profile)?;
 
-    Ok(PreparedScienceLaunch { bin, profile })
+    Ok(PreparedScienceLaunch {
+        bin: source_bin,
+        profile,
+    })
 }
 
 fn launch_prepared_science(
     prepared: PreparedScienceLaunch,
     proxy_base_url: String,
 ) -> Result<ScienceLaunchOutcome, String> {
-    let PreparedScienceLaunch { bin, profile } = prepared;
+    let PreparedScienceLaunch {
+        bin: source_bin,
+        profile,
+    } = prepared;
+    let bin = prepare_managed_science_binary(&source_bin, &profile, &proxy_base_url)?;
 
     let proxy_env = proxy_launch_env(&proxy_base_url);
     let output = run_cli_with_env(
@@ -411,6 +437,257 @@ fn proxy_launch_env(proxy_base_url: &str) -> [(&'static str, &str); 3] {
         ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER),
         ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER),
     ]
+}
+
+fn managed_binary_path(profile: &ScienceProfilePaths) -> PathBuf {
+    profile
+        .data_dir
+        .join(MANAGED_BIN_DIR)
+        .join(CLAUDE_SCIENCE_BINARY_NAME)
+}
+
+fn existing_managed_binary(profile: &ScienceProfilePaths) -> Option<PathBuf> {
+    let path = managed_binary_path(profile);
+    is_executable_file(&path).then_some(path)
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_managed_science_binary(
+    source: &Path,
+    profile: &ScienceProfilePaths,
+    proxy_base_url: &str,
+) -> Result<PathBuf, String> {
+    let anthropic_origin = padded_anthropic_loopback_origin(proxy_base_url)?;
+    let claude_ai_origin = padded_claude_ai_loopback_origin(proxy_base_url)?;
+    let metadata = fs::metadata(source).map_err(|e| {
+        format!(
+            "Failed to inspect Claude Science source binary {}: {e}",
+            source.display()
+        )
+    })?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_secs())
+        .unwrap_or_default();
+    let stamp = format!(
+        "source={}\nlength={}\nmodified={}\nanthropic_origin={}\nclaude_ai_origin={}\npatch_version={}\n",
+        source.display(),
+        metadata.len(),
+        modified,
+        anthropic_origin,
+        claude_ai_origin,
+        MANAGED_BIN_PATCH_VERSION
+    );
+
+    let managed = managed_binary_path(profile);
+    let stamp_path = profile.data_dir.join(MANAGED_BIN_STAMP);
+    if is_executable_file(&managed)
+        && fs::read_to_string(&stamp_path).ok().as_deref() == Some(stamp.as_str())
+    {
+        return Ok(managed);
+    }
+
+    let bin_dir = managed
+        .parent()
+        .ok_or_else(|| "Claude Science managed binary path has no parent".to_string())?;
+    fs::create_dir_all(bin_dir).map_err(|e| {
+        format!(
+            "Failed to create Claude Science managed binary dir {}: {e}",
+            bin_dir.display()
+        )
+    })?;
+    set_private_dir_permissions(bin_dir)?;
+
+    let mut binary = fs::read(source).map_err(|e| {
+        format!(
+            "Failed to read Claude Science source binary {}: {e}",
+            source.display()
+        )
+    })?;
+    patch_science_api_origins(&mut binary, &anthropic_origin, &claude_ai_origin)?;
+
+    let temp = bin_dir.join(format!(
+        ".{CLAUDE_SCIENCE_BINARY_NAME}.{}.tmp",
+        std::process::id()
+    ));
+    let result = (|| {
+        fs::write(&temp, &binary).map_err(|e| {
+            format!(
+                "Failed to write Claude Science managed binary {}: {e}",
+                temp.display()
+            )
+        })?;
+        set_private_executable_permissions(&temp)?;
+
+        let codesign = Command::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-"])
+            .arg(&temp)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("Failed to ad-hoc sign Claude Science managed binary: {e}"))?;
+        if !codesign.status.success() {
+            return Err(format_cli_failure(
+                "Claude Science managed binary signing failed",
+                &codesign,
+            ));
+        }
+
+        let check = Command::new(&temp)
+            .arg("--help")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("Failed to verify Claude Science managed binary: {e}"))?;
+        if !check.status.success() {
+            return Err(format_cli_failure(
+                "Claude Science managed binary executable check failed",
+                &check,
+            ));
+        }
+
+        fs::rename(&temp, &managed).map_err(|e| {
+            format!(
+                "Failed to install Claude Science managed binary {}: {e}",
+                managed.display()
+            )
+        })?;
+        write_private_file(&stamp_path, stamp.as_bytes())?;
+        Ok(managed.clone())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(not(target_os = "macos"))]
+fn prepare_managed_science_binary(
+    source: &Path,
+    _profile: &ScienceProfilePaths,
+    _proxy_base_url: &str,
+) -> Result<PathBuf, String> {
+    Ok(source.to_path_buf())
+}
+
+fn loopback_proxy_port(proxy_base_url: &str) -> Result<u16, String> {
+    let url = url::Url::parse(proxy_base_url)
+        .map_err(|e| format!("Claude Science proxy URL is invalid: {e}"))?;
+    if url.scheme() != "http"
+        || !matches!(
+            url.host_str(),
+            Some("127.0.0.1" | "localhost" | "::1" | "[::1]")
+        )
+    {
+        return Err(
+            "Claude Science managed OAuth bridge requires a loopback HTTP proxy URL".to_string(),
+        );
+    }
+    url.port()
+        .ok_or_else(|| "Claude Science proxy URL must include a port".to_string())
+}
+
+fn padded_anthropic_loopback_origin(proxy_base_url: &str) -> Result<String, String> {
+    let port = loopback_proxy_port(proxy_base_url)?;
+    let padded_host = match port.to_string().len() {
+        5 => "127.00.00.01",
+        4 => "127.000.00.01",
+        3 => "127.000.000.01",
+        2 => "127.000.000.001",
+        _ => {
+            return Err(
+                "Claude Science managed OAuth bridge requires a 2-5 digit proxy port".to_string(),
+            );
+        }
+    };
+    let origin = format!("http://{padded_host}:{port}");
+    if origin.len() != ANTHROPIC_API_ORIGIN.len() {
+        return Err("Claude Science OAuth bridge could not preserve binary URL length".to_string());
+    }
+    Ok(origin)
+}
+
+fn padded_claude_ai_loopback_origin(proxy_base_url: &str) -> Result<String, String> {
+    let port = loopback_proxy_port(proxy_base_url)?;
+    let port_digits = port.to_string().len();
+    if !(2..=5).contains(&port_digits) {
+        return Err(
+            "Claude Science managed OAuth bridge requires a 2-5 digit proxy port".to_string(),
+        );
+    }
+    // WHATWG URL parsers canonicalize an all-zero numeric hostname to
+    // 0.0.0.0. This keeps the replacement exactly as long as claude.ai while
+    // still reaching the loopback-bound CC Switch proxy on macOS.
+    let padded_host = "0".repeat(9 - port_digits);
+    let origin = format!("http://{padded_host}:{port}");
+    if origin.len() != CLAUDE_AI_ORIGIN.len() {
+        return Err(
+            "Claude Science account bridge could not preserve binary URL length".to_string(),
+        );
+    }
+    Ok(origin)
+}
+
+fn replace_binary_origin(binary: &mut [u8], old: &str, new: &str) -> usize {
+    let old = old.as_bytes();
+    let new = new.as_bytes();
+    let mut start = 0;
+    let mut patched = 0;
+    while start + old.len() <= binary.len() {
+        let Some(offset) = binary[start..].iter().position(|byte| *byte == old[0]) else {
+            break;
+        };
+        let index = start + offset;
+        if binary[index..].starts_with(old) {
+            binary[index..index + new.len()].copy_from_slice(new);
+            start = index + new.len();
+            patched += 1;
+        } else {
+            start = index + 1;
+        }
+    }
+    patched
+}
+
+fn patch_science_api_origins(
+    binary: &mut [u8],
+    anthropic_origin: &str,
+    claude_ai_origin: &str,
+) -> Result<(usize, usize), String> {
+    if anthropic_origin.len() != ANTHROPIC_API_ORIGIN.len() {
+        return Err("Claude Science API replacement origin has the wrong length".to_string());
+    }
+    if claude_ai_origin.len() != CLAUDE_AI_ORIGIN.len() {
+        return Err("Claude Science account replacement origin has the wrong length".to_string());
+    }
+
+    // Validate the build before mutating it. Some Claude Science code builds
+    // the URL from a shared origin plus a path at runtime, so replacing only
+    // the three contiguous full URLs leaves the active fetch path untouched.
+    for path in ANTHROPIC_OAUTH_PATHS {
+        let old = format!("{ANTHROPIC_API_ORIGIN}{path}");
+        if !binary
+            .windows(old.len())
+            .any(|window| window == old.as_bytes())
+        {
+            return Err(format!(
+                "Unsupported Claude Science build: OAuth URL not found for {path}"
+            ));
+        }
+    }
+    if !binary
+        .windows(CLAUDE_AI_ORIGIN.len())
+        .any(|window| window == CLAUDE_AI_ORIGIN.as_bytes())
+    {
+        return Err("Unsupported Claude Science build: claude.ai origin not found".to_string());
+    }
+
+    let anthropic_count = replace_binary_origin(binary, ANTHROPIC_API_ORIGIN, anthropic_origin);
+    let claude_ai_count = replace_binary_origin(binary, CLAUDE_AI_ORIGIN, claude_ai_origin);
+    Ok((anthropic_count, claude_ai_count))
 }
 
 fn run_cli(
@@ -625,19 +902,19 @@ fn write_proxy_managed_oauth_token(auth_dir: &Path, oauth_key: &str) -> Result<(
         )
     })?;
 
-    let token_path = token_dir.join(format!("{SCIENCE_PROXY_USER_ID}.enc"));
+    let token_path = token_dir.join(format!("{CLAUDE_SCIENCE_PROXY_USER_ID}.enc"));
     remove_stale_oauth_tokens(&token_dir, &token_path)?;
 
     let token = ScienceOAuthToken {
         access_token: PROXY_TOKEN_PLACEHOLDER,
-        refresh_token: Some(String::new()),
+        refresh_token: Some(PROXY_REFRESH_TOKEN_PLACEHOLDER.to_string()),
         api_key: None,
         token_expires_at: OAUTH_TOKEN_EXPIRY.to_string(),
         provider: "claude_ai",
         scopes: "user:inference user:file_upload user:profile user:mcp_servers user:plugins",
-        email: SCIENCE_PROXY_EMAIL,
-        account_uuid: SCIENCE_PROXY_USER_ID,
-        org_uuid: Some(SCIENCE_PROXY_ORG_ID.to_string()),
+        email: CLAUDE_SCIENCE_PROXY_EMAIL,
+        account_uuid: CLAUDE_SCIENCE_PROXY_USER_ID,
+        org_uuid: Some(CLAUDE_SCIENCE_PROXY_ORG_ID.to_string()),
         org_name: None,
         subscription_type: "max",
         rate_limit_tier: None,
@@ -682,7 +959,7 @@ fn remove_stale_oauth_tokens(token_dir: &Path, keep: &Path) -> Result<(), String
 
 fn write_active_org(auth_dir: &Path) -> Result<(), String> {
     let active_org = ScienceActiveOrg {
-        org_uuid: SCIENCE_PROXY_ORG_ID,
+        org_uuid: CLAUDE_SCIENCE_PROXY_ORG_ID,
     };
     let content = serde_json::to_vec_pretty(&active_org)
         .map_err(|e| format!("Failed to serialize Claude Science active organization: {e}"))?;
@@ -741,6 +1018,23 @@ fn set_private_file_permissions(path: &Path) -> Result<(), String> {
 
 #[cfg(not(unix))]
 fn set_private_file_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_executable_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| {
+        format!(
+            "Failed to set private executable permissions on {}: {e}",
+            path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn set_private_executable_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
@@ -831,6 +1125,10 @@ fn find_first_executable(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates
         .into_iter()
         .find(|path| path.is_file() && is_executable(path))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file() && is_executable(path)
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -1005,17 +1303,18 @@ mod tests {
             profile
                 .auth_dir
                 .join(OAUTH_TOKEN_DIR)
-                .join(format!("{SCIENCE_PROXY_USER_ID}.enc")),
+                .join(format!("{CLAUDE_SCIENCE_PROXY_USER_ID}.enc")),
         )
         .expect("encrypted oauth token");
         let plaintext = decrypt_oauth_payload_for_test(oauth_key, encrypted.trim());
         let token: Value = serde_json::from_slice(&plaintext).expect("token json");
 
         assert_eq!(token["access_token"], PROXY_TOKEN_PLACEHOLDER);
-        assert_eq!(token["email"], SCIENCE_PROXY_EMAIL);
-        assert_eq!(token["account_uuid"], SCIENCE_PROXY_USER_ID);
-        assert_eq!(token["org_uuid"], SCIENCE_PROXY_ORG_ID);
+        assert_eq!(token["email"], CLAUDE_SCIENCE_PROXY_EMAIL);
+        assert_eq!(token["account_uuid"], CLAUDE_SCIENCE_PROXY_USER_ID);
+        assert_eq!(token["org_uuid"], CLAUDE_SCIENCE_PROXY_ORG_ID);
         assert_eq!(token["provider"], "claude_ai");
+        assert_eq!(token["refresh_token"], PROXY_REFRESH_TOKEN_PLACEHOLDER);
         assert_eq!(token["subscription_type"], "max");
         assert_eq!(token["token_expires_at"], OAUTH_TOKEN_EXPIRY);
         let scopes = token["scopes"].as_str().expect("scopes");
@@ -1028,7 +1327,7 @@ mod tests {
             &fs::read(profile.auth_dir.join(ACTIVE_ORG_FILENAME)).expect("active org file"),
         )
         .expect("active org json");
-        assert_eq!(active_org["org_uuid"], SCIENCE_PROXY_ORG_ID);
+        assert_eq!(active_org["org_uuid"], CLAUDE_SCIENCE_PROXY_ORG_ID);
     }
 
     #[test]
@@ -1045,7 +1344,7 @@ mod tests {
         assert!(!token_dir.join("stale.enc").exists());
         assert!(token_dir.join("keep.txt").exists());
         assert!(token_dir
-            .join(format!("{SCIENCE_PROXY_USER_ID}.enc"))
+            .join(format!("{CLAUDE_SCIENCE_PROXY_USER_ID}.enc"))
             .exists());
     }
 
@@ -1056,6 +1355,69 @@ mod tests {
         assert_eq!(env[0], ("ANTHROPIC_BASE_URL", "http://127.0.0.1:15721"));
         assert_eq!(env[1], ("ANTHROPIC_AUTH_TOKEN", PROXY_TOKEN_PLACEHOLDER));
         assert_eq!(env[2], ("ANTHROPIC_API_KEY", PROXY_TOKEN_PLACEHOLDER));
+        assert_ne!(PROXY_TOKEN_PLACEHOLDER, "PROXY_MANAGED");
+    }
+
+    #[test]
+    fn loopback_origins_preserve_binary_url_lengths() {
+        for (url, expected_anthropic, expected_claude_ai) in [
+            (
+                "http://127.0.0.1:15721",
+                "http://127.00.00.01:15721",
+                "http://0000:15721",
+            ),
+            (
+                "http://localhost:9876",
+                "http://127.000.00.01:9876",
+                "http://00000:9876",
+            ),
+            (
+                "http://[::1]:321",
+                "http://127.000.000.01:321",
+                "http://000000:321",
+            ),
+        ] {
+            let anthropic =
+                padded_anthropic_loopback_origin(url).expect("Anthropic loopback origin");
+            let claude_ai =
+                padded_claude_ai_loopback_origin(url).expect("Claude.ai loopback origin");
+            assert_eq!(anthropic, expected_anthropic);
+            assert_eq!(claude_ai, expected_claude_ai);
+            assert_eq!(anthropic.len(), ANTHROPIC_API_ORIGIN.len());
+            assert_eq!(claude_ai.len(), CLAUDE_AI_ORIGIN.len());
+        }
+        assert!(padded_anthropic_loopback_origin("https://127.0.0.1:15721").is_err());
+        assert!(padded_claude_ai_loopback_origin("http://example.com:15721").is_err());
+    }
+
+    #[test]
+    fn api_binary_patch_is_length_preserving_and_complete() {
+        let mut original = ANTHROPIC_OAUTH_PATHS
+            .iter()
+            .map(|path| format!("prefix:{ANTHROPIC_API_ORIGIN}{path}:suffix"))
+            .collect::<Vec<_>>()
+            .join("|");
+        original.push_str(&format!(
+            "|split-origin:{ANTHROPIC_API_ORIGIN}:suffix|account:{CLAUDE_AI_ORIGIN}:suffix"
+        ));
+        let mut binary = original.clone().into_bytes();
+        let anthropic_replacement = "http://127.00.00.01:15721";
+        let claude_ai_replacement = "http://0000:15721";
+
+        let (anthropic_count, claude_ai_count) =
+            patch_science_api_origins(&mut binary, anthropic_replacement, claude_ai_replacement)
+                .expect("patch API origins");
+        let patched = String::from_utf8(binary).expect("utf8 fixture");
+
+        assert_eq!(anthropic_count, ANTHROPIC_OAUTH_PATHS.len() + 1);
+        assert_eq!(claude_ai_count, 1);
+        assert_eq!(patched.len(), original.len());
+        assert!(!patched.contains(ANTHROPIC_API_ORIGIN));
+        assert!(!patched.contains(CLAUDE_AI_ORIGIN));
+        for path in ANTHROPIC_OAUTH_PATHS {
+            assert!(patched.contains(&format!("{anthropic_replacement}{path}")));
+        }
+        assert!(patched.contains(claude_ai_replacement));
     }
 
     #[test]

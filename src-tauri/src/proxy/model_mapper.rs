@@ -158,17 +158,22 @@ pub fn strip_one_m_suffix_for_upstream(model: &str) -> &str {
     model
 }
 
-pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
+/// Strip the local `[1m]` routing marker while preserving whether it was present.
+///
+/// Callers that translate the marker into an upstream capability header must use
+/// this variant; otherwise stripping the suffix silently loses the 1M intent.
+pub fn strip_one_m_suffix_for_upstream_from_body_with_flag(mut body: Value) -> (Value, bool) {
     let Some(model) = body.get("model").and_then(Value::as_str) else {
-        return body;
+        return (body, false);
     };
 
     let stripped = strip_one_m_suffix_for_upstream(model);
     if stripped != model {
         log::debug!("[ModelMapper] 去除本地 1M 标记: {model} → {stripped}");
         body["model"] = serde_json::json!(stripped);
+        return (body, true);
     }
-    body
+    (body, false)
 }
 
 #[cfg(test)]
@@ -399,8 +404,9 @@ mod tests {
     #[test]
     fn strips_one_m_suffix_before_upstream() {
         let body = json!({"model": "deepseek-v4-pro[1M]"});
-        let result = strip_one_m_suffix_for_upstream_from_body(body);
+        let (result, requested_one_m) = strip_one_m_suffix_for_upstream_from_body_with_flag(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+        assert!(requested_one_m);
     }
 
     #[test]
@@ -414,15 +420,34 @@ mod tests {
 
         let body = json!({"model": "claude-sonnet-4-6"});
         let (mapped, _, _) = apply_model_mapping(body, &provider);
-        let result = strip_one_m_suffix_for_upstream_from_body(mapped);
+        let (result, requested_one_m) = strip_one_m_suffix_for_upstream_from_body_with_flag(mapped);
 
         assert_eq!(result["model"], "deepseek-v4-pro");
+        assert!(requested_one_m);
+    }
+
+    #[test]
+    fn preserves_one_m_intent_after_mapping_for_forwarder() {
+        let mut provider = create_provider_with_mapping();
+        provider.settings_config = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-fable-5[1m]"
+            }
+        });
+
+        let body = json!({"model": "claude-sonnet-4-6"});
+        let (mapped, _, _) = apply_model_mapping(body, &provider);
+        let (result, requested_one_m) = strip_one_m_suffix_for_upstream_from_body_with_flag(mapped);
+
+        assert_eq!(result["model"], "claude-fable-5");
+        assert!(requested_one_m);
     }
 
     #[test]
     fn keeps_model_without_one_m_suffix() {
         let body = json!({"model": "deepseek-v4-pro"});
-        let result = strip_one_m_suffix_for_upstream_from_body(body);
+        let (result, requested_one_m) = strip_one_m_suffix_for_upstream_from_body_with_flag(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+        assert!(!requested_one_m);
     }
 }

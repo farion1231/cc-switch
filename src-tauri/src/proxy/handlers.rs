@@ -44,6 +44,9 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
+use crate::proxy::{
+    CLAUDE_SCIENCE_PROXY_EMAIL, CLAUDE_SCIENCE_PROXY_ORG_ID, CLAUDE_SCIENCE_PROXY_USER_ID,
+};
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -68,6 +71,93 @@ pub async fn health_check() -> (StatusCode, Json<Value>) {
 pub async fn get_status(State(state): State<ProxyState>) -> Result<Json<ProxyStatus>, ProxyError> {
     let status = state.status.read().await.clone();
     Ok(Json(status))
+}
+
+/// OAuth/profile endpoints used only by CC Switch's isolated Claude Science
+/// daemon. Its shared claude.ai account origin is redirected to the loopback
+/// proxy; these three responses keep background profile refreshes from logging
+/// the fake local session out.
+pub async fn handle_claude_science_oauth(uri: axum::http::Uri) -> Result<Json<Value>, StatusCode> {
+    // Claude Science does not attach its access token to these background
+    // profile/account refreshes. The responses below are entirely synthetic
+    // (fixed CC Switch UUIDs and no user data), so requiring the managed token
+    // here only logs the isolated profile out without protecting anything.
+    // Message forwarding still requires the marker to activate the Science-
+    // specific compatibility path.
+    claude_science_oauth_response(uri.path())
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+fn claude_science_account() -> Value {
+    json!({
+        "id": CLAUDE_SCIENCE_PROXY_USER_ID,
+        "uuid": CLAUDE_SCIENCE_PROXY_USER_ID,
+        "sub": CLAUDE_SCIENCE_PROXY_USER_ID,
+        "email": CLAUDE_SCIENCE_PROXY_EMAIL,
+        "email_address": CLAUDE_SCIENCE_PROXY_EMAIL,
+        "email_verified": true,
+        "name": "CC Switch Proxy",
+        "display_name": "CC Switch Proxy"
+    })
+}
+
+fn claude_science_organization() -> Value {
+    json!({
+        "id": CLAUDE_SCIENCE_PROXY_ORG_ID,
+        "uuid": CLAUDE_SCIENCE_PROXY_ORG_ID,
+        "name": "CC Switch Proxy",
+        "type": "organization",
+        "organization_type": "claude_max",
+        "status": "active",
+        "default_role": "admin",
+        "subscription": {"type": "max", "status": "active"},
+        "rate_limit_tier": "tier_5",
+        "seat_tier": "enterprise_usage_based",
+        "billing_type": "api",
+        "has_extra_usage_enabled": true,
+        "claude_ai_completion_feedback_enabled": false
+    })
+}
+
+fn claude_science_profile() -> Value {
+    let account = claude_science_account();
+    let organization = claude_science_organization();
+    json!({
+        "id": CLAUDE_SCIENCE_PROXY_USER_ID,
+        "uuid": CLAUDE_SCIENCE_PROXY_USER_ID,
+        "sub": CLAUDE_SCIENCE_PROXY_USER_ID,
+        "email": CLAUDE_SCIENCE_PROXY_EMAIL,
+        "email_address": CLAUDE_SCIENCE_PROXY_EMAIL,
+        "email_verified": true,
+        "name": "CC Switch Proxy",
+        "display_name": "CC Switch Proxy",
+        "account": account,
+        "user": claude_science_account(),
+        "organization": organization,
+        "organizations": [claude_science_organization()],
+        "active_organization": claude_science_organization(),
+        "organization_uuid": CLAUDE_SCIENCE_PROXY_ORG_ID,
+        "org_uuid": CLAUDE_SCIENCE_PROXY_ORG_ID,
+        "enabled_plugins": [],
+        "subscription_type": "max",
+        "rate_limit_tier": "tier_5",
+        "seat_tier": "enterprise_usage_based",
+        "billing_type": "api",
+        "has_extra_usage_enabled": true
+    })
+}
+
+fn claude_science_oauth_response(path: &str) -> Option<Value> {
+    match path {
+        "/api/oauth/profile" | "/api/oauth/account" => Some(claude_science_profile()),
+        "/api/oauth/usage" => Some(json!({
+            "usage": {"used": 0, "limit": 999999999, "remaining": 999999999},
+            "organization": claude_science_organization(),
+            "organizations": [claude_science_organization()]
+        })),
+        _ => None,
+    }
 }
 
 /// GET /v1/models — Codex model list (reachability check)
@@ -2389,11 +2479,24 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        body_looks_like_sse, body_snippet, chat_sse_to_response_value,
+        claude_science_oauth_response, codex_proxy_error_json, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
+
+    #[test]
+    fn science_oauth_mocks_match_profile_shape() {
+        let profile =
+            claude_science_oauth_response("/api/oauth/profile").expect("profile response");
+        assert_eq!(profile["account"]["uuid"], profile["uuid"]);
+        assert_eq!(
+            profile["organization"]["uuid"],
+            profile["organization_uuid"]
+        );
+        assert!(profile["enabled_plugins"].is_array());
+        assert!(claude_science_oauth_response("/api/oauth/token").is_none());
+    }
 
     #[test]
     fn body_looks_like_sse_detects_unlabeled_sse_prefixes() {
