@@ -52,6 +52,8 @@ const ENCRYPTION_KEY_FILENAME: &str = "encryption.key";
 const LAUNCH_POLL_ATTEMPTS: usize = 50;
 const LAUNCH_POLL_INTERVAL_MS: u64 = 100;
 const CLAUDE_SCIENCE_BINARY_NAME: &str = "claude-science";
+#[cfg(target_os = "macos")]
+const MACOS_SCIENCE_SERVE_CWD: &str = "/tmp";
 const SCIENCE_MODEL_ENV_KEYS_TO_CLEAR: &[&str] = &[
     "ANTHROPIC_MODEL",
     "ANTHROPIC_REASONING_MODEL",
@@ -716,17 +718,32 @@ fn run_cli_with_env(
     }
 
     if let Some(profile) = profile {
+        let working_dir = science_cli_working_dir(args, profile);
         command
             .arg("--data-dir")
             .arg(&profile.data_dir)
             .arg("--config")
             .arg(&profile.config_path)
-            .current_dir(&profile.data_dir);
+            .current_dir(working_dir);
     }
 
     command
         .output()
         .map_err(|e| format!("Failed to execute Claude Science CLI: {e}"))
+}
+
+fn science_cli_working_dir<'a>(args: &[&str], profile: &'a ScienceProfilePaths) -> &'a Path {
+    // Claude Science 0.1.18 runs micromamba through its macOS seatbelt
+    // executor. If the detached daemon inherits a private project/profile
+    // directory as cwd, micromamba cannot resolve getcwd() and Python, R, and
+    // bundled MCP provisioning all fail. /tmp is explicitly readable inside
+    // that sandbox; the managed data/config paths remain explicit CLI args.
+    #[cfg(target_os = "macos")]
+    if args.first().copied() == Some("serve") {
+        return Path::new(MACOS_SCIENCE_SERVE_CWD);
+    }
+
+    &profile.data_dir
 }
 
 fn managed_profile_paths() -> ScienceProfilePaths {
@@ -1508,6 +1525,22 @@ printf 'sonnet_name=%s\n' "${ANTHROPIC_DEFAULT_SONNET_MODEL_NAME-}"
         assert!(stdout.contains(&format!("api={PROXY_TOKEN_PLACEHOLDER}\n")));
         assert!(stdout.contains("model=\n"));
         assert!(stdout.contains("sonnet_name=\n"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn science_serve_uses_sandbox_readable_working_dir() {
+        let profile = managed_profile_paths_for_app_config_dir(Path::new("/private/profile"));
+
+        assert_eq!(
+            fs::canonicalize(science_cli_working_dir(&["serve"], &profile))
+                .expect("canonical serve cwd"),
+            fs::canonicalize(MACOS_SCIENCE_SERVE_CWD).expect("canonical sandbox cwd")
+        );
+        assert_eq!(
+            science_cli_working_dir(&["status"], &profile),
+            profile.data_dir
+        );
     }
 
     #[test]
