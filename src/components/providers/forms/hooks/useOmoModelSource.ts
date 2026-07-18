@@ -135,7 +135,8 @@ export function useOmoModelSource({
     const parseFailedProviders: string[] = [];
 
     const allProviders = opencodeProvidersData?.providers;
-    const liveReady = omoLiveIdsLoadFailed || enabledOpencodeProviderIds !== null;
+    const liveReady =
+      omoLiveIdsLoadFailed || enabledOpencodeProviderIds !== null;
 
     // Configured providers are filtered by live ids when available.
     // Runtime models are merged regardless, so OAuth/Zen entries still show

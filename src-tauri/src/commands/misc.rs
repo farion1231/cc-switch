@@ -2437,10 +2437,7 @@ fn wait_child_output(
                             let _ = child.wait();
                             let _ = stdout_handle.map(|handle| handle.join());
                             let _ = stderr_handle.map(|handle| handle.join());
-                            return Err(format!(
-                                "Command timed out after {}s",
-                                limit.as_secs()
-                            ));
+                            return Err(format!("Command timed out after {}s", limit.as_secs()));
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
