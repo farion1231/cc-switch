@@ -2463,17 +2463,17 @@ fn wait_child_output(
     })
 }
 
-pub(crate) fn run_detected_tool_command(
-    tool: &str,
-    args: &[&str],
-) -> Result<std::process::Output, String> {
-    run_detected_tool_command_with_timeout(tool, args, None)
+fn apply_extra_env(cmd: &mut std::process::Command, extra_env: &[(&str, String)]) {
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
 }
 
 pub(crate) fn run_detected_tool_command_with_timeout(
     tool: &str,
     args: &[&str],
     timeout: Option<std::time::Duration>,
+    extra_env: &[(&str, String)],
 ) -> Result<std::process::Output, String> {
     if !VALID_TOOLS.contains(&tool) {
         return Err(format!("Unsupported tool: {tool}"));
@@ -2489,7 +2489,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
 
     #[cfg(target_os = "windows")]
     if let Some(distro) = wsl_distro_for_tool(tool) {
-        return run_wsl_tool_command(tool, args, &distro, timeout);
+        return run_wsl_tool_command(tool, args, &distro, timeout, extra_env);
     }
 
     let installs = enumerate_tool_installations(tool);
@@ -2518,6 +2518,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             args,
             &format!("{};{current_path}", dir.display()),
             timeout,
+            extra_env,
         );
     }
 
@@ -2530,6 +2531,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             .env("PATH", format!("{}:{current_path}", dir.display()))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        apply_extra_env(&mut cmd, extra_env);
         let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to run {tool}: {e}"))?;
@@ -2543,6 +2545,7 @@ fn run_windows_tool_command_capture(
     args: &[&str],
     new_path: &str,
     timeout: Option<std::time::Duration>,
+    extra_env: &[(&str, String)],
 ) -> Result<std::process::Output, String> {
     use std::process::{Command, Stdio};
 
@@ -2576,11 +2579,51 @@ fn run_windows_tool_command_capture(
         cmd
     };
 
+    apply_extra_env(&mut cmd, extra_env);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let child = cmd
         .spawn()
         .map_err(|e| format!("Failed to run tool: {e}"))?;
     wait_child_output(child, timeout)
+}
+
+/// Convert `\\wsl$\Distro\home\user\...` / `\\wsl.localhost\...` to a Linux path.
+#[cfg(target_os = "windows")]
+fn wsl_unc_path_to_linux(path: &Path) -> Option<String> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Component::Prefix(prefix) = components.next()? else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::UNC(server, _share) | Prefix::VerbatimUNC(server, _share) => {
+            let server_name = server.to_string_lossy();
+            if !(server_name.eq_ignore_ascii_case("wsl$")
+                || server_name.eq_ignore_ascii_case("wsl.localhost"))
+            {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+
+    let mut linux = String::new();
+    for component in components {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(part) => {
+                linux.push('/');
+                linux.push_str(&part.to_string_lossy());
+            }
+            Component::CurDir | Component::ParentDir | Component::Prefix(_) => return None,
+        }
+    }
+    if linux.is_empty() {
+        None
+    } else {
+        Some(linux)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2589,6 +2632,7 @@ fn run_wsl_tool_command(
     args: &[&str],
     distro: &str,
     timeout: Option<std::time::Duration>,
+    extra_env: &[(&str, String)],
 ) -> Result<std::process::Output, String> {
     use std::process::{Command, Stdio};
 
@@ -2603,8 +2647,34 @@ fn run_wsl_tool_command(
     let command = format!(
         "for flag in -lic -lc -c; do if \"${{SHELL:-sh}}\" \"$flag\" 'command -v {tool}' >/dev/null 2>&1; then exec \"${{SHELL:-sh}}\" \"$flag\" '{invocation}'; fi; done; exit 127"
     );
+
+    // Translate host-side env values that are WSL UNC paths into Linux paths,
+    // then inject via `env` so they apply inside the distro process.
+    let mut env_argv: Vec<String> = Vec::new();
+    for (key, value) in extra_env {
+        let linux_value = wsl_unc_path_to_linux(Path::new(value)).unwrap_or_else(|| value.clone());
+        // Reject values that would break env KEY=VALUE parsing.
+        if key.is_empty()
+            || key.contains('=')
+            || key.chars().any(|c| c.is_whitespace())
+            || linux_value
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace())
+        {
+            return Err(format!("[WSL:{distro}] invalid env for {key}"));
+        }
+        env_argv.push(format!("{key}={linux_value}"));
+    }
+
     let mut cmd = Command::new("wsl.exe");
-    cmd.args(["-d", distro, "--", "sh", "-c", &command])
+    cmd.arg("-d").arg(distro).arg("--");
+    if !env_argv.is_empty() {
+        cmd.arg("env");
+        for item in &env_argv {
+            cmd.arg(item);
+        }
+    }
+    cmd.args(["sh", "-c", &command])
         .creation_flags(CREATE_NO_WINDOW)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

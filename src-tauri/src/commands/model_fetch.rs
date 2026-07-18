@@ -22,10 +22,16 @@ const OPENCODE_MODELS_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 #[tauri::command]
 pub async fn get_opencode_models() -> Result<Vec<OpenCodeModelRef>, String> {
     tokio::task::spawn_blocking(|| {
+        // Align runtime discovery with the OpenCode config directory that
+        // cc-switch already uses for live read/write (settings override included).
+        let config_dir = crate::opencode_config::get_opencode_dir();
+        let config_dir_env = config_dir.to_string_lossy().into_owned();
+        let extra_env = [("OPENCODE_CONFIG_DIR", config_dir_env)];
         let output = super::misc::run_detected_tool_command_with_timeout(
             "opencode",
             &["models"],
             Some(OPENCODE_MODELS_TIMEOUT),
+            &extra_env,
         )?;
         if !output.status.success() {
             let stderr = super::misc::decode_command_output(&output.stderr);
