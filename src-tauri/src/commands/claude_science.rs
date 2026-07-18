@@ -92,6 +92,12 @@ struct ScienceProfilePaths {
     config_path: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+struct PreparedScienceLaunch {
+    bin: PathBuf,
+    profile: ScienceProfilePaths,
+}
+
 #[derive(Debug, Serialize)]
 struct ScienceConfig<'a> {
     paths: ScienceConfigPaths<'a>,
@@ -148,16 +154,52 @@ pub async fn launch_claude_science_with_proxy(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<ClaudeScienceLaunchResult, String> {
-    let proxy_base_url = state
-        .proxy_service
-        .ensure_running_and_get_proxy_url()
-        .await?;
+    // Complete every local Science preflight before starting the proxy. A
+    // missing binary, unwritable managed profile, or failed stop must not
+    // mutate the user's proxy state.
+    let prepared = tokio::task::spawn_blocking(prepare_science_launch)
+        .await
+        .map_err(|e| format!("Claude Science preflight task failed: {e}"))??;
 
-    let launch_outcome = {
+    let proxy_was_running = state.proxy_service.is_running().await;
+    let proxy_base_url = match state.proxy_service.ensure_running_and_get_proxy_url().await {
+        Ok(url) => url,
+        Err(proxy_error) => {
+            // `ensure_running_and_get_proxy_url` starts the server before it
+            // resolves the public URL. If the latter step fails, release only
+            // the proxy instance this launcher just started.
+            if !proxy_was_running && state.proxy_service.is_running().await {
+                if let Err(rollback_error) = state.proxy_service.stop().await {
+                    return Err(format!(
+                        "{proxy_error}; failed to roll back local proxy: {rollback_error}"
+                    ));
+                }
+            }
+            return Err(proxy_error);
+        }
+    };
+
+    let launch_result = {
         let proxy_base_url = proxy_base_url.clone();
-        tokio::task::spawn_blocking(move || launch_science(proxy_base_url))
+        match tokio::task::spawn_blocking(move || launch_prepared_science(prepared, proxy_base_url))
             .await
-            .map_err(|e| format!("Claude Science launch task failed: {e}"))??
+        {
+            Ok(result) => result,
+            Err(error) => Err(format!("Claude Science launch task failed: {error}")),
+        }
+    };
+    let launch_outcome = match launch_result {
+        Ok(outcome) => outcome,
+        Err(launch_error) => {
+            if !proxy_was_running {
+                if let Err(rollback_error) = state.proxy_service.stop().await {
+                    return Err(format!(
+                        "{launch_error}; failed to roll back local proxy: {rollback_error}"
+                    ));
+                }
+            }
+            return Err(launch_error);
+        }
     };
 
     if let Some(url) = launch_outcome.url.as_deref() {
@@ -249,12 +291,21 @@ fn stop_science_for_profile(bin: &Path, profile: &ScienceProfilePaths) -> Result
     }
 }
 
-fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String> {
+fn prepare_science_launch() -> Result<PreparedScienceLaunch, String> {
     let bin = find_claude_science_binary()
         .ok_or_else(|| "Claude Science CLI was not found".to_string())?;
     let profile = prepare_managed_profile()?;
 
     stop_science_for_profile(&bin, &profile)?;
+
+    Ok(PreparedScienceLaunch { bin, profile })
+}
+
+fn launch_prepared_science(
+    prepared: PreparedScienceLaunch,
+    proxy_base_url: String,
+) -> Result<ScienceLaunchOutcome, String> {
+    let PreparedScienceLaunch { bin, profile } = prepared;
 
     let proxy_env = proxy_launch_env(&proxy_base_url);
     let output = run_cli_with_env(
@@ -270,11 +321,20 @@ fn launch_science(proxy_base_url: String) -> Result<ScienceLaunchOutcome, String
         &proxy_env,
         Some(&profile),
     )?;
-    if !output.status.success() {
-        return Err(format_cli_failure("Claude Science launch failed", &output));
-    }
-
-    let parsed_status = poll_until_running(&bin, &profile)?;
+    let launch_result = if !output.status.success() {
+        Err(format_cli_failure("Claude Science launch failed", &output))
+    } else {
+        poll_until_running(&bin, &profile)
+    };
+    let parsed_status = match launch_result {
+        Ok(status) => status,
+        Err(error) => {
+            if let Err(stop_error) = stop_science_for_profile(&bin, &profile) {
+                log::warn!("Failed to stop Claude Science after launch failure: {stop_error}");
+            }
+            return Err(error);
+        }
+    };
     let url = read_science_url(&bin, &profile)
         .ok()
         .or(parsed_status.url.clone());

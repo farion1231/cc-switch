@@ -18,7 +18,8 @@ use super::{
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         is_thinking_tool_choice_incompatibility, normalize_thinking_type,
-        rectify_anthropic_request, should_rectify_thinking_signature,
+        rectify_anthropic_request, rectify_anthropic_request_for_tool_choice_conflict,
+        should_rectify_thinking_signature,
     },
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
@@ -704,14 +705,21 @@ impl RequestForwarder {
                             // anthropic-beta: *thinking* 也视为 thinking mode，
                             // 所以 tool_choice 冲突时也需要清理 header 后重试。
                             let mut retry_headers = headers.clone();
+                            let upstream_reported_tool_choice_conflict =
+                                is_thinking_tool_choice_incompatibility(error_message.as_deref());
                             let removed_thinking_beta_headers =
-                                if is_thinking_tool_choice_incompatibility(error_message.as_deref())
-                                {
+                                if upstream_reported_tool_choice_conflict {
                                     strip_thinking_beta_headers(&mut retry_headers)
                                 } else {
                                     0
                                 };
-                            let rectified = rectify_anthropic_request(&mut provider_body);
+                            let rectified = if upstream_reported_tool_choice_conflict {
+                                rectify_anthropic_request_for_tool_choice_conflict(
+                                    &mut provider_body,
+                                )
+                            } else {
+                                rectify_anthropic_request(&mut provider_body)
+                            };
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied && removed_thinking_beta_headers == 0 {

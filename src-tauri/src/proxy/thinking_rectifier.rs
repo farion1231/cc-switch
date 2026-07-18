@@ -136,6 +136,23 @@ pub fn is_thinking_tool_choice_incompatibility(error_message: Option<&str>) -> b
 ///
 /// 注意：该函数会原地修改 body 对象
 pub fn rectify_anthropic_request(body: &mut Value) -> RectifyResult {
+    rectify_anthropic_request_inner(body, false)
+}
+
+/// Rectify an Anthropic request after the upstream explicitly reported that
+/// thinking mode is incompatible with the request's `tool_choice`.
+///
+/// Unlike the generic signature rectifier, this path may disable top-level
+/// thinking even for `tool_choice: auto`, because the upstream error is direct
+/// evidence that the combination is unsupported.
+pub fn rectify_anthropic_request_for_tool_choice_conflict(body: &mut Value) -> RectifyResult {
+    rectify_anthropic_request_inner(body, true)
+}
+
+fn rectify_anthropic_request_inner(
+    body: &mut Value,
+    upstream_reported_tool_choice_conflict: bool,
+) -> RectifyResult {
     let mut result = RectifyResult::default();
 
     let messages = match body.get_mut("messages").and_then(|m| m.as_array_mut()) {
@@ -191,13 +208,18 @@ pub fn rectify_anthropic_request(body: &mut Value) -> RectifyResult {
         }
     }
 
-    remove_top_level_tool_choice_thinking_conflict(body, &mut result);
+    rectify_top_level_thinking(body, &mut result, upstream_reported_tool_choice_conflict);
 
     result
 }
 
-fn remove_top_level_tool_choice_thinking_conflict(body: &mut Value, result: &mut RectifyResult) {
-    let has_incompatible_tool_choice = has_thinking_incompatible_tool_choice(body);
+fn rectify_top_level_thinking(
+    body: &mut Value,
+    result: &mut RectifyResult,
+    upstream_reported_tool_choice_conflict: bool,
+) {
+    let has_incompatible_tool_choice =
+        upstream_reported_tool_choice_conflict || has_explicitly_forced_tool_choice(body);
     if !has_incompatible_tool_choice {
         let messages_snapshot: Vec<Value> = body
             .get("messages")
@@ -245,20 +267,18 @@ fn remove_top_level_tool_choice_thinking_conflict(body: &mut Value, result: &mut
     }
 }
 
-fn has_thinking_incompatible_tool_choice(body: &Value) -> bool {
+fn has_explicitly_forced_tool_choice(body: &Value) -> bool {
     let Some(tool_choice) = body.get("tool_choice") else {
         return false;
     };
 
     match tool_choice {
-        Value::String(value) => value != "none",
+        Value::String(value) => matches!(value.as_str(), "any" | "tool"),
         Value::Object(obj) => obj
             .get("type")
             .and_then(Value::as_str)
-            .map(|tool_type| tool_type != "none")
-            .unwrap_or(true),
-        Value::Null => false,
-        _ => true,
+            .is_some_and(|tool_type| matches!(tool_type, "any" | "tool")),
+        _ => false,
     }
 }
 
@@ -526,7 +546,7 @@ mod tests {
         let mut body = json!({
             "model": "deepseek-v4-flash",
             "thinking": { "type": "auto" },
-            "tool_choice": { "type": "auto" },
+            "tool_choice": { "type": "tool", "name": "extract_refs" },
             "output_config": { "effort": "max" },
             "reasoning_effort": "high",
             "messages": [{
@@ -543,14 +563,17 @@ mod tests {
         assert_eq!(body["thinking"], json!({ "type": "disabled" }));
         assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("output_config").is_none());
-        assert_eq!(body["tool_choice"], json!({ "type": "auto" }));
+        assert_eq!(
+            body["tool_choice"],
+            json!({ "type": "tool", "name": "extract_refs" })
+        );
     }
 
     #[test]
     fn test_rectify_tool_choice_thinking_conflict_adds_disabled_thinking() {
         let mut body = json!({
             "model": "deepseek-v4-flash",
-            "tool_choice": { "type": "auto" },
+            "tool_choice": { "type": "any" },
             "messages": [{
                 "role": "user",
                 "content": [{ "type": "text", "text": "extract refs" }]
@@ -562,6 +585,59 @@ mod tests {
         assert!(result.applied);
         assert_eq!(result.rewritten_top_level_thinking_fields, 1);
         assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+        assert_eq!(body["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_generic_rectifier_keeps_auto_tool_choice_thinking_and_effort() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" },
+            "tool_choice": { "type": "auto" },
+            "output_config": { "effort": "max" },
+            "reasoning_effort": "high",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "hello", "signature": "stale" }
+                ]
+            }]
+        });
+
+        let result = rectify_anthropic_request(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.removed_signature_fields, 1);
+        assert_eq!(result.rewritten_top_level_thinking_fields, 0);
+        assert_eq!(result.removed_effort_fields, 0);
+        assert_eq!(body["thinking"], json!({ "type": "adaptive" }));
+        assert_eq!(body["tool_choice"], json!({ "type": "auto" }));
+        assert_eq!(body["output_config"], json!({ "effort": "max" }));
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn test_explicit_upstream_conflict_disables_auto_tool_choice_thinking() {
+        let mut body = json!({
+            "model": "claude-test",
+            "thinking": { "type": "adaptive" },
+            "tool_choice": { "type": "auto" },
+            "output_config": { "effort": "max" },
+            "reasoning_effort": "high",
+            "messages": [{
+                "role": "user",
+                "content": [{ "type": "text", "text": "hello" }]
+            }]
+        });
+
+        let result = rectify_anthropic_request_for_tool_choice_conflict(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.rewritten_top_level_thinking_fields, 1);
+        assert_eq!(result.removed_effort_fields, 2);
+        assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+        assert!(body.get("output_config").is_none());
+        assert!(body.get("reasoning_effort").is_none());
         assert_eq!(body["tool_choice"], json!({ "type": "auto" }));
     }
 

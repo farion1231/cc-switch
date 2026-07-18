@@ -134,6 +134,143 @@ fn should_normalize_anthropic_tool_thinking_history(
     .any(is_reasoning_vendor_identifier)
 }
 
+fn configured_anthropic_base_url(provider: &Provider) -> Option<&str> {
+    let settings = &provider.settings_config;
+    settings
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(Value::as_str)
+        .or_else(|| settings.get("base_url").and_then(Value::as_str))
+        .or_else(|| settings.get("baseURL").and_then(Value::as_str))
+        .or_else(|| settings.get("apiEndpoint").and_then(Value::as_str))
+}
+
+fn is_explicit_third_party_anthropic_endpoint(provider: &Provider) -> bool {
+    let Some(base_url) = configured_anthropic_base_url(provider) else {
+        return false;
+    };
+    let Ok(url) = url::Url::parse(base_url) else {
+        return false;
+    };
+
+    let is_official = url.scheme().eq_ignore_ascii_case("https")
+        && url.host_str().is_some_and(|host| {
+            host.trim_end_matches('.')
+                .eq_ignore_ascii_case("api.anthropic.com")
+        })
+        && url.port_or_known_default() == Some(443);
+
+    !is_official
+}
+
+fn is_empty_server_tool_result_content(content: Option<&Value>) -> bool {
+    match content {
+        None | Some(Value::Null) => true,
+        Some(Value::String(value)) => value.trim().is_empty(),
+        Some(Value::Array(values)) => values.is_empty(),
+        Some(Value::Object(values)) => values.is_empty(),
+        Some(_) => false,
+    }
+}
+
+fn render_server_tool_history_block_as_text(block: &Value, block_type: &str) -> Option<Value> {
+    if block_type == "server_tool_use" {
+        let name = block
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty());
+        let header = name.map_or_else(
+            || "[server_tool_use]".to_string(),
+            |name| format!("[server_tool_use: {name}]"),
+        );
+        let text = match block.get("input") {
+            None | Some(Value::Null) => header,
+            Some(Value::Object(input)) if input.is_empty() => header,
+            Some(input) => format!("{header}\n{input}"),
+        };
+        return Some(json!({ "type": "text", "text": text }));
+    }
+
+    if block_type == "tool_result" || !block_type.ends_with("_tool_result") {
+        return Some(block.clone());
+    }
+
+    let content = block.get("content");
+    if is_empty_server_tool_result_content(content) {
+        return None;
+    }
+
+    let rendered = match content.expect("non-empty content checked above") {
+        Value::String(value) => value.clone(),
+        value => value.to_string(),
+    };
+    Some(json!({
+        "type": "text",
+        "text": format!("[{block_type}]\n{rendered}")
+    }))
+}
+
+/// Anthropic's built-in server tools use history block types such as
+/// `server_tool_use` and `web_search_tool_result`. Third-party
+/// Anthropic-compatible endpoints commonly reject those blocks because no
+/// matching server-side tool invocation exists there. Preserve the visible
+/// history as text, while leaving ordinary client `tool_use` / `tool_result`
+/// pairs untouched. Official Anthropic traffic remains byte-for-byte unchanged.
+fn normalize_third_party_anthropic_server_tool_history(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if api_format.trim() != "anthropic" || !is_explicit_third_party_anthropic_endpoint(provider) {
+        return false;
+    }
+
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    messages.retain_mut(|message| {
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            return true;
+        };
+
+        let mut rewritten = Vec::with_capacity(content.len());
+        let mut message_changed = false;
+        for block in content.drain(..) {
+            let block_type = block.get("type").and_then(Value::as_str);
+            let is_server_history = block_type == Some("server_tool_use")
+                || block_type
+                    .is_some_and(|value| value != "tool_result" && value.ends_with("_tool_result"));
+
+            if !is_server_history {
+                rewritten.push(block);
+                continue;
+            }
+
+            message_changed = true;
+            if let Some(replacement) =
+                render_server_tool_history_block_as_text(&block, block_type.unwrap_or_default())
+            {
+                rewritten.push(replacement);
+            }
+        }
+
+        *content = rewritten;
+        if message_changed {
+            changed = true;
+        }
+
+        let keep_message = !message_changed || !content.is_empty();
+        if !keep_message {
+            changed = true;
+        }
+        keep_message
+    });
+
+    changed
+}
+
 /// DeepSeek's Anthropic-compatible endpoint requires thinking history to be
 /// replayed on every assistant turn that contains tool_use. Some Anthropic SDK
 /// clients keep the tool history but drop or redact the thinking block, which
@@ -158,16 +295,8 @@ const DEEPSEEK_OFFICIAL_ANTHROPIC_URL: &str = "https://api.deepseek.com/anthropi
 /// Check whether the provider is configured to use DeepSeek's official
 /// Anthropic-compatible endpoint.
 fn is_deepseek_official_anthropic_endpoint(provider: &Provider) -> bool {
-    let settings = &provider.settings_config;
-    let base_url = settings
-        .get("env")
-        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
-        .and_then(|v| v.as_str())
-        .or_else(|| settings.get("base_url").and_then(|v| v.as_str()))
-        .or_else(|| settings.get("baseURL").and_then(|v| v.as_str()))
-        .or_else(|| settings.get("apiEndpoint").and_then(|v| v.as_str()));
-
-    base_url.map(|u| u.trim_end_matches('/')) == Some(DEEPSEEK_OFFICIAL_ANTHROPIC_URL)
+    configured_anthropic_base_url(provider).map(|u| u.trim_end_matches('/'))
+        == Some(DEEPSEEK_OFFICIAL_ANTHROPIC_URL)
 }
 
 /// Claude Science can send `thinking: { type: "auto" }` for automatic thinking
@@ -314,7 +443,8 @@ pub fn normalize_anthropic_messages_for_provider(
     }
 
     let mut changed =
-        normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
+        normalize_third_party_anthropic_server_tool_history(body, provider, api_format);
+    changed |= normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
     changed |= normalize_deepseek_tool_choice_disable_thinking(body, provider);
     changed |= normalize_deepseek_thinking_auto_type(body, provider);
     changed |= normalize_deepseek_thinking_disabled_strip_effort(body, provider);
@@ -2304,6 +2434,235 @@ mod tests {
         assert_eq!(content[0]["type"], "thinking");
         assert_eq!(content[0]["thinking"], ANTHROPIC_THINKING_PLACEHOLDER);
         assert_eq!(content[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_kimi_drops_empty_web_search_history_but_keeps_client_tool_use() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "model": "kimi-k2.5",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "I searched the web." },
+                    { "type": "web_search_tool_result", "tool_use_id": "", "content": [] },
+                    { "type": "tool_use", "id": "toolu_client_1", "name": "read_file", "input": { "path": "README.md" } }
+                ]
+            }]
+        });
+
+        let changed =
+            normalize_third_party_anthropic_server_tool_history(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "I searched the web.");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "toolu_client_1");
+    }
+
+    #[test]
+    fn test_kimi_rewrites_non_empty_server_tool_history_as_visible_text() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "server_tool_use",
+                        "id": "srvtoolu_1",
+                        "name": "web_search",
+                        "input": { "query": "CC Switch" }
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "srvtoolu_1",
+                        "content": [{
+                            "type": "web_search_result",
+                            "title": "CC Switch",
+                            "url": "https://github.com/farion1231/cc-switch"
+                        }]
+                    }]
+                }
+            ]
+        });
+
+        let changed =
+            normalize_third_party_anthropic_server_tool_history(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        let server_use_text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+        let server_result_text = body["messages"][1]["content"][0]["text"].as_str().unwrap();
+        assert!(server_use_text.contains("web_search"));
+        assert!(server_use_text.contains("CC Switch"));
+        assert!(server_result_text.contains("CC Switch"));
+        assert!(server_result_text.contains("https://github.com/farion1231/cc-switch"));
+    }
+
+    #[test]
+    fn test_official_anthropic_server_tool_history_is_unchanged() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com/v1",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "content": [{ "type": "server_tool_use", "name": "web_search", "input": {} }]
+            }]
+        });
+        let original = body.clone();
+
+        let changed =
+            normalize_third_party_anthropic_server_tool_history(&mut body, &provider, "anthropic");
+
+        assert!(!changed);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_anthropic_lookalike_host_is_treated_as_third_party() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com.evil.example/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "content": [{ "type": "server_tool_use", "name": "web_search", "input": {} }]
+            }]
+        });
+
+        assert!(normalize_third_party_anthropic_server_tool_history(
+            &mut body,
+            &provider,
+            "anthropic"
+        ));
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn test_third_party_keeps_standard_tool_result_and_rewrites_future_server_result() {
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let standard_tool_result = json!({
+            "type": "tool_result",
+            "tool_use_id": "toolu_client_1",
+            "content": "client result"
+        });
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    standard_tool_result.clone(),
+                    { "type": "future_tool_result", "content": { "answer": 42 } }
+                ]
+            }]
+        });
+
+        let changed =
+            normalize_third_party_anthropic_server_tool_history(&mut body, &provider, "anthropic");
+
+        assert!(changed);
+        assert_eq!(body["messages"][0]["content"][0], standard_tool_result);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert!(body["messages"][0]["content"][1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("42"));
+    }
+
+    #[test]
+    fn test_server_tool_history_normalizer_is_conservative_without_valid_endpoint_or_format() {
+        let providers = [
+            create_provider(json!({})),
+            create_provider(json!({
+                "env": { "ANTHROPIC_BASE_URL": "not a URL" }
+            })),
+        ];
+
+        for provider in providers {
+            let mut body = json!({
+                "messages": [{
+                    "role": "assistant",
+                    "content": [{ "type": "server_tool_use", "name": "web_search", "input": {} }]
+                }]
+            });
+            let original = body.clone();
+            assert!(!normalize_third_party_anthropic_server_tool_history(
+                &mut body,
+                &provider,
+                "anthropic"
+            ));
+            assert_eq!(body, original);
+        }
+
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding" }
+        }));
+        let mut body = json!({
+            "messages": [{
+                "role": "assistant",
+                "content": [{ "type": "server_tool_use", "name": "web_search", "input": {} }]
+            }]
+        });
+        let original = body.clone();
+        assert!(!normalize_third_party_anthropic_server_tool_history(
+            &mut body,
+            &provider,
+            "openai_chat"
+        ));
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_empty_server_result_only_message_is_removed() {
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding" }
+        }));
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "searching" }]
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "web_search_tool_result", "content": "   " }]
+                }
+            ]
+        });
+
+        assert!(normalize_third_party_anthropic_server_tool_history(
+            &mut body,
+            &provider,
+            "anthropic"
+        ));
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(body["messages"][0]["content"][0]["text"], "searching");
     }
 
     #[test]

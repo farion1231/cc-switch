@@ -356,6 +356,7 @@ function App() {
     setIsLaunchingClaudeScience(true);
     try {
       await claudeScienceApi.launchWithProxy();
+      await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
       toast.success(t("claudeScience.launchSuccess"));
     } catch (error) {
       toast.error(t("claudeScience.launchFailed"), {

@@ -149,13 +149,14 @@ vi.mock("@/components/mcp/McpPanel", () => ({
 
 const renderApp = (AppComponent: ComponentType) => {
   const client = new QueryClient();
-  return render(
+  const renderResult = render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
         <AppComponent />
       </Suspense>
     </QueryClientProvider>,
   );
+  return { client, ...renderResult };
 };
 
 describe("App integration with MSW", () => {
@@ -277,12 +278,18 @@ describe("App integration with MSW", () => {
 
     try {
       const { default: App } = await import("@/App");
-      renderApp(App);
+      const { client } = renderApp(App);
+      const invalidateSpy = vi.spyOn(client, "invalidateQueries");
 
       const launchButton = await screen.findByTitle("claudeScience.launch");
       fireEvent.click(launchButton);
 
       await waitFor(() => expect(launchSpy).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: ["proxyStatus"],
+        }),
+      );
       expect(toastSuccessMock).toHaveBeenCalledWith(
         "claudeScience.launchSuccess",
       );
