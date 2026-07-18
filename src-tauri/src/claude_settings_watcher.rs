@@ -265,4 +265,51 @@ mod tests {
         }));
         assert!(resolve_active_model_window(&settings, &provider).is_none());
     }
+
+    // ========== Task 5: 防循环测试 ==========
+
+    #[test]
+    fn loop_same_model_consecutive_triggers() {
+        let state = Mutex::new(None);
+        assert!(should_process(&state, Some("haiku")));
+        assert!(!should_process(&state, Some("haiku")));
+        assert!(!should_process(&state, Some("haiku")));
+    }
+
+    #[test]
+    fn loop_two_models_alternating() {
+        let state = Mutex::new(None);
+        assert!(should_process(&state, Some("haiku")));
+        assert!(should_process(&state, Some("sonnet")));
+        assert!(should_process(&state, Some("haiku")));
+        assert!(should_process(&state, Some("sonnet")));
+    }
+
+    #[test]
+    fn loop_model_to_none_to_same() {
+        let state = Mutex::new(None);
+        assert!(should_process(&state, Some("haiku")));
+        assert!(should_process(&state, None));       // model 被删
+        assert!(should_process(&state, Some("haiku"))); // 重新出现
+    }
+
+    #[test]
+    fn loop_model_to_none_stays_none() {
+        let state = Mutex::new(None);
+        assert!(should_process(&state, Some("haiku")));
+        assert!(should_process(&state, None));
+        // 后续 None 事件都算"无变化" → 跳过
+        assert!(!should_process(&state, None));
+        assert!(!should_process(&state, None));
+    }
+
+    #[test]
+    fn loop_initial_state_with_existing_model() {
+        // 启动时 model 已经是 "haiku"（如上次会话留下的）
+        let state = Mutex::new(Some("haiku".to_string()));
+        // 第一次触发就是 haiku → 跳过（不算变化）
+        assert!(!should_process(&state, Some("haiku")));
+        // 切到别的 → 处理
+        assert!(should_process(&state, Some("sonnet")));
+    }
 }
