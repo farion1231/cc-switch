@@ -1478,11 +1478,12 @@ impl RequestForwarder {
                 adapter.transform_request(mapped_body, provider)?
             }
         } else {
-            if base_url.contains("generativelanguage.googleapis.com") {
-                super::providers::apply_gemini_openai_thought_signature_fix(&mut mapped_body);
-            }
             mapped_body
         };
+
+        if base_url.contains("generativelanguage.googleapis.com") {
+            super::providers::apply_gemini_openai_thought_signature_fix(&mut request_body);
+        }
 
         if matches!(app_type, AppType::Codex) {
             self.apply_media_prevention(&mut request_body, provider);
