@@ -2252,7 +2252,7 @@
       "skillCount": "識別到 {{count}} 個技能"
     },
     "search": "搜尋技能",
-    "searchPlaceholder": "搜尋技能名稱或儲存庫名稱...",
+    "searchPlaceholder": "搜尋技能，多個以空格分隔...",
     "searchSource": {
       "repos": "儲存庫",
       "skillssh": "skills.sh"
@@ -2316,6 +2316,43 @@
       "gemini": "Gemini",
       "opencode": "OpenCode",
       "openclaw": "OpenClaw"
+    },
+    "detail": {
+      "title": "技能詳情",
+      "description": "描述",
+      "noDescription": "暫無描述",
+      "directory": "目錄",
+      "source": "來源",
+      "local": "本地",
+      "branch": "分支",
+      "installedAt": "安裝時間",
+      "updatedAt": "更新時間",
+      "enabledApps": "啟用應用",
+      "viewOnGitHub": "查看 GitHub"
+    },
+    "batch": {
+      "selected": "已選擇 {{count}} 項",
+      "selectAll": "全選",
+      "enable": "啟用",
+      "disable": "禁用",
+      "toggleApps": "啟用/禁用",
+      "deleteSelected": "刪除已選",
+      "deleteConfirmTitle": "批次刪除技能",
+      "deleteConfirmMessage": "確定要刪除 {{count}} 個選中的技能嗎？刪除前會自動備份，此操作可在備份中恢復。",
+      "toggleSuccess": "已為 {{count}} 個技能{{action}} {{app}}",
+      "deleteSuccess": "已刪除 {{count}} 個技能",
+      "enableAction": "啟用",
+      "disableAction": "禁用",
+      "changeSource": "變更來源",
+      "changeSourceTitle": "批次變更來源",
+      "changeSourceDescription": "將選中的 {{count}} 個技能關聯到指定倉庫，後續可跟隨該倉庫檢測更新。",
+      "selectRepo": "選擇倉庫",
+      "customRepo": "自訂倉庫",
+      "repoOwner": "倉庫所有者",
+      "repoName": "倉庫名稱",
+      "repoBranch": "分支",
+      "subdirectory": "倉庫子目錄（可選，如 skills）",
+      "sourceChangeSuccess": "已將 {{count}} 個技能的來源變更為 {{repo}}"
     },
     "installFromZip": {
       "button": "從 ZIP 安裝",

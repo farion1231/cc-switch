@@ -73,6 +73,13 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useBatchUpdateSkillSource: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+  useSkillRepos: () => ({
+    data: [],
+  }),
 }));
 
 describe("UnifiedSkillsPanel", () => {
