@@ -148,6 +148,19 @@ impl RequestContext {
             .cloned()
             .ok_or(ProxyError::NoAvailableProvider)?;
 
+        // 供应商聚合：当前供应商是「聚合供应商」时，按请求模型名解析出目标上游，
+        // 生成一个等价的普通 Claude 供应商，之后完全复用现有转发/转换链路。
+        // 仅 Claude 应用支持（模型名在请求体中，Codex/Gemini 形态不同）。
+        let (provider, providers) = if matches!(app_type, AppType::Claude) {
+            match crate::aggregation::resolve_aggregation_upstream(&provider, &request_model) {
+                Ok(Some(synth)) => (synth.clone(), vec![synth]),
+                Ok(None) => (provider, providers),
+                Err(e) => return Err(ProxyError::InvalidRequest(e.to_string())),
+            }
+        } else {
+            (provider, providers)
+        };
+
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
             tag,

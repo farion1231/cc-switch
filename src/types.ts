@@ -5,6 +5,7 @@ export type ProviderCategory =
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
   | "custom" // 自定义
+  | "aggregation" // 供应商聚合（多上游 + 模型路由）
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 

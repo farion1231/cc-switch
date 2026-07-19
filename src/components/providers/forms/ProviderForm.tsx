@@ -81,6 +81,8 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
+import { AggregationFormFields } from "./AggregationFormFields";
+import { useAggregationDraftState } from "./hooks/useAggregationDraftState";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   ProviderAdvancedConfig,
@@ -339,6 +341,13 @@ function ProviderFormFull({
   });
   const isOmoCategory = appId === "opencode" && category === "omo";
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
+  // 「供应商聚合」：Claude 应用下的特殊供应商（多上游 + 模型路由）
+  const isAggregationCategory =
+    appId === "claude" && category === "aggregation";
+  const aggDraft = useAggregationDraftState(
+    (initialData?.settingsConfig as { aggregation?: unknown } | undefined)
+      ?.aggregation,
+  );
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
@@ -660,6 +669,9 @@ function ProviderFormFull({
       }),
       aggregator: t("providerForm.categoryAggregation", {
         defaultValue: "聚合服务",
+      }),
+      aggregation: t("aggregation.categoryLabel", {
+        defaultValue: "供应商聚合",
       }),
       third_party: t("providerForm.categoryThirdParty", {
         defaultValue: "第三方",
@@ -1358,6 +1370,9 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "claude" && category === "aggregation") {
+      // 供应商聚合：序列化多上游 + 模型路由到 settings_config.aggregation
+      settingsConfig = JSON.stringify({ aggregation: aggDraft.toConfig() });
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -2085,7 +2100,11 @@ function ProviderFormFull({
             }
           />
 
-          {appId === "claude" && (
+          {appId === "claude" && isAggregationCategory && (
+            <AggregationFormFields draft={aggDraft} />
+          )}
+
+          {appId === "claude" && !isAggregationCategory && (
             <ClaudeFormFields
               providerId={providerId}
               shouldShowApiKey={
