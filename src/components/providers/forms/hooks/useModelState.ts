@@ -45,22 +45,35 @@ export interface ModelSuffixResult {
 function parseWindowToken(token: string): number | undefined {
   const trimmed = token.trim();
   if (!trimmed) return undefined;
-  const last = trimmed[trimmed.length - 1];
+  // 清洗括号、逗号、下划线、空格等装饰字符
+  const cleaned = trimmed.replace(/[[\]()_,\s]/g, "");
+  if (!cleaned) return undefined;
+
+  // 提取末尾单位（K/k/M/m），去掉后得到数字部分
+  const last = cleaned[cleaned.length - 1];
   let numPart: string;
   let multiplier: number;
   if (last === "K" || last === "k") {
-    numPart = trimmed.slice(0, -1);
+    numPart = cleaned.slice(0, -1);
     multiplier = 1000;
   } else if (last === "M" || last === "m") {
-    numPart = trimmed.slice(0, -1);
+    numPart = cleaned.slice(0, -1);
     multiplier = 1000000;
-  } else {
-    numPart = trimmed;
+  } else if (last >= "0" && last <= "9") {
+    // 纯数字
+    numPart = cleaned;
     multiplier = 1;
+  } else {
+    // 未知单位（如 G）→ 不合法
+    return undefined;
   }
-  const value = Number.parseInt(numPart.trim(), 10);
-  if (Number.isNaN(value) || value <= 0) return undefined;
-  return value * multiplier;
+
+  // 支持小数（如 1.5M → 1.5 × 1000000 = 1500000）
+  const num = numPart.includes(".")
+    ? Number.parseFloat(numPart)
+    : Number.parseInt(numPart, 10);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  return Math.round(num * multiplier);
 }
 
 export function parseModelSuffix(model: string): ModelSuffixResult {
@@ -87,10 +100,14 @@ export function setModelSuffix(model: string, windowStr: string): string {
   if (!base) return "";
   const trimmed = windowStr.trim();
   if (!trimmed) return base;
-  const window = parseWindowToken(trimmed);
+  const cleaned = trimmed.replace(/[[\]()_,\s]/g, "");
+  if (!cleaned) return base;
+  const window = parseWindowToken(cleaned);
   if (window === undefined) return base;
-  // 统一小写写入
-  return `${base}[${trimmed.toLowerCase()}]`;
+  if (window === undefined) return base;
+  // 小数输入时输出计算结果（如 1.5M → [1500000]），否则保留清洗后的原始格式
+  const suffix = cleaned.includes(".") ? String(window) : cleaned.toLowerCase();
+  return `${base}[${suffix}]`;
 }
 
 /**
