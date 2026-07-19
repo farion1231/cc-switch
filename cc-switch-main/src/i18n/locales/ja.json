@@ -1127,7 +1127,7 @@
     "modelDisplayNamePlaceholder": "例: DeepSeek V4 Pro",
     "modelNoDisplayName": "/model には表示されません",
     "requestModelLabel": "リクエストモデル",
-    "modelOneMHeader": "1M 対応を宣言",
+    "modelOneMHeader": "コンテキスト長",
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "既定フォールバックモデル",
     "fallbackModelHint": "Sonnet・Opus・Fable・Haiku のいずれにも明確に対応しないリクエストのフォールバックです。サードパーティ/中継エンドポイントでは設定を推奨します。設定しないと、これらのリクエスト（Haiku のバックグラウンドサブタスクを含む）が元の Claude モデル名のまま上流へ転送され、上流に該当モデルが無い場合は失敗することがあります。公式エンドポイントでは空欄で構いません。",
@@ -1154,7 +1154,7 @@
     "modelContextWindowLabel": "コンテキスト長",
     "modelContextWindowPlaceholder": "1M / 200K",
     "modelContextWindowHint": "?????????????????????????????? 200K",
-    "autoSyncContextWindow": "自動同期",
+    "autoSyncContextWindow": "コンテキスト長自動同期",
     "autoSyncContextWindowTooltip": "ターミナルでモデルを切り替える際、コンテキスト長と圧縮閾値が選択されたモデルに基づいて settings.json で更新されます。複数の claude ターミナルが異なるモデルを使用する場合、最後に切り替えたモデルのコンテキスト長がグローバル値として使用されます。"
   },
   "copilot": {

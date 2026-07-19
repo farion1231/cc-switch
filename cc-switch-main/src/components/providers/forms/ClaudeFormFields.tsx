@@ -1013,37 +1013,37 @@ export function ClaudeFormFields({
               })}
             </div>
 
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="mt-3 flex items-center gap-2 rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 w-fit">
-                    <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-xs font-medium text-foreground">
-                      {t("providerForm.autoSyncContextWindow", {
-                        defaultValue: "自动同步",
-                      })}
-                    </span>
-                    <Switch
-                      checked={autoSyncContextWindow}
-                      onCheckedChange={handleAutoSyncChange}
-                      aria-label={t("providerForm.autoSyncContextWindow", {
-                        defaultValue: "自动同步",
-                      })}
-                      className="h-5 w-9"
-                    />
+            <div className="mt-3 flex items-center gap-2 rounded-full border border-border/70 bg-muted/30 px-2.5 py-1 w-fit">
+              <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs font-medium text-foreground">
+                {t("providerForm.autoSyncContextWindow", {
+                  defaultValue: "自动同步模型上下文长度",
+                })}
+              </span>
+              <Switch
+                checked={autoSyncContextWindow}
+                onCheckedChange={handleAutoSyncChange}
+                aria-label={t("providerForm.autoSyncContextWindow", {
+                  defaultValue: "自动同步模型上下文长度",
+                })}
+                className="h-5 w-9"
+              />
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="text-xs leading-relaxed">
-                    {t("providerForm.autoSyncContextWindowTooltip", {
-                      defaultValue:
-                        "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。",
-                    })}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <p className="text-xs leading-relaxed">
+                      {t("providerForm.autoSyncContextWindowTooltip", {
+                        defaultValue:
+                          "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。",
+                      })}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
 
             <div className="space-y-2 border-t pt-4">
               <FormLabel htmlFor="claudeModel">
