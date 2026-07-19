@@ -947,7 +947,20 @@ fn set_codex_model_catalog_json_field(
 
     match catalog_path {
         Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            // User-written pointer to a custom catalog must NOT be overwritten
+            // by regeneration; symmetric with the None arm's file_name check.
+            let user_owned = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(|path| {
+                    Path::new(path).file_name().and_then(|name| name.to_str())
+                        != Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+                })
+                .unwrap_or(false);
+            if !user_owned {
+                doc["model_catalog_json"] =
+                    toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            }
         }
         None => {
             let should_remove = doc
@@ -3470,6 +3483,54 @@ model = "glm-5"
             parsed.get("model_catalog_json").and_then(|v| v.as_str()),
             Some("/Users/me/.codex/my-custom-catalog.json"),
             "None arm should NOT remove user-owned catalog"
+        );
+    }
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_catalog() {
+        // User-written pointer to a custom catalog must NOT be overwritten
+        // by the Some arm (regeneration); symmetric with the None arm's
+        // file_name protection in set_catalog_json_none_preserves_user_owned_catalog.
+        let input = r#"model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "Some arm should NOT overwrite a user-owned catalog pointer"
+        );
+    }
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_relative_catalog() {
+        // Relative user-owned pointer (filename differs from cc-switch's)
+        // must also be preserved by the Some arm, matching the None arm.
+        let input = r#"model_catalog_json = "my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("my-custom-catalog.json"),
+            "Some arm should NOT overwrite a user-owned relative catalog pointer"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_some_overwrites_cc_switch_owned_pointer() {
+        // When the existing pointer already points at cc-switch's own file
+        // (by filename), the Some arm must still refresh it to the canonical
+        // relative filename. Guards against over-protection.
+        let input = r#"model_catalog_json = "/abs/path/cc-switch-model-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
+            "Some arm should refresh a cc-switch-owned pointer to the canonical filename"
         );
     }
 
