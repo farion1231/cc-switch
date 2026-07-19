@@ -726,4 +726,68 @@ mod tests {
         assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
         assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
     }
+
+    /// 回归测试 #4：autoSyncContextWindow=false 时，model 字段变化不写 ACW/MAX。
+    /// 验证开关关闭后终端切模型不会同步（开关行为链路：toggle OFF -> save ->
+    /// update -> write_live -> replace_watcher(新 provider 快照) -> watcher 读到 false -> skip）。
+    #[test]
+    fn fs_watcher_auto_sync_disabled_skips_writes() {
+        use std::fs;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let initial = json!({
+            "model": "sonnet",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, initial.to_string()).unwrap();
+
+        // provider 显式关闭 autoSyncContextWindow
+        let provider = Arc::new(Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+                },
+                "autoSyncContextWindow": false
+            }),
+            None,
+        ));
+
+        let spawned = spawn_claude_settings_watcher(path.clone(), provider).unwrap();
+        replace_watcher(spawned);
+
+        // 改 model 字段 sonnet -> haiku
+        let new_content = json!({
+            "model": "haiku",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, new_content.to_string()).unwrap();
+
+        thread::sleep(Duration::from_millis(800));
+
+        let content = fs::read_to_string(&path).unwrap();
+        let v: Value = serde_json::from_str(&content).unwrap();
+        // model 字段确实变了（说明事件被收到），但 ACW/MAX 不应该被写
+        assert_eq!(v["model"], "haiku");
+        assert!(
+            v["env"].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").is_none(),
+            "autoSync OFF 时不应写 ACW，但实际写入了: {:?}",
+            v["env"].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+        );
+        assert!(
+            v["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none(),
+            "autoSync OFF 时不应写 MAX，但实际写入了: {:?}",
+            v["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+        );
+    }
 }
