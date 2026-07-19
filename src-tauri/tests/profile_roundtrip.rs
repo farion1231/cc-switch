@@ -185,7 +185,10 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         payload.skills.claude,
         Some(vec!["local:test-skill".to_string()])
     );
-    assert_eq!(payload.prompts.claude.as_deref(), Some("pr1"));
+    assert_eq!(
+        payload.prompts.claude.as_ref().map(|ids| ids.0.clone()),
+        Some(vec!["pr1".to_string()])
+    );
     assert_eq!(
         payload.providers.codex, None,
         "codex side not captured when creating from the claude group"
@@ -205,7 +208,9 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     McpService::toggle_app(&state, "m2", AppType::Claude, true).expect("enable m2");
     SkillService::toggle_app(&state.db, "local:test-skill", &AppType::Claude, false)
         .expect("disable skill");
-    PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("enable pr2");
+    // 多选语义：在 pr1 保持启用的同时再启用 pr2，随后应用 Profile A
+    // 应恢复为快照中的精确集合（仅 pr1）。
+    PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("also enable pr2");
 
     // ---- 应用项目 A（Claude 组）：只复原 Claude 侧 ----
     let (warnings, _) = ProfileService::apply(&state, &profile_a.id, ProfileScope::Claude)
@@ -275,6 +280,80 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
             .expect("get codex current profile id"),
         None,
         "codex scope marker untouched by claude-group apply"
+    );
+}
+
+#[test]
+fn profile_apply_restores_prompt_order_when_enabled_set_is_unchanged() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    let mut prompt_a = prompt("a", true);
+    prompt_a.created_at = Some(1_000);
+    let mut prompt_b = prompt("b", true);
+    prompt_b.created_at = Some(2_000);
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_a)
+        .expect("save prompt a");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_b)
+        .expect("save prompt b");
+
+    let profile = ProfileService::create(&state, "Ordered Prompts", ProfileScope::Claude)
+        .expect("create ordered prompt profile");
+
+    // 保持启用集合 {a, b} 不变，只把当前列表顺序改成 b, a。
+    prompt_a.created_at = Some(3_000);
+    prompt_b.created_at = Some(1_000);
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_a)
+        .expect("move prompt a after b");
+    state
+        .db
+        .save_prompt(AppType::Claude.as_str(), &prompt_b)
+        .expect("move prompt b before a");
+    assert_eq!(
+        state
+            .db
+            .get_prompts(AppType::Claude.as_str())
+            .expect("get reordered prompts")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["b", "a"]
+    );
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).expect("create .claude dir");
+    fs::write(
+        claude_dir.join("CLAUDE.md"),
+        format!("{}\n\n{}", prompt_b.content, prompt_a.content),
+    )
+    .expect("seed reordered CLAUDE.md");
+
+    let (warnings, _) = ProfileService::apply(&state, &profile.id, ProfileScope::Claude)
+        .expect("apply ordered prompt profile");
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    let prompts = state
+        .db
+        .get_prompts(AppType::Claude.as_str())
+        .expect("get restored prompts");
+    assert_eq!(
+        prompts.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert!(prompts["a"].enabled && prompts["b"].enabled);
+
+    let live_prompt =
+        fs::read_to_string(claude_dir.join("CLAUDE.md")).expect("read merged CLAUDE.md");
+    assert_eq!(
+        live_prompt,
+        format!("{}\n\n{}", prompt_a.content, prompt_b.content)
     );
 }
 
@@ -547,7 +626,8 @@ fn switching_profile_autosaves_previous_profile_state() {
     ProviderService::switch(&state, AppType::Claude, "p2").expect("switch to p2");
     McpService::toggle_app(&state, "m1", AppType::Claude, false).expect("disable m1");
     McpService::toggle_app(&state, "m2", AppType::Claude, true).expect("enable m2");
-    PromptService::enable_prompt(&state, AppType::Claude, "pr2").expect("enable pr2");
+    PromptService::set_enabled_prompts(&state, AppType::Claude, &["pr2".to_string()])
+        .expect("select pr2 only");
 
     let project_b = ProfileService::create(&state, "Project B", ProfileScope::Claude)
         .expect("create project B");
@@ -586,13 +666,17 @@ fn switching_profile_autosaves_previous_profile_state() {
         serde_json::from_str(&saved_a.payload).expect("parse project A payload");
     assert_eq!(payload_a.providers.claude.as_deref(), Some("p2"));
     assert_eq!(payload_a.mcp.claude, Some(vec!["m2".to_string()]));
-    assert_eq!(payload_a.prompts.claude.as_deref(), Some("pr2"));
+    assert_eq!(
+        payload_a.prompts.claude.as_ref().map(|ids| ids.0.clone()),
+        Some(vec!["pr2".to_string()])
+    );
 
     // ---- 在 B 下改回状态 X，再切换回 A ----
     ProviderService::switch(&state, AppType::Claude, "p1").expect("switch to p1");
     McpService::toggle_app(&state, "m1", AppType::Claude, true).expect("enable m1");
     McpService::toggle_app(&state, "m2", AppType::Claude, false).expect("disable m2");
-    PromptService::enable_prompt(&state, AppType::Claude, "pr1").expect("enable pr1");
+    PromptService::set_enabled_prompts(&state, AppType::Claude, &["pr1".to_string()])
+        .expect("select pr1 only");
 
     let (warnings, _) = ProfileService::apply(&state, &project_a.id, ProfileScope::Claude)
         .expect("switch back to project A");
@@ -640,7 +724,10 @@ fn switching_profile_autosaves_previous_profile_state() {
         serde_json::from_str(&saved_b.payload).expect("parse project B payload");
     assert_eq!(payload_b.providers.claude.as_deref(), Some("p1"));
     assert_eq!(payload_b.mcp.claude, Some(vec!["m1".to_string()]));
-    assert_eq!(payload_b.prompts.claude.as_deref(), Some("pr1"));
+    assert_eq!(
+        payload_b.prompts.claude.as_ref().map(|ids| ids.0.clone()),
+        Some(vec!["pr1".to_string()])
+    );
 }
 
 #[test]

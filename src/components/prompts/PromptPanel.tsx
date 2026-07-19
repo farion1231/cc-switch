@@ -1,5 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { FileText } from "lucide-react";
 import { type AppId } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
@@ -38,7 +53,15 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       savePrompt,
       deletePrompt,
       toggleEnabled,
+      reorderPrompts,
     } = usePromptActions(appId);
+
+    const sensors = useSensors(
+      useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+      useSensor(KeyboardSensor, {
+        coordinateGetter: sortableKeyboardCoordinates,
+      }),
+    );
 
     useEffect(() => {
       if (open) reload();
@@ -96,17 +119,40 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     };
 
     const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
+    const enabledPrompts = promptEntries.filter(
+      ([_, prompt]) => prompt.enabled,
+    );
 
-    const enabledPrompt = promptEntries.find(([_, p]) => p.enabled);
+    const handleDragEnd = async ({ active, over }: DragEndEvent) => {
+      if (!over || active.id === over.id) return;
+      const oldIndex = promptEntries.findIndex(([id]) => id === active.id);
+      const newIndex = promptEntries.findIndex(([id]) => id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return;
+
+      const reordered = arrayMove(promptEntries, oldIndex, newIndex);
+      try {
+        await reorderPrompts(reordered.map(([id]) => id));
+      } catch {
+        // Error handled by hook.
+      }
+    };
 
     return (
       <div className="flex flex-col flex-1 min-h-0 px-6">
         <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
           <div className="text-sm text-muted-foreground">
             {t("prompts.count", { count: promptEntries.length })} ·{" "}
-            {enabledPrompt
-              ? t("prompts.enabledName", { name: enabledPrompt[1].name })
+            {enabledPrompts.length > 0
+              ? t("prompts.enabledNames", {
+                  count: enabledPrompts.length,
+                  names: enabledPrompts
+                    .map(([_, prompt]) => prompt.name)
+                    .join(" → "),
+                })
               : t("prompts.noneEnabled")}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground/80">
+            {t("prompts.mergeOrderHint")}
           </div>
         </div>
 
@@ -128,18 +174,29 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {promptEntries.map(([id, prompt]) => (
-                <PromptListItem
-                  key={id}
-                  id={id}
-                  prompt={prompt}
-                  onToggle={toggleEnabled}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                />
-              ))}
-            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={promptEntries.map(([id]) => id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="space-y-3">
+                  {promptEntries.map(([id, prompt]) => (
+                    <PromptListItem
+                      key={id}
+                      id={id}
+                      prompt={prompt}
+                      onToggle={toggleEnabled}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           )}
         </div>
 

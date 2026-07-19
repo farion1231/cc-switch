@@ -28,6 +28,17 @@ export const promptsApi = {
     return await invoke("enable_prompt", { app, id });
   },
 
+  async setEnabled(app: AppId, id: string, enabled: boolean): Promise<void> {
+    return await invoke("set_prompt_enabled", { app, id, enabled });
+  },
+
+  async updateSortOrder(
+    app: AppId,
+    updates: Array<{ id: string; sortIndex: number }>,
+  ): Promise<void> {
+    return await invoke("update_prompts_sort_order", { app, updates });
+  },
+
   async importFromFile(app: AppId): Promise<string> {
     return await invoke("import_prompt_from_file", { app });
   },

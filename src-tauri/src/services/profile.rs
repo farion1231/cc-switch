@@ -9,7 +9,7 @@
 //! - 供应商：`ProviderService::switch`（内建代理接管热切换与接管下禁切官方）
 //! - MCP：`McpService::toggle_app`（改标志 + 单 server 物化）
 //! - Skills：`SkillService::toggle_app`（改标志 + 单 skill 物化）
-//! - Prompt：`PromptService::enable_prompt`（互斥激活 + 原子写 live）
+//! - Prompt：`PromptService::set_enabled_prompts`（批量启用 + 按顺序合并写 live）
 //!
 //! apply 为 best-effort：单项失败收集为 warning 继续，不整体回滚。
 
@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::app_config::AppType;
-use crate::database::Profile;
+use crate::database::{Profile, PromptSortUpdate};
 use crate::error::AppError;
 use crate::services::{McpService, PromptService, ProviderService, SkillService};
 use crate::store::AppState;
@@ -114,6 +114,32 @@ impl<T> PerApp<T> {
     }
 }
 
+/// Profile 中启用的提示词 id 列表。
+///
+/// 新版始终序列化为数组；反序列化时兼容旧版保存的单个字符串 id。
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct PromptIds(pub Vec<String>);
+
+impl<'de> Deserialize<'de> for PromptIds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum PromptIdsRepr {
+            One(String),
+            Many(Vec<String>),
+        }
+
+        Ok(match PromptIdsRepr::deserialize(deserializer)? {
+            PromptIdsRepr::One(id) => Self(vec![id]),
+            PromptIdsRepr::Many(ids) => Self(ids),
+        })
+    }
+}
+
 /// Profile 的 JSON 快照结构（与前端 TS 类型严格对应）
 ///
 /// 所有槽位都是 Option：None = 该侧从未拍过快照（应用时不动），
@@ -128,8 +154,8 @@ pub struct ProfilePayload {
     pub mcp: PerApp<Option<Vec<String>>>,
     /// 每 app 启用的 Skill id 集合
     pub skills: PerApp<Option<Vec<String>>>,
-    /// 每 app 激活的 prompt id
-    pub prompts: PerApp<Option<String>>,
+    /// 每 app 启用的 prompt id 列表（顺序与合并顺序一致）
+    pub prompts: PerApp<Option<PromptIds>>,
 }
 
 impl ProfilePayload {
@@ -190,6 +216,23 @@ fn plan_toggles(
     (toggles, dangling)
 }
 
+/// 将目标提示词按快照顺序放回它们当前占用的列表槽位，其余提示词位置不变。
+fn restore_selected_prompt_order(current_order: &[String], target_order: &[String]) -> Vec<String> {
+    let target: HashSet<&str> = target_order.iter().map(String::as_str).collect();
+    let mut replacements = target_order.iter();
+
+    current_order
+        .iter()
+        .map(|id| {
+            if target.contains(id.as_str()) {
+                replacements.next().cloned().unwrap_or_else(|| id.clone())
+            } else {
+                id.clone()
+            }
+        })
+        .collect()
+}
+
 pub struct ProfileService;
 
 impl ProfileService {
@@ -225,12 +268,15 @@ impl ProfileService {
                 );
             }
             if let Some(slot) = payload.prompts.get_mut(app) {
-                *slot = state
-                    .db
-                    .get_prompts(app.as_str())?
-                    .values()
-                    .find(|p| p.enabled)
-                    .map(|p| p.id.clone());
+                *slot = Some(PromptIds(
+                    state
+                        .db
+                        .get_prompts(app.as_str())?
+                        .values()
+                        .filter(|p| p.enabled)
+                        .map(|p| p.id.clone())
+                        .collect(),
+                ));
             }
         }
         Ok(payload)
@@ -433,22 +479,56 @@ impl ProfileService {
                 }
             }
 
-            // 5. Prompt（None = 不动；已激活则幂等跳过，避免无谓的文件写与备份）
-            if let Some(Some(target_prompt)) = payload.prompts.get(app) {
+            // 5. Prompt（None = 不动；Some(空) = 禁用全部）
+            if let Some(Some(target_prompts)) = payload.prompts.get(app) {
                 let prompts = state.db.get_prompts(app_str)?;
-                match prompts.get(target_prompt) {
-                    None => warnings.push(format!(
-                        "[{app_str}] prompt '{target_prompt}' no longer exists, skipped"
-                    )),
-                    Some(p) if p.enabled => {}
-                    Some(_) => {
-                        if let Err(e) =
-                            PromptService::enable_prompt(state, app.clone(), target_prompt)
-                        {
-                            warnings.push(format!(
-                                "[{app_str}] enable prompt '{target_prompt}' failed: {e}"
-                            ));
-                        }
+                let mut valid_ids = Vec::new();
+                let mut seen_ids = HashSet::new();
+                for id in &target_prompts.0 {
+                    if prompts.contains_key(id) && seen_ids.insert(id.as_str()) {
+                        valid_ids.push(id.clone());
+                    } else if !prompts.contains_key(id) {
+                        warnings.push(format!(
+                            "[{app_str}] prompt '{id}' no longer exists, skipped"
+                        ));
+                    }
+                }
+
+                let current_enabled: Vec<String> = prompts
+                    .values()
+                    .filter(|prompt| prompt.enabled)
+                    .map(|prompt| prompt.id.clone())
+                    .collect();
+                let target: HashSet<&str> = valid_ids.iter().map(String::as_str).collect();
+                let current_target_order: Vec<&str> = prompts
+                    .keys()
+                    .filter(|id| target.contains(id.as_str()))
+                    .map(String::as_str)
+                    .collect();
+                let target_order: Vec<&str> = valid_ids.iter().map(String::as_str).collect();
+
+                if current_target_order != target_order {
+                    let current_order: Vec<String> = prompts.keys().cloned().collect();
+                    let restored_order = restore_selected_prompt_order(&current_order, &valid_ids);
+                    let updates: Vec<PromptSortUpdate> = restored_order
+                        .iter()
+                        .enumerate()
+                        .map(|(sort_index, id)| PromptSortUpdate {
+                            id: id.clone(),
+                            sort_index: sort_index as i64,
+                        })
+                        .collect();
+                    if let Err(e) = PromptService::update_sort_order(state, app.clone(), &updates) {
+                        warnings.push(format!("[{app_str}] restore prompt order failed: {e}"));
+                    }
+                }
+
+                let current: HashSet<&str> = current_enabled.iter().map(String::as_str).collect();
+                if current != target {
+                    if let Err(e) =
+                        PromptService::set_enabled_prompts(state, app.clone(), &valid_ids)
+                    {
+                        warnings.push(format!("[{app_str}] set enabled prompts failed: {e}"));
                     }
                 }
             }
@@ -494,7 +574,7 @@ mod tests {
             prompts: PerApp {
                 claude: None,
                 claude_desktop: None,
-                codex: Some("pr1".into()),
+                codex: Some(PromptIds(ids(&["pr1", "pr2"]))),
             },
         };
         let json = serde_json::to_string(&payload).unwrap();
@@ -504,6 +584,21 @@ mod tests {
         assert!(json.contains("\"codex\""));
         let back: ProfilePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn test_payload_accepts_legacy_single_prompt_id() {
+        let back: ProfilePayload = serde_json::from_str(
+            r#"{"prompts":{"claude":"legacy-prompt","claude-desktop":null,"codex":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            back.prompts.claude,
+            Some(PromptIds(vec!["legacy-prompt".to_string()]))
+        );
+
+        let json = serde_json::to_string(&back).unwrap();
+        assert!(json.contains(r#""claude":["legacy-prompt"]"#));
     }
 
     #[test]
@@ -652,5 +747,16 @@ mod tests {
         let (toggles, dangling) = plan_toggles(&current, &[]);
         assert_eq!(toggles, vec![("a".to_string(), false)]);
         assert!(dangling.is_empty());
+    }
+
+    #[test]
+    fn test_restore_selected_prompt_order_preserves_other_slots() {
+        assert_eq!(
+            restore_selected_prompt_order(
+                &ids(&["disabled-1", "b", "disabled-2", "a"]),
+                &ids(&["a", "b"]),
+            ),
+            ids(&["disabled-1", "a", "disabled-2", "b"])
+        );
     }
 }

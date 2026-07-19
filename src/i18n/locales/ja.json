@@ -1881,7 +1881,10 @@
     "enabled": "有効",
     "enable": "有効化",
     "enabledName": "有効: {{name}}",
+    "enabledNames": "{{count}} 件有効：{{names}}",
     "noneEnabled": "有効なプロンプトがありません",
+    "mergeOrderHint": "有効なプロンプトは一覧の順序で設定ファイルに結合されます。ドラッグして並べ替えできます。",
+    "dragHandle": "ドラッグしてプロンプトを並べ替え",
     "currentFile": "現在の {{filename}} の内容",
     "empty": "まだプロンプトがありません",
     "emptyDescription": "上のボタンからプロンプトを追加またはインポートしてください",
@@ -1901,6 +1904,8 @@
     "enableFailed": "有効化に失敗しました",
     "disableSuccess": "無効化しました",
     "disableFailed": "無効化に失敗しました",
+    "sortSuccess": "プロンプトの順序を更新しました",
+    "sortFailed": "プロンプトの順序を更新できませんでした",
     "importSuccess": "インポートしました",
     "importFailed": "インポートに失敗しました",
     "confirm": {
@@ -2408,7 +2413,7 @@
       "name": "名前",
       "description": "説明",
       "contentPreview": "内容プレビュー",
-      "enabledWarning": "インポート後すぐにこのプロンプトが有効になり、他は無効になります"
+      "enabledWarning": "インポート後、このプロンプトは有効になり、他の有効なプロンプトと順番に結合されます"
     },
     "skill": {
       "title": "Claude スキルリポジトリを追加",

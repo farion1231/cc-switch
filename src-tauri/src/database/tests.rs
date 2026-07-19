@@ -202,6 +202,58 @@ fn schema_migration_sets_user_version_when_missing() {
 }
 
 #[test]
+fn schema_migration_v15_to_v16_adds_prompt_sort_index() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE prompts (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            description TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at INTEGER,
+            updated_at INTEGER,
+            PRIMARY KEY (id, app_type)
+        );
+        INSERT INTO prompts
+            (id, app_type, name, content, description, enabled, created_at, updated_at)
+        VALUES
+            ('legacy', 'codex', 'Legacy', '# legacy', NULL, 1, 1000, 1000);
+        PRAGMA user_version = 15;
+        "#,
+    )
+    .expect("seed v15 prompts schema");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("migrate v15 to v16");
+
+    assert!(
+        Database::has_column(&conn, "prompts", "sort_index").expect("check sort_index"),
+        "prompts.sort_index should be added for existing v15 databases"
+    );
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read migrated version"),
+        SCHEMA_VERSION
+    );
+
+    let db = Database {
+        conn: std::sync::Mutex::new(conn),
+    };
+    let prompts = db.get_prompts("codex").expect("load migrated prompts");
+    assert_eq!(prompts["legacy"].content, "# legacy");
+
+    let mut updated = prompts["legacy"].clone();
+    updated.name = "Updated".to_string();
+    db.save_prompt("codex", &updated)
+        .expect("save migrated prompt");
+    assert_eq!(
+        db.get_prompts("codex").expect("reload prompt")["legacy"].name,
+        "Updated"
+    );
+}
+
+#[test]
 fn schema_migration_rejects_future_version() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");

@@ -74,11 +74,16 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 4. Prompts 表
-        conn.execute("CREATE TABLE IF NOT EXISTS prompts (
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS prompts (
             id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL,
-            description TEXT, enabled BOOLEAN NOT NULL DEFAULT 1, created_at INTEGER, updated_at INTEGER,
+            description TEXT, enabled BOOLEAN NOT NULL DEFAULT 1, sort_index INTEGER,
+            created_at INTEGER, updated_at INTEGER,
             PRIMARY KEY (id, app_type)
-        )", []).map_err(|e| AppError::Database(e.to_string()))?;
+        )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
         // 5. Skills 表（v3.10.0+ 统一结构）
         conn.execute(
@@ -506,6 +511,11 @@ impl Database {
                         Self::migrate_v14_to_v15(conn)?;
                         Self::set_user_version(conn, 15)?;
                     }
+                    15 => {
+                        log::info!("迁移数据库从 v15 到 v16（添加提示词排序支持）");
+                        Self::migrate_v15_to_v16(conn)?;
+                        Self::set_user_version(conn, 16)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -572,6 +582,7 @@ impl Database {
         // prompts 表
         Self::add_column_if_missing(conn, "prompts", "description", "TEXT")?;
         Self::add_column_if_missing(conn, "prompts", "enabled", "BOOLEAN NOT NULL DEFAULT 1")?;
+        Self::add_column_if_missing(conn, "prompts", "sort_index", "INTEGER")?;
         Self::add_column_if_missing(conn, "prompts", "created_at", "INTEGER")?;
         Self::add_column_if_missing(conn, "prompts", "updated_at", "INTEGER")?;
 
@@ -1506,6 +1517,14 @@ impl Database {
                 "enabled_grokbuild",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
+        }
+        Ok(())
+    }
+
+    /// v15 -> v16：为提示词增加持久化排序字段。
+    fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "prompts")? {
+            Self::add_column_if_missing(conn, "prompts", "sort_index", "INTEGER")?;
         }
         Ok(())
     }

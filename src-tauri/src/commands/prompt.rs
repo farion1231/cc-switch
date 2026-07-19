@@ -4,6 +4,7 @@ use std::str::FromStr;
 use tauri::State;
 
 use crate::app_config::AppType;
+use crate::database::PromptSortUpdate;
 use crate::prompt::Prompt;
 use crate::services::PromptService;
 use crate::store::AppState;
@@ -46,6 +47,27 @@ pub async fn enable_prompt(
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     PromptService::enable_prompt(&state, app_type, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_prompt_enabled(
+    app: String,
+    id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    PromptService::set_prompt_enabled(&state, app_type, &id, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_prompts_sort_order(
+    app: String,
+    updates: Vec<PromptSortUpdate>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    PromptService::update_sort_order(&state, app_type, &updates).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
