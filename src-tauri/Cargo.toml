@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "3.16.5"
+version = "3.17.0"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -81,6 +81,7 @@ sha2 = "0.10"
 hmac = "0.12"
 json5 = "0.4"
 json-five = "0.3.1"
+sys-locale = "0.3"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

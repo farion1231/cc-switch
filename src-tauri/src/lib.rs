@@ -14,12 +14,14 @@ mod deeplink;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
+mod grok_config;
 pub mod hermes_config;
 mod init_status;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 mod mcp;
+mod model_capabilities;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
@@ -47,10 +49,11 @@ pub use database::{Database, Profile};
 pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
 pub use error::AppError;
 pub use mcp::{
-    import_from_claude, import_from_codex, import_from_gemini, remove_server_from_claude,
-    remove_server_from_codex, remove_server_from_gemini, sync_enabled_to_claude,
-    sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
-    sync_single_server_to_codex, sync_single_server_to_gemini,
+    import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
+    remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
+    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
+    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
@@ -783,6 +786,14 @@ pub fn run() {
                     Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
                 }
 
+                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
+                    }
+                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
+                }
+
                 match crate::services::mcp::McpService::import_from_opencode(&app_state) {
                     Ok(count) if count > 0 => {
                         log::info!("✓ Imported {count} MCP server(s) from OpenCode");
@@ -808,6 +819,7 @@ pub fn run() {
                     crate::app_config::AppType::Claude,
                     crate::app_config::AppType::Codex,
                     crate::app_config::AppType::Gemini,
+                    crate::app_config::AppType::GrokBuild,
                     crate::app_config::AppType::OpenCode,
                     crate::app_config::AppType::OpenClaw,
                     crate::app_config::AppType::Hermes,
@@ -1200,6 +1212,7 @@ pub fn run() {
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
+            commands::ensure_codex_official_provider,
             commands::get_claude_config_status,
             commands::get_config_status,
             commands::get_claude_code_config_path,
@@ -1739,16 +1752,25 @@ pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
 ///
 /// 检查 `proxy_config.enabled` 字段，如果有任一应用的状态为 `true`，
 /// 则自动启动代理服务并接管对应应用的 Live 配置。
-async fn restore_proxy_state_on_startup(state: &store::AppState) {
-    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
-    let mut apps_to_restore = Vec::new();
-    for app_type in ["claude", "codex", "gemini"] {
-        if let Ok(config) = state.db.get_proxy_config_for_app(app_type).await {
-            if config.enabled {
-                apps_to_restore.push(app_type);
-            }
+const PROXY_STARTUP_APP_TYPES: [&str; 4] = ["claude", "codex", "gemini", "grokbuild"];
+
+async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static str> {
+    let mut apps = Vec::new();
+    for app_type in PROXY_STARTUP_APP_TYPES {
+        if db
+            .get_proxy_config_for_app(app_type)
+            .await
+            .is_ok_and(|config| config.enabled)
+        {
+            apps.push(app_type);
         }
     }
+    apps
+}
+
+async fn restore_proxy_state_on_startup(state: &store::AppState) {
+    // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
+    let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
 
     if apps_to_restore.is_empty() {
         log::debug!("启动时无需恢复代理状态");
@@ -2066,7 +2088,8 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_exit_request, ExitRequestAction};
+    use super::{classify_exit_request, enabled_proxy_apps_on_startup, ExitRequestAction};
+    use crate::database::Database;
 
     #[test]
     fn no_code_keeps_app_alive_in_tray() {
@@ -2091,5 +2114,22 @@ mod tests {
             classify_exit_request(Some(1)),
             ExitRequestAction::CleanupAndExit
         );
+    }
+
+    #[tokio::test]
+    async fn startup_restore_includes_enabled_grokbuild_route() {
+        let db = Database::memory().expect("initialize database");
+        let mut config = db
+            .get_proxy_config_for_app("grokbuild")
+            .await
+            .expect("read Grok Build proxy config");
+        config.enabled = true;
+        db.update_proxy_config_for_app(config)
+            .await
+            .expect("enable Grok Build proxy config");
+
+        let apps = enabled_proxy_apps_on_startup(&db).await;
+
+        assert_eq!(apps, vec!["grokbuild"]);
     }
 }

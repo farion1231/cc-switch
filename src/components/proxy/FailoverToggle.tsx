@@ -14,7 +14,7 @@ import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
-type ProxySupportedAppId = "claude" | "codex" | "gemini";
+type ProxySupportedAppId = "claude" | "codex" | "gemini" | "grokbuild";
 
 interface FailoverToggleProps {
   className?: string;
@@ -39,7 +39,9 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
       ? "Claude"
       : activeApp === "codex"
         ? "Codex"
-        : "Gemini";
+        : activeApp === "grokbuild"
+          ? "Grok Build"
+          : "Gemini";
 
   const tooltipText = !takeoverEnabled
     ? t("failover.tooltip.takeoverRequired", {

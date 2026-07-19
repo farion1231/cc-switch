@@ -13,7 +13,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
-            "该应用暂不支持 Prompts",
+            "当前应用暂不支持 Prompts",
             "This app does not support Prompts",
         ));
     }
@@ -22,6 +22,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
         AppType::Gemini => get_gemini_dir(),
+        AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
@@ -32,7 +33,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
+        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
         AppType::ClaudeDesktop | AppType::Pi => unreachable!("handled above"),
     };
 
