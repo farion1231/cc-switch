@@ -457,7 +457,16 @@ export function SessionManagerPage({ appId }: { appId: string }) {
   const handleExportMarkdown = async () => {
     if (!selectedSession || isExporting) return;
 
-    const markdown = formatSessionMarkdown(messages);
+    const exportMessages = isCodexSession
+      ? messages.filter(
+          (message) =>
+            !(
+              message.role.toLowerCase() === "user" &&
+              shouldHideCodexMessageFromToc(message.content)
+            ),
+        )
+      : messages;
+    const markdown = formatSessionMarkdown(exportMessages);
     if (!markdown) {
       toast.error(
         t("sessionManager.exportEmpty", {
