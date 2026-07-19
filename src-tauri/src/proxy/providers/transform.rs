@@ -54,6 +54,25 @@ pub fn is_openai_o_series(model: &str) -> bool {
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
 }
 
+/// Detect Chat Completions models that require `max_completion_tokens` instead
+/// of the legacy `max_tokens` parameter.
+///
+/// GPT-5+ (including `chat-latest`) and the o-series use the new field. GPT-4o,
+/// GPT-4.1, GPT-4, and
+/// GPT-3.5 retain `max_tokens` compatibility in the Chat Completions protocol.
+pub fn requires_openai_max_completion_tokens(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    if is_openai_o_series(&normalized) || normalized == "chat-latest" {
+        return true;
+    }
+
+    normalized
+        .strip_prefix("gpt-")
+        .and_then(|rest| rest.split(|c| c == '.' || c == '-').next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 5)
+}
+
 /// Detect OpenAI models that support reasoning_effort.
 ///
 /// Supported families:
@@ -171,10 +190,11 @@ pub fn anthropic_to_openai_with_reasoning_content(
     normalize_openai_system_messages(&mut messages);
     result["messages"] = json!(messages);
 
-    // 转换参数 — o-series 模型需要 max_completion_tokens
+    // 转换参数 — GPT-5+（含 chat-latest）与 o-series Chat Completions 模型使用
+    // max_completion_tokens；GPT-4o/4.1/4/3.5 保持 max_tokens 兼容。
     let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
     if let Some(v) = body.get("max_tokens") {
-        if is_openai_o_series(model) {
+        if requires_openai_max_completion_tokens(model) {
             result["max_completion_tokens"] = v.clone();
         } else {
             result["max_tokens"] = v.clone();
@@ -739,6 +759,36 @@ mod tests {
         assert_eq!(result["max_tokens"], 1024);
         assert_eq!(result["messages"][0]["role"], "user");
         assert_eq!(result["messages"][0]["content"], "Hello");
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_gpt5_uses_max_completion_tokens() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_openai(input).unwrap();
+
+        assert_eq!(result["max_completion_tokens"], 1024);
+        assert!(result.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_gpt4_chat_models_keep_max_tokens() {
+        for model in ["gpt-4.1", "gpt-4o", "gpt-4", "gpt-3.5-turbo"] {
+            let input = json!({
+                "model": model,
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": "Hello"}]
+            });
+
+            let result = anthropic_to_openai(input).unwrap();
+
+            assert_eq!(result["max_tokens"], 1024, "{model}");
+            assert!(result.get("max_completion_tokens").is_none(), "{model}");
+        }
     }
 
     #[test]
@@ -1557,6 +1607,20 @@ mod tests {
         assert!(!is_openai_o_series("openai-gpt"));
         assert!(!is_openai_o_series("o"));
         assert!(!is_openai_o_series(""));
+    }
+
+    #[test]
+    fn test_requires_openai_max_completion_tokens() {
+        assert!(requires_openai_max_completion_tokens("o3-mini"));
+        assert!(requires_openai_max_completion_tokens("gpt-5"));
+        assert!(requires_openai_max_completion_tokens("gpt-5.4"));
+        assert!(requires_openai_max_completion_tokens("chat-latest"));
+        assert!(requires_openai_max_completion_tokens("GPT-10-preview"));
+        assert!(!requires_openai_max_completion_tokens("gpt-4.1"));
+        assert!(!requires_openai_max_completion_tokens("gpt-4o"));
+        assert!(!requires_openai_max_completion_tokens("gpt-4"));
+        assert!(!requires_openai_max_completion_tokens("gpt-3.5-turbo"));
+        assert!(!requires_openai_max_completion_tokens("kimi-k2.5"));
     }
 
     #[test]

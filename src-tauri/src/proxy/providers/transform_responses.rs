@@ -214,9 +214,14 @@ pub fn anthropic_to_responses(
         result["input"] = json!(input);
     }
 
-    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models)
+    // max_tokens → max_output_tokens (Responses API uses max_output_tokens for all models).
+    // Claude Desktop sends `max_tokens: 1` when probing a mapped model, but the
+    // OpenAI-compatible Responses API requires max_output_tokens >= 16.
     if let Some(v) = body.get("max_tokens") {
-        result["max_output_tokens"] = v.clone();
+        result["max_output_tokens"] = v
+            .as_u64()
+            .map(|value| json!(value.max(16)))
+            .unwrap_or_else(|| v.clone());
     }
 
     // 直接透传的参数
@@ -876,6 +881,19 @@ mod tests {
         assert_eq!(result["input"][0]["content"][0]["text"], "Hello");
         // stop_sequences should not appear
         assert!(result.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_clamps_probe_max_tokens_to_api_minimum() {
+        let input = json!({
+            "model": "gpt-4o",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+        assert_eq!(result["max_output_tokens"], 16);
     }
 
     #[test]
