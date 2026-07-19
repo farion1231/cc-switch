@@ -43,7 +43,7 @@ cc-switch 当前为 Claude Code 注入的 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（AC
 1. **实际容量 = min(ACW, MAX)** —— Claude Code 客户端内部做 min 计算
 2. **ACW 和 MAX 都是有效 env**，都参与容量计算
 3. **model name 后缀不影响容量** —— Kimi[30k] 和 GLM[200k] 同样 env 下显示一致
-4. **改 env 不需要重启 Claude Code 客户端** —— 实验中 ACW 改动立即生效
+4. **改 env 需要重启 Claude Code 客户端** -- Claude Code 进程启动时读 settings.json 的 env 注入到进程环境，运行中切换模型不会重读。实测（v2.1.214）：同一会话内 `/model` 切换后 `/context` 仍显示旧窗口值；退出后 `claude --resume` 恢复会话（新进程）才读到新值。早期"立即生效"的结论已修正。
 
 ### 2.2 触发器
 
