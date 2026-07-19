@@ -932,9 +932,10 @@ fn ensure_tool_call_reasoning_content(message: &mut Value) {
 /// 2. user 等回合边界消息到达时 pending_reasoning 非空——reasoning 不允许
 ///    跨 user 回合泄漏到之后的 assistant 消息，也不能直接丢弃可归属的思考。
 ///
-/// 守卫：目标消息已有非空 reasoning_content 时不再追加，避免把新一轮思考
-/// 拼进旧消息造成交叉污染。无论是否附挂成功，pending 都会被消费（拿走），
-/// 绝不留到下一条 assistant。
+/// 这里已经处于尾部/边界收尾点，不是普通 reasoning 的前向归属路径；
+/// 若目标已有 reasoning_content，追加尾部 reasoning 以保留同一 assistant turn
+/// 中同时出现的 embedded reasoning 与尾随 reasoning。无论是否附挂成功，
+/// pending 都会被消费（拿走），绝不留到下一条 assistant。
 fn attach_pending_reasoning_to_previous_assistant(
     messages: &mut [Value],
     last_assistant_index: Option<usize>,
@@ -953,14 +954,6 @@ fn attach_pending_reasoning_to_previous_assistant(
     if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
         return;
     }
-    let already_has_reasoning = message
-        .get("reasoning_content")
-        .and_then(|v| v.as_str())
-        .is_some_and(|text| !text.trim().is_empty());
-    if already_has_reasoning {
-        return;
-    }
-
     if let Some(obj) = message.as_object_mut() {
         append_reasoning_content(obj, reasoning);
     }
@@ -2567,6 +2560,44 @@ mod tests {
             messages[0]["reasoning_content"],
             "I need to preserve thinking history."
         );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_trailing_reasoning_after_embedded_reasoning() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "reasoning_content": "Embedded thought.",
+                    "content": "Done."
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "Trailing thought."}
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Continue"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "Done.");
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "Embedded thought.\n\nTrailing thought."
+        );
+        assert_eq!(messages[1]["role"], "user");
+        assert!(messages[1].get("reasoning_content").is_none());
     }
 
     #[test]
