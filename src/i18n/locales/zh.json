@@ -1133,7 +1133,7 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
     "modelMappingLabel": "模型映射",
-    "modelMappingHint": "显示名称只影响 /model 菜单；上下文长度声明模型支持的最大上下文窗口（如 1M、200K、128K），留空使用默认值。",
+    "modelMappingHint": "显示名称只影响 /model 菜单；上下文长度声明模型支持的最大上下文窗口（如 1M、200K、500000、[30k]、1.5M 等），留空使用默认值。",
     "modelRoleLabel": "模型角色",
     "modelRoleSonnet": "Sonnet",
     "modelRoleOpus": "Opus",
