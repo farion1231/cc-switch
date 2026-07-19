@@ -257,7 +257,11 @@ export function ClaudeFormFields({
     isXaiOauthPreset ? false : hasAnyAdvancedValue,
   );
   // 自动同步上下文窗口开关
-  const autoSyncContextWindow = (() => {
+  // 用 local state 而非直接从 settingsConfig 派生：父组件用 form.setValue
+  // 更新 settingsConfig，但 react-hook-form 的 setValue 默认不触发 re-render，
+  // 直接派生会导致 Switch 点击后 checked 不更新（看起来"不能切换"）。
+  // local state 立即响应点击，useEffect 在 settingsConfig 外部变化时同步。
+  const [autoSyncContextWindow, setAutoSyncContextWindow] = useState(() => {
     if (!settingsConfig) return true;
     try {
       const parsed = JSON.parse(settingsConfig);
@@ -267,10 +271,27 @@ export function ClaudeFormFields({
     } catch {
       return true;
     }
-  })();
+  });
+
+  useEffect(() => {
+    if (!settingsConfig) {
+      setAutoSyncContextWindow(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(settingsConfig);
+      setAutoSyncContextWindow(
+        (parsed as Record<string, unknown>).autoSyncContextWindow !== false,
+      );
+    } catch {
+      setAutoSyncContextWindow(true);
+    }
+  }, [settingsConfig]);
 
   const handleAutoSyncChange = useCallback(
     (checked: boolean) => {
+      // 立即更新 local state，让 Switch 视觉响应
+      setAutoSyncContextWindow(checked);
       if (!onSettingsConfigChange) return;
       try {
         const parsed = settingsConfig ? JSON.parse(settingsConfig) : {};
@@ -1114,11 +1135,19 @@ export function ClaudeFormFields({
                   <TooltipTrigger asChild>
                     <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                   </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs">
+                  <TooltipContent
+                    side="top"
+                    align="center"
+                    sideOffset={4}
+                    collisionPadding={8}
+                    sticky="always"
+                    hideWhenDetached
+                    className="max-w-xs"
+                  >
                     <p className="text-xs leading-relaxed">
                       {t("providerForm.autoSyncContextWindowTooltip", {
                         defaultValue:
-                          "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。",
+                          "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。",
                       })}
                     </p>
                   </TooltipContent>
