@@ -19,6 +19,81 @@ fn settings_path(home: &Path) -> PathBuf {
     home.join(".cc-switch").join("settings.json")
 }
 
+fn grokbuild_config(name: &str, endpoint: &str, api_key: &str) -> String {
+    format!(
+        r#"[models]
+default = "grok-4.5"
+
+[model."grok-4.5"]
+model = "grok-4.5"
+base_url = "{endpoint}"
+name = "{name}"
+api_key = "{api_key}"
+api_backend = "responses"
+context_window = 500000
+"#
+    )
+}
+
+#[test]
+fn grokbuild_import_and_switch_write_live_config() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let live_path = home.join(".grok").join("config.toml");
+    std::fs::create_dir_all(live_path.parent().expect("grok config dir"))
+        .expect("create grok config dir");
+    let imported_config = grokbuild_config("Imported", "https://old.example/v1", "old-key");
+    std::fs::write(&live_path, &imported_config).expect("seed Grok Build config");
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::GrokBuild)
+        .expect("import Grok Build default provider");
+
+    let imported = state
+        .db
+        .get_provider_by_id("default", AppType::GrokBuild.as_str())
+        .expect("query imported provider")
+        .expect("imported provider exists");
+    assert_eq!(
+        imported
+            .settings_config
+            .get("config")
+            .and_then(|value| value.as_str()),
+        Some(imported_config.as_str())
+    );
+
+    let next_config = grokbuild_config("Relay", "https://new.example/v1", "new-key");
+    state
+        .db
+        .save_provider(
+            AppType::GrokBuild.as_str(),
+            &Provider::with_id(
+                "relay".to_string(),
+                "Relay".to_string(),
+                json!({ "config": next_config }),
+                None,
+            ),
+        )
+        .expect("save second Grok Build provider");
+
+    switch_provider_test_hook(&state, AppType::GrokBuild, "relay")
+        .expect("switch Grok Build provider");
+
+    assert_eq!(
+        std::fs::read_to_string(&live_path).expect("read switched Grok Build config"),
+        next_config
+    );
+    assert_eq!(
+        state
+            .db
+            .get_current_provider(AppType::GrokBuild.as_str())
+            .expect("read Grok Build current provider")
+            .as_deref(),
+        Some("relay")
+    );
+}
+
 #[test]
 fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
     let _guard = test_mutex().lock().expect("acquire test mutex");
@@ -300,6 +375,7 @@ command = "say"
                 claude: false,
                 codex: true, // 启用 Codex
                 gemini: false,
+                grokbuild: false,
                 opencode: false,
                 hermes: false,
             },
