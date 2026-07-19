@@ -192,6 +192,34 @@ describe("parseModelSuffix", () => {
       window: undefined,
     });
   });
+
+  it("parses lowercase [1m]", () => {
+    expect(parseModelSuffix("model[1m]")).toEqual({
+      slug: "model",
+      window: 1000000,
+    });
+  });
+
+  it("parses [128k] suffix", () => {
+    expect(parseModelSuffix("model[128k]")).toEqual({
+      slug: "model",
+      window: 128000,
+    });
+  });
+
+  it("rejects [0] as invalid window", () => {
+    expect(parseModelSuffix("model[0]")).toEqual({
+      slug: "model[0]",
+      window: undefined,
+    });
+  });
+
+  it("parses [1.5m] decimal as 1500000", () => {
+    expect(parseModelSuffix("model[1.5m]")).toEqual({
+      slug: "model",
+      window: 1500000,
+    });
+  });
 });
 
 describe("setModelSuffix", () => {
@@ -205,6 +233,68 @@ describe("setModelSuffix", () => {
 
   it("replaces existing suffix", () => {
     expect(setModelSuffix("model[1m]", "200K")).toBe("model[200k]");
+  });
+
+  it("writes lowercase [200k] from 200K", () => {
+    expect(setModelSuffix("model", "200K")).toBe("model[200k]");
+  });
+
+  it("writes lowercase [128k] from 128K", () => {
+    expect(setModelSuffix("model", "128K")).toBe("model[128k]");
+  });
+
+  it("writes pure number [1000000]", () => {
+    expect(setModelSuffix("model", "1000000")).toBe("model[1000000]");
+  });
+
+  it("returns empty string for empty base", () => {
+    expect(setModelSuffix("", "1M")).toBe("");
+  });
+
+  it("returns base unchanged for invalid input abc", () => {
+    expect(setModelSuffix("model", "abc")).toBe("model");
+  });
+
+  it("returns base unchanged for unsupported unit 1G", () => {
+    expect(setModelSuffix("model", "1G")).toBe("model");
+  });
+});
+
+describe("setModelSuffix - 多元化输入", () => {
+  it("accepts input with brackets [30k]", () => {
+    expect(setModelSuffix("model", "[30k]")).toBe("model[30k]");
+  });
+
+  it("accepts input with trailing bracket [30", () => {
+    expect(setModelSuffix("model", "[30")).toBe("model[30]");
+  });
+
+  it("accepts input with leading bracket 30k]", () => {
+    expect(setModelSuffix("model", "30k]")).toBe("model[30k]");
+  });
+
+  it("accepts comma-separated number 1,000,000", () => {
+    expect(setModelSuffix("model", "1,000,000")).toBe("model[1000000]");
+  });
+
+  it("accepts underscore-separated number 1_000_000", () => {
+    expect(setModelSuffix("model", "1_000_000")).toBe("model[1000000]");
+  });
+
+  it("accepts space-separated \"1 000 000\"", () => {
+    expect(setModelSuffix("model", "1 000 000")).toBe("model[1000000]");
+  });
+
+  it("accepts decimal 1.5M as 1500000", () => {
+    expect(setModelSuffix("model", "1.5M")).toBe("model[1500000]");
+  });
+
+  it("accepts decimal 0.5M as 500000", () => {
+    expect(setModelSuffix("model", "0.5M")).toBe("model[500000]");
+  });
+
+  it("accepts mixed input [1,000k]", () => {
+    expect(setModelSuffix("model", "[1,000k]")).toBe("model[1000k]");
   });
 });
 
