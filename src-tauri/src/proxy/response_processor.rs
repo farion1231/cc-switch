@@ -204,6 +204,405 @@ pub async fn handle_streaming(
     }
 }
 
+/// Normalize a native Responses SSE response into the canonical shape Codex
+/// expects before it reaches the regular streaming handler.
+fn normalize_codex_responses_streaming_response(response: ProxyResponse) -> ProxyResponse {
+    let status = response.status();
+    if let Some(encoding) = get_content_encoding(response.headers()) {
+        log::warn!(
+            "Codex Responses SSE response has content-encoding={encoding}; skipping SSE normalization"
+        );
+        return response;
+    }
+
+    let mut headers = response.headers().clone();
+    strip_entity_headers_for_rebuilt_body(&mut headers);
+    let stream = normalize_codex_responses_sse_stream(response.bytes_stream());
+    ProxyResponse::streamed(status, headers, stream)
+}
+
+fn normalize_codex_responses_sse_stream(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    async_stream::stream! {
+        let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut stats = ResponsesSseNormalizationStats::default();
+
+        tokio::pin!(stream);
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    while let Some(block) = take_codex_responses_sse_block(&mut buffer) {
+                        for bytes in normalize_codex_responses_sse_block_to_bytes(&block, &mut stats) {
+                            yield Ok(bytes);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let flushed_blocks =
+                        flush_codex_responses_sse_buffer(&mut buffer, &mut utf8_remainder, &mut stats);
+                    let flushed_count = flushed_blocks.len();
+                    for bytes in flushed_blocks {
+                        yield Ok(bytes);
+                    }
+                    log::warn!(
+                        "Codex Responses SSE stream errored; flushed_blocks={}, blocks_seen={}, saw_completed={}, last_event_type={}, error={}",
+                        flushed_count,
+                        stats.blocks_seen,
+                        stats.saw_completed,
+                        stats.last_event_type.as_deref().unwrap_or("<none>"),
+                        e
+                    );
+                    yield Err(e);
+                    return;
+                }
+            }
+        }
+
+        for bytes in flush_codex_responses_sse_buffer(&mut buffer, &mut utf8_remainder, &mut stats) {
+            yield Ok(bytes);
+        }
+
+        if stats.saw_completed {
+            log::debug!(
+                "Codex Responses SSE stream completed; blocks_seen={}, last_event_type={}, event_sample={}",
+                stats.blocks_seen,
+                stats.last_event_type.as_deref().unwrap_or("<none>"),
+                stats.event_sample.join(",")
+            );
+        } else {
+            log::warn!(
+                "Codex Responses SSE stream ended before response.completed; blocks_seen={}, last_event_type={}, event_sample={}",
+                stats.blocks_seen,
+                stats.last_event_type.as_deref().unwrap_or("<none>"),
+                stats.event_sample.join(",")
+            );
+        }
+    }
+}
+
+#[derive(Default)]
+struct ResponsesSseNormalizationStats {
+    saw_completed: bool,
+    last_event_type: Option<String>,
+    blocks_seen: usize,
+    event_sample: Vec<String>,
+}
+
+impl ResponsesSseNormalizationStats {
+    fn record(&mut self, event_type: Option<&str>) {
+        if let Some(event_type) = event_type.filter(|name| is_safe_sse_event_name(name)) {
+            self.saw_completed |= event_type == "response.completed";
+            self.last_event_type = Some(event_type.to_string());
+            if self.event_sample.len() < 12 {
+                self.event_sample.push(event_type.to_string());
+            }
+        }
+        self.blocks_seen += 1;
+    }
+}
+
+struct NormalizedResponsesSseBlock {
+    text: String,
+    event_type: Option<String>,
+}
+
+fn normalize_codex_responses_sse_block_to_bytes(
+    block: &str,
+    stats: &mut ResponsesSseNormalizationStats,
+) -> Vec<Bytes> {
+    normalize_codex_responses_sse_block(block)
+        .into_iter()
+        .map(|normalized| {
+            stats.record(normalized.event_type.as_deref());
+            Bytes::from(normalized.text)
+        })
+        .collect()
+}
+
+fn flush_codex_responses_sse_buffer(
+    buffer: &mut String,
+    utf8_remainder: &mut Vec<u8>,
+    stats: &mut ResponsesSseNormalizationStats,
+) -> Vec<Bytes> {
+    if !utf8_remainder.is_empty() {
+        buffer.push_str(&String::from_utf8_lossy(utf8_remainder));
+        utf8_remainder.clear();
+    }
+    if buffer.is_empty() {
+        return Vec::new();
+    }
+
+    let block = std::mem::take(buffer);
+    normalize_codex_responses_sse_block_to_bytes(&block, stats)
+}
+
+fn take_codex_responses_sse_block(buffer: &mut String) -> Option<String> {
+    if let Some(block) = take_sse_block(buffer) {
+        return Some(block);
+    }
+
+    take_concatenated_responses_sse_block(buffer)
+}
+
+fn take_concatenated_responses_sse_block(buffer: &mut String) -> Option<String> {
+    let mut current_has_data = false;
+    let mut current_data_lines = Vec::new();
+    let mut line_start = 0usize;
+    let mut emit_end = None;
+
+    for (idx, ch) in buffer.char_indices() {
+        if ch != '\n' {
+            continue;
+        }
+
+        let line_end = idx + ch.len_utf8();
+        let line = buffer[line_start..idx].trim_end_matches('\r').trim_start();
+
+        if line_start > 0 && current_has_data && strip_sse_field(line, "event").is_some() {
+            emit_end = Some(line_start);
+            break;
+        }
+
+        if let Some(data) = strip_sse_field(line, "data") {
+            if line_start > 0 && current_has_data && data.trim() == "[DONE]" {
+                emit_end = Some(line_start);
+                break;
+            }
+            if line_start > 0
+                && current_has_data
+                && data_line_has_response_type(data)
+                // If the accumulated lines are complete JSON payloads, the new
+                // response.* payload is the next event even when the previous
+                // gateway-wrapped event forgot its own data.type.
+                && (data_lines_have_response_type(&current_data_lines)
+                    || data_lines_are_individual_json_values(&current_data_lines))
+            {
+                emit_end = Some(line_start);
+                break;
+            }
+
+            current_has_data = true;
+            current_data_lines.push(data.to_string());
+            if data.trim() == "[DONE]" {
+                emit_end = Some(line_end);
+                break;
+            }
+        }
+
+        line_start = line_end;
+    }
+
+    let emit_end = emit_end?;
+    let block = buffer[..emit_end]
+        .trim_end_matches(&['\r', '\n'][..])
+        .to_string();
+    buffer.drain(..emit_end);
+    Some(block)
+}
+
+fn normalize_codex_responses_sse_block(block: &str) -> Vec<NormalizedResponsesSseBlock> {
+    let mut event_name: Option<String> = None;
+    let mut data_lines = Vec::new();
+    let mut data_line_events = Vec::new();
+    let mut passthrough_lines = Vec::new();
+
+    for line in block.lines() {
+        let line = line.trim_start();
+        if let Some(evt) = strip_sse_field(line, "event") {
+            let evt = evt.trim();
+            // Per the SSE field rules, an empty event value resets the event
+            // name instead of inheriting an earlier field from the same block.
+            event_name = (!evt.is_empty()).then(|| evt.to_string());
+        } else if let Some(data) = strip_sse_field(line, "data") {
+            data_lines.push(data);
+            data_line_events.push(event_name.clone());
+        } else {
+            passthrough_lines.push(line.to_string());
+        }
+    }
+
+    if data_lines.is_empty() {
+        return vec![NormalizedResponsesSseBlock {
+            text: format!("{block}\n\n"),
+            event_type: event_name,
+        }];
+    }
+
+    let data = data_lines.join("\n");
+    if data.trim() == "[DONE]" {
+        return vec![NormalizedResponsesSseBlock {
+            text: format!("{block}\n\n"),
+            event_type: event_name,
+        }];
+    }
+
+    let mut value = match serde_json::from_str::<Value>(&data) {
+        Ok(value) => value,
+        Err(_) if data_lines.len() > 1 => {
+            if !has_responses_sse_boundary_hint(&data_lines, &data_line_events) {
+                return vec![NormalizedResponsesSseBlock {
+                    text: format!("{block}\n\n"),
+                    event_type: event_name,
+                }];
+            }
+
+            // Some gateways omit the blank line between Responses SSE events,
+            // which makes several complete JSON payloads look like one block.
+            let mut split_blocks = Vec::new();
+            for (data_line, line_event_name) in data_lines.into_iter().zip(data_line_events) {
+                let event_name = if data_line_has_response_type(data_line) {
+                    None
+                } else {
+                    line_event_name.as_deref()
+                };
+                let single_block = build_sse_block(&passthrough_lines, event_name, data_line);
+                let mut normalized = normalize_codex_responses_sse_block(&single_block);
+                split_blocks.append(&mut normalized);
+            }
+            return split_blocks;
+        }
+        Err(_) => {
+            return vec![NormalizedResponsesSseBlock {
+                text: format!("{block}\n\n"),
+                event_type: event_name,
+            }];
+        }
+    };
+    let Some(object) = value.as_object_mut() else {
+        return vec![NormalizedResponsesSseBlock {
+            text: format!("{block}\n\n"),
+            event_type: event_name,
+        }];
+    };
+
+    let data_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|ty| !ty.is_empty())
+        .map(ToString::to_string);
+
+    // Canonical Responses events are already safe to forward verbatim. This
+    // keeps field order/formatting intact and avoids serializing every delta.
+    if event_name.as_deref() == data_type.as_deref()
+        && data_type.as_deref().is_some_and(is_responses_event_type)
+        && data_lines.len() == 1
+    {
+        return vec![NormalizedResponsesSseBlock {
+            text: format!("{block}\n\n"),
+            event_type: data_type,
+        }];
+    }
+
+    // Prefer payload type when present; malformed gateways can leave a stale
+    // `event:` value attached to a later Responses payload.
+    let event_type = match (event_name.as_deref(), data_type.as_deref()) {
+        (_, Some(data)) if is_responses_event_type(data) => Some(data.to_string()),
+        // A non-Responses payload type is a different event shape; do not
+        // rewrite it just because the SSE event field is stale.
+        (Some(event), Some(_)) if is_responses_event_type(event) => {
+            return vec![NormalizedResponsesSseBlock {
+                text: format!("{block}\n\n"),
+                event_type: data_type,
+            }];
+        }
+        (Some(event), _) if is_responses_event_type(event) => Some(event.to_string()),
+        (Some(event), _) => Some(event.to_string()),
+        _ => data_type.clone(),
+    };
+
+    let Some(event_type) = event_type.filter(|name| is_responses_event_type(name)) else {
+        return vec![NormalizedResponsesSseBlock {
+            text: format!("{block}\n\n"),
+            event_type: data_type,
+        }];
+    };
+
+    let mut normalized = std::mem::take(object);
+    normalized.insert("type".to_string(), Value::String(event_type.clone()));
+    value = Value::Object(normalized);
+
+    let normalized_data = match serde_json::to_string(&value) {
+        Ok(data) => data,
+        Err(_) => {
+            return vec![NormalizedResponsesSseBlock {
+                text: format!("{block}\n\n"),
+                event_type: Some(event_type),
+            }];
+        }
+    };
+
+    let mut out = Vec::new();
+    out.append(&mut passthrough_lines);
+    out.push(format!("event: {event_type}"));
+    out.push(format!("data: {normalized_data}"));
+
+    vec![NormalizedResponsesSseBlock {
+        text: format!("{}\n\n", out.join("\n")),
+        event_type: Some(event_type),
+    }]
+}
+
+fn has_responses_sse_boundary_hint(
+    data_lines: &[&str],
+    data_line_events: &[Option<String>],
+) -> bool {
+    data_lines
+        .iter()
+        .zip(data_line_events)
+        .any(|(data, event_name)| {
+            data_line_has_response_type(data)
+                || event_name.as_deref().is_some_and(is_responses_event_type)
+        })
+}
+
+fn data_line_has_response_type(data: &str) -> bool {
+    serde_json::from_str::<Value>(data)
+        .ok()
+        .is_some_and(|value| {
+            value
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(is_responses_event_type)
+        })
+}
+
+fn is_responses_event_type(event_type: &str) -> bool {
+    event_type
+        .strip_prefix("response.")
+        .is_some_and(|suffix| !suffix.is_empty() && is_safe_sse_event_name(event_type))
+}
+
+fn is_safe_sse_event_name(event_name: &str) -> bool {
+    !event_name.is_empty()
+        && event_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn data_lines_have_response_type(data_lines: &[String]) -> bool {
+    !data_lines.is_empty() && data_line_has_response_type(&data_lines.join("\n"))
+}
+
+fn data_lines_are_individual_json_values(data_lines: &[String]) -> bool {
+    !data_lines.is_empty()
+        && data_lines
+            .iter()
+            .all(|data| serde_json::from_str::<Value>(data).is_ok())
+}
+
+fn build_sse_block(passthrough_lines: &[String], event_name: Option<&str>, data: &str) -> String {
+    let mut out = passthrough_lines.to_vec();
+    if let Some(event_name) = event_name {
+        out.push(format!("event: {event_name}"));
+    }
+    out.push(format!("data: {data}"));
+    out.join("\n")
+}
+
 /// 处理非流式响应
 pub async fn handle_non_streaming(
     response: ProxyResponse,
@@ -326,6 +725,22 @@ pub async fn process_response(
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
     if is_sse_response(&response) {
+        Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
+    } else {
+        handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
+    }
+}
+
+/// Codex `/v1/responses` response path with Responses SSE compatibility repair.
+pub async fn process_codex_responses_response(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    parser_config: &UsageParserConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+) -> Result<Response, ProxyError> {
+    if is_sse_response(&response) {
+        let response = normalize_codex_responses_streaming_response(response);
         Ok(handle_streaming(response, ctx, state, parser_config, connection_guard).await)
     } else {
         handle_non_streaming(response, ctx, state, parser_config, connection_guard).await
@@ -826,6 +1241,373 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    fn normalize_single_codex_responses_sse_block(input: &str) -> NormalizedResponsesSseBlock {
+        let mut output = normalize_codex_responses_sse_block(input);
+        assert_eq!(output.len(), 1);
+        output.remove(0)
+    }
+
+    #[test]
+    fn normalizes_wrapped_openai_responses_sse_event() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type.as_deref(), Some("response.created"));
+        assert!(output.text.contains("event: response.created\n"));
+        assert!(output.text.contains("\"type\":\"response.created\""));
+        assert!(output.text.contains("\"response\":{\"id\":\"resp_1\"}"));
+    }
+
+    #[test]
+    fn keeps_already_typed_openai_responses_sse_event() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: { \"response\": {\"id\":\"resp_1\"}, \"type\": \"response.created\" }"
+        );
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type.as_deref(), Some("response.created"));
+        assert_eq!(
+            output.text,
+            concat!(
+                "event: response.created\n",
+                "data: { \"response\": {\"id\":\"resp_1\"}, \"type\": \"response.created\" }\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn empty_event_field_clears_stale_response_event_name() {
+        let input = concat!(
+            "event: response.created\n",
+            "event:\n",
+            "data: {\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type, None);
+        assert_eq!(output.text, format!("{input}\n\n"));
+    }
+
+    #[test]
+    fn keeps_done_marker_unchanged() {
+        let input = "event: done\ndata: [DONE]";
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type.as_deref(), Some("done"));
+        assert_eq!(output.text, "event: done\ndata: [DONE]\n\n");
+    }
+
+    #[test]
+    fn adds_missing_event_field_from_data_type() {
+        let input = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}";
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type.as_deref(), Some("response.completed"));
+        assert_eq!(
+            output.text,
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn prefers_response_data_type_when_event_field_disagrees() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type.as_deref(), Some("response.completed"));
+        assert_eq!(
+            output.text,
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn preserves_non_response_payload_type_when_event_field_disagrees() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"error\",\"error\":{\"message\":\"upstream failed\"}}"
+        );
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.event_type.as_deref(), Some("error"));
+        assert_eq!(
+            output.text,
+            concat!(
+                "event: response.created\n",
+                "data: {\"type\":\"error\",\"error\":{\"message\":\"upstream failed\"}}\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn does_not_promote_unsafe_payload_type_to_sse_event() {
+        let input = concat!(
+            "data: {\"type\":\"response.completed\\nevent: response.created\",",
+            "\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_single_codex_responses_sse_block(input);
+
+        assert_eq!(output.text, format!("{input}\n\n"));
+        assert!(!output
+            .text
+            .lines()
+            .any(|line| line == "event: response.completed"));
+    }
+
+    #[test]
+    fn splits_multiple_json_data_lines_when_joined_data_is_not_json() {
+        let input = concat!(
+            "data: {\"response\":{\"id\":\"resp_1\"}}\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_codex_responses_sse_block(input);
+
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0].event_type.as_deref(), None);
+        assert_eq!(output[1].event_type.as_deref(), Some("response.completed"));
+        assert_eq!(
+            output[1].text,
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn preserves_non_json_multi_line_non_responses_sse_event() {
+        let input = concat!("event: ping\n", "data: first line\n", "data: second line");
+
+        let output = normalize_codex_responses_sse_block(input);
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].event_type.as_deref(), Some("ping"));
+        assert_eq!(
+            output[0].text,
+            "event: ping\ndata: first line\ndata: second line\n\n"
+        );
+    }
+
+    #[test]
+    fn split_data_line_keeps_its_own_response_type_over_shared_event() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"response\":{\"id\":\"resp_1\"}}\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_codex_responses_sse_block(input);
+
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0].event_type.as_deref(), Some("response.created"));
+        assert_eq!(output[1].event_type.as_deref(), Some("response.completed"));
+        assert_eq!(
+            output[1].text,
+            concat!(
+                "event: response.completed\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            )
+        );
+    }
+
+    #[test]
+    fn split_data_line_uses_each_preceding_event_when_type_is_missing() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"response\":{\"id\":\"resp_1\"}}\n",
+            "event: response.completed\n",
+            "data: {\"response\":{\"id\":\"resp_1\"}}"
+        );
+
+        let output = normalize_codex_responses_sse_block(input);
+
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0].event_type.as_deref(), Some("response.created"));
+        assert_eq!(output[1].event_type.as_deref(), Some("response.completed"));
+        assert_eq!(
+            output[0].text,
+            concat!(
+                "event: response.created\n",
+                "data: {\"response\":{\"id\":\"resp_1\"},\"type\":\"response.created\"}\n\n"
+            )
+        );
+        assert_eq!(
+            output[1].text,
+            concat!(
+                "event: response.completed\n",
+                "data: {\"response\":{\"id\":\"resp_1\"},\"type\":\"response.completed\"}\n\n"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn flushes_buffered_responses_event_before_stream_error() {
+        let stream = futures::stream::iter([
+            Ok(Bytes::from_static(
+                b"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}",
+            )),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "upstream reset",
+            )),
+        ]);
+        let mut stream = Box::pin(normalize_codex_responses_sse_stream(stream));
+
+        let first = stream
+            .next()
+            .await
+            .expect("buffered event")
+            .expect("event before error");
+        assert_eq!(
+            first,
+            Bytes::from_static(
+                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            )
+        );
+
+        let second = stream
+            .next()
+            .await
+            .expect("stream error")
+            .expect_err("upstream error should be propagated");
+        assert_eq!(second.kind(), std::io::ErrorKind::ConnectionReset);
+    }
+
+    #[tokio::test]
+    async fn emits_concatenated_responses_event_before_upstream_eof() {
+        let (tx, rx) = futures::channel::mpsc::unbounded::<Result<Bytes, std::io::Error>>();
+        let mut stream = Box::pin(normalize_codex_responses_sse_stream(rx));
+
+        tx.unbounded_send(Ok(Bytes::from(concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n",
+            "event: response.in_progress\n"
+        ))))
+        .unwrap();
+
+        let first = tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
+            .await
+            .expect("concatenated event should be emitted before upstream EOF")
+            .expect("stream item")
+            .expect("stream error");
+
+        assert_eq!(
+            first,
+            Bytes::from(concat!(
+                "event: response.created\n",
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_untyped_concatenated_responses_event_before_upstream_eof() {
+        let (tx, rx) = futures::channel::mpsc::unbounded::<Result<Bytes, std::io::Error>>();
+        let mut stream = Box::pin(normalize_codex_responses_sse_stream(rx));
+
+        tx.unbounded_send(Ok(Bytes::from(concat!(
+            "event: response.created\n",
+            "data: {\"response\":{\"id\":\"resp_1\"}}\n",
+            "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_1\"}}\n"
+        ))))
+        .unwrap();
+
+        let first = tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
+            .await
+            .expect("untyped concatenated event should be emitted before upstream EOF")
+            .expect("stream item")
+            .expect("stream error");
+
+        assert_eq!(
+            first,
+            Bytes::from(concat!(
+                "event: response.created\n",
+                "data: {\"response\":{\"id\":\"resp_1\"},\"type\":\"response.created\"}\n\n"
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_data_only_concatenated_responses_event_before_upstream_eof() {
+        let (tx, rx) = futures::channel::mpsc::unbounded::<Result<Bytes, std::io::Error>>();
+        let mut stream = Box::pin(normalize_codex_responses_sse_stream(rx));
+
+        tx.unbounded_send(Ok(Bytes::from(concat!(
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n",
+            "data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_1\"}}\n"
+        ))))
+        .unwrap();
+
+        let first = tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
+            .await
+            .expect("data-only concatenated event should be emitted before upstream EOF")
+            .expect("stream item")
+            .expect("stream error");
+
+        assert_eq!(
+            first,
+            Bytes::from(concat!(
+                "event: response.created\n",
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn skips_codex_responses_sse_normalization_when_stream_is_encoded() {
+        let encoded_body = Bytes::from_static(&[0x1f, 0x8b, 0x08, 0x00]);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("text/event-stream"),
+        );
+        headers.insert(
+            axum::http::header::CONTENT_ENCODING,
+            axum::http::HeaderValue::from_static("gzip"),
+        );
+
+        let response = ProxyResponse::streamed(
+            http::StatusCode::OK,
+            headers,
+            futures::stream::once({
+                let encoded_body = encoded_body.clone();
+                async move { Ok(encoded_body) }
+            }),
+        );
+
+        let response = normalize_codex_responses_streaming_response(response);
+
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_ENCODING)
+                .and_then(|value| value.to_str().ok()),
+            Some("gzip")
+        );
+        assert_eq!(response.bytes().await.unwrap(), encoded_body);
+    }
 
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
