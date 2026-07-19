@@ -1144,7 +1144,7 @@
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
     "modelNoDisplayName": "不显示在 /model 菜单",
     "requestModelLabel": "实际请求模型",
-    "modelOneMHeader": "声明支持 1M",
+    "modelOneMHeader": "上下文长度",
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "默认兜底模型",
     "fallbackModelHint": "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
@@ -1171,7 +1171,7 @@
     "modelContextWindowLabel": "上下文长度",
     "modelContextWindowPlaceholder": "1M / 200K",
     "modelContextWindowHint": "?????????????????? 200K",
-    "autoSyncContextWindow": "自动同步",
+    "autoSyncContextWindow": "自动同步模型上下文长度",
     "autoSyncContextWindowTooltip": "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。"
   },
   "copilot": {
