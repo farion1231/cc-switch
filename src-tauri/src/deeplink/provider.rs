@@ -431,6 +431,7 @@ requires_openai_auth = true
                 Ok(doc) => doc,
                 Err(_) => return build_codex_settings_without_common(request, provider_config),
             };
+            strip_codex_deeplink_profile_routing(&mut common_doc);
             let provider_doc = provider_config
                 .parse::<toml_edit::DocumentMut>()
                 .expect("generated Codex provider config must be valid TOML");
@@ -471,6 +472,37 @@ fn extract_codex_common_config(request: &DeepLinkImportRequest) -> Option<String
     let decoded = decode_base64_param("config", config_b64).ok()?;
     let config: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
     ProviderService::extract_common_config_snippet_from_settings(AppType::Codex, &config).ok()
+}
+
+fn strip_codex_deeplink_profile_routing(doc: &mut toml_edit::DocumentMut) {
+    const PROVIDER_SPECIFIC_FIELDS: &[&str] = &[
+        "model_provider",
+        "model",
+        "base_url",
+        "wire_api",
+        "experimental_bearer_token",
+        "model_catalog_json",
+    ];
+
+    let Some(profiles) = doc
+        .get_mut("profiles")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return;
+    };
+
+    let profile_names: Vec<String> = profiles.iter().map(|(name, _)| name.to_string()).collect();
+    for profile_name in profile_names {
+        let Some(profile) = profiles
+            .get_mut(&profile_name)
+            .and_then(|item| item.as_table_like_mut())
+        else {
+            continue;
+        };
+        for field in PROVIDER_SPECIFIC_FIELDS {
+            profile.remove(field);
+        }
+    }
 }
 
 /// Build Gemini settings configuration

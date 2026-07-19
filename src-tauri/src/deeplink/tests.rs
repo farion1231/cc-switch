@@ -542,12 +542,27 @@ model = "old-model"
 model_catalog_json = "/tmp/stale-catalog.json"
 experimental_bearer_token = "sk-stale-top-level"
 web_search = "live"
+profile = "work"
 
 [features]
 standalone_web_search = true
 
 [tools.web_search]
 context_size = "high"
+
+[profiles.work]
+model_provider = "old"
+model = "old-profile-model"
+base_url = "https://profile-old.example/v1"
+wire_api = "chat"
+experimental_bearer_token = "sk-stale-profile"
+model_catalog_json = "/tmp/stale-profile-catalog.json"
+model_reasoning_effort = "medium"
+
+[profiles.later]
+model_provider = "old"
+model = "later-old-model"
+model_verbosity = "low"
 
 [model_providers.old]
 name = "Old"
@@ -597,6 +612,33 @@ command = "should-not-survive"
     );
     assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
     assert_eq!(parsed["model"].as_str(), Some("gpt-url-wins"));
+    assert_eq!(parsed["profile"].as_str(), Some("work"));
+    for profile_name in ["work", "later"] {
+        let profile = parsed["profiles"][profile_name]
+            .as_table()
+            .expect("profile settings must be preserved");
+        for field in [
+            "model_provider",
+            "model",
+            "base_url",
+            "wire_api",
+            "experimental_bearer_token",
+            "model_catalog_json",
+        ] {
+            assert!(
+                !profile.contains_key(field),
+                "profile {profile_name} must not retain {field}"
+            );
+        }
+    }
+    assert_eq!(
+        parsed["profiles"]["work"]["model_reasoning_effort"].as_str(),
+        Some("medium")
+    );
+    assert_eq!(
+        parsed["profiles"]["later"]["model_verbosity"].as_str(),
+        Some("low")
+    );
     assert_eq!(
         parsed["model_providers"]["custom"]["name"].as_str(),
         Some("Imported Provider")
