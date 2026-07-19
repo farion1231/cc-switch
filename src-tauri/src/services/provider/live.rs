@@ -163,7 +163,6 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
     }
 }
 
-
 /// Scan all ANTHROPIC_DEFAULT_*_MODEL / ANTHROPIC_MODEL suffixes and inject
 /// CLAUDE_CODE_MAX_CONTEXT_TOKENS + CLAUDE_CODE_AUTO_COMPACT_WINDOW from max(window).
 /// User explicit values always win; no suffix = no injection.
@@ -203,9 +202,11 @@ fn apply_context_window_defaults(settings: &mut Value, provider: &Provider) {
     };
 
     let max_str = max_window.to_string();
-    for key in ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"] {
-        let user_has_explicit = provider_env
-            .is_some_and(|e| e.contains_key(key));
+    for key in [
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    ] {
+        let user_has_explicit = provider_env.is_some_and(|e| e.contains_key(key));
         if !user_has_explicit && !env.contains_key(key) {
             env.insert(key.to_string(), Value::String(max_str.clone()));
         }
@@ -742,17 +743,20 @@ pub(crate) fn build_effective_settings_with_common_config(
         apply_context_window_defaults(&mut effective_settings, provider);
     }
 
-
     // 启动 settings.json 监听器，在后台自动同步 ACW/MAX 当用户 /model 切换时
     if matches!(app_type, AppType::Claude) {
         let settings_path = get_claude_settings_path();
         if settings_path.exists() {
             let provider_arc = std::sync::Arc::new(provider.clone());
-            if let Err(e) = crate::claude_settings_watcher::spawn_claude_settings_watcher(
+            match crate::claude_settings_watcher::spawn_claude_settings_watcher(
                 settings_path,
                 provider_arc,
             ) {
-                log::warn!("[ClaudeSettingsWatcher] spawn failed: {e}");
+                // Ok(watcher) 必须交给 replace_watcher 存进进程单例，
+                // 否则返回值在 match 表达式结束时被 Drop，notify 监听线程退出，
+                // /model 切换将无法同步 ACW/MAX（dev 测试暴露的根因）。
+                Ok(watcher) => crate::claude_settings_watcher::replace_watcher(watcher),
+                Err(e) => log::warn!("[ClaudeSettingsWatcher] spawn failed: {e}"),
             }
         }
     }
@@ -2727,8 +2731,12 @@ base_url = "https://a.example/v1"
         let effective =
             build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
                 .expect("build effective settings");
-        assert!(effective["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none());
-        assert!(effective["env"].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+            .is_none());
+        assert!(effective["env"]
+            .get("CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+            .is_none());
     }
 
     #[test]
