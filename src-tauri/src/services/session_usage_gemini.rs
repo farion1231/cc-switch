@@ -418,6 +418,7 @@ impl<'a> ProtoParser<'a> {
                 return Some(result);
             }
             shift += 7;
+            // Shift 达到 63 时最高位安全截断，防止后续 shift >= 64 时发生位移 Panic
             if shift >= 64 {
                 return None;
             }
@@ -445,11 +446,12 @@ impl<'a> ProtoParser<'a> {
                 }
                 2 => {
                     let length = self.decode_varint()? as usize;
-                    if self.offset + length > self.data.len() {
-                        return None;
-                    }
-                    let blob = &self.data[self.offset..self.offset + length];
-                    self.offset += length;
+                    let end = match self.offset.checked_add(length) {
+                        Some(end) if end <= self.data.len() => end,
+                        _ => return None,
+                    };
+                    let blob = &self.data[self.offset..end];
+                    self.offset = end;
                     return Some((field_num, ProtoValue::LengthDelimited(blob.to_vec())));
                 }
                 5 => {
@@ -549,16 +551,16 @@ fn sync_single_antigravity_db(db: &Database, db_path: &Path) -> Result<(u32, u32
     let metadata =
         fs::metadata(db_path).map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
-    let wal_path = db_path.with_extension("db-wal");
+    let db_path_str = db_path.to_string_lossy();
+    let wal_path = PathBuf::from(format!("{}-wal", db_path_str));
+    let shm_path = PathBuf::from(format!("{}-shm", db_path_str));
     if let Ok(wal_meta) = fs::metadata(&wal_path) {
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
-    let file_modified_secs = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0);
+    if let Ok(shm_meta) = fs::metadata(&shm_path) {
+        file_modified = file_modified.max(metadata_modified_nanos(&shm_meta));
+    }
+    let file_modified_secs = (file_modified / 1_000_000_000) as i64;
 
     let (last_modified, last_gen_idx) = get_sync_state(db, &file_path_str)?;
     if file_modified <= last_modified {

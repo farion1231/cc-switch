@@ -3296,7 +3296,7 @@ mod tests {
             assert_eq!(dirs.len(), 2);
         } else {
             assert_eq!(dirs.len(), 1);
-            assert!(dirs[0].to_string_lossy().ends_with(".gemini/skills"));
+            assert!(dirs[0].ends_with(std::path::Path::new(".gemini").join("skills")));
         }
     }
 

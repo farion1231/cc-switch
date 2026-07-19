@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::session_manager::{SessionMessage, SessionMeta};
 
-use super::utils::{parse_timestamp_to_ms, truncate_summary};
+use super::utils::{
+    parse_timestamp_to_ms, remove_dir_all_if_exists, remove_file_if_exists, truncate_summary,
+};
 
 const PROVIDER_ID: &str = "gemini";
 // Storage invariant: except for `tempmediaStorage` (temporary media cache),
@@ -262,13 +264,47 @@ fn antigravity_session_id_from_transcript(path: &Path) -> Option<String> {
 
 fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
     let session_id = antigravity_session_id_from_transcript(path)?;
-    let messages = load_antigravity_messages(path).ok()?;
-    let created_at = messages.iter().filter_map(|message| message.ts).min();
-    let last_active_at = messages.iter().filter_map(|message| message.ts).max();
-    let title = messages
-        .iter()
-        .find(|message| message.role == "user")
-        .map(|message| truncate_summary(&message.content, 160));
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    use std::io::BufRead;
+
+    // 设计取舍：流式读完文件以获取 100% 精确的最近消息时间戳进行列表排序，
+    // 免受操作系统文件修改时间（如Touch或文件复制）造成的乱序干扰。由于仅按需提取必要字段，开销极低。
+    let mut created_at: Option<i64> = None;
+    let mut last_active_at: Option<i64> = None;
+    let mut title: Option<String> = None;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        if let Some(ts) = value.get("ts").and_then(|v| v.as_i64()) {
+            if created_at.is_none() {
+                created_at = Some(ts);
+            }
+            last_active_at = Some(ts);
+        }
+
+        if title.is_none() {
+            let source = value.get("source").and_then(|v| v.as_str());
+            let message_type = value.get("type").and_then(|v| v.as_str());
+            if let (Some("USER_EXPLICIT"), Some("USER_INPUT")) = (source, message_type) {
+                let content = clean_antigravity_content(extract_antigravity_content(&value));
+                if !content.trim().is_empty() {
+                    title = Some(truncate_summary(&content, 160));
+                }
+            }
+        }
+    }
+
+    let last_active_at = last_active_at.or(created_at);
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -277,7 +313,7 @@ fn parse_antigravity_session(path: &Path) -> Option<SessionMeta> {
         summary: title,
         project_dir: None,
         created_at,
-        last_active_at: last_active_at.or(created_at),
+        last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("agy --conversation {session_id}")),
     })
@@ -369,28 +405,24 @@ fn delete_antigravity_session(root: &Path, path: &Path, session_id: &str) -> Res
     // brain directory as the final discovery entry. If an auxiliary deletion fails,
     // the session remains visible and the user can retry, matching OpenCode's
     // deletion ordering.
-    let conversation_base = root.join("conversations").join(session_id);
-    for suffix in ["db", "db-shm", "db-wal", "pb"] {
-        let file = conversation_base.with_extension(suffix);
-        if file.exists() {
-            std::fs::remove_file(&file).map_err(|e| {
-                format!(
-                    "Failed to delete Antigravity conversation file {}: {e}",
-                    file.display()
-                )
-            })?;
-        }
-    }
-
-    let brain_dir = root.join("brain").join(session_id);
-    if brain_dir.exists() {
-        std::fs::remove_dir_all(&brain_dir).map_err(|e| {
+    let conversation_base = root.join("conversations");
+    for suffix in ["db", "db-shm", "db-wal", "db-journal", "pb"] {
+        let file = conversation_base.join(format!("{session_id}.{suffix}"));
+        remove_file_if_exists(&file).map_err(|e| {
             format!(
-                "Failed to delete Antigravity brain directory {}: {e}",
-                brain_dir.display()
+                "Failed to delete Antigravity conversation file {}: {e}",
+                file.display()
             )
         })?;
     }
+
+    let brain_dir = root.join("brain").join(session_id);
+    remove_dir_all_if_exists(&brain_dir).map_err(|e| {
+        format!(
+            "Failed to delete Antigravity brain directory {}: {e}",
+            brain_dir.display()
+        )
+    })?;
 
     Ok(true)
 }
