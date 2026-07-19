@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -63,10 +64,7 @@ pub(crate) fn build_env_writes(window: u64) -> Vec<(&'static str, String)> {
 
 /// 检查新事件的 model 字段是否需要处理（与上次不同则处理）。
 /// 这是监听器防循环的核心逻辑：自己写 env 不改 model 字段 → 自动跳过。
-pub(crate) fn should_process(
-    state: &Mutex<Option<String>>,
-    new_model: Option<&str>,
-) -> bool {
+pub(crate) fn should_process(state: &Mutex<Option<String>>, new_model: Option<&str>) -> bool {
     let mut guard = state.lock().expect("settings watcher mutex poisoned");
     let new_model_owned = new_model.map(|s| s.to_string());
     if *guard == new_model_owned {
@@ -150,6 +148,29 @@ pub(crate) fn spawn_claude_settings_watcher(
     })
 }
 
+/// 进程级单例 slot，持有当前存活的 watcher。
+///
+/// production 路径下 spawn 出来的 watcher 必须存到这里，否则函数返回时
+/// 返回值被 Drop，notify 监听线程随之退出--这正是 dev 测试里 /model 切换
+/// 不更新 ACW/MAX 的根因。
+static WATCHER_SLOT: OnceLock<Mutex<Option<ClaudeSettingsWatcher>>> = OnceLock::new();
+
+fn watcher_slot() -> &'static Mutex<Option<ClaudeSettingsWatcher>> {
+    WATCHER_SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// 把新 watcher 存进进程级单例，旧的自动 Drop（停止监听）。
+///
+/// 调用方不需要持有返回的 watcher--这正是 production 路径需要的语义：
+/// spawn_claude_settings_watcher 的 Ok 返回值交给 replace_watcher，
+/// 由静态 slot 接管所有权，watcher 才能存活到进程退出或下次替换。
+pub fn replace_watcher(new: ClaudeSettingsWatcher) {
+    let mut guard = watcher_slot().lock().expect("watcher slot mutex poisoned");
+    // 旧 watcher 在赋值时自动 Drop：Drop 设 shutdown=true 并 drop debouncer，
+    // notify 监听线程随之停止。新 watcher 接管监听。
+    *guard = Some(new);
+}
+
 /// 处理一次 settings.json 变化
 fn handle_settings_change(
     path: &std::path::Path,
@@ -214,16 +235,14 @@ fn handle_settings_change(
     } else {
         log::info!(
             "[ClaudeSettingsWatcher] wrote ACW/MAX for model={} window={}",
-            active.model, active.window
+            active.model,
+            active.window
         );
     }
 }
 
 /// 原子地更新 settings.json 中 env 子对象的指定字段，其他字段全部保留
-fn update_env_fields(
-    content: &str,
-    writes: &[(&'static str, String)],
-) -> Result<String, String> {
+fn update_env_fields(content: &str, writes: &[(&'static str, String)]) -> Result<String, String> {
     let mut v: Value = serde_json::from_str(content).map_err(|e| e.to_string())?;
     if !v.is_object() {
         return Err("top-level not object".to_string());
@@ -244,11 +263,16 @@ fn update_env_fields(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
     use super::*;
+    use serde_json::json;
 
     fn make_provider(env: Value) -> Provider {
-        Provider::with_id("p".to_string(), "P".to_string(), json!({ "env": env }), None)
+        Provider::with_id(
+            "p".to_string(),
+            "P".to_string(),
+            json!({ "env": env }),
+            None,
+        )
     }
 
     // ========== Task 2: 角色映射测试 ==========
@@ -312,38 +336,50 @@ mod tests {
     #[test]
     fn build_writes_for_30k_window() {
         let writes = build_env_writes(30000);
-        assert_eq!(writes, vec![
-            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "24000".to_string()),
-            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "30000".to_string()),
-        ]);
+        assert_eq!(
+            writes,
+            vec![
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "24000".to_string()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "30000".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn build_writes_for_1m_window() {
         let writes = build_env_writes(1000000);
-        assert_eq!(writes, vec![
-            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "800000".to_string()),
-            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1000000".to_string()),
-        ]);
+        assert_eq!(
+            writes,
+            vec![
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "800000".to_string()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1000000".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn build_writes_for_200k_window() {
         let writes = build_env_writes(200000);
-        assert_eq!(writes, vec![
-            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "160000".to_string()),
-            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "200000".to_string()),
-        ]);
+        assert_eq!(
+            writes,
+            vec![
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "160000".to_string()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "200000".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn build_writes_for_1_token_boundary() {
         // 最小边界：1 token → ACW=0（×0.8 = 0.8，向下取整 = 0）
         let writes = build_env_writes(1);
-        assert_eq!(writes, vec![
-            ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "0".to_string()),
-            ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1".to_string()),
-        ]);
+        assert_eq!(
+            writes,
+            vec![
+                ("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "0".to_string()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1".to_string()),
+            ]
+        );
     }
 
     // ========== Task 4: 无效输入处理测试 ==========
@@ -462,7 +498,7 @@ mod tests {
     fn loop_model_to_none_to_same() {
         let state = Mutex::new(None);
         assert!(should_process(&state, Some("haiku")));
-        assert!(should_process(&state, None));       // model 被删
+        assert!(should_process(&state, None)); // model 被删
         assert!(should_process(&state, Some("haiku"))); // 重新出现
     }
 
@@ -638,5 +674,56 @@ mod tests {
         let result = spawn_claude_settings_watcher(path, provider);
         // 文件不存在 → 应该出错（watch 失败）
         assert!(result.is_err());
+    }
+    /// 回归测试：production 路径下 spawn 的 watcher 必须靠 replace_watcher 存活，
+    /// 不能因为返回值没绑定到局部变量就被 Drop。
+    ///
+    /// 修复前（直接 if-let-Err 丢弃 Ok 返回值）：watcher 构造完立即 Drop，
+    /// notify 线程退出，改文件后 ACW/MAX 不会被写入。
+    /// 修复后（spawn 的 Ok 交给 replace_watcher 存进进程单例）：watcher 存活，
+    /// 改 model 字段后 ACW/MAX 正确写入。
+    #[test]
+    fn fs_watcher_survives_via_replace_watcher_without_local_binding() {
+        use std::fs;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let initial = json!({
+            "model": "sonnet",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, initial.to_string()).unwrap();
+
+        let provider = Arc::new(make_provider(json!({
+            "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+        })));
+
+        // 模拟 production 调用：spawn 后立即存进进程单例，不保留局部绑定。
+        // spawned 在这里 move 进 replace_watcher，没有局部变量持有 watcher。
+        let spawned = spawn_claude_settings_watcher(path.clone(), provider).unwrap();
+        replace_watcher(spawned);
+
+        // 改 model 字段，模拟 Claude Code /model 切换 sonnet -> haiku
+        let new_content = json!({
+            "model": "haiku",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, new_content.to_string()).unwrap();
+
+        thread::sleep(Duration::from_millis(800));
+
+        let content = fs::read_to_string(&path).unwrap();
+        let v: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["model"], "haiku");
+        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
+        assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
     }
 }
