@@ -48,7 +48,7 @@
 **Files:**
 - Modify: `src-tauri/Cargo.toml`
 
-- [ ] **Step 1: 在 `[dependencies]` 加 notify-debouncer-mini**
+- [x] **Step 1: 在 `[dependencies]` 加 notify-debouncer-mini**
 
 在 `src-tauri/Cargo.toml` 找 `[dependencies]` 段，在 `serde_json` 下面加：
 
@@ -56,7 +56,7 @@
 notify-debouncer-mini = "0.4"
 ```
 
-- [ ] **Step 2: 在 `[dev-dependencies]` 加 tempfile**
+- [x] **Step 2: 在 `[dev-dependencies]` 加 tempfile**
 
 在 `src-tauri/Cargo.toml` 找 `[dev-dependencies]` 段（如果存在就在 `serial_test` 旁边加，没有就新建段），加：
 
@@ -64,12 +64,12 @@ notify-debouncer-mini = "0.4"
 tempfile = "3"
 ```
 
-- [ ] **Step 3: 验证编译**
+- [x] **Step 3: 验证编译**
 
 Run: `cd /Users/jarvis/Documents/cc-switch/cc-switch-main/src-tauri && cargo check`
 Expected: 编译成功，新依赖下载并链接，无 error
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Users/jarvis/Documents/cc-switch/cc-switch-main
@@ -434,7 +434,7 @@ git commit -m "feat(watcher): add env write builder for ACW/MAX"
 Run: `cd /Users/jarvis/Documents/cc-switch/cc-switch-main/src-tauri && cargo test --lib claude_settings_watcher::tests::resolve_returns_none`
 Expected: 11 个测试全部 PASS（之前的实现已经用 `?` 操作符和 `Option` 处理了所有无效输入，**不需要新代码**）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /Users/jarvis/Documents/cc-switch/cc-switch-main
@@ -971,7 +971,7 @@ pub mod claude_settings_watcher;
 
 **更优方案**（独立实施）：用 `OnceCell<ClaudeSettingsWatcher>` 在进程内单例化。本 task **先**接受多次启动的浪费，**后续** task 优化。
 
-- [ ] **Step 3: 验证编译**
+- [x] **Step 3: 验证编译**
 
 Run: `cd /Users/jarvis/Documents/cc-switch/cc-switch-main/src-tauri && cargo check`
 Expected: 编译成功，**无** warning（除非 `provider.id.strip_prefix` 链式有未使用返回值）
