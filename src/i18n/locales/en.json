@@ -1133,7 +1133,7 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "Optional: Specify default Claude model to use, leave blank to use system default.",
     "modelMappingLabel": "Model Mapping",
-    "modelMappingHint": "Display names only affect the /model menu; Context Length declares the model's max context window (e.g., 1M, 200K, 128K). Leave empty for default.",
+    "modelMappingHint": "Display names only affect the /model menu; Context Length declares the model's max context window (e.g., 1M, 200K, 500000, [30k], 1.5M, etc.). Leave empty for default.",
     "modelRoleLabel": "Model role",
     "modelRoleSonnet": "Sonnet",
     "modelRoleOpus": "Opus",
