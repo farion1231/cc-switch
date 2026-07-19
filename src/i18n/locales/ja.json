@@ -1172,7 +1172,7 @@
     "modelContextWindowPlaceholder": "1M / 200K",
     "modelContextWindowHint": "?????????????????????????????? 200K",
     "autoSyncContextWindow": "コンテキスト長自動同期",
-    "autoSyncContextWindowTooltip": "ターミナルでモデルを切り替える際、コンテキスト長と圧縮閾値が選択されたモデルに基づいて settings.json で更新されます。複数の claude ターミナルが異なるモデルを使用する場合、最後に切り替えたモデルのコンテキスト長がグローバル値として使用されます。"
+    "autoSyncContextWindowTooltip": "ターミナルでモデルを切り替える際、コンテキスト長と圧縮閾値が選択されたモデルに基づいて settings.json で更新されます。複数の claude ターミナルが異なるモデルを使用する場合、最後に切り替えたモデルのコンテキスト長がグローバル値として使用されます。変更を反映するには Claude Code を再起動（終了後 claude --resume でセッションを復元）してください。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 認証",

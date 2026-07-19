@@ -1172,7 +1172,7 @@
     "modelContextWindowPlaceholder": "1M / 200K",
     "modelContextWindowHint": "Declare model context window size; leave empty for default 200K",
     "autoSyncContextWindow": "Auto Sync Context Length",
-    "autoSyncContextWindowTooltip": "When switching models in the terminal, context length and compression threshold are updated in settings.json based on the selected model. With multiple Claude terminals using different models, the most recently switched model's context length is used as the global value."
+    "autoSyncContextWindowTooltip": "When switching models in the terminal, context length and compression threshold are updated in settings.json based on the selected model. With multiple Claude terminals using different models, the most recently switched model's context length is used as the global value. Restart Claude Code (exit then run `claude --resume`) for changes to take effect."
   },
   "copilot": {
     "authSection": "GitHub Copilot Authentication",
