@@ -195,4 +195,81 @@ describe("ClaudeFormFields", () => {
       "shared-model[1M]",
     );
   });
+
+  it("Subagent Provider 默认显示当前供应商，并支持选择其他供应商", () => {
+    const onSubagentRouteProviderIdChange = vi.fn();
+    renderCopilotForm({
+      subagentModel: "local-sub[1M]",
+      subagentRouteCandidates: [
+        { id: "provider-b", name: "Provider B" },
+        { id: "provider-c", name: "Provider C" },
+      ],
+      subagentRouteProviderId: "",
+      onSubagentRouteProviderIdChange,
+      resolvedSubagentRouteModel: "",
+    });
+
+    expect(
+      screen.getByText("By default, subagent requests use this provider", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+
+    // Open selector and pick a foreign provider
+    fireEvent.click(
+      screen.getByRole("combobox", { name: /Subagent Provider/i }),
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Provider B" }));
+    expect(onSubagentRouteProviderIdChange).toHaveBeenCalledWith("provider-b");
+  });
+
+  it("选择外部供应商时展示目标 Subagent 模型与接管说明", () => {
+    renderCopilotForm({
+      subagentModel: "local-sub",
+      subagentRouteCandidates: [{ id: "provider-b", name: "Provider B" }],
+      subagentRouteProviderId: "provider-b",
+      onSubagentRouteProviderIdChange: vi.fn(),
+      resolvedSubagentRouteModel: "target-subagent[1M]",
+    });
+
+    expect(
+      screen.getByText(/Target subagent model: target-subagent\[1M\]/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Claude local proxy takeover/i),
+    ).toBeInTheDocument();
+    // Must not leak secrets into route UI labels
+    expect(screen.queryByText(/sk-/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/api[_-]?key/i)).not.toBeInTheDocument();
+  });
+
+  it("目标供应商缺失时显示校验错误", () => {
+    renderCopilotForm({
+      subagentRouteCandidates: [],
+      subagentRouteProviderId: "deleted-provider",
+      onSubagentRouteProviderIdChange: vi.fn(),
+      resolvedSubagentRouteModel: "",
+      subagentRouteError:
+        "Selected subagent provider no longer exists. Choose another provider or Current provider.",
+    });
+
+    expect(screen.getByTestId("subagent-route-error")).toHaveTextContent(
+      /no longer exists/i,
+    );
+  });
+
+  it("目标供应商未配置 Subagent 模型时显示校验错误", () => {
+    renderCopilotForm({
+      subagentRouteCandidates: [{ id: "provider-b", name: "Provider B" }],
+      subagentRouteProviderId: "provider-b",
+      onSubagentRouteProviderIdChange: vi.fn(),
+      resolvedSubagentRouteModel: "",
+      subagentRouteError:
+        "The selected subagent provider has no Subagent model configured.",
+    });
+
+    expect(screen.getByTestId("subagent-route-error")).toHaveTextContent(
+      /no Subagent model configured/i,
+    );
+  });
 });

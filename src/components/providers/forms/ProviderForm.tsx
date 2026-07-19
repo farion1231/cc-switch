@@ -14,6 +14,7 @@ import {
 } from "@/lib/requestOverrides";
 import { providersApi, settingsApi, type AppId } from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { useProvidersQuery } from "@/lib/query/queries";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -59,6 +60,12 @@ import {
   hasApiKeyField,
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
+import {
+  applyClaudeSubagentRouteToMeta,
+  buildClaudeSubagentRouteMeta,
+  extractClaudeSubagentModel,
+  validateClaudeSubagentRoute,
+} from "@/utils/claudeSubagentRoute";
 import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
@@ -364,6 +371,9 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setSubagentRouteProviderId(
+      initialData?.meta?.claudeSubagentRoute?.providerId?.trim() ?? "",
+    );
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -542,6 +552,55 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  // Claude 子代理跨供应商路由目标（空字符串 = 当前供应商）
+  const [subagentRouteProviderId, setSubagentRouteProviderId] =
+    useState<string>(
+      () => initialData?.meta?.claudeSubagentRoute?.providerId?.trim() ?? "",
+    );
+  const { data: claudeProvidersData } = useProvidersQuery("claude");
+  const subagentRouteCandidates = useMemo(() => {
+    if (appId !== "claude" || !claudeProvidersData?.providers) return [];
+    return Object.values(claudeProvidersData.providers)
+      .filter((p) => p.id && p.id !== providerId)
+      .map((p) => ({ id: p.id, name: p.name || p.id }))
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  }, [appId, claudeProvidersData?.providers, providerId]);
+  const resolvedSubagentRouteModel = useMemo(() => {
+    if (!subagentRouteProviderId || !claudeProvidersData?.providers) return "";
+    const target = claudeProvidersData.providers[subagentRouteProviderId];
+    return extractClaudeSubagentModel(target?.settingsConfig);
+  }, [subagentRouteProviderId, claudeProvidersData?.providers]);
+  const subagentRouteError = useMemo(() => {
+    const validation = validateClaudeSubagentRoute({
+      appId,
+      providerId,
+      selectedTargetProviderId: subagentRouteProviderId,
+      providersById: claudeProvidersData?.providers,
+    });
+    if (validation.ok) return null;
+    if (validation.reason === "missing_target") {
+      return t("providerForm.subagentRouteTargetMissing", {
+        defaultValue:
+          "Selected subagent provider no longer exists. Choose another provider or Current provider.",
+      });
+    }
+    if (validation.reason === "reserved_alias") {
+      return t("providerForm.subagentRouteTargetModelReserved", {
+        defaultValue:
+          "The selected subagent provider uses the reserved CC Switch route alias as its Subagent model. Configure a real upstream model name on that provider first.",
+      });
+    }
+    return t("providerForm.subagentRouteTargetModelRequired", {
+      defaultValue:
+        "The selected subagent provider has no Subagent model configured. Configure CLAUDE_CODE_SUBAGENT_MODEL on that provider first.",
+    });
+  }, [
+    appId,
+    subagentRouteProviderId,
+    providerId,
+    claudeProvidersData?.providers,
+    t,
+  ]);
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -1163,6 +1222,12 @@ function ProviderFormFull({
       return;
     }
 
+    // Claude 子代理跨供应商路由：硬校验（目标缺失/无子代理模型时禁止保存）
+    if (appId === "claude" && subagentRouteProviderId && subagentRouteError) {
+      toast.error(subagentRouteError);
+      return;
+    }
+
     // OMO Other Fields JSON：B 类（格式错了保存下去数据就坏了）
     if (
       appId === "opencode" &&
@@ -1561,7 +1626,13 @@ function ProviderFormFull({
       delete nextMeta.codexFastMode;
     }
 
-    payload.meta = nextMeta;
+    // 同供应商/默认省略字段，保持既有配置兼容；仅存 providerId，不复制目标凭证
+    const routeMeta = buildClaudeSubagentRouteMeta({
+      appId,
+      providerId,
+      selectedTargetProviderId: subagentRouteProviderId,
+    });
+    payload.meta = applyClaudeSubagentRouteToMeta(nextMeta, routeMeta);
 
     await onSubmit(payload);
   };
@@ -2152,6 +2223,11 @@ function ProviderFormFull({
               defaultFableModelName={defaultFableModelName}
               subagentModel={subagentModel}
               onModelChange={handleModelChange}
+              subagentRouteCandidates={subagentRouteCandidates}
+              subagentRouteProviderId={subagentRouteProviderId}
+              onSubagentRouteProviderIdChange={setSubagentRouteProviderId}
+              resolvedSubagentRouteModel={resolvedSubagentRouteModel}
+              subagentRouteError={subagentRouteError}
               speedTestEndpoints={speedTestEndpoints}
               apiFormat={localApiFormat}
               onApiFormatChange={handleApiFormatChange}

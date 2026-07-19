@@ -390,6 +390,18 @@ impl LocalProxyRequestOverrides {
     }
 }
 
+/// Claude Code 子代理跨供应商路由（仅本地代理接管模式下生效）。
+///
+/// 保存在当前（active）供应商 meta 上：主会话仍使用当前供应商，
+/// 子代理请求按 `provider_id` 路由到目标 Claude 供应商，并使用目标
+/// 供应商自身配置的 `CLAUDE_CODE_SUBAGENT_MODEL`。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ClaudeSubagentRoute {
+    /// 目标 Claude 供应商 ID（不得复制目标凭证）。
+    #[serde(rename = "providerId")]
+    pub provider_id: String,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -513,6 +525,13 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// Claude Code 子代理跨供应商路由（仅 Claude 本地代理接管模式生效）。
+    /// 同供应商/默认选择应省略该字段，保持现有配置向后兼容。
+    #[serde(
+        rename = "claudeSubagentRoute",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claude_subagent_route: Option<ClaudeSubagentRoute>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。

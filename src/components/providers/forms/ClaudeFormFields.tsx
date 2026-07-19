@@ -129,6 +129,17 @@ interface ClaudeFormFieldsProps {
   subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
+  // Subagent cross-provider route (proxy takeover only)
+  /** Other saved Claude providers available as route targets */
+  subagentRouteCandidates?: Array<{ id: string; name: string }>;
+  /** Selected target provider id; empty string = current provider (default) */
+  subagentRouteProviderId?: string;
+  onSubagentRouteProviderIdChange?: (providerId: string) => void;
+  /** Resolved CLAUDE_CODE_SUBAGENT_MODEL of the selected foreign target */
+  resolvedSubagentRouteModel?: string;
+  /** Soft warning when target is missing / has no subagent model */
+  subagentRouteError?: string | null;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
@@ -199,6 +210,11 @@ export function ClaudeFormFields({
   defaultFableModelName,
   subagentModel,
   onModelChange,
+  subagentRouteCandidates = [],
+  subagentRouteProviderId = "",
+  onSubagentRouteProviderIdChange,
+  resolvedSubagentRouteModel = "",
+  subagentRouteError = null,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -224,6 +240,7 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
+    subagentRouteProviderId ||
     apiFormat !== "anthropic" ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
@@ -916,64 +933,172 @@ export function ClaudeFormFields({
                 const modelBase = stripClaudeOneMMarker(row.model);
                 const usesOneM =
                   row.supportsOneM && hasClaudeOneMMarker(row.model);
+                const isSubagentRow = row.role === "subagent";
 
                 return (
-                  <div
-                    key={row.role}
-                    className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]"
-                  >
-                    <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
-                      {row.label}
-                    </div>
-                    {row.displayNameField ? (
-                      <Input
-                        value={row.displayName ?? ""}
-                        onChange={(event) =>
-                          onModelChange(
-                            row.displayNameField!,
-                            event.target.value,
-                          )
-                        }
-                        placeholder={
-                          modelBase ||
-                          t("providerForm.modelDisplayNamePlaceholder", {
-                            defaultValue: "例如 DeepSeek V4 Pro",
-                          })
-                        }
-                        autoComplete="off"
-                      />
-                    ) : (
-                      <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
-                        {t("providerForm.modelNoDisplayName", {
-                          defaultValue: "不显示在 /model 菜单",
-                        })}
+                  <div key={row.role} className="space-y-2">
+                    <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_minmax(0,1fr)_104px]">
+                      <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm font-medium text-muted-foreground">
+                        {row.label}
                       </div>
-                    )}
-                    {renderModelInput(
-                      row.inputId,
-                      modelBase,
-                      row.modelField,
-                      t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                      (value) =>
-                        handleRoleModelChange(
-                          row,
-                          row.supportsOneM
-                            ? setClaudeOneMMarker(value, usesOneM)
-                            : stripClaudeOneMMarker(value),
-                        ),
-                    )}
-                    {row.supportsOneM && (
-                      <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
-                        <Checkbox
-                          checked={usesOneM}
-                          onCheckedChange={(checked) =>
-                            handleRoleOneMChange(row, checked === true)
+                      {row.displayNameField ? (
+                        <Input
+                          value={row.displayName ?? ""}
+                          onChange={(event) =>
+                            onModelChange(
+                              row.displayNameField!,
+                              event.target.value,
+                            )
                           }
+                          placeholder={
+                            modelBase ||
+                            t("providerForm.modelDisplayNamePlaceholder", {
+                              defaultValue: "例如 DeepSeek V4 Pro",
+                            })
+                          }
+                          autoComplete="off"
                         />
-                        {t("providerForm.modelOneMLabel", {
-                          defaultValue: "1M",
-                        })}
-                      </label>
+                      ) : (
+                        <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground">
+                          {t("providerForm.modelNoDisplayName", {
+                            defaultValue: "不显示在 /model 菜单",
+                          })}
+                        </div>
+                      )}
+                      {renderModelInput(
+                        row.inputId,
+                        modelBase,
+                        row.modelField,
+                        t("providerForm.modelPlaceholder", {
+                          defaultValue: "",
+                        }),
+                        (value) =>
+                          handleRoleModelChange(
+                            row,
+                            row.supportsOneM
+                              ? setClaudeOneMMarker(value, usesOneM)
+                              : stripClaudeOneMMarker(value),
+                          ),
+                      )}
+                      {row.supportsOneM && (
+                        <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                          <Checkbox
+                            checked={usesOneM}
+                            onCheckedChange={(checked) =>
+                              handleRoleOneMChange(row, checked === true)
+                            }
+                          />
+                          {t("providerForm.modelOneMLabel", {
+                            defaultValue: "1M",
+                          })}
+                        </label>
+                      )}
+                    </div>
+
+                    {isSubagentRow && onSubagentRouteProviderIdChange && (
+                      <div className="space-y-2 rounded-md border border-dashed border-border-default bg-muted/30 p-3">
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_minmax(0,1fr)]">
+                          <FormLabel
+                            htmlFor="claudeSubagentRouteProvider"
+                            className="flex h-9 items-center"
+                          >
+                            {t("providerForm.subagentProviderLabel", {
+                              defaultValue: "Subagent Provider",
+                            })}
+                          </FormLabel>
+                          <Select
+                            value={subagentRouteProviderId || "__current__"}
+                            onValueChange={(value) =>
+                              onSubagentRouteProviderIdChange(
+                                value === "__current__" ? "" : value,
+                              )
+                            }
+                          >
+                            <SelectTrigger
+                              id="claudeSubagentRouteProvider"
+                              className="w-full"
+                            >
+                              <SelectValue
+                                placeholder={t(
+                                  "providerForm.subagentProviderCurrent",
+                                  {
+                                    defaultValue: "Current provider",
+                                  },
+                                )}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__current__">
+                                {t("providerForm.subagentProviderCurrent", {
+                                  defaultValue: "Current provider",
+                                })}
+                              </SelectItem>
+                              {subagentRouteCandidates.map((candidate) => (
+                                <SelectItem
+                                  key={candidate.id}
+                                  value={candidate.id}
+                                >
+                                  {candidate.name}
+                                </SelectItem>
+                              ))}
+                              {/* Keep a deleted/unknown target selectable so users can clear it */}
+                              {subagentRouteProviderId &&
+                                !subagentRouteCandidates.some(
+                                  (c) => c.id === subagentRouteProviderId,
+                                ) && (
+                                  <SelectItem value={subagentRouteProviderId}>
+                                    {t("providerForm.subagentProviderMissing", {
+                                      defaultValue: "Missing provider ({{id}})",
+                                      id: subagentRouteProviderId,
+                                    })}
+                                  </SelectItem>
+                                )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {subagentRouteProviderId ? (
+                          <div className="space-y-1 text-xs text-muted-foreground">
+                            <p>
+                              {t("providerForm.subagentRouteTargetModel", {
+                                defaultValue:
+                                  "Target subagent model: {{model}}",
+                                model:
+                                  resolvedSubagentRouteModel ||
+                                  t(
+                                    "providerForm.subagentRouteTargetModelEmpty",
+                                    {
+                                      defaultValue: "(not configured)",
+                                    },
+                                  ),
+                              })}
+                            </p>
+                            <p>
+                              {t("providerForm.subagentRouteTakeoverHint", {
+                                defaultValue:
+                                  "Cross-provider subagent routing only works when Claude local proxy takeover is enabled. Without takeover, provider switching stays direct and does not write a synthetic subagent model.",
+                              })}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            {t("providerForm.subagentRouteDefaultHint", {
+                              defaultValue:
+                                "By default, subagent requests use this provider and its Subagent model above.",
+                            })}
+                          </p>
+                        )}
+
+                        {subagentRouteError && (
+                          <p
+                            className="text-xs text-destructive"
+                            role="alert"
+                            data-testid="subagent-route-error"
+                          >
+                            {subagentRouteError}
+                          </p>
+                        )}
+                      </div>
                     )}
                   </div>
                 );

@@ -103,11 +103,12 @@ impl ProxyService {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
         // Copilot/Codex 接管时 live config 可能还是旧供应商；显示模型必须跟随目标 provider。
-        let takeover_model_fields = if provider.uses_managed_account_auth() {
+        let mut takeover_model_fields = if provider.uses_managed_account_auth() {
             Self::build_claude_takeover_model_fields(&provider.settings_config)
         } else {
             Self::build_claude_takeover_model_fields(config)
         };
+        Self::apply_claude_subagent_route_takeover_override(&mut takeover_model_fields, provider);
 
         Self::apply_claude_takeover_fields_with_policy_and_models(
             config,
@@ -123,6 +124,7 @@ impl ProxyService {
         auth_policy: ClaudeTakeoverAuthPolicy,
     ) {
         // 必须在 remove/insert 前 snapshot：避免读到自己刚写入的接管别名。
+        // 无 provider 上下文时无法解析跨供应商路由，保持同供应商子代理模型语义。
         let takeover_model_fields = Self::build_claude_takeover_model_fields(config);
 
         Self::apply_claude_takeover_fields_with_policy_and_models(
@@ -131,6 +133,25 @@ impl ProxyService {
             auth_policy,
             takeover_model_fields,
         );
+    }
+
+    /// 接管模式下：若 active 供应商配置了跨供应商子代理路由，
+    /// 将 live `CLAUDE_CODE_SUBAGENT_MODEL` 写成 CC Switch 保留别名，
+    /// 以便本地代理识别并路由到目标供应商。
+    ///
+    /// 非接管路径不得写入该别名（由调用方仅在 takeover 中调用本函数保证）。
+    fn apply_claude_subagent_route_takeover_override(
+        fields: &mut Vec<(&'static str, String)>,
+        provider: &Provider,
+    ) {
+        if !crate::proxy::claude_subagent_route::should_write_subagent_route_alias(provider) {
+            return;
+        }
+        fields.retain(|(key, _)| *key != "CLAUDE_CODE_SUBAGENT_MODEL");
+        fields.push((
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            crate::proxy::claude_subagent_route::CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS.to_string(),
+        ));
     }
 
     fn apply_claude_takeover_fields_with_policy_and_models(
@@ -5503,6 +5524,195 @@ model = "gpt-5.1-codex"
             .expect("backup exists");
         let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
         assert_eq!(backup.original_config, expected);
+    }
+
+    #[test]
+    fn claude_takeover_writes_subagent_route_alias_only_for_foreign_route() {
+        use crate::provider::ClaudeSubagentRoute;
+        use crate::proxy::claude_subagent_route::CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS;
+
+        // No route: write provider's own subagent model (byte-compatible with existing behavior)
+        let mut no_route = Provider::with_id(
+            "active".to_string(),
+            "Active".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-real",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "active-sub[1M]"
+                }
+            }),
+            None,
+        );
+        let mut live = no_route.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live,
+            "http://127.0.0.1:15721",
+            &no_route,
+        );
+        assert_eq!(
+            live["env"]["CLAUDE_CODE_SUBAGENT_MODEL"].as_str(),
+            Some("active-sub[1M]"),
+            "no-route path must keep the provider's own subagent model"
+        );
+
+        // Same-provider route: treat as default, write own model
+        no_route.meta = Some(ProviderMeta {
+            claude_subagent_route: Some(ClaudeSubagentRoute {
+                provider_id: "active".to_string(),
+            }),
+            ..ProviderMeta::default()
+        });
+        let mut live_same = no_route.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_same,
+            "http://127.0.0.1:15721",
+            &no_route,
+        );
+        assert_eq!(
+            live_same["env"]["CLAUDE_CODE_SUBAGENT_MODEL"].as_str(),
+            Some("active-sub[1M]"),
+            "same-provider route must not write the reserved alias"
+        );
+
+        // Foreign route: write reserved alias (not the target's real model / credentials)
+        let mut foreign = no_route.clone();
+        foreign.meta = Some(ProviderMeta {
+            claude_subagent_route: Some(ClaudeSubagentRoute {
+                provider_id: "target".to_string(),
+            }),
+            ..ProviderMeta::default()
+        });
+        let mut live_foreign = foreign.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_foreign,
+            "http://127.0.0.1:15721",
+            &foreign,
+        );
+        assert_eq!(
+            live_foreign["env"]["CLAUDE_CODE_SUBAGENT_MODEL"].as_str(),
+            Some(CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS),
+            "foreign route must write the CC Switch reserved alias during takeover"
+        );
+        // Ensure no secret leakage into model field
+        let alias = live_foreign["env"]["CLAUDE_CODE_SUBAGENT_MODEL"]
+            .as_str()
+            .unwrap();
+        assert!(!alias.contains("key"));
+        assert!(!alias.contains("sk-"));
+    }
+
+    #[test]
+    fn claude_takeover_without_provider_context_never_writes_route_alias() {
+        use crate::proxy::claude_subagent_route::CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS;
+
+        // apply_claude_takeover_fields (no provider) is used in some restore paths —
+        // must keep the config's own subagent model, never invent the route alias.
+        let mut live = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-real",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "own-sub"
+            }
+        });
+        ProxyService::apply_claude_takeover_fields(&mut live, "http://127.0.0.1:15721");
+        assert_eq!(
+            live["env"]["CLAUDE_CODE_SUBAGENT_MODEL"].as_str(),
+            Some("own-sub")
+        );
+        assert_ne!(
+            live["env"]["CLAUDE_CODE_SUBAGENT_MODEL"].as_str(),
+            Some(CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS)
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_reapplies_subagent_route_alias_for_foreign_route() {
+        use crate::provider::ClaudeSubagentRoute;
+        use crate::proxy::claude_subagent_route::CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS;
+
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let provider_a = Provider::with_id(
+            "a".to_string(),
+            "A".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "a-key",
+                    "ANTHROPIC_BASE_URL": "https://api.a.example",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "a-sonnet",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "a-sub"
+                }
+            }),
+            None,
+        );
+        let mut provider_b = Provider::with_id(
+            "b".to_string(),
+            "B".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_API_KEY": "b-key",
+                    "ANTHROPIC_BASE_URL": "https://api.b.example",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "b-sonnet",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "b-sub[1M]"
+                }
+            }),
+            None,
+        );
+        provider_b.meta = Some(ProviderMeta {
+            claude_subagent_route: Some(ClaudeSubagentRoute {
+                provider_id: "a".to_string(),
+            }),
+            ..ProviderMeta::default()
+        });
+
+        db.save_provider("claude", &provider_a)
+            .expect("save provider a");
+        db.save_provider("claude", &provider_b)
+            .expect("save provider b");
+        db.set_current_provider("claude", "a")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("a"))
+            .expect("set local current provider");
+        db.save_live_backup(
+            "claude",
+            &serde_json::to_string(&provider_a.settings_config).expect("serialize"),
+        )
+        .await
+        .expect("seed live backup");
+        service
+            .write_claude_live(&json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                    "ANTHROPIC_API_KEY": PROXY_TOKEN_PLACEHOLDER,
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "stale-sub"
+                }
+            }))
+            .expect("seed taken-over live");
+
+        service
+            .hot_switch_provider("claude", "b")
+            .await
+            .expect("hot switch to b");
+
+        let live = service.read_claude_live().expect("read live");
+        assert_eq!(
+            live["env"]["CLAUDE_CODE_SUBAGENT_MODEL"].as_str(),
+            Some(CLAUDE_SUBAGENT_ROUTE_MODEL_ALIAS),
+            "hot switch must reapply reserved alias when target has foreign route"
+        );
+        // Global current is B; alias must not embed target credentials
+        assert_eq!(
+            live["env"]["ANTHROPIC_API_KEY"].as_str(),
+            Some(PROXY_TOKEN_PLACEHOLDER)
+        );
+        assert_eq!(
+            crate::settings::get_current_provider(&AppType::Claude).as_deref(),
+            Some("b")
+        );
     }
 
     #[tokio::test]
