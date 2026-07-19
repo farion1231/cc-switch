@@ -1546,6 +1546,27 @@ mod tests {
     }
 
     #[test]
+    fn test_request_tool_parameters_root_combinator_normalized() {
+        // Tools whose parameters are a root-level JSON Schema combinator
+        // (oneOf/anyOf) without a root "type" must still produce an
+        // input_schema with type "object" — Anthropic and strict Anthropic-
+        // compatible gateways require it.
+        let input = json!({
+            "model": "claude",
+            "max_output_tokens": 100,
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [
+                { "type": "function", "name": "automation_update", "description": "d",
+                  "parameters": { "oneOf": [{ "type": "object" }, { "type": "object" }] } }
+            ]
+        });
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+        let schema = &result["tools"][0]["input_schema"];
+        assert_eq!(schema["type"], "object");
+        assert!(schema.get("oneOf").is_some());
+    }
+
+    #[test]
     fn test_request_tool_choice_mapping() {
         // A function tool must be present, else tool_choice is (correctly) dropped.
         let base = |tc: Value| {

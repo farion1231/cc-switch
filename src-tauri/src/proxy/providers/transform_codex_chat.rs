@@ -1173,13 +1173,11 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .get_mut("function")
             .and_then(|value| value.as_object_mut())
         {
-            // Ensure parameters.type is "object" for strict OpenAI-compatible providers
-            if let Some(params) = obj.get("parameters") {
-                let normalized = normalize_function_parameters(Some(params));
-                if normalized != *params {
-                    obj.insert("parameters".to_string(), normalized);
-                }
-            }
+            // Ensure parameters.type is "object" for strict OpenAI-compatible
+            // providers, and default to an empty object schema when the nested
+            // function omits parameters entirely.
+            let normalized = normalize_function_parameters(obj.get("parameters"));
+            obj.insert("parameters".to_string(), normalized);
 
             obj.insert("name".to_string(), json!(chat_name));
             if let Some(strict) = tool.get("strict").cloned() {
@@ -2052,6 +2050,108 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn function_tool_parameters_with_root_combinator_gets_object_type() {
+        // Codex tools may declare parameters as a root-level JSON Schema
+        // combinator (oneOf/anyOf) without a root "type" — e.g. Codex
+        // Desktop's codex_app/automation_update. Strict OpenAI-compatible
+        // upstreams (Kimi/Moonshot) reject those with HTTP 400:
+        // tools.function.parameters.type is required and must be "object".
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "name": "automation_update",
+                "description": "d",
+                "parameters": {
+                    "oneOf": [
+                        { "type": "object", "properties": { "mode": { "type": "string" } }, "required": ["mode"] },
+                        { "type": "object", "properties": { "mode": { "type": "string" }, "name": { "type": "string" } }, "required": ["mode", "name"] }
+                    ]
+                }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        let parameters = &result["tools"][0]["function"]["parameters"];
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("oneOf").is_some());
+    }
+
+    #[test]
+    fn tool_search_output_tool_parameters_are_normalized() {
+        // Regression test for the real-world trigger: the model called
+        // tool_search, so the loaded tool definitions only exist inside the
+        // conversation history's tool_search_output item and are
+        // reconstructed from there.
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                { "role": "user", "content": "hi" },
+                {
+                    "type": "tool_search_call",
+                    "call_id": "tool_1",
+                    "status": "completed",
+                    "execution": "client",
+                    "arguments": {"limit": 5, "query": "automation"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "tool_1",
+                    "status": "completed",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "codex_app",
+                        "tools": [{
+                            "type": "function",
+                            "name": "automation_update",
+                            "description": "d",
+                            "strict": false,
+                            "parameters": { "oneOf": [{ "type": "object" }, { "type": "object" }] }
+                        }]
+                    }]
+                }
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "exec_command",
+                "parameters": { "type": "object" }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        let loaded = tools
+            .iter()
+            .find(|tool| tool["function"]["name"] == "codex_app__automation_update")
+            .expect("tool_search_output tool should be reconstructed");
+
+        assert_eq!(loaded["function"]["parameters"]["type"], "object");
+        assert!(loaded["function"]["parameters"].get("oneOf").is_some());
+    }
+
+    #[test]
+    fn nested_function_tool_without_parameters_gets_default_schema() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [{ "role": "user", "content": "hi" }],
+            "tools": [{
+                "type": "function",
+                "function": { "name": "lookup", "description": "d" }
+            }]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({ "type": "object", "properties": {} })
+        );
     }
 
     #[test]
