@@ -32,14 +32,7 @@ import {
   Loader2,
   Wand2,
   RefreshCw,
-  Info,
 } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
@@ -1130,30 +1123,13 @@ export function ClaudeFormFields({
                 })}
                 className="h-5 w-9"
               />
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent
-                    side="top"
-                    align="center"
-                    sideOffset={4}
-                    collisionPadding={8}
-                    sticky="always"
-                    hideWhenDetached
-                    className="max-w-xs"
-                  >
-                    <p className="text-xs leading-relaxed">
-                      {t("providerForm.autoSyncContextWindowTooltip", {
-                        defaultValue:
-                          "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。",
-                      })}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
             </div>
+            <p className="mt-1.5 ml-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+              {t("providerForm.autoSyncContextWindowTooltip", {
+                defaultValue:
+                  "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。",
+              })}
+            </p>
 
             <div className="space-y-2 border-t pt-4">
               <FormLabel htmlFor="claudeModel">
