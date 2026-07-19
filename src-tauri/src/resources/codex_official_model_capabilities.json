@@ -1,0 +1,196 @@
+{
+  "source": "openai/codex models registry snapshot (2026-07-19)",
+  "models": {
+    "gpt-5.6-sol": {
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        { "effort": "xhigh", "description": "Extra-high reasoning depth" },
+        { "effort": "max", "description": "Maximum reasoning depth" },
+        {
+          "effort": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ],
+      "shell_type": "shell_command",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "supports_parallel_tool_calls": true,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "supports_search_tool": true,
+      "use_responses_lite": true,
+      "tool_mode": "code_mode_only",
+      "multi_agent_version": "v2",
+      "include_skills_usage_instructions": false
+    },
+    "gpt-5.6-terra": {
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        { "effort": "xhigh", "description": "Extra-high reasoning depth" },
+        { "effort": "max", "description": "Maximum reasoning depth" },
+        {
+          "effort": "ultra",
+          "description": "Maximum reasoning with automatic task delegation"
+        }
+      ],
+      "shell_type": "shell_command",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "supports_parallel_tool_calls": true,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "supports_search_tool": true,
+      "use_responses_lite": true,
+      "tool_mode": "code_mode_only",
+      "multi_agent_version": "v2",
+      "include_skills_usage_instructions": false
+    },
+    "gpt-5.6-luna": {
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        { "effort": "xhigh", "description": "Extra-high reasoning depth" },
+        { "effort": "max", "description": "Maximum reasoning depth" }
+      ],
+      "shell_type": "shell_command",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "supports_parallel_tool_calls": true,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "supports_search_tool": true,
+      "use_responses_lite": true,
+      "tool_mode": "code_mode_only",
+      "multi_agent_version": "v1",
+      "include_skills_usage_instructions": false
+    },
+    "gpt-5.5": {
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        { "effort": "xhigh", "description": "Extra-high reasoning depth" }
+      ],
+      "shell_type": "shell_command",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "supports_parallel_tool_calls": true,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": true
+    },
+    "gpt-5.4": {
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        { "effort": "xhigh", "description": "Extra-high reasoning depth" }
+      ],
+      "shell_type": "shell_command",
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "supports_parallel_tool_calls": true,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": true
+    },
+    "gpt-5.4-mini": {
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced speed and reasoning depth"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        { "effort": "xhigh", "description": "Extra-high reasoning depth" }
+      ],
+      "shell_type": "shell_command",
+      "support_verbosity": true,
+      "default_verbosity": "medium",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "supports_parallel_tool_calls": true,
+      "supports_image_detail_original": true,
+      "input_modalities": ["text", "image"],
+      "supports_search_tool": true,
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": true
+    }
+  }
+}

@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::config::{
     atomic_write, delete_file, get_home_dir, read_json_file, sanitize_provider_name,
@@ -449,6 +450,34 @@ fn codex_catalog_input_modalities(
     modalities.iter().map(|item| (*item).to_string()).collect()
 }
 
+/// Match an upstream model id to a Codex-official model capability entry.
+/// Relays commonly prefix the real model with a vendor (`relay/gpt-5.6-sol`),
+/// so capability matching uses the final path segment while the generated slug
+/// keeps the original request model verbatim.
+fn codex_official_model_capability_overlay(model: &str) -> Option<Value> {
+    let model = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .trim()
+        .to_ascii_lowercase();
+    static REGISTRY: OnceLock<Value> = OnceLock::new();
+    let registry = REGISTRY.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "resources/codex_official_model_capabilities.json"
+        ))
+        .expect("bundled Codex official model capability registry must be valid JSON")
+    });
+    registry.get("models")?.get(&model).cloned()
+}
+
+fn apply_codex_model_capability_overlay(entry: &mut serde_json::Map<String, Value>, model: &str) {
+    let Some(Value::Object(overlay)) = codex_official_model_capability_overlay(model) else {
+        return;
+    };
+    entry.extend(overlay);
+}
+
 fn codex_catalog_model_entry(
     template: &Value,
     spec: &CodexCatalogModelSpec,
@@ -460,6 +489,11 @@ fn codex_catalog_model_entry(
         return json!({});
     };
 
+    // Start from the exact capability profile for models Codex already knows.
+    // This prevents a gpt-5.5 template from flattening GPT-5.6 reasoning levels
+    // and, critically, preserves `use_responses_lite=true` for GPT-5.6.
+    apply_codex_model_capability_overlay(entry_obj, &spec.model);
+
     entry_obj.insert("slug".to_string(), json!(spec.model));
     entry_obj.insert("display_name".to_string(), json!(spec.display_name));
     entry_obj.insert("description".to_string(), json!(spec.display_name));
@@ -470,6 +504,9 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    if let Some(use_responses_lite) = spec.use_responses_lite {
+        entry_obj.insert("use_responses_lite".to_string(), json!(use_responses_lite));
+    }
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -483,12 +520,18 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    if profile != CodexCatalogToolProfile::ProxyChat {
+    let use_responses_lite = entry_obj
+        .get("use_responses_lite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let strip_custom_tools = profile == CodexCatalogToolProfile::Anthropic
+        || (profile == CodexCatalogToolProfile::NativeResponses && !use_responses_lite);
+
+    if strip_custom_tools {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
-        // `apply_patch` (type=="custom") tool. Strip any key that would make Codex
-        // emit a custom/freeform tool, and rely on shell_type="shell_command" for
-        // edits. Defensive even though the native template is already clean
-        // (guards against template drift / an accidental gpt-5.5 clone).
+        // `apply_patch` (type=="custom") tool unless the native model explicitly
+        // uses Responses Lite, whose protocol accepts custom tools and converts
+        // hosted search into client-executed search. Anthropic always strips.
         //
         // NOTE: `base_instructions` is NOT stripped — Codex's catalog parser
         // treats it as a REQUIRED field and refuses to load the file without
@@ -503,7 +546,9 @@ fn codex_catalog_model_entry(
             entry_obj.remove(key);
         }
         entry_obj.insert("shell_type".to_string(), json!("shell_command"));
+    }
 
+    if profile != CodexCatalogToolProfile::ProxyChat {
         if let Some(base_instructions) = spec
             .base_instructions
             .as_deref()
@@ -517,6 +562,13 @@ fn codex_catalog_model_entry(
         }
     }
 
+    // Anthropic is not a Responses endpoint; never advertise the proprietary
+    // Lite transport even when an official GPT id or a manual row override was
+    // carried into this profile.
+    if profile == CodexCatalogToolProfile::Anthropic && use_responses_lite {
+        entry_obj.insert("use_responses_lite".to_string(), json!(false));
+    }
+
     entry
 }
 
@@ -525,6 +577,8 @@ struct CodexCatalogModelSpec {
     model: String,
     display_name: String,
     context_window: u64,
+    /// Explicit UI override. `None` follows the bundled official-model registry.
+    use_responses_lite: Option<bool>,
     /// Per-row override for the native template's `supports_parallel_tool_calls`
     /// (e.g. MiniMax=true, MiMo=false). Only consulted for `NativeResponses`.
     supports_parallel_tool_calls: Option<bool>,
@@ -586,6 +640,10 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .get("supportsParallelToolCalls")
             .or_else(|| model_config.get("supports_parallel_tool_calls"))
             .and_then(|value| value.as_bool());
+        let use_responses_lite = model_config
+            .get("useResponsesLite")
+            .or_else(|| model_config.get("use_responses_lite"))
+            .and_then(|value| value.as_bool());
         let input_modalities = model_config
             .get("inputModalities")
             .or_else(|| model_config.get("input_modalities"))
@@ -611,6 +669,7 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             model: model.to_string(),
             display_name: display_name.to_string(),
             context_window,
+            use_responses_lite,
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
@@ -1130,6 +1189,11 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             .filter(|v| *v > 0 && *v != default_context_window)
         {
             obj.insert("contextWindow".to_string(), json!(context_window));
+        }
+
+        if let Some(use_responses_lite) = entry.get("use_responses_lite").and_then(|v| v.as_bool())
+        {
+            obj.insert("useResponsesLite".to_string(), json!(use_responses_lite));
         }
 
         // Preserve native-profile per-row overrides so a DB-SSOT-missing
@@ -2748,6 +2812,106 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn official_models_keep_reasoning_and_responses_lite_capabilities() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "relay/gpt-5.6-sol" },
+                    { "model": "gpt-5.6-luna" },
+                    { "model": "gpt-5.5" },
+                    { "model": "gpt-5.6-terra", "useResponsesLite": false },
+                    { "model": "custom-lite", "use_responses_lite": true }
+                ]
+            }
+        });
+
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation should succeed")
+        .expect("models should generate a catalog");
+        let models = catalog["models"].as_array().expect("models array");
+        let entry = |slug: &str| {
+            models
+                .iter()
+                .find(|model| model["slug"] == slug)
+                .unwrap_or_else(|| panic!("missing catalog entry for {slug}"))
+        };
+        let efforts = |model: &Value| {
+            model["supported_reasoning_levels"]
+                .as_array()
+                .expect("reasoning levels")
+                .iter()
+                .filter_map(|level| level["effort"].as_str())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        let expected_efforts = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>()
+        };
+
+        let sol = entry("relay/gpt-5.6-sol");
+        assert_eq!(sol["use_responses_lite"], json!(true));
+        assert_eq!(
+            efforts(sol),
+            expected_efforts(&["low", "medium", "high", "xhigh", "max", "ultra"])
+        );
+        assert_eq!(sol["supports_search_tool"], json!(true));
+        assert_eq!(sol["apply_patch_tool_type"], json!("freeform"));
+
+        assert_eq!(
+            efforts(entry("gpt-5.6-luna")),
+            expected_efforts(&["low", "medium", "high", "xhigh", "max"])
+        );
+
+        let gpt_5_5 = entry("gpt-5.5");
+        assert_eq!(gpt_5_5["use_responses_lite"], json!(false));
+        assert_eq!(
+            efforts(gpt_5_5),
+            expected_efforts(&["low", "medium", "high", "xhigh"])
+        );
+        assert!(
+            gpt_5_5.get("apply_patch_tool_type").is_none(),
+            "non-Lite native models keep the existing custom-tool safety profile"
+        );
+
+        let disabled = entry("gpt-5.6-terra");
+        assert_eq!(disabled["use_responses_lite"], json!(false));
+        assert!(
+            disabled.get("apply_patch_tool_type").is_none(),
+            "an explicit false must override the official automatic capability"
+        );
+        assert_eq!(entry("custom-lite")["use_responses_lite"], json!(true));
+    }
+
+    #[test]
+    fn anthropic_catalog_never_advertises_responses_lite() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "custom", "useResponsesLite": true }
+                ]
+            }
+        });
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::Anthropic)
+                .expect("catalog generation should succeed")
+                .expect("models should generate a catalog");
+
+        for entry in catalog["models"].as_array().expect("models array") {
+            assert_eq!(entry["use_responses_lite"], json!(false));
+            assert!(entry.get("apply_patch_tool_type").is_none());
+        }
+    }
+
+    #[test]
     fn native_responses_profile_suppresses_apply_patch_and_keeps_shell() {
         // Native (direct) /responses providers must NOT emit a freeform
         // apply_patch (type=="custom") tool — gateways like MiMo reject it.
@@ -2831,6 +2995,7 @@ base_url = "https://production.api/v1"
                 model: "gpt-5.4".to_string(),
                 display_name: "GPT 5.4".to_string(),
                 context_window: 128_000,
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
@@ -2839,6 +3004,7 @@ base_url = "https://production.api/v1"
                 model: "deepseek/deepseek-v4-pro".to_string(),
                 display_name: "DeepSeek V4 Pro".to_string(),
                 context_window: 128_000,
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
@@ -2847,6 +3013,7 @@ base_url = "https://production.api/v1"
                 model: "glm-5.2v".to_string(),
                 display_name: "GLM 5.2V".to_string(),
                 context_window: 128_000,
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
@@ -2855,6 +3022,7 @@ base_url = "https://production.api/v1"
                 model: "deepseek-v4-flash".to_string(),
                 display_name: "Explicit Visual Override".to_string(),
                 context_window: 128_000,
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
@@ -2863,6 +3031,7 @@ base_url = "https://production.api/v1"
                 model: "custom-text-alias".to_string(),
                 display_name: "Explicit Text Override".to_string(),
                 context_window: 128_000,
+                use_responses_lite: None,
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
@@ -2934,6 +3103,7 @@ base_url = "https://production.api/v1"
             model: "x".to_string(),
             display_name: "x".to_string(),
             context_window: 128_000,
+            use_responses_lite: None,
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
@@ -3180,8 +3350,8 @@ web_search = "disabled"
         let config = "";
         let catalog = r#"{
             "models": [
-                { "slug": "deepseek-v4-pro", "display_name": "deepseek-v4-pro", "context_window": 1000000 },
-                { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000 }
+                { "slug": "deepseek-v4-pro", "display_name": "deepseek-v4-pro", "context_window": 1000000, "use_responses_lite": true },
+                { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000, "use_responses_lite": false }
             ]
         }"#;
         let result = build_simplified_catalog_from_texts(config, catalog).expect("entries found");
@@ -3202,12 +3372,14 @@ web_search = "disabled"
             models[0].get("contextWindow").and_then(|v| v.as_u64()),
             Some(1_000_000)
         );
+        assert_eq!(models[0].get("useResponsesLite"), Some(&json!(true)));
 
         // Second entry: display_name distinct from slug → preserved.
         assert_eq!(
             models[1].get("displayName").and_then(|v| v.as_str()),
             Some("DeepSeek Flash")
         );
+        assert_eq!(models[1].get("useResponsesLite"), Some(&json!(false)));
     }
 
     #[test]

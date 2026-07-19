@@ -119,6 +119,9 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     model: seed?.model ?? "",
     displayName: seed?.displayName ?? "",
     contextWindow: seed?.contextWindow ?? "",
+    ...(seed?.useResponsesLite !== undefined
+      ? { useResponsesLite: seed.useResponsesLite }
+      : {}),
     // Carry native-profile overrides verbatim (not user-editable in the row UI,
     // but must survive load->save so the official catalog fidelity is kept).
     ...(seed?.supportsParallelToolCalls !== undefined
@@ -147,6 +150,7 @@ function catalogRowsMatchModels(
       (row.displayName ?? "") === (incoming.displayName ?? "") &&
       String(row.contextWindow ?? "") ===
         String(incoming.contextWindow ?? "") &&
+      (row.useResponsesLite ?? null) === (incoming.useResponsesLite ?? null) &&
       (row.supportsParallelToolCalls ?? null) ===
         (incoming.supportsParallelToolCalls ?? null) &&
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
@@ -866,7 +870,7 @@ export function CodexFormFields({
                 {catalogRows.length > 0 && (
                   <div className="space-y-2">
                     {/* 列头：md+ 显示 */}
-                    <div className="hidden grid-cols-[1fr_1fr_140px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+                    <div className="hidden grid-cols-[1fr_1fr_140px_132px_36px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
                       <span>
                         {t("codexConfig.catalogColumnDisplay", {
                           defaultValue: "菜单显示名",
@@ -882,13 +886,18 @@ export function CodexFormFields({
                           defaultValue: "上下文窗口",
                         })}
                       </span>
+                      <span>
+                        {t("codexConfig.catalogColumnResponsesLite", {
+                          defaultValue: "Responses Lite",
+                        })}
+                      </span>
                       <span />
                     </div>
 
                     {catalogRows.map((row, index) => (
                       <div
                         key={row.rowId}
-                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_36px]"
+                        className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_140px_132px_36px]"
                       >
                         <Input
                           value={row.displayName ?? ""}
@@ -963,6 +972,53 @@ export function CodexFormFields({
                             defaultValue: "上下文窗口",
                           })}
                         />
+                        <Select
+                          value={
+                            typeof row.useResponsesLite === "boolean"
+                              ? row.useResponsesLite
+                                ? "enabled"
+                                : "disabled"
+                              : "auto"
+                          }
+                          onValueChange={(value) =>
+                            handleUpdateCatalogRow(index, {
+                              useResponsesLite:
+                                value === "auto"
+                                  ? undefined
+                                  : value === "enabled",
+                            })
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label={t(
+                              "codexConfig.catalogColumnResponsesLite",
+                              { defaultValue: "Responses Lite" },
+                            )}
+                            title={t("codexConfig.responsesLiteHint", {
+                              defaultValue:
+                                "自动模式按 Codex 官方模型能力选择；仅在上游明确支持时手动开启。",
+                            })}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">
+                              {t("codexConfig.responsesLiteAuto", {
+                                defaultValue: "自动",
+                              })}
+                            </SelectItem>
+                            <SelectItem value="enabled">
+                              {t("codexConfig.responsesLiteEnabled", {
+                                defaultValue: "开启",
+                              })}
+                            </SelectItem>
+                            <SelectItem value="disabled">
+                              {t("codexConfig.responsesLiteDisabled", {
+                                defaultValue: "关闭",
+                              })}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Button
                           type="button"
                           variant="ghost"
