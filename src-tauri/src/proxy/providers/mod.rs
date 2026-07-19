@@ -269,46 +269,50 @@ pub fn apply_gemini_openai_thought_signature_fix(body: &mut serde_json::Value) {
             // Fix tool_calls
             if let Some(tool_calls) = msg.get_mut("tool_calls").and_then(|t| t.as_array_mut()) {
                 for tool_call in tool_calls {
-                    let google = tool_call
-                        .as_object_mut()
-                        .unwrap()
-                        .entry("extra_content")
-                        .or_insert_with(|| serde_json::json!({}))
-                        .as_object_mut()
-                        .unwrap()
-                        .entry("google")
-                        .or_insert_with(|| serde_json::json!({}))
-                        .as_object_mut()
-                        .unwrap();
-                    
-                    if !google.contains_key("thought_signature") {
-                        google.insert(
-                            "thought_signature".to_string(),
-                            serde_json::json!("skip_thought_signature_validator"),
-                        );
+                    if let Some(tool_call_obj) = tool_call.as_object_mut() {
+                        let extra_content = tool_call_obj
+                            .entry("extra_content")
+                            .or_insert_with(|| serde_json::json!({}));
+                        
+                        if let Some(extra_content_obj) = extra_content.as_object_mut() {
+                            let google = extra_content_obj
+                                .entry("google")
+                                .or_insert_with(|| serde_json::json!({}));
+                            
+                            if let Some(google_obj) = google.as_object_mut() {
+                                if !google_obj.contains_key("thought_signature") {
+                                    google_obj.insert(
+                                        "thought_signature".to_string(),
+                                        serde_json::json!("skip_thought_signature_validator"),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             // Fix function_call
-            if let Some(function_call) = msg.get_mut("function_call").and_then(|f| f.as_object_mut()) {
-                let google = msg
-                    .as_object_mut()
-                    .unwrap()
-                    .entry("extra_content")
-                    .or_insert_with(|| serde_json::json!({}))
-                    .as_object_mut()
-                    .unwrap()
-                    .entry("google")
-                    .or_insert_with(|| serde_json::json!({}))
-                    .as_object_mut()
-                    .unwrap();
-
-                if !google.contains_key("thought_signature") {
-                    google.insert(
-                        "thought_signature".to_string(),
-                        serde_json::json!("skip_thought_signature_validator"),
-                    );
+            if msg.get("function_call").is_some() {
+                if let Some(msg_obj) = msg.as_object_mut() {
+                    let extra_content = msg_obj
+                        .entry("extra_content")
+                        .or_insert_with(|| serde_json::json!({}));
+                        
+                    if let Some(extra_content_obj) = extra_content.as_object_mut() {
+                        let google = extra_content_obj
+                            .entry("google")
+                            .or_insert_with(|| serde_json::json!({}));
+                            
+                        if let Some(google_obj) = google.as_object_mut() {
+                            if !google_obj.contains_key("thought_signature") {
+                                google_obj.insert(
+                                    "thought_signature".to_string(),
+                                    serde_json::json!("skip_thought_signature_validator"),
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
