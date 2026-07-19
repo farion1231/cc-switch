@@ -1,5 +1,9 @@
 use std::process::Command;
 
+// cmux 集成逻辑较长，单独成模块；
+#[cfg(target_os = "macos")]
+pub mod cmux;
+
 pub fn launch_terminal(
     target: &str,
     command: &str,
@@ -22,6 +26,8 @@ pub fn launch_terminal(
         "wezterm" => launch_wezterm(command, cwd),
         "kaku" => launch_kaku(command, cwd),
         "alacritty" => launch_alacritty(command, cwd),
+        #[cfg(target_os = "macos")]
+        "cmux" => launch_cmux(command, cwd),
         #[cfg(unix)]
         "warp" => launch_warp(command, cwd),
         "custom" => launch_custom(command, cwd, custom_config),
@@ -245,6 +251,22 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn launch_cmux(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    let launch = build_cmux_workspace_launch(command, cwd);
+    cmux::run_cmux_workspace(&launch)
+}
+
+#[cfg(target_os = "macos")]
+fn build_cmux_workspace_launch(command: &str, cwd: Option<&str>) -> cmux::CmuxWorkspaceLaunch {
+    // cwd 交给 cmux `--cwd`，不要拼进 shell command，避免路径里的 `$` / 反引号被展开。
+    cmux::CmuxWorkspaceLaunch {
+        title: "Claude Session · Claude".to_string(),
+        cwd: cwd.map(std::path::PathBuf::from),
+        command: command.to_string(),
+    }
+}
+
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Alacritty: open -na Alacritty --args --working-directory ... -e shell -c command
     let full_command = build_shell_command(command, None);
@@ -334,6 +356,15 @@ mod tests {
             build_shell_command("claude --resume abc-123", None),
             "claude --resume abc-123"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cmux_launch_uses_cwd_arg_without_shell_cd_or_trailing_newline() {
+        let launch = build_cmux_workspace_launch("claude --resume abc-123", Some("/tmp/a$`b"));
+
+        assert_eq!(launch.cwd, Some(std::path::PathBuf::from("/tmp/a$`b")));
+        assert_eq!(launch.command, "claude --resume abc-123");
     }
 
     #[test]
