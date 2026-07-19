@@ -586,6 +586,15 @@ fn append_responses_input_as_chat_messages(
         &mut pending_reasoning,
         &mut last_assistant_index,
     );
+    // 整个 input 处理完毕后仍剩余的 pending reasoning 属于「真正的尾部」思考
+    // （其后已没有任何可前向附挂的 message / function_call），回溯附挂到最后一条
+    // assistant；目标已有 reasoning_content 时追加，以保留同一 turn 的 embedded
+    // reasoning 与 trailing reasoning。
+    attach_pending_reasoning_to_previous_assistant(
+        messages,
+        last_assistant_index,
+        &mut pending_reasoning,
+    );
     backfill_tool_call_reasoning_placeholders(messages);
     Ok(())
 }
@@ -650,12 +659,14 @@ fn append_responses_item_as_chat_message(
             }));
         }
         Some("reasoning") => {
-            let reasoning = responses_reasoning_item_text(item);
-            let attached_to_previous = pending_tool_calls.is_empty()
-                && attach_reasoning_to_last_assistant(messages, *last_assistant_index, &reasoning);
-            if !attached_to_previous {
-                append_pending_reasoning(pending_reasoning, reasoning);
-            }
+            // reasoning 一律先进入 pending_reasoning，前向附挂到其后的
+            // message / function_call（后者经 flush_pending_tool_calls 消费）。
+            // 此前这里在 pending_tool_calls 为空时直接回溯附挂到上一条 assistant，
+            // 会把新一轮的思考错拼进旧消息，导致紧跟的纯文本 assistant 丢失
+            // reasoning_content，思考型模型（kimi 等）多轮对话因此中途"断片"。
+            // 真正的尾部剩余由 input 结束时的收尾逻辑、或回合边界消息（user 等）
+            // 到达时回溯附挂，见 attach_pending_reasoning_to_previous_assistant。
+            append_pending_reasoning(pending_reasoning, responses_reasoning_item_text(item));
         }
         Some("input_text" | "input_image" | "input_file" | "input_audio") => {
             flush_pending_tool_calls(
@@ -679,8 +690,16 @@ fn append_responses_item_as_chat_message(
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
                 return Ok(());
-            } else if pending_reasoning.is_some() {
-                pending_reasoning.take();
+            } else {
+                // 非 assistant 的回合边界消息（user 等）：pending reasoning 不再直接
+                // 丢弃，优先回溯附挂到上一条 assistant；其已有 reasoning_content 时
+                // 追加尾部 reasoning。reasoning 不允许跨 user 回合泄漏到之后的
+                // assistant 消息；无上一条 assistant 可附挂时自然丢弃（等同原行为）。
+                attach_pending_reasoning_to_previous_assistant(
+                    messages,
+                    *last_assistant_index,
+                    pending_reasoning,
+                );
             }
             update_last_assistant_index(messages, &message, last_assistant_index);
             messages.push(message);
@@ -693,7 +712,12 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             if item.get("role").is_some() || item.get("content").is_some() {
-                let message = responses_message_item_to_chat_message(item, pending_reasoning);
+                let message = responses_message_item_to_chat_message(
+                    item,
+                    pending_reasoning,
+                    messages,
+                    *last_assistant_index,
+                );
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             }
@@ -706,7 +730,12 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             if item.get("role").is_some() || item.get("content").is_some() {
-                let message = responses_message_item_to_chat_message(item, pending_reasoning);
+                let message = responses_message_item_to_chat_message(
+                    item,
+                    pending_reasoning,
+                    messages,
+                    *last_assistant_index,
+                );
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             }
@@ -739,6 +768,8 @@ fn flush_pending_tool_calls(
 fn responses_message_item_to_chat_message(
     item: &Value,
     pending_reasoning: &mut Option<String>,
+    messages: &mut [Value],
+    last_assistant_index: Option<usize>,
 ) -> Value {
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
@@ -755,8 +786,15 @@ fn responses_message_item_to_chat_message(
     if chat_role == "assistant" {
         append_pending_reasoning(pending_reasoning, responses_message_reasoning_text(item));
         attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
-    } else if pending_reasoning.is_some() {
-        pending_reasoning.take();
+    } else {
+        // 非 assistant 的回合边界消息（user 等）：pending reasoning 不再直接丢弃，
+        // 回溯附挂到上一条 assistant；其已有 reasoning_content 时追加尾部
+        // reasoning，同时防止 reasoning 跨 user 回合泄漏到之后的 assistant 消息。
+        attach_pending_reasoning_to_previous_assistant(
+            messages,
+            last_assistant_index,
+            pending_reasoning,
+        );
     }
 
     message
@@ -850,8 +888,8 @@ fn attach_pending_reasoning_to_assistant(
 
 /// 在所有 input 处理完毕后，对仍缺 `reasoning_content` 的 assistant tool-call 消息补占位。
 /// 必须作为管线末端的最终兜底执行：真实 reasoning 可能以尾随 `reasoning` item 的形式经
-/// `attach_reasoning_to_last_assistant` 回填，过早注入占位会被 `append_reasoning_content`
-/// 追加而污染真实思考。
+/// `attach_pending_reasoning_to_previous_assistant` 回填，过早注入占位会被
+/// `append_reasoning_content` 追加而污染真实思考。
 fn backfill_tool_call_reasoning_placeholders(messages: &mut [Value]) {
     for message in messages.iter_mut() {
         let is_assistant_tool_call = message.get("role").and_then(|value| value.as_str())
@@ -887,34 +925,39 @@ fn ensure_tool_call_reasoning_content(message: &mut Value) {
     }
 }
 
-fn attach_reasoning_to_last_assistant(
+/// 将仍未消费的 pending reasoning 回溯附挂到上一条 assistant 消息。
+///
+/// 只允许两种「真正的尾部」场景调用：
+/// 1. 整个 input 处理完毕后 pending_reasoning 仍有剩余——其后已没有任何可
+///    前向附挂的 message / function_call；
+/// 2. user 等回合边界消息到达时 pending_reasoning 非空——reasoning 不允许
+///    跨 user 回合泄漏到之后的 assistant 消息，也不能直接丢弃可归属的思考。
+///
+/// 这里已经处于尾部/边界收尾点，不是普通 reasoning 的前向归属路径；
+/// 若目标已有 reasoning_content，追加尾部 reasoning 以保留同一 assistant turn
+/// 中同时出现的 embedded reasoning 与尾随 reasoning。无论是否附挂成功，
+/// pending 都会被消费（拿走），绝不留到下一条 assistant。
+fn attach_pending_reasoning_to_previous_assistant(
     messages: &mut [Value],
     last_assistant_index: Option<usize>,
-    reasoning: &Option<String>,
-) -> bool {
-    let Some(reasoning) = reasoning
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return true;
+    pending_reasoning: &mut Option<String>,
+) {
+    let Some(reasoning) = pending_reasoning.take() else {
+        return;
     };
-    let Some(index) = last_assistant_index else {
-        return false;
-    };
-    let Some(message) = messages.get_mut(index) else {
-        return false;
+    let reasoning = reasoning.trim();
+    if reasoning.is_empty() {
+        return;
+    }
+    let Some(message) = last_assistant_index.and_then(|index| messages.get_mut(index)) else {
+        return;
     };
     if message.get("role").and_then(|v| v.as_str()) != Some("assistant") {
-        return false;
+        return;
     }
-
     if let Some(obj) = message.as_object_mut() {
         append_reasoning_content(obj, reasoning);
-        return true;
     }
-
-    false
 }
 
 fn responses_message_reasoning_text(item: &Value) -> Option<String> {
@@ -2521,6 +2564,44 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_preserves_trailing_reasoning_after_embedded_reasoning() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "reasoning_content": "Embedded thought.",
+                    "content": "Done."
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "Trailing thought."}
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Continue"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "Done.");
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "Embedded thought.\n\nTrailing thought."
+        );
+        assert_eq!(messages[1]["role"], "user");
+        assert!(messages[1].get("reasoning_content").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_attaches_reasoning_to_tool_call_message() {
         let input = json!({
             "model": "gpt-5.4",
@@ -2641,6 +2722,106 @@ mod tests {
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(messages[0]["reasoning_content"], "Need to read a file.");
         assert_eq!(messages[1]["role"], "tool");
+    }
+
+    #[test]
+    fn responses_request_to_chat_attaches_reasoning_forward_to_following_assistant() {
+        // 回归：reasoning 必须前向附挂到其后的 assistant 消息，不得回溯拼进
+        // 上一条 assistant。此前多轮序列 [r1, m1, r2, m2] 中 r2 会被拼到 m1
+        // 尾部、 m2 丢失 reasoning_content，思考型模型（kimi 等）因此中途"断片"。
+        let input = json!({
+            "model": "kimi-k2-thinking",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "first thought"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "First answer."
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "second thought"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "Second answer."
+                },
+                {
+                    "role": "user",
+                    "content": "Continue"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "First answer.");
+        assert_eq!(messages[0]["reasoning_content"], "first thought");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "Second answer.");
+        assert_eq!(messages[1]["reasoning_content"], "second thought");
+        assert_eq!(messages[2]["role"], "user");
+        assert!(messages[2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_reasoning_on_final_answer_after_tool_call() {
+        // 回归（Kimi 契约）：[reasoning, function_call, output, reasoning, message]
+        // 最后一个纯文本 assistant 必须保留自己的 reasoning_content，且该 reasoning
+        // 不得被回溯拼进前面的 tool-call 消息（否则上游历史里 tool-call 消息的思考
+        // 被污染、最终答复消息反而没有 reasoning_content）。
+        let input = json!({
+            "model": "kimi-k2-thinking",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "need to read a file"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "arguments": "{\"path\":\"README.md\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "Readme content"
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "now I can answer"}]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "The file says hello."
+                },
+                {
+                    "role": "user",
+                    "content": "Continue"
+                }
+            ]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "need to read a file");
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "The file says hello.");
+        assert_eq!(messages[2]["reasoning_content"], "now I can answer");
+        assert_eq!(messages[3]["role"], "user");
+        assert!(messages[3].get("reasoning_content").is_none());
     }
 
     #[test]
