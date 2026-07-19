@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { Layers } from "lucide-react";
 import {
   getIcon,
   hasIcon,
@@ -65,6 +66,26 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     }
     return undefined;
   }, [color, icon]);
+
+  // 供应商聚合：用 lucide Layers 图标（紫色），而非"供"字首字母兜底
+  if (icon === "aggregation" || icon === "layers") {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center justify-center flex-shrink-0",
+          className,
+        )}
+        title={name}
+        style={sizeStyle}
+      >
+        <Layers
+          color={color && color.trim() !== "" ? color : "#6366F1"}
+          style={{ width: "100%", height: "100%" }}
+          strokeWidth={2}
+        />
+      </span>
+    );
+  }
 
   // 内联 SVG 渲染（支持 CSS currentColor 着色）
   if (iconSvg) {
