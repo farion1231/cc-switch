@@ -2186,14 +2186,16 @@ impl RequestForwarder {
                 response = self
                     .validate_codex_anthropic_success_response(response)
                     .await?;
-            } else if matches!(
+            } else if should_validate_responses_semantics(
+                app_type,
+                endpoint,
                 resolved_claude_api_format.as_deref(),
-                Some("openai_responses")
+                codex_responses_to_chat || codex_responses_to_anthropic,
             ) {
                 if !request_is_streaming || response.is_json() {
-                    // Claude→Responses gateways can also return a semantic failure in an
-                    // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
-                    // retry loop so an early failure can still select another provider.
+                    // Responses gateways can also return a semantic failure in an HTTP
+                    // 2xx Response object. Validate buffered/JSON bodies inside the retry
+                    // loop so an early failure can still select another provider.
                     response = self.validate_responses_success_response(response).await?;
                 } else {
                     // Delay committing the downstream stream until the upstream emits
@@ -2876,6 +2878,22 @@ fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
     }
 }
 
+fn should_validate_responses_semantics(
+    app_type: &AppType,
+    endpoint: &str,
+    resolved_claude_api_format: Option<&str>,
+    codex_response_transformed: bool,
+) -> bool {
+    if matches!(resolved_claude_api_format, Some("openai_responses")) {
+        return true;
+    }
+
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        && !codex_response_transformed
+        && matches!(path, "/responses" | "/v1/responses")
+}
+
 /// A streaming request may receive a whole JSON document even when the gateway
 /// omits `application/json`. `None` means either "not JSON" or "not complete yet";
 /// a parsed document is safe to commit unless it is a semantic failure envelope.
@@ -3463,6 +3481,7 @@ mod tests {
     use crate::provider::LocalProxyRequestOverrides;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
+    use axum::{routing::post, Router};
     use bytes::Bytes;
     use http::StatusCode;
     use serde_json::json;
@@ -4187,6 +4206,116 @@ mod tests {
             br#"{"status":"completed","error":null,"output":[]}"#
         )
         .is_none());
+    }
+
+    #[test]
+    fn native_responses_paths_require_semantic_validation() {
+        assert!(should_validate_responses_semantics(
+            &AppType::Codex,
+            "/responses",
+            None,
+            false,
+        ));
+        assert!(should_validate_responses_semantics(
+            &AppType::Codex,
+            "/v1/responses?trace=1",
+            None,
+            false,
+        ));
+        assert!(should_validate_responses_semantics(
+            &AppType::GrokBuild,
+            "/responses",
+            None,
+            false,
+        ));
+        assert!(should_validate_responses_semantics(
+            &AppType::Claude,
+            "/v1/messages",
+            Some("openai_responses"),
+            false,
+        ));
+
+        assert!(!should_validate_responses_semantics(
+            &AppType::Codex,
+            "/responses",
+            None,
+            true,
+        ));
+        assert!(!should_validate_responses_semantics(
+            &AppType::Codex,
+            "/responses/compact",
+            None,
+            false,
+        ));
+        assert!(!should_validate_responses_semantics(
+            &AppType::Codex,
+            "/chat/completions",
+            None,
+            false,
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_responses_stream_error_reaches_semantic_validator() {
+        let app = Router::new().route(
+            "/v1/responses",
+            post(|| async {
+                (
+                    [(http::header::CONTENT_TYPE, "text/event-stream")],
+                    concat!(
+                        "event: error\n",
+                        "data: {\"type\":\"error\",\"sequence_number\":3,",
+                        "\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",",
+                        "\"message\":\"temporary upstream failure\"}}\n\n"
+                    ),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test upstream");
+        let address = listener.local_addr().expect("read test upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve test upstream");
+        });
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "base_url": format!("http://{address}"),
+            "api_key": "test-key"
+        });
+        let adapter = get_adapter(&AppType::Codex);
+        let result = forwarder
+            .forward(
+                &AppType::Codex,
+                &http::Method::POST,
+                &provider,
+                "/responses?trace=1",
+                &json!({"model": "gpt-test", "stream": true, "input": "hello"}),
+                &HeaderMap::new(),
+                &Extensions::new(),
+                adapter.as_ref(),
+            )
+            .await;
+        server.abort();
+
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("HTTP 200 Responses error must fail before stream commitment"),
+        };
+        assert!(matches!(
+            &error,
+            ProxyError::TransformError(message)
+                if message.contains("server_error")
+                    && message.contains("temporary upstream failure")
+        ));
+        assert_eq!(
+            forwarder.categorize_proxy_error(&error, &provider),
+            ErrorCategory::Retryable
+        );
     }
 
     #[test]
