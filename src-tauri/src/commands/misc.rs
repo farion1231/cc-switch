@@ -2513,13 +2513,13 @@ pub(crate) fn run_detected_tool_command_with_timeout(
 
     #[cfg(target_os = "windows")]
     {
-        return run_windows_tool_command_capture(
+        run_windows_tool_command_capture(
             tool_path,
             args,
             &format!("{};{current_path}", dir.display()),
             timeout,
             extra_env,
-        );
+        )
     }
 
     #[cfg(not(target_os = "windows"))]
