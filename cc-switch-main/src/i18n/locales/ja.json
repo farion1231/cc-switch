@@ -1116,7 +1116,7 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "任意: 既定で使いたい Claude モデルを指定。空欄ならシステム既定を使用します。",
     "modelMappingLabel": "モデルマッピング",
-    "modelMappingHint": "表示名は /model メニューにのみ影響します。コンテキスト長はモデルがサポートする最大コンテキストウィンドウを宣言します（例：1M、200K、500000、[30k]、1.5M など）。空欄でデフォルト値を使用。",
+    "modelMappingHint": "表示名は /model メニューにのみ影響します。コンテキスト長はモデルがサポートする最大コンテキストウィンドウを宣言します（例：1M、200K、500000 など）。空欄でデフォルト値を使用。",
     "modelRoleLabel": "モデル役割",
     "modelRoleSonnet": "Sonnet",
     "modelRoleOpus": "Opus",
