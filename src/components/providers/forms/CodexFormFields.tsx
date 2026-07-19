@@ -32,6 +32,10 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import {
+  enrichOpencodeGoModels,
+  isOpencodeGoBaseUrl,
+} from "@/config/opencodeGoModelMeta";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import { cn } from "@/lib/utils";
@@ -328,11 +332,22 @@ export function CodexFormFields({
         setFetchedModels(models);
         if (models.length === 0) {
           toast.info(t("providerForm.fetchModelsEmpty"));
-        } else {
-          toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
-          );
+          return;
         }
+        // OpenCode Go: directly enrich the fetched models into the full catalog
+        // (with per-model context windows, excluding messages-only models), so a
+        // single "Fetch Models" click auto-syncs any newly added upstream models.
+        if (isOpencodeGoBaseUrl(codexBaseUrl) && onCatalogModelsChange) {
+          const enriched = enrichOpencodeGoModels(models);
+          setCatalogRows(enriched.map((m) => createCatalogRow(m)));
+          toast.success(
+            t("providerForm.fetchModelsSuccess", { count: enriched.length }),
+          );
+          return;
+        }
+        toast.success(
+          t("providerForm.fetchModelsSuccess", { count: models.length }),
+        );
       })
       .catch((err) => {
         if (seq !== fetchModelsSeqRef.current) return;
@@ -340,7 +355,14 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
+  }, [
+    codexBaseUrl,
+    codexApiKey,
+    isFullUrl,
+    customUserAgent,
+    onCatalogModelsChange,
+    t,
+  ]);
 
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;
