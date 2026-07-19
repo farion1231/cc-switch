@@ -46,10 +46,7 @@ import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import {
-  buildOpenClawDefaultModel,
-  matchesOpenClawPrimaryModel,
-} from "@/utils/openClawDefaultModel";
+import { matchesOpenClawPrimaryModel } from "@/utils/openClawDefaultModel";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -144,10 +141,7 @@ export function ProviderList({
   const isProviderDefaultModel = useCallback(
     (provider: Provider): boolean => {
       if (appId !== "openclaw" || !openclawDefaultModel?.primary) return false;
-      return matchesOpenClawPrimaryModel(
-        openclawDefaultModel,
-        buildOpenClawDefaultModel(provider),
-      );
+      return matchesOpenClawPrimaryModel(openclawDefaultModel, provider);
     },
     [appId, openclawDefaultModel],
   );

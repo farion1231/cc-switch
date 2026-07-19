@@ -19,7 +19,15 @@ export function buildOpenClawDefaultModel(
 
 export function matchesOpenClawPrimaryModel(
   current: OpenClawDefaultModel | null | undefined,
-  expected: OpenClawDefaultModel | null,
+  provider: Provider,
 ): boolean {
-  return Boolean(current && expected && current.primary === expected.primary);
+  if (!current?.primary) return false;
+
+  const config = provider.settingsConfig as OpenClawProviderConfig;
+  const models = config.models ?? [];
+
+  return models.some(
+    (model) =>
+      Boolean(model.id) && current.primary === `${provider.id}/${model.id}`,
+  );
 }

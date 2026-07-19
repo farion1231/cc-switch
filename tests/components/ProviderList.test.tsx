@@ -338,6 +338,14 @@ describe("ProviderList Component", () => {
       expected: "default",
     },
     {
+      name: "another configured model is primary",
+      defaultModel: {
+        primary: "provider-1/gpt-5.6-mini",
+        fallbacks: [],
+      },
+      expected: "default",
+    },
+    {
       name: "custom fallback models are configured",
       defaultModel: {
         primary: "provider-1/gpt-5.6-terra",
@@ -376,7 +384,7 @@ describe("ProviderList Component", () => {
         />,
       );
 
-      expect(screen.getByTestId("is-default-provider-1")).toHaveTextContent(
+      expect(screen.getByTestId("is-default-provider-1").textContent).toBe(
         expected,
       );
     },
