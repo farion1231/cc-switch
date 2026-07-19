@@ -1124,7 +1124,7 @@ export function ClaudeFormFields({
                 className="h-5 w-9"
               />
             </div>
-            <p className="mt-1.5 ml-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1.5 ml-1 text-xs leading-relaxed text-muted-foreground">
               {t("providerForm.autoSyncContextWindowTooltip", {
                 defaultValue:
                   "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。",
