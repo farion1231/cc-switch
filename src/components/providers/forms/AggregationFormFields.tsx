@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Plus, Trash2, Loader2, Layers, Download, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -16,7 +17,12 @@ import {
   fetchModelsForConfig,
   showFetchModelsError,
 } from "@/lib/api/model-fetch";
-import type { AggregationDraft } from "./hooks/useAggregationDraftState";
+import type { ClaudeApiKeyField } from "@/types";
+import {
+  AGG_ROLE_SUPPORTS_1M,
+  type AggRoleKey,
+  type AggregationDraft,
+} from "./hooks/useAggregationDraftState";
 
 interface AggregationFormFieldsProps {
   draft: AggregationDraft;
@@ -32,27 +38,56 @@ const API_FORMAT_OPTIONS = [
   { value: "gemini_native", labelKey: "providerForm.apiFormatGeminiNative" },
 ] as const;
 
+const ROLE_ROWS: Array<{
+  key: AggRoleKey;
+  labelKey: string;
+  fallback: string;
+}> = [
+  {
+    key: "sonnet",
+    labelKey: "providerForm.modelRoleSonnet",
+    fallback: "Sonnet",
+  },
+  { key: "opus", labelKey: "providerForm.modelRoleOpus", fallback: "Opus" },
+  { key: "fable", labelKey: "providerForm.modelRoleFable", fallback: "Fable" },
+  { key: "haiku", labelKey: "providerForm.modelRoleHaiku", fallback: "Haiku" },
+  {
+    key: "subagent",
+    labelKey: "providerForm.modelRoleSubagent",
+    fallback: "Subagent",
+  },
+  {
+    key: "default",
+    labelKey: "aggregation.roleDefault",
+    fallback: "默认兜底",
+  },
+];
+
 /**
- * 「供应商聚合」表单字段：多条上游 + 一键获取模型 + 模型→上游路由。
+ * 「供应商聚合」表单字段：多条上游 + 一键获取模型 +（按 Claude 角色的）模型映射。
  */
 export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
   const { t } = useTranslation();
   const {
     upstreams,
-    routes,
+    roles,
+    legacyRoutes,
     addUpstream,
     removeUpstream,
     updateUpstream,
-    addRoute,
-    removeRoute,
-    updateRoute,
+    updateRole,
+    removeLegacyRoute,
   } = draft;
 
   const [fetching, setFetching] = useState(false);
-  // 每条上游拉取到的模型名（用于快速添加路由）
   const [fetchedByUpstream, setFetchedByUpstream] = useState<
     Record<string, string[]>
   >({});
+
+  const configuredUpstreams = useMemo(
+    () => upstreams.filter((u) => u.baseUrl.trim()),
+    [upstreams],
+  );
 
   const upstreamLabel = (id: string) => {
     const u = upstreams.find((x) => x.id === id);
@@ -83,6 +118,9 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
           u.baseUrl.trim(),
           u.apiKey.trim(),
           u.isFullUrl,
+          undefined,
+          undefined,
+          u.apiKeyField,
         );
         next[u.id] = models.map((m) => m.id);
         anySuccess = true;
@@ -91,6 +129,7 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
         showFetchModelsError(err, t, {
           hasApiKey: !!u.apiKey.trim(),
           hasBaseUrl: !!u.baseUrl.trim(),
+          apiKeyOptional: true,
         });
       }
     }
@@ -108,9 +147,6 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
     }
   };
 
-  const routeExists = (model: string, upstreamId: string) =>
-    routes.some((r) => r.model === model && r.upstreamId === upstreamId);
-
   return (
     <div className="space-y-6">
       {/* 说明 */}
@@ -123,7 +159,7 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
           <p>
             {t("aggregation.intro", {
               defaultValue:
-                "添加多条上游（各自的 URL / 密钥 / API 格式），一键获取全部模型后，把想用的模型分别绑定到上游。启用后作为一个供应商切换使用，代理会按模型名路由。",
+                "添加多条上游（各自的 URL / 密钥 / API 格式），一键获取全部模型后，在下方模型映射里把每个 Claude 角色绑定到某条上游的模型。等同于把单一供应商扩展为多供应商。",
             })}
           </p>
           <p className="text-amber-600 dark:text-amber-400">
@@ -182,17 +218,19 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
-            <div className="grid gap-2 sm:grid-cols-[1fr_200px]">
-              <Input
-                value={u.baseUrl}
-                onChange={(e) =>
-                  updateUpstream(u.id, { baseUrl: e.target.value })
-                }
-                placeholder={t("aggregation.baseUrlPlaceholder", {
-                  defaultValue: "请求地址，如 https://api.example.com",
-                })}
-                className="h-8 font-mono text-xs"
-              />
+            {/* 请求地址（整行，避免与下拉挤在一起） */}
+            <Input
+              value={u.baseUrl}
+              onChange={(e) =>
+                updateUpstream(u.id, { baseUrl: e.target.value })
+              }
+              placeholder={t("aggregation.baseUrlPlaceholder", {
+                defaultValue: "请求地址，如 https://api.example.com",
+              })}
+              className="h-8 font-mono text-xs"
+            />
+            {/* API 格式 + 认证字段：各占一半、min-w-0 + 截断，防止长标签溢出 */}
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Select
                 value={u.apiFormat}
                 onValueChange={(v) =>
@@ -202,7 +240,12 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
                   })
                 }
               >
-                <SelectTrigger className="h-8">
+                <SelectTrigger
+                  className="h-8 min-w-0 [&>span]:truncate"
+                  aria-label={t("providerForm.apiFormat", {
+                    defaultValue: "API 格式",
+                  })}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -213,48 +256,52 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
                   ))}
                 </SelectContent>
               </Select>
+              <Select
+                value={u.apiKeyField}
+                onValueChange={(value) =>
+                  updateUpstream(u.id, {
+                    apiKeyField: value as ClaudeApiKeyField,
+                  })
+                }
+              >
+                <SelectTrigger
+                  className="h-8 min-w-0 [&>span]:truncate"
+                  aria-label={t("providerForm.authField", {
+                    defaultValue: "认证字段",
+                  })}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ANTHROPIC_AUTH_TOKEN">
+                    {t("providerForm.authFieldAuthToken", {
+                      defaultValue: "ANTHROPIC_AUTH_TOKEN（默认）",
+                    })}
+                  </SelectItem>
+                  <SelectItem value="ANTHROPIC_API_KEY">
+                    {t("providerForm.authFieldApiKey", {
+                      defaultValue: "ANTHROPIC_API_KEY",
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <Input
               type="password"
               value={u.apiKey}
               onChange={(e) => updateUpstream(u.id, { apiKey: e.target.value })}
               placeholder={t("aggregation.apiKeyPlaceholder", {
-                defaultValue: "API Key",
+                defaultValue: "API Key（无鉴权可留空）",
               })}
               className="h-8 font-mono text-xs"
             />
-            {/* 已获取模型：点击快速加为路由 */}
-            {fetchedByUpstream[u.id] && fetchedByUpstream[u.id].length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {fetchedByUpstream[u.id].map((m) => {
-                  const added = routeExists(m, u.id);
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      disabled={added}
-                      onClick={() => addRoute({ model: m, upstreamId: u.id })}
-                      className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
-                        added
-                          ? "cursor-default border-border bg-muted text-muted-foreground"
-                          : "border-indigo-500/40 text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-400"
-                      }`}
-                      title={
-                        added
-                          ? t("aggregation.alreadyRouted", {
-                              defaultValue: "已添加",
-                            })
-                          : t("aggregation.clickToRoute", {
-                              defaultValue: "点击添加为路由",
-                            })
-                      }
-                    >
-                      {added ? "✓ " : "+ "}
-                      {m}
-                    </button>
-                  );
+            {fetchedByUpstream[u.id] && (
+              <p className="text-xs text-muted-foreground">
+                {t("aggregation.fetchedForUpstream", {
+                  count: fetchedByUpstream[u.id].length,
+                  defaultValue: `已获取 ${fetchedByUpstream[u.id].length} 个模型（下方映射输入框可自动补全）`,
                 })}
-              </div>
+              </p>
             )}
           </div>
         ))}
@@ -278,52 +325,54 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
         </Button>
       </div>
 
-      {/* 模型路由 */}
+      {/* 每条上游的模型建议（datalist，用于映射输入框自动补全） */}
+      {Object.entries(fetchedByUpstream).map(([upstreamId, models]) => (
+        <datalist key={upstreamId} id={`agg-models-${upstreamId}`}>
+          {models.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+      ))}
+
+      {/* 模型映射：按 Claude 角色（与单一供应商同构，左=角色，右=上游+模型） */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label className="text-sm font-semibold">
-            {t("aggregation.modelRoutes", { defaultValue: "模型映射" })}
-          </Label>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => addRoute()}
-          >
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            {t("aggregation.addRoute", { defaultValue: "添加映射" })}
-          </Button>
+        <Label className="text-sm font-semibold">
+          {t("aggregation.modelRoutes", { defaultValue: "模型映射" })}
+        </Label>
+        <p className="text-xs text-muted-foreground">
+          {t("aggregation.roleMappingHint", {
+            defaultValue:
+              "左侧是 Claude 角色，右侧选择由哪条上游、用哪个模型来承接。留空的角色不生效；建议至少配置「默认兜底」。",
+          })}
+        </p>
+
+        {/* 表头 */}
+        <div className="hidden grid-cols-[72px_1fr_1fr_auto] gap-2 px-1 text-xs font-medium text-muted-foreground sm:grid">
+          <span>{t("aggregation.colRole", { defaultValue: "角色" })}</span>
+          <span>{t("aggregation.colUpstream", { defaultValue: "上游" })}</span>
+          <span>
+            {t("aggregation.colModel", { defaultValue: "实际请求模型" })}
+          </span>
+          <span className="pr-1">1M</span>
         </div>
 
-        {routes.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-muted-foreground/40 p-4 text-center text-xs text-muted-foreground">
-            {t("aggregation.noRoutes", {
-              defaultValue:
-                "暂无模型映射。先获取模型并点击添加，或手动添加「模型名 → 上游」。",
-            })}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {routes.map((r, index) => (
+        <div className="space-y-2">
+          {ROLE_ROWS.map(({ key, labelKey, fallback }) => {
+            const role = roles[key];
+            const supports1m = AGG_ROLE_SUPPORTS_1M[key];
+            return (
               <div
-                key={index}
-                className="grid items-center gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]"
+                key={key}
+                className="grid grid-cols-[72px_1fr_1fr_auto] items-center gap-2"
               >
-                <Input
-                  value={r.model}
-                  onChange={(e) =>
-                    updateRoute(index, { model: e.target.value })
-                  }
-                  placeholder={t("aggregation.modelPlaceholder", {
-                    defaultValue: "模型名 / 通配（如 gpt-*）",
-                  })}
-                  className="h-8 font-mono text-xs"
-                />
+                <span className="truncate text-sm font-medium text-muted-foreground">
+                  {t(labelKey, { defaultValue: fallback })}
+                </span>
                 <Select
-                  value={r.upstreamId}
-                  onValueChange={(v) => updateRoute(index, { upstreamId: v })}
+                  value={role.upstreamId || undefined}
+                  onValueChange={(v) => updateRole(key, { upstreamId: v })}
                 >
-                  <SelectTrigger className="h-8">
+                  <SelectTrigger className="h-8 min-w-0 [&>span]:truncate">
                     <SelectValue
                       placeholder={t("aggregation.selectUpstream", {
                         defaultValue: "选择上游",
@@ -331,46 +380,93 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
                     />
                   </SelectTrigger>
                   <SelectContent>
-                    {upstreams
-                      .filter((u) => u.baseUrl.trim())
-                      .map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {upstreamLabel(u.id)}
-                        </SelectItem>
-                      ))}
+                    {configuredUpstreams.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {upstreamLabel(u.id)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Input
-                  value={r.upstreamModel}
-                  onChange={(e) =>
-                    updateRoute(index, { upstreamModel: e.target.value })
+                  value={role.model}
+                  onChange={(e) => updateRole(key, { model: e.target.value })}
+                  list={
+                    role.upstreamId
+                      ? `agg-models-${role.upstreamId}`
+                      : undefined
                   }
-                  placeholder={t("aggregation.upstreamModelPlaceholder", {
-                    defaultValue: "上游模型名（可选改写）",
+                  placeholder={t("aggregation.modelPlaceholder", {
+                    defaultValue: "实际请求模型名",
                   })}
                   className="h-8 font-mono text-xs"
                 />
+                {supports1m ? (
+                  <label className="flex items-center justify-center pr-1">
+                    <Checkbox
+                      checked={role.supports1m}
+                      onCheckedChange={(c) =>
+                        updateRole(key, { supports1m: c === true })
+                      }
+                      aria-label="1M"
+                    />
+                  </label>
+                ) : (
+                  <span className="w-4 pr-1" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {legacyRoutes.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+          <Label className="text-sm font-semibold">
+            {t("aggregation.legacyRoutesTitle", {
+              count: legacyRoutes.length,
+              defaultValue: `旧版模型路由（${legacyRoutes.length}）`,
+            })}
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {t("aggregation.legacyRoutesHint", {
+              defaultValue:
+                "这些路由来自旧版聚合配置，会继续在角色映射之后生效。请先完成新的角色映射，再按需删除旧路由。",
+            })}
+          </p>
+          <div className="space-y-1.5">
+            {legacyRoutes.map((route, index) => (
+              <div
+                key={`${route.model}-${route.upstreamId}-${index}`}
+                className="flex items-center gap-2 rounded-md border bg-background/70 px-2 py-1.5 text-xs"
+              >
+                <code className="min-w-0 flex-1 truncate">{route.model}</code>
+                <span className="text-muted-foreground">→</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {upstreamLabel(route.upstreamId)}
+                </span>
+                {route.upstreamModel && (
+                  <>
+                    <span className="text-muted-foreground">→</span>
+                    <code className="min-w-0 flex-1 truncate">
+                      {route.upstreamModel}
+                    </code>
+                  </>
+                )}
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeRoute(index)}
+                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => removeLegacyRoute(index)}
                   aria-label={t("common.delete", { defaultValue: "删除" })}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
             ))}
           </div>
-        )}
-        <p className="text-xs text-muted-foreground">
-          {t("aggregation.matchHint", {
-            defaultValue:
-              "匹配规则：精确匹配优先，其次是最长前缀通配（如 gpt-*），最后是 * 兜底。",
-          })}
-        </p>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -10,7 +10,8 @@ use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
 use crate::services::provider::{
-    build_effective_settings_with_common_config, write_live_with_common_config,
+    build_effective_settings_with_common_config, sanitize_claude_settings_for_live,
+    write_live_with_common_config,
 };
 use serde_json::{json, Map, Value};
 use std::str::FromStr;
@@ -1379,7 +1380,11 @@ impl ProxyService {
             if Self::live_has_proxy_placeholder_for_app(&AppType::Claude, &config) {
                 log::warn!("claude Live 已被代理接管，不备份（避免把代理配置固化进备份槽）；下次 stop 会从 SSOT 重建 Live");
             } else {
-                let json_str = serde_json::to_string(&config)
+                // Older builds could write the internal aggregation block (including
+                // upstream credentials) into Claude's live settings. Never persist
+                // that legacy residue into the takeover backup.
+                let safe_config = sanitize_claude_settings_for_live(&config);
+                let json_str = serde_json::to_string(&safe_config)
                     .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?;
                 self.db
                     .save_live_backup("claude", &json_str)
@@ -1453,6 +1458,11 @@ impl ProxyService {
             return Ok(());
         }
 
+        let config = if matches!(app_type, AppType::Claude) {
+            sanitize_claude_settings_for_live(&config)
+        } else {
+            config
+        };
         let json_str = serde_json::to_string(&config)
             .map_err(|e| format!("序列化 {app_type_str} 配置失败: {e}"))?;
         self.db
@@ -2364,8 +2374,11 @@ impl ProxyService {
         }
 
         let backup_json = match app_type_enum {
-            AppType::Claude => serde_json::to_string(&effective_settings)
-                .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?,
+            AppType::Claude => {
+                let safe_settings = sanitize_claude_settings_for_live(&effective_settings);
+                serde_json::to_string(&safe_settings)
+                    .map_err(|e| format!("序列化 Claude 配置失败: {e}"))?
+            }
             AppType::Codex => serde_json::to_string(&effective_settings)
                 .map_err(|e| format!("序列化 Codex 配置失败: {e}"))?,
             AppType::GrokBuild => serde_json::to_string(&effective_settings)
@@ -5711,6 +5724,10 @@ model = "gpt-5.1-codex"
                 "env": {
                     "ANTHROPIC_AUTH_TOKEN": "token",
                     "ANTHROPIC_BASE_URL": "https://claude.example"
+                },
+                "aggregation": {
+                    "upstreams": [{"id": "u1", "apiKey": "must-not-leak"}],
+                    "routes": []
                 }
             }),
             None,
@@ -5737,6 +5754,10 @@ model = "gpt-5.1-codex"
             stored.get("includeCoAuthoredBy").and_then(|v| v.as_bool()),
             Some(false),
             "common config should be applied into Claude restore backup"
+        );
+        assert!(
+            stored.get("aggregation").is_none(),
+            "DB-only aggregation credentials must not be stored in Live backups"
         );
     }
 
@@ -7067,6 +7088,68 @@ experimental_bearer_token = "PROXY_MANAGED"
                 "must not overwrite good backup for {app_type} with proxy placeholder"
             );
         }
+    }
+
+    /// Legacy versions could leave the internal aggregation payload in Claude's
+    /// settings.json. Both backup entry points must scrub it before persisting.
+    #[tokio::test]
+    #[serial]
+    async fn claude_backups_strip_legacy_aggregation_secrets() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+        let legacy_live = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "live-token"
+            },
+            "aggregation": {
+                "upstreams": [{
+                    "id": "upstream-a",
+                    "baseUrl": "https://upstream.example.com",
+                    "apiKey": "must-not-be-backed-up"
+                }]
+            }
+        });
+        let settings_path = get_claude_settings_path();
+        if let Some(parent) = settings_path.parent() {
+            std::fs::create_dir_all(parent).expect("create Claude config dir");
+        }
+        std::fs::write(
+            &settings_path,
+            serde_json::to_vec(&legacy_live).expect("serialize legacy live"),
+        )
+        .expect("seed legacy Claude live");
+
+        service
+            .backup_live_config_strict(&AppType::Claude)
+            .await
+            .expect("strict backup");
+        let strict_backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read strict backup")
+            .expect("strict backup exists");
+        let strict_json: Value =
+            serde_json::from_str(&strict_backup.original_config).expect("parse strict backup");
+        assert!(strict_json.get("aggregation").is_none());
+        assert_eq!(strict_json["env"]["ANTHROPIC_AUTH_TOKEN"], "live-token");
+
+        db.delete_live_backup("claude")
+            .await
+            .expect("delete strict backup");
+        service.backup_live_configs().await.expect("bulk backup");
+        let bulk_backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read bulk backup")
+            .expect("bulk backup exists");
+        let bulk_json: Value =
+            serde_json::from_str(&bulk_backup.original_config).expect("parse bulk backup");
+        assert!(bulk_json.get("aggregation").is_none());
+        assert_eq!(bulk_json["env"]["ANTHROPIC_AUTH_TOKEN"], "live-token");
     }
 
     fn grok_provider_config(base_url: &str, api_key: &str) -> Value {

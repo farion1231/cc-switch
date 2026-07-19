@@ -94,9 +94,8 @@ export const providerPresets: ProviderPreset[] = [
     name: "供应商聚合",
     nameKey: "aggregation.presetName",
     websiteUrl: "",
-    settingsConfig: {
-      aggregation: { upstreams: [], routes: [] },
-    },
+    // Aggregation routes/credentials are stored in provider meta (DB-only).
+    settingsConfig: {},
     category: "aggregation",
     providerType: "aggregation",
     theme: {
