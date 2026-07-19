@@ -673,7 +673,32 @@ async fn log_usage_internal(
     }
 }
 
-/// 创建带日志记录和超时控制的透传流
+/// 检查单个 SSE data JSON 是否为空的 thinking/thinking_delta 事件
+fn is_empty_thinking_event(data: &str) -> bool {
+    if let Ok(json) = serde_json::from_str::<Value>(data) {
+        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        match event_type {
+            // 注意：content_block_start(thinking="") 是 Anthropic 协议的正常块起始事件，
+            // thinking 字段初始为空、后续由 thinking_delta 填充。
+            // 之前误把这种 start 当作"空 thinking 碎块"过滤，会导致 Claude Code
+            // 收到 thinking_delta 却没有对应 content_block_start，整个 thought 块丢失。
+            // 因此 content_block_start 一律不过滤，空 thinking 块由"start 后紧跟 stop
+            // 且中间无 delta"的状态机逻辑在 create_logged_passthrough_stream 中精准处理。
+            "content_block_start" => false,
+            "content_block_delta" => {
+                // 空 thinking_delta（thinking=""）本身无害，Claude Code 收到即为无操作；
+                // 而过滤它反而可能打乱 thinking 块的 start/delta/stop 结构。
+                // 因此空 thinking_delta 一律放行，由 Claude Code 自行处理。
+                false
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// 创建带日志记录、超时控制和空thinking块过滤的透传流
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
@@ -687,9 +712,10 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
-        let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let debug_enabled = log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
+        // 空thinking过滤状态：跟踪是否正在跳过空的thinking块
+        let mut skipping_empty_thinking = false;
 
         // 超时配置
         let first_byte_timeout = if timeout_config.first_byte_timeout > 0 {
@@ -706,7 +732,6 @@ pub fn create_logged_passthrough_stream(
         tokio::pin!(stream);
 
         loop {
-            // 选择超时时间：首字节超时或静默期超时
             let timeout_duration = if is_first_chunk {
                 first_byte_timeout
             } else {
@@ -717,9 +742,8 @@ pub fn create_logged_passthrough_stream(
                 Some(duration) => {
                     match tokio::time::timeout(duration, stream.next()).await {
                         Ok(Some(chunk)) => Some(chunk),
-                        Ok(None) => None, // 流结束
+                        Ok(None) => None,
                         Err(_) => {
-                            // 超时
                             let timeout_type = if is_first_chunk { "首字节" } else { "静默期" };
                             log::error!("[{tag}] 流式响应{}超时 ({}秒)", timeout_type, duration.as_secs());
                             yield Err(std::io::Error::other(format!("流式响应{timeout_type}超时")));
@@ -727,7 +751,7 @@ pub fn create_logged_passthrough_stream(
                         }
                     }
                 }
-                None => stream.next().await, // 无超时限制
+                None => stream.next().await,
             };
 
             match chunk_result {
@@ -739,43 +763,96 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    if inspect_sse_events {
-                        crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
-                        // 尝试解析并记录完整的 SSE 事件
-                        while let Some(event_text) = take_sse_block(&mut buffer) {
-                            if !event_text.trim().is_empty() {
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
-                                for line in event_text.lines() {
-                                    if let Some(data) = strip_sse_field(line, "data") {
-                                        if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
-                                                        }
-                                                        Err(_) => false,
-                                                    }
+                    // 始终进行SSE解析，不再仅用于debug
+                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+
+                    // 安全阀：若buffer超过128KB仍未提取到SSE块，说明非SSE响应（如错误JSON），
+                    // 直接透传原始buffer内容，防止内存泄漏
+                    const MAX_SSE_BUFFER: usize = 128 * 1024;
+                    if buffer.len() > MAX_SSE_BUFFER {
+                        log::warn!(
+                            "[{tag}] SSE buffer超过{}KB仍未收到完整事件，作为非SSE响应透传",
+                            MAX_SSE_BUFFER / 1024
+                        );
+                        yield Ok(Bytes::from(buffer.clone().into_bytes()));
+                        buffer.clear();
+                        continue;
+                    }
+
+                    // 解析完整的SSE事件并按需过滤
+                    while let Some(event_text) = take_sse_block(&mut buffer) {
+                        if event_text.trim().is_empty() {
+                            continue;
+                        }
+
+                        let mut should_yield = true;
+
+                        // 检查每个data行是否为空的thinking事件
+                        for line in event_text.lines() {
+                            if let Some(data) = strip_sse_field(line, "data") {
+                                if data.trim() == "[DONE]" {
+                                    if debug_enabled {
+                                        log::debug!("[{tag}] <<< SSE: [DONE]");
+                                    }
+                                    should_yield = true;
+                                    skipping_empty_thinking = false;
+                                    break;
+                                }
+
+                                if is_empty_thinking_event(data) {
+                                    // 遇到空thinking事件：标记跳过状态
+                                    skipping_empty_thinking = true;
+                                    should_yield = false;
+                                    if debug_enabled {
+                                        log::debug!("[{tag}] [FILTER] 过滤空thinking事件: {data}");
+                                    }
+                                } else if skipping_empty_thinking
+                                    && data.contains("\"type\":\"content_block_stop\"")
+                                {
+                                    // 紧跟空thinking的content_block_stop也跳过
+                                    skipping_empty_thinking = false;
+                                    should_yield = false;
+                                    if debug_enabled {
+                                        log::debug!("[{tag}] [FILTER] 过滤空thinking的stop事件");
+                                    }
+                                } else {
+                                    // 正常事件：结束跳过状态
+                                    skipping_empty_thinking = false;
+                                    should_yield = true;
+
+                                    // usage收集和debug日志（原逻辑）
+                                    let collected = match &collector {
+                                        Some(c) if c.should_collect(data) => {
+                                            match serde_json::from_str::<Value>(data) {
+                                                Ok(json_value) => {
+                                                    c.push(json_value).await;
+                                                    true
                                                 }
-                                                _ => false,
-                                            };
-                                            if collected {
-                                                log::debug!("[{tag}] <<< SSE 事件: {data}");
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE 数据: {data}");
+                                                Err(_) => false,
                                             }
+                                        }
+                                        _ => false,
+                                    };
+                                    if debug_enabled {
+                                        if collected {
+                                            log::debug!("[{tag}] <<< SSE 事件: {data}");
                                         } else {
-                                            log::debug!("[{tag}] <<< SSE: [DONE]");
+                                            log::debug!("[{tag}] <<< SSE 数据: {data}");
                                         }
                                     }
                                 }
+                                break;
                             }
                         }
-                    }
 
-                    yield Ok(bytes);
+                        if should_yield {
+                            // 重建SSE块并输出
+                            let mut block_bytes = event_text.into_bytes();
+                            block_bytes.extend_from_slice(b"\n\n");
+                            yield Ok(Bytes::from(block_bytes));
+                        }
+                    }
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
@@ -783,7 +860,6 @@ pub fn create_logged_passthrough_stream(
                     break;
                 }
                 None => {
-                    // 流正常结束
                     break;
                 }
             }
@@ -1193,5 +1269,76 @@ mod tests {
             Decimal::from_str("1.5").unwrap()
         );
         Ok(())
+    }
+
+    // ========== is_empty_thinking_event 测试 ==========
+
+    #[test]
+    fn test_empty_thinking_block_start() {
+        let data = r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#;
+        assert!(
+            !is_empty_thinking_event(data),
+            "空的thinking content_block_start是Anthropic协议正常块起始，不应被过滤（否则thinking_delta成孤儿，thought块丢失）"
+        );
+    }
+
+    #[test]
+    fn test_empty_thinking_delta() {
+        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}"#;
+        assert!(
+            !is_empty_thinking_event(data),
+            "空的thinking_delta本身无害，不应过滤以免打乱块结构"
+        );
+    }
+
+    #[test]
+    fn test_non_empty_thinking_not_filtered() {
+        let data = r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"实际推理内容"}}"#;
+        assert!(!is_empty_thinking_event(data), "非空thinking不应被过滤");
+    }
+
+    #[test]
+    fn test_non_empty_thinking_delta_not_filtered() {
+        let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"推理"}}"#;
+        assert!(
+            !is_empty_thinking_event(data),
+            "非空thinking_delta不应被过滤"
+        );
+    }
+
+    #[test]
+    fn test_text_content_not_filtered() {
+        let data =
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#;
+        assert!(!is_empty_thinking_event(data), "text block不应被过滤");
+    }
+
+    #[test]
+    fn test_text_delta_not_filtered() {
+        let data = r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"你好"}}"#;
+        assert!(!is_empty_thinking_event(data), "text_delta不应被过滤");
+    }
+
+    #[test]
+    fn test_content_block_stop_not_filtered() {
+        let data = r#"{"type":"content_block_stop","index":0}"#;
+        assert!(
+            !is_empty_thinking_event(data),
+            "content_block_stop不应被is_empty_thinking_event过滤（由状态机处理）"
+        );
+    }
+
+    #[test]
+    fn test_message_start_not_filtered() {
+        let data = r#"{"type":"message_start","message":{"id":"chatcmpl-xxx","type":"message","role":"assistant","model":"glm-5.2"}}"#;
+        assert!(!is_empty_thinking_event(data), "message_start不应被过滤");
+    }
+
+    #[test]
+    fn test_invalid_json_not_filtered() {
+        assert!(
+            !is_empty_thinking_event("not valid json"),
+            "无效JSON不应被过滤"
+        );
     }
 }

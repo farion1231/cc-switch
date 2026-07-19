@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -26,11 +27,22 @@ jobs:
           - os: ubuntu-22.04
           - os: ubuntu-22.04-arm
             arch: arm64
-          - os: macos-14
+          # macOS 已禁用：fork 无 Apple 证书和公证密钥，构建必失败。
+          # 如需启用，取消下一行注释并确保已配置 secrets.APPLE_*
+          # - os: macos-14
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Prepare safe version tag
+        shell: bash
+        run: |
+          # workflow_dispatch 用分支名触发时，GITHUB_REF_NAME 含 /（如 fix/xxx）
+          # Release tag 不支持 /，替换为 -；tag 触发时（如 v3.5.0）不变
+          SAFE_TAG="${GITHUB_REF_NAME//\//-}"
+          echo "RELEASE_TAG=$SAFE_TAG" >> "$GITHUB_ENV"
+          echo "✅ Release tag: $SAFE_TAG"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -133,11 +145,21 @@ jobs:
       - name: Prepare Tauri signing key
         shell: bash
         run: |
-          # 调试：检查 Secret 是否存在
+          # 检查 Secret 是否存在；fork 仓库可能未配置签名密钥
           if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-            echo "❌ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在" >&2
-            echo "请检查 GitHub 仓库 Settings > Secrets and variables > Actions" >&2
-            exit 1
+            echo "⚠️ TAURI_SIGNING_PRIVATE_KEY Secret 为空或不存在，跳过签名（产物将不带签名和更新器）" >&2
+            echo "NO_SIGNING=1" >> "$GITHUB_ENV"
+            # 无签名密钥时禁用 updater artifacts（否则 Tauri 构建会因缺少密钥而失败）
+            cd src-tauri
+            node -e "
+              const fs = require('fs');
+              const p = 'tauri.conf.json';
+              const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+              c.bundle.createUpdaterArtifacts = false;
+              fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+              console.log('✅ 已禁用 createUpdaterArtifacts（无签名密钥）');
+            "
+            exit 0
           fi
           
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
@@ -187,7 +209,7 @@ jobs:
           echo "✅ Tauri signing key prepared"
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -229,7 +251,7 @@ jobs:
           rm -f "$CERT_PATH"
 
       - name: Build Tauri App (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         timeout-minutes: 60
         env:
@@ -275,12 +297,12 @@ jobs:
         run: pnpm tauri build --bundles appimage,deb,rpm
 
       - name: Prepare macOS Assets
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p release-assets
-          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
+          VERSION="${GITHUB_REF_NAME//\//-}"  # 分支名含/替换为-
 
           # Locate bundle artifacts
           TAR_GZ=""; APP_PATH=""
@@ -350,7 +372,7 @@ jobs:
           echo "✅ Styled DMG created: $NEW_DMG"
 
       - name: Notarize macOS DMG
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         timeout-minutes: 30
         env:
@@ -392,7 +414,7 @@ jobs:
           done
 
       - name: Verify macOS code signing and notarization
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -444,7 +466,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          $VERSION = $env:GITHUB_REF_NAME  # e.g., v3.5.0
+          $VERSION = $env:GITHUB_REF_NAME -replace '/','-'  # 分支名含/替换为-
           $isArm64 = $env:WINDOWS_RELEASE_ARCH -eq 'arm64'
           $targetRoot = if ($isArm64) { 'src-tauri/target/aarch64-pc-windows-msvc/release' } else { 'src-tauri/target/release' }
           $assetSuffix = if ($isArm64) { '-arm64' } else { '' }
@@ -463,7 +485,7 @@ jobs:
             if (Test-Path $sigPath) {
               Copy-Item $sigPath (Join-Path release-assets ("$dest.sig"))
               Write-Host "Signature copied: $dest.sig"
-            } elseif ($isArm64) {
+            } elseif ($isArm64 -and $env:NO_SIGNING -ne '1') {
               throw "Signature not found for $($msi.Name)"
             } else {
               Write-Warning "Signature not found for $($msi.Name)"
@@ -518,7 +540,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p release-assets
-          VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
+          VERSION="${GITHUB_REF_NAME//\//-}"  # 分支名含/替换为-
           ARCH="${{ matrix.arch || 'x86_64' }}"
           # Updater artifact: AppImage（含对应 .sig）
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
@@ -560,11 +582,12 @@ jobs:
           ls -la release-assets/*.sig || echo "No signatures found"
 
       - name: Upload release artifacts to workflow
+        if: ${{ !(runner.os == 'macOS' && env.NO_SIGNING == '1') }}
         uses: actions/upload-artifact@v7
         with:
           name: release-assets-${{ runner.os }}-${{ matrix.arch || runner.arch }}
           path: release-assets/*
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: List generated bundles (debug)
         if: always()
@@ -574,7 +597,7 @@ jobs:
           find src-tauri/target -maxdepth 4 -type f -name "*.*" 2>/dev/null || true
 
       - name: Clean up Apple signing keychain
-        if: runner.os == 'macOS' && always()
+        if: runner.os == 'macOS' && env.NO_SIGNING != '1' && always()
         shell: bash
         run: |
           if [ -n "${ORIGINAL_DEFAULT_KEYCHAIN:-}" ]; then
@@ -607,11 +630,11 @@ jobs:
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_name }}
-          name: CC Switch ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: CC Switch ${{ env.RELEASE_TAG }}
           prerelease: true
           body: |
-            ## CC Switch ${{ github.ref_name }}
+            ## CC Switch ${{ env.RELEASE_TAG }}
 
             🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
 
@@ -619,11 +642,11 @@ jobs:
 
             ### 下载
 
-            - **macOS**: `CC-Switch-${{ github.ref_name }}-macOS.dmg`（推荐）或 `CC-Switch-${{ github.ref_name }}-macOS.zip`（解压即用）
-            - **Windows (x86_64)**: `CC-Switch-${{ github.ref_name }}-Windows.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-Portable.zip`（绿色版）
-            - **Windows (ARM64)**: `CC-Switch-${{ github.ref_name }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ github.ref_name }}-Windows-arm64-Portable.zip`（绿色版）
-            - **Linux (x86_64)**: `CC-Switch-${{ github.ref_name }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
-            - **Linux (ARM64)**: `CC-Switch-${{ github.ref_name }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
+            - **macOS**: `CC-Switch-${{ env.RELEASE_TAG }}-macOS.dmg`（推荐）或 `CC-Switch-${{ env.RELEASE_TAG }}-macOS.zip`（解压即用）
+            - **Windows (x86_64)**: `CC-Switch-${{ env.RELEASE_TAG }}-Windows.msi`（安装版）或 `CC-Switch-${{ env.RELEASE_TAG }}-Windows-Portable.zip`（绿色版）
+            - **Windows (ARM64)**: `CC-Switch-${{ env.RELEASE_TAG }}-Windows-arm64.msi`（安装版）或 `CC-Switch-${{ env.RELEASE_TAG }}-Windows-arm64-Portable.zip`（绿色版）
+            - **Linux (x86_64)**: `CC-Switch-${{ env.RELEASE_TAG }}-Linux-x86_64.AppImage` / `.deb` / `.rpm`
+            - **Linux (ARM64)**: `CC-Switch-${{ env.RELEASE_TAG }}-Linux-arm64.AppImage` / `.deb` / `.rpm`
 
             > `.tar.gz` 为 Tauri updater 自动更新专用，无需手动下载。
 
@@ -650,7 +673,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${GITHUB_REF_NAME//\//-}"
           mkdir -p dl
           gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
           ls -la dl || true
@@ -660,7 +683,14 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # 无签名密钥时没有 .sig 文件，latest.json 无意义，跳过
+          sig_count=$(ls dl/*.sig 2>/dev/null | wc -l || true)
+          if [ "$sig_count" -eq 0 ]; then
+            echo "⚠️ No .sig files found (fork without signing key). Skipping latest.json generation."
+            exit 0
+          fi
           VERSION="${TAG#v}"
+          VERSION="${VERSION//\//-}"  # 分支名含/替换为-
           PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           base_url="https://github.com/$REPO/releases/download/$TAG"
           # 初始化空平台映射
@@ -736,4 +766,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
-          gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          if [ ! -f latest.json ]; then
+            echo "⚠️ latest.json not generated (no signing key). Skipping upload."
+            exit 0
+          fi
+          gh release upload "${GITHUB_REF_NAME//\//-}" latest.json --clobber --repo "$GITHUB_REPOSITORY"
