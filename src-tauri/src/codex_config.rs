@@ -465,6 +465,10 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(spec.display_name));
     entry_obj.insert("context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    entry_obj.insert(
+        "auto_compact_token_limit".to_string(),
+        json!(spec.context_window.saturating_mul(9) / 10),
+    );
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -2815,6 +2819,13 @@ base_url = "https://production.api/v1"
         assert_eq!(
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(1_000_000)
+        );
+        assert_eq!(
+            entry
+                .get("auto_compact_token_limit")
+                .and_then(|v| v.as_u64()),
+            Some(900_000),
+            "generated catalogs should trigger auto-compaction at 90% of the model window"
         );
     }
 

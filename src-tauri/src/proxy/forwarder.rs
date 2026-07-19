@@ -1144,6 +1144,8 @@ impl RequestForwarder {
         // catalog matching and to the transform's own strip+beta detection).
         let codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_chat_compaction = codex_responses_to_chat
+            && super::providers::is_codex_compaction_request(endpoint, body, headers);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
@@ -1430,10 +1432,17 @@ impl RequestForwarder {
             super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
             let reasoning_config =
                 super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
-            let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
-                mapped_body,
-                reasoning_config.as_ref(),
-            )?;
+            let mut chat_body = if codex_chat_compaction {
+                super::providers::transform_codex_chat::responses_compaction_to_chat_completions_with_reasoning(
+                    mapped_body,
+                    reasoning_config.as_ref(),
+                )?
+            } else {
+                super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                    mapped_body,
+                    reasoning_config.as_ref(),
+                )?
+            };
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,

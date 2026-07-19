@@ -8,6 +8,7 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
+use axum::http::HeaderMap;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
@@ -82,6 +83,63 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
         path,
         "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
     ) && codex_provider_uses_chat_completions(provider)
+}
+
+/// Detect both generations of Codex remote compaction requests.
+///
+/// Legacy clients use `/responses/compact`. Current clients keep using
+/// `/responses`, append a `compaction_trigger` input item, and mark the turn in
+/// `x-codex-turn-metadata`. Recognizing all three signals keeps the proxy
+/// compatible with clients that omit either of the v2 hints.
+pub fn is_codex_compaction_request(endpoint: &str, body: &JsonValue, headers: &HeaderMap) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+    if matches!(path, "/responses/compact" | "/v1/responses/compact") {
+        return true;
+    }
+
+    let has_trigger = body
+        .get("input")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("type").and_then(JsonValue::as_str) == Some("compaction_trigger")
+            })
+        });
+    if has_trigger {
+        return true;
+    }
+
+    let header_metadata = headers
+        .get("x-codex-turn-metadata")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| serde_json::from_str::<JsonValue>(value).ok());
+    if header_metadata.as_ref().is_some_and(metadata_is_compaction) {
+        return true;
+    }
+
+    [
+        "/client_metadata/x-codex-turn-metadata",
+        "/metadata/x-codex-turn-metadata",
+    ]
+    .iter()
+    .filter_map(|pointer| body.pointer(pointer))
+    .any(metadata_value_is_compaction)
+}
+
+fn metadata_value_is_compaction(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(value) => serde_json::from_str::<JsonValue>(value)
+            .ok()
+            .as_ref()
+            .is_some_and(metadata_is_compaction),
+        value => metadata_is_compaction(value),
+    }
+}
+
+fn metadata_is_compaction(value: &JsonValue) -> bool {
+    value.get("request_kind").and_then(JsonValue::as_str) == Some("compaction")
 }
 
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
@@ -1316,6 +1374,61 @@ wire_api = "chat"
         assert!(should_convert_codex_responses_to_chat(
             &provider,
             "/responses/compact?stream=true"
+        ));
+    }
+
+    #[test]
+    fn detects_legacy_and_v2_codex_compaction_requests() {
+        let headers = HeaderMap::new();
+        assert!(is_codex_compaction_request(
+            "/v1/responses/compact?stream=true",
+            &json!({"input": []}),
+            &headers,
+        ));
+        assert!(is_codex_compaction_request(
+            "/v1/responses",
+            &json!({
+                "input": [
+                    {"role": "user", "content": "hello"},
+                    {"type": "compaction_trigger"}
+                ]
+            }),
+            &headers,
+        ));
+    }
+
+    #[test]
+    fn detects_codex_compaction_from_turn_metadata() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-codex-turn-metadata",
+            r#"{"request_kind":"compaction"}"#.parse().unwrap(),
+        );
+        assert!(is_codex_compaction_request(
+            "/responses",
+            &json!({"input": []}),
+            &headers,
+        ));
+
+        let headers = HeaderMap::new();
+        assert!(is_codex_compaction_request(
+            "/responses",
+            &json!({
+                "input": [],
+                "client_metadata": {
+                    "x-codex-turn-metadata": "{\"request_kind\":\"compaction\"}"
+                }
+            }),
+            &headers,
+        ));
+    }
+
+    #[test]
+    fn ordinary_codex_turn_is_not_compaction() {
+        assert!(!is_codex_compaction_request(
+            "/v1/responses",
+            &json!({"input": [{"role": "user", "content": "hello"}]}),
+            &HeaderMap::new(),
         ));
     }
 
