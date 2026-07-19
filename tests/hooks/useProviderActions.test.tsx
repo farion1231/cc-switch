@@ -264,6 +264,42 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
   });
 
+  it("warns for Grok providers that require the Responses router", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const providers = [
+      createProvider({
+        id: "grok-chat",
+        category: "custom",
+        meta: { apiFormat: "openai_chat" },
+      }),
+      createProvider({
+        id: "grok-anthropic",
+        category: "custom",
+        meta: { apiFormat: "anthropic" },
+      }),
+      createProvider({
+        id: "grok-full-url",
+        category: "custom",
+        meta: { isFullUrl: true },
+      }),
+    ];
+
+    const { result } = renderHook(
+      () => useProviderActions("grokbuild", false),
+      { wrapper },
+    );
+
+    for (const provider of providers) {
+      await act(async () => {
+        await result.current.switchProvider(provider);
+      });
+    }
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(3);
+    expect(switchProviderMutateAsync).toHaveBeenCalledTimes(3);
+  });
+
   it("allows the built-in Codex official provider during takeover", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();
