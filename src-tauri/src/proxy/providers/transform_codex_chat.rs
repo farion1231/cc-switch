@@ -588,7 +588,8 @@ fn append_responses_input_as_chat_messages(
     );
     // 整个 input 处理完毕后仍剩余的 pending reasoning 属于「真正的尾部」思考
     // （其后已没有任何可前向附挂的 message / function_call），回溯附挂到最后一条
-    // assistant；目标已有非空 reasoning_content 时守卫跳过，避免重复拼接污染。
+    // assistant；目标已有 reasoning_content 时追加，以保留同一 turn 的 embedded
+    // reasoning 与 trailing reasoning。
     attach_pending_reasoning_to_previous_assistant(
         messages,
         last_assistant_index,
@@ -691,9 +692,9 @@ fn append_responses_item_as_chat_message(
                 return Ok(());
             } else {
                 // 非 assistant 的回合边界消息（user 等）：pending reasoning 不再直接
-                // 丢弃，优先回溯附挂到上一条 assistant（守卫：其已有 reasoning_content
-                // 时跳过）。reasoning 不允许跨 user 回合泄漏到之后的 assistant 消息；
-                // 无上一条 assistant 可附挂时自然丢弃（等同原行为）。
+                // 丢弃，优先回溯附挂到上一条 assistant；其已有 reasoning_content 时
+                // 追加尾部 reasoning。reasoning 不允许跨 user 回合泄漏到之后的
+                // assistant 消息；无上一条 assistant 可附挂时自然丢弃（等同原行为）。
                 attach_pending_reasoning_to_previous_assistant(
                     messages,
                     *last_assistant_index,
@@ -787,8 +788,8 @@ fn responses_message_item_to_chat_message(
         attach_pending_reasoning_to_assistant(&mut message, pending_reasoning);
     } else {
         // 非 assistant 的回合边界消息（user 等）：pending reasoning 不再直接丢弃，
-        // 回溯附挂到上一条 assistant（守卫：其已有 reasoning_content 时跳过），
-        // 防止 reasoning 跨 user 回合泄漏到之后的 assistant 消息。
+        // 回溯附挂到上一条 assistant；其已有 reasoning_content 时追加尾部
+        // reasoning，同时防止 reasoning 跨 user 回合泄漏到之后的 assistant 消息。
         attach_pending_reasoning_to_previous_assistant(
             messages,
             last_assistant_index,
