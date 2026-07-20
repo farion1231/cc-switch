@@ -80,4 +80,32 @@ describe("xAI OAuth provider presets", () => {
       }),
     ]);
   });
+
+  it("pins the Codex OAuth preset to managed native Responses", () => {
+    const preset = codexProviderPresets.find(
+      (entry) => entry.name === "xAI (Grok) OAuth",
+    );
+    expect(preset).toBeDefined();
+    expect(preset).toMatchObject({
+      category: "third_party",
+      apiFormat: "openai_responses",
+      providerType: "xai_oauth",
+      requiresOAuth: true,
+      icon: "xai",
+    });
+    // Managed OAuth: auth.json keeps an empty key; the forwarder injects the
+    // real access token per request and the adapter pins the base URL.
+    expect(preset!.auth).toEqual({ OPENAI_API_KEY: "" });
+    expect(extractCodexBaseUrl(preset!.config)).toBe("https://api.x.ai/v1");
+    expect(extractCodexWireApi(preset!.config)).toBe("responses");
+    expect(extractCodexModelName(preset!.config)).toBe("grok-4.5");
+    expect(preset!.modelCatalog).toEqual([
+      expect.objectContaining({
+        model: "grok-4.5",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+      }),
+    ]);
+  });
 });

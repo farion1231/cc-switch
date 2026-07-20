@@ -1094,7 +1094,7 @@ fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContex
     }
 }
 
-fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
+pub(crate) fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
     let full_name = format!("{namespace}__{name}");
     if full_name.len() <= CHAT_TOOL_NAME_MAX_LEN {
         return full_name;
