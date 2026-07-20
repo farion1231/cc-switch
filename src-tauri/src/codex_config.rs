@@ -2819,6 +2819,8 @@ base_url = "https://production.api/v1"
                     { "model": "relay/gpt-5.6-sol" },
                     { "model": "gpt-5.6-luna" },
                     { "model": "gpt-5.5" },
+                    { "model": "gpt-5.4" },
+                    { "model": "gpt-5.4-mini" },
                     { "model": "gpt-5.6-terra", "useResponsesLite": false },
                     { "model": "custom-lite", "use_responses_lite": true }
                 ]
@@ -2879,6 +2881,14 @@ base_url = "https://production.api/v1"
             gpt_5_5.get("apply_patch_tool_type").is_none(),
             "non-Lite native models keep the existing custom-tool safety profile"
         );
+
+        for slug in ["gpt-5.4", "gpt-5.4-mini"] {
+            assert_eq!(
+                entry(slug)["include_skills_usage_instructions"],
+                json!(false),
+                "released Codex catalogs keep skill usage instructions disabled for {slug}"
+            );
+        }
 
         let disabled = entry("gpt-5.6-terra");
         assert_eq!(disabled["use_responses_lite"], json!(false));
