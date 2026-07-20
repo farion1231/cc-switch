@@ -340,6 +340,8 @@
         "enableFeatureDescription": "开启后，主页面顶部将显示路由和故障转移开关",
         "enableFailoverToggle": "在主页面显示故障转移开关",
         "enableFailoverToggleDescription": "开启后，主页面顶部将独立显示故障转移开关",
+        "interceptClaudeDesktopStartupProbe": "拦截 Claude Desktop 启动测活",
+        "interceptClaudeDesktopStartupProbeDescription": "在本机响应固定的一 Token 启动探针，不再转发给供应商；供应商是否可用将在第一次真实请求时确认。",
         "running": "运行中",
         "stopped": "已停止"
       },

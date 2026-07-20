@@ -340,6 +340,8 @@
         "enableFeatureDescription": "有効にすると、メインページ上部にルーティングとフェイルオーバーの切り替えが表示されます",
         "enableFailoverToggle": "メインページにフェイルオーバー切り替えを表示",
         "enableFailoverToggleDescription": "有効にすると、メインページ上部にフェイルオーバー切り替えが独立して表示されます",
+        "interceptClaudeDesktopStartupProbe": "Claude Desktop の起動プローブを遮断",
+        "interceptClaudeDesktopStartupProbeDescription": "固定の 1 トークン起動プローブにローカルで応答し、プロバイダーへ転送しません。可用性は最初の実リクエストで確認されます。",
         "running": "実行中",
         "stopped": "停止中"
       },

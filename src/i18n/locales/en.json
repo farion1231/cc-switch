@@ -340,6 +340,8 @@
         "enableFeatureDescription": "When enabled, the routing and failover toggles will appear at the top of the main page",
         "enableFailoverToggle": "Show Failover Toggle on Main Page",
         "enableFailoverToggleDescription": "When enabled, the failover toggle will appear independently at the top of the main page",
+        "interceptClaudeDesktopStartupProbe": "Block Claude Desktop Startup Probe",
+        "interceptClaudeDesktopStartupProbeDescription": "Answer the fixed one-token startup probe locally instead of forwarding it to the provider. Availability is checked on the first real request.",
         "running": "Running",
         "stopped": "Stopped"
       },
