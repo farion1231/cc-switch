@@ -1019,7 +1019,28 @@ fn fragment_from_provider(provider: &Provider) -> Result<KimiOwnedFragment, AppE
             "Kimi Code configuration must be a JSON object",
         )
     })?;
-    extract_owned_fragment(&Value::Object(settings.clone()))
+    let fragment = extract_owned_fragment(&Value::Object(settings.clone()))?;
+    // DB card id is the live providers.<id> key. Keep them identical so
+    // current-provider resolution, live collision checks, and import all agree.
+    if provider.id.trim() != fragment.provider_id {
+        return Err(AppError::localized(
+            "provider.kimicode.provider_id.db_mismatch",
+            format!(
+                "供应商 ID '{}' 与 config 中的 providers.{} 不一致",
+                provider.id, fragment.provider_id
+            ),
+            format!(
+                "Provider id '{}' does not match providers.{} in config",
+                provider.id, fragment.provider_id
+            ),
+        ));
+    }
+    Ok(fragment)
+}
+
+/// Validate a CC Switch Kimi card: fragment shape + DB id binding.
+pub fn validate_provider_binding(provider: &Provider) -> Result<KimiOwnedFragment, AppError> {
+    fragment_from_provider(provider)
 }
 
 /// Merge an owned fragment without changing the active model.
@@ -1776,6 +1797,44 @@ max_context_size = 128000
             !raw.lines()
                 .any(|l| l.trim_start().starts_with("default_model")),
             "default_model should be cleared when no models remain, got:\n{raw}"
+        );
+    }
+
+    #[test]
+    fn rejects_db_id_mismatch_with_fragment_provider() {
+        use crate::provider::Provider;
+        use serde_json::json;
+
+        let matched = Provider::with_id(
+            "custom-a".into(),
+            "Custom A".into(),
+            json!({
+                "config": fragment_a(),
+                "provider_id": "custom-a",
+                "selected_model": "custom/a1",
+            }),
+            None,
+        );
+        validate_provider_binding(&matched).expect("matching ids should pass");
+
+        let mismatched = Provider::with_id(
+            "uuid-not-the-key".into(),
+            "Custom A".into(),
+            json!({
+                "config": fragment_a(),
+                "provider_id": "custom-a",
+                "selected_model": "custom/a1",
+            }),
+            None,
+        );
+        let err = validate_provider_binding(&mismatched).expect_err("db id must match");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("uuid-not-the-key")
+                || msg.contains("custom-a")
+                || msg.contains("mismatch")
+                || msg.contains("不一致"),
+            "unexpected error: {msg}"
         );
     }
 }

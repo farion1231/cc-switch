@@ -12,6 +12,14 @@ import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { usageKeys } from "@/lib/query/usage";
 import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
+async function invalidateKimiCodeProviderCaches(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  await queryClient.invalidateQueries({
+    queryKey: ["kimicodeLiveProviderIds"],
+  });
+}
+
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -118,9 +126,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       if (appId === "kimicode") {
-        await queryClient.invalidateQueries({
-          queryKey: ["kimicodeLiveProviderIds"],
-        });
+        await invalidateKimiCodeProviderCaches(queryClient);
       }
 
       try {
@@ -186,6 +192,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -241,6 +250,10 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
       }
 
       try {
@@ -315,6 +328,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "kimicode") {
+        await invalidateKimiCodeProviderCaches(queryClient);
       }
 
       try {

@@ -3727,7 +3727,7 @@ impl ProviderService {
                         "Kimi Code configuration must be a JSON object",
                     ));
                 }
-                crate::kimi_code_config::extract_owned_fragment(&provider.settings_config)?;
+                crate::kimi_code_config::validate_provider_binding(provider)?;
             }
         }
 
