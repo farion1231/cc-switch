@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import { codexProviderPresets } from "@/config/codexProviderPresets";
+import {
+  extractCodexBaseUrl,
+  extractCodexModelName,
+  extractCodexWireApi,
+} from "@/utils/providerConfigUtils";
 
 describe("xAI OAuth provider presets", () => {
   it("pins the Claude Code preset to managed Responses auth", () => {
@@ -45,6 +51,32 @@ describe("xAI OAuth provider presets", () => {
       expect.objectContaining({
         upstreamModel: "grok-4.5",
         supports1m: false,
+      }),
+    ]);
+  });
+
+  it("pins the Codex preset to native Responses via API key (no managed OAuth)", () => {
+    const preset = codexProviderPresets.find(
+      (entry) => entry.name === "xAI (Grok)",
+    );
+    expect(preset).toBeDefined();
+    expect(preset).toMatchObject({
+      category: "third_party",
+      apiFormat: "openai_responses",
+      icon: "xai",
+    });
+    // API-key preset: managed-account OAuth is Claude-side only for now.
+    expect(preset).not.toHaveProperty("providerType");
+    expect(preset!.auth).toEqual({ OPENAI_API_KEY: "" });
+    expect(extractCodexBaseUrl(preset!.config)).toBe("https://api.x.ai/v1");
+    expect(extractCodexWireApi(preset!.config)).toBe("responses");
+    expect(extractCodexModelName(preset!.config)).toBe("grok-4.5");
+    expect(preset!.modelCatalog).toEqual([
+      expect.objectContaining({
+        model: "grok-4.5",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
       }),
     ]);
   });
