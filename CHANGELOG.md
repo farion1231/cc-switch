@@ -5,6 +5,18 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Codex Session Usage Rebuild and Fork Deduplication**: Codex fork/subagent rollouts now strip copied parent token history by matching explicit parent IDs against the parent rollout's pre-fork token signatures. Proxy usage logging also derives stable, provider-scoped response IDs and is idempotent at the final database write. Session importers are serialized and send one refresh notification per sync.
+
+### Upgrade notes
+
+- Schema v16 automatically rebuilds only `codex_session` usage. A pre-migration database backup is stored under `backups/`, but history whose source JSONL was already deleted cannot be reconstructed.
+- Fork files whose parent rollout is missing are deferred and reported instead of guessed; restoring the parent log and using “Rebuild Codex Usage” imports them later.
+- Existing historical proxy-source duplicate rows are not removed by this migration; the idempotent logger prevents future duplicates.
+
 ## [3.17.0] - 2026-07-13
 
 Development since v3.16.5 is headlined by project profiles — named snapshots of provider/MCP/Skills/prompt state, switchable per scope from a new header switcher or the tray (schema v12) — and a deep Codex push: official ChatGPT-subscription sessions can now route through the local proxy takeover with a corrected client identity, gpt-5.6 lands across context-window injection and Sol/Terra/Luna pricing with 1.25× cache-write rates, and a native Anthropic Messages upstream joins the Codex format options. A proxy-correctness wave makes the Responses↔Anthropic bridges fail closed and round-trip reasoning/tool results losslessly, strengthens prompt-cache breakpoint injection, and fixes cache-write accounting across historical token semantics (schema v13); a config.toml hardening batch stops deleted MCP servers from resurrecting, fails MCP sync closed on unparseable files, extends switch-time common-config autosync to Codex, and moves the common-config merge to backend toml_edit. Usage tooling gains Zhipu team-plan quota queries, Codex sub-agent and free-plan accounting, and transient-failure retry, while Kimi For Coding's 256K window finally takes effect — rounded out by a Codex default-model form field, renamed-session titles, OpenCode form and live-sync fixes, and preset updates (SudoCode sponsorship, LongCat-2.0, GPT-5.6 defaults, Hunyuan Hy3 pricing).
