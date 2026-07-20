@@ -171,6 +171,91 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
+
+/// Whether Claude /v1/messages passthrough should rewrite response model fields
+/// back to the client-visible request model.
+pub fn should_force_response_model_for_app(app_type: &crate::app_config::AppType) -> bool {
+    matches!(
+        app_type,
+        crate::app_config::AppType::Claude | crate::app_config::AppType::ClaudeDesktop
+    )
+}
+
+/// Rewrite Anthropic-compatible response JSON model fields to `client_model`.
+///
+/// Paths rewritten (when present):
+/// - top-level `model`
+/// - `message.model` (non-stream final body or message object)
+///
+/// Returns true if any field was changed.
+pub fn rewrite_anthropic_response_model(json: &mut Value, client_model: &str) -> bool {
+    let client_model = client_model.trim();
+    if client_model.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+
+    if let Some(model) = json.get("model").and_then(Value::as_str) {
+        if model != client_model {
+            json["model"] = Value::String(client_model.to_string());
+            changed = true;
+        }
+    }
+
+    if let Some(message) = json.get_mut("message") {
+        if let Some(model) = message.get("model").and_then(Value::as_str) {
+            if model != client_model {
+                message["model"] = Value::String(client_model.to_string());
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+/// Rewrite model fields inside one SSE event block (without trailing blank line).
+///
+/// Only rewrites JSON on `data:` lines that parse as objects. Non-JSON data
+/// lines and control fields are preserved.
+pub fn rewrite_anthropic_sse_event_block(event_text: &str, client_model: &str) -> String {
+    let client_model = client_model.trim();
+    if client_model.is_empty() || !event_text.contains("model") {
+        return event_text.to_string();
+    }
+
+    let mut out_lines = Vec::new();
+    for line in event_text.lines() {
+        let rewritten = rewrite_sse_data_line_model(line, client_model);
+        out_lines.push(rewritten.unwrap_or_else(|| line.to_string()));
+    }
+    out_lines.join("\n")
+}
+
+fn rewrite_sse_data_line_model(line: &str, client_model: &str) -> Option<String> {
+    let data = line.strip_prefix("data:")?;
+    // Preserve optional space after "data:"
+    let (prefix, payload) = if let Some(rest) = data.strip_prefix(' ') {
+        ("data: ", rest)
+    } else {
+        ("data:", data)
+    };
+
+    let trimmed = payload.trim();
+    if trimmed.is_empty() || trimmed == "[DONE]" || !trimmed.starts_with('{') {
+        return None;
+    }
+
+    let mut json: Value = serde_json::from_str(trimmed).ok()?;
+    if !rewrite_anthropic_response_model(&mut json, client_model) {
+        return None;
+    }
+    let rewritten = serde_json::to_string(&json).ok()?;
+    Some(format!("{prefix}{rewritten}"))
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,4 +510,58 @@ mod tests {
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
     }
+
+    #[test]
+    fn rewrite_response_model_updates_top_level_and_message() {
+        let mut json = json!({
+            "id": "msg_1",
+            "model": "grok-4.5-build-free",
+            "message": {
+                "id": "msg_1",
+                "model": "grok-4.5-build-free",
+                "role": "assistant",
+                "content": []
+            }
+        });
+        assert!(rewrite_anthropic_response_model(&mut json, "claude-fable-5"));
+        assert_eq!(json["model"], "claude-fable-5");
+        assert_eq!(json["message"]["model"], "claude-fable-5");
+    }
+
+    #[test]
+    fn rewrite_response_model_noop_when_already_client_model() {
+        let mut json = json!({"model": "claude-fable-5"});
+        assert!(!rewrite_anthropic_response_model(&mut json, "claude-fable-5"));
+    }
+
+    #[test]
+    fn rewrite_sse_event_rewrites_message_start_model() {
+        let event = r#"event: message_start
+data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assistant","model":"grok-4.5-build-free","content":[]}}"#;
+        let out = rewrite_anthropic_sse_event_block(event, "claude-fable-5");
+        assert!(out.contains("\"model\":\"claude-fable-5\""));
+        assert!(!out.contains("grok-4.5-build-free"));
+        assert!(out.contains("event: message_start"));
+    }
+
+    #[test]
+    fn rewrite_sse_event_preserves_non_json_data() {
+        let event = "event: ping\ndata: {not-json}";
+        let out = rewrite_anthropic_sse_event_block(event, "claude-fable-5");
+        assert_eq!(out, event);
+    }
+
+    #[test]
+    fn should_force_only_claude_apps() {
+        assert!(should_force_response_model_for_app(
+            &crate::app_config::AppType::Claude
+        ));
+        assert!(should_force_response_model_for_app(
+            &crate::app_config::AppType::ClaudeDesktop
+        ));
+        assert!(!should_force_response_model_for_app(
+            &crate::app_config::AppType::Codex
+        ));
+    }
+
 }
