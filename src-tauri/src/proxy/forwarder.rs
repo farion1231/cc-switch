@@ -1521,6 +1521,48 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Native Responses passthrough to a strict third-party gateway (xAI):
+        // flatten Codex's private `namespace`/plugin tool declarations into
+        // top-level function tools so the upstream's strict serde parser does
+        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
+        // above already unwrap namespaces, so this only fires on the native
+        // passthrough. The response handler restores the flat names using a map
+        // re-derived from the same request tools.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+                &mut request_body,
+            )?
+        {
+            log::debug!(
+                "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                provider.id
+            );
+        }
+
+        // Same native-Responses path: scrub the OpenAI-backend-private fields
+        // and tool carriers (`external_web_access`, `prompt_cache_retention`,
+        // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
+        // rejects with 400/422. Deterministic field removals only, gated on the
+        // xAI OAuth path, so the prompt-cache prefix stays stable and no other
+        // provider is affected. Runs after the flatten above so lifted
+        // `namespace` tools survive the tool-type whitelist.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+                &mut request_body,
+            )
+        {
+            log::debug!(
+                "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
+                provider.id
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
@@ -2605,6 +2647,14 @@ impl RequestForwarder {
                     }
                 ))
         {
+            return ErrorCategory::NonRetryable;
+        }
+
+        // xAI OAuth mirrors the same rule for token acquisition: a local
+        // AuthError means the managed account needs re-login. Failing over
+        // would silently move the conversation off the selected Grok account
+        // and poison the provider's health state for an account-level issue.
+        if provider.is_xai_oauth() && matches!(error, ProxyError::AuthError(_)) {
             return ErrorCategory::NonRetryable;
         }
 
@@ -4341,6 +4391,32 @@ mod tests {
                 ErrorCategory::NonRetryable
             );
         }
+    }
+
+    #[test]
+    fn xai_oauth_token_auth_failures_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("xai_oauth"));
+
+        // 本地取 token 失败 = 账号级问题（需重新登录），failover 无济于事
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::AuthError("xAI OAuth 认证失败".to_string()),
+                &provider,
+            ),
+            ErrorCategory::NonRetryable
+        );
+        // 上游 401/403 保持 Retryable：换 provider 可能持有可用的 key
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::UpstreamError {
+                    status: 401,
+                    body: None,
+                },
+                &provider,
+            ),
+            ErrorCategory::Retryable
+        );
     }
 
     #[test]

@@ -33,6 +33,10 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
+  // 托管账号预设：目前仅 xAI OAuth（Grok 订阅经本地代理注入 token 直连 api.x.ai）
+  providerType?: "xai_oauth";
+  // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
+  requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
@@ -1010,6 +1014,29 @@ requires_openai_auth = true`,
     // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
     // 原生 Responses，无需路由接管转换
     apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "grok-4.5",
+        displayName: "Grok 4.5",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+      },
+    ]),
+    category: "third_party",
+    icon: "xai",
+    iconColor: "#000000",
+  },
+  {
+    name: "xAI (Grok) OAuth",
+    websiteUrl: "https://x.ai/grok",
+    auth: generateThirdPartyAuth(""),
+    // 托管 OAuth：真实 token 由本地代理按请求注入，CodexAdapter 硬定向
+    // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    apiFormat: "openai_responses",
+    providerType: "xai_oauth",
+    requiresOAuth: true,
     modelCatalog: modelCatalog([
       {
         model: "grok-4.5",
