@@ -805,7 +805,8 @@ async fn handle_responses_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let is_compaction = super::providers::is_codex_compaction_request(&endpoint, &body, &headers);
+    let is_remote_compaction =
+        super::providers::is_codex_remote_compaction_request(&endpoint, &body);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
 
     let forwarder = ctx.create_forwarder(&state);
@@ -849,7 +850,7 @@ async fn handle_responses_for_app(
     }
 
     if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
-        if is_compaction {
+        if is_remote_compaction {
             return handle_codex_chat_compaction_transform(
                 response,
                 &ctx,
@@ -931,7 +932,8 @@ async fn handle_responses_compact_for_app(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let is_compaction = super::providers::is_codex_compaction_request(&endpoint, &body, &headers);
+    let is_remote_compaction =
+        super::providers::is_codex_remote_compaction_request(&endpoint, &body);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
 
     let forwarder = ctx.create_forwarder(&state);
@@ -975,7 +977,7 @@ async fn handle_responses_compact_for_app(
     }
 
     if super::providers::should_convert_codex_responses_to_chat(&ctx.provider, &endpoint) {
-        if is_compaction {
+        if is_remote_compaction {
             return handle_codex_chat_compaction_transform(
                 response,
                 &ctx,

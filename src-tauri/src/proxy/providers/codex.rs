@@ -8,7 +8,6 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
-use axum::http::HeaderMap;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
@@ -87,11 +86,13 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
 
 /// Detect both generations of Codex remote compaction requests.
 ///
-/// Legacy clients use `/responses/compact`. Current clients keep using
-/// `/responses`, append a `compaction_trigger` input item, and mark the turn in
-/// `x-codex-turn-metadata`. Recognizing all three signals keeps the proxy
-/// compatible with clients that omit either of the v2 hints.
-pub fn is_codex_compaction_request(endpoint: &str, body: &JsonValue, headers: &HeaderMap) -> bool {
+/// Legacy clients use `/responses/compact`; current remote-v2 clients keep
+/// using `/responses` and append a `compaction_trigger` input item. Do not use
+/// `x-codex-turn-metadata.request_kind == "compaction"` as a signal here:
+/// Codex also sends that metadata for local checkpoint compaction, whose Chat
+/// response must remain an assistant summary rather than an opaque compaction
+/// item.
+pub fn is_codex_remote_compaction_request(endpoint: &str, body: &JsonValue) -> bool {
     let path = endpoint
         .split_once('?')
         .map_or(endpoint, |(path, _query)| path);
@@ -99,47 +100,13 @@ pub fn is_codex_compaction_request(endpoint: &str, body: &JsonValue, headers: &H
         return true;
     }
 
-    let has_trigger = body
-        .get("input")
+    body.get("input")
         .and_then(JsonValue::as_array)
         .is_some_and(|items| {
             items.iter().any(|item| {
                 item.get("type").and_then(JsonValue::as_str) == Some("compaction_trigger")
             })
-        });
-    if has_trigger {
-        return true;
-    }
-
-    let header_metadata = headers
-        .get("x-codex-turn-metadata")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| serde_json::from_str::<JsonValue>(value).ok());
-    if header_metadata.as_ref().is_some_and(metadata_is_compaction) {
-        return true;
-    }
-
-    [
-        "/client_metadata/x-codex-turn-metadata",
-        "/metadata/x-codex-turn-metadata",
-    ]
-    .iter()
-    .filter_map(|pointer| body.pointer(pointer))
-    .any(metadata_value_is_compaction)
-}
-
-fn metadata_value_is_compaction(value: &JsonValue) -> bool {
-    match value {
-        JsonValue::String(value) => serde_json::from_str::<JsonValue>(value)
-            .ok()
-            .as_ref()
-            .is_some_and(metadata_is_compaction),
-        value => metadata_is_compaction(value),
-    }
-}
-
-fn metadata_is_compaction(value: &JsonValue) -> bool {
-    value.get("request_kind").and_then(JsonValue::as_str) == Some("compaction")
+        })
 }
 
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
@@ -1378,14 +1345,12 @@ wire_api = "chat"
     }
 
     #[test]
-    fn detects_legacy_and_v2_codex_compaction_requests() {
-        let headers = HeaderMap::new();
-        assert!(is_codex_compaction_request(
+    fn detects_legacy_and_v2_codex_remote_compaction_requests() {
+        assert!(is_codex_remote_compaction_request(
             "/v1/responses/compact?stream=true",
             &json!({"input": []}),
-            &headers,
         ));
-        assert!(is_codex_compaction_request(
+        assert!(is_codex_remote_compaction_request(
             "/v1/responses",
             &json!({
                 "input": [
@@ -1393,25 +1358,12 @@ wire_api = "chat"
                     {"type": "compaction_trigger"}
                 ]
             }),
-            &headers,
         ));
     }
 
     #[test]
-    fn detects_codex_compaction_from_turn_metadata() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-codex-turn-metadata",
-            r#"{"request_kind":"compaction"}"#.parse().unwrap(),
-        );
-        assert!(is_codex_compaction_request(
-            "/responses",
-            &json!({"input": []}),
-            &headers,
-        ));
-
-        let headers = HeaderMap::new();
-        assert!(is_codex_compaction_request(
+    fn local_compaction_metadata_is_not_remote_compaction() {
+        assert!(!is_codex_remote_compaction_request(
             "/responses",
             &json!({
                 "input": [],
@@ -1419,16 +1371,14 @@ wire_api = "chat"
                     "x-codex-turn-metadata": "{\"request_kind\":\"compaction\"}"
                 }
             }),
-            &headers,
         ));
     }
 
     #[test]
     fn ordinary_codex_turn_is_not_compaction() {
-        assert!(!is_codex_compaction_request(
+        assert!(!is_codex_remote_compaction_request(
             "/v1/responses",
             &json!({"input": [{"role": "user", "content": "hello"}]}),
-            &HeaderMap::new(),
         ));
     }
 
