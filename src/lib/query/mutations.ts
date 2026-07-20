@@ -55,7 +55,14 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       let id: string;
 
-      if (appId === "opencode" || appId === "openclaw" || appId === "hermes") {
+      // Kimi Code fragments key live TOML by provider id; the DB row id must match
+      // the entered providerKey (same pattern as OpenCode/OpenClaw/Hermes).
+      if (
+        appId === "opencode" ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "kimicode"
+      ) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -108,6 +115,12 @@ export const useAddProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+
+      if (appId === "kimicode") {
+        await queryClient.invalidateQueries({
+          queryKey: ["kimicodeLiveProviderIds"],
+        });
       }
 
       try {

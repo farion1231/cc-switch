@@ -804,11 +804,107 @@ fn merge_owned_fragment_into_live_with_default(
     // When live had no providers table at all, the branch above may have created it.
     // Always merge models from fragment for owned aliases.
     {
-        let models = ensure_models_table(&mut live)?;
-        if let Some(frag_models) = frag_doc.get("models").and_then(|i| i.as_table_like()) {
-            for (alias, item) in frag_models.iter() {
-                if fragment.model_aliases.contains(alias) {
+        // Collect prior live aliases owned by this provider before mutating models,
+        // so an edit that drops aliases can prune orphans from config.toml.
+        let previously_owned_aliases: Vec<String> = live
+            .get("models")
+            .and_then(|item| item.as_table_like())
+            .map(|models| {
+                models
+                    .iter()
+                    .filter_map(|(alias, item)| {
+                        let owned = item_to_toml_value(item)
+                            .ok()
+                            .and_then(|v| v.as_table().cloned())
+                            .and_then(|t| {
+                                t.get("provider")
+                                    .and_then(|v| v.as_str())
+                                    .map(|p| p.trim() == fragment.provider_id)
+                            })
+                            .unwrap_or(false);
+                        if owned {
+                            Some(alias.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        {
+            let models = ensure_models_table(&mut live)?;
+            if let Some(frag_models) = frag_doc.get("models").and_then(|i| i.as_table_like()) {
+                for (alias, item) in frag_models.iter() {
+                    if !fragment.model_aliases.contains(alias) {
+                        continue;
+                    }
+
+                    // Refuse to steal an alias already owned by another live provider.
+                    if let Some(existing) = models.get(alias) {
+                        if let Ok(toml_val) = item_to_toml_value(existing) {
+                            if let Some(table) = toml_val.as_table() {
+                                if let Some(owner) = table
+                                    .get("provider")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::trim)
+                                {
+                                    if !owner.is_empty() && owner != fragment.provider_id {
+                                        return Err(AppError::localized(
+                                            "provider.kimicode.model_alias.collision",
+                                            format!(
+                                                "模型别名 '{alias}' 已被 provider '{owner}' 占用，无法分配给 '{}'",
+                                                fragment.provider_id
+                                            ),
+                                            format!(
+                                                "Model alias '{alias}' is already owned by provider '{owner}' and cannot be assigned to '{}'",
+                                                fragment.provider_id
+                                            ),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     merge_table_item(models, alias, item);
+                }
+            }
+
+            // Drop aliases that previously belonged to this provider but are no
+            // longer present in the updated fragment (edit form removals).
+            for alias in previously_owned_aliases {
+                if !fragment.model_aliases.contains(&alias) {
+                    models.remove(&alias);
+                }
+            }
+        }
+
+        // If an edit dropped the current default_model alias, re-point or clear it
+        // when this call is not also activating a fresh selection.
+        if selected_model.is_none() {
+            if let Some(default) = live
+                .get("default_model")
+                .and_then(|i| i.as_str())
+                .map(str::to_string)
+            {
+                let still_exists = live
+                    .get("models")
+                    .and_then(|i| i.as_table_like())
+                    .map(|m| m.iter().any(|(k, _)| k == default))
+                    .unwrap_or(false);
+                if !still_exists {
+                    let first_remaining = live
+                        .get("models")
+                        .and_then(|item| item.as_table_like())
+                        .and_then(|models| {
+                            models.iter().next().map(|(alias, _)| alias.to_string())
+                        });
+                    if let Some(first) = first_remaining {
+                        live["default_model"] = Item::Value(TomlEditValue::from(first));
+                    } else {
+                        live.as_table_mut().remove("default_model");
+                    }
                 }
             }
         }
@@ -1008,13 +1104,16 @@ pub fn remove_owned_fragment_from_live(fragment: &KimiOwnedFragment) -> Result<(
             .map(|m| m.iter().any(|(k, _)| k == default))
             .unwrap_or(false);
         if !still_exists {
-            // Prefer first remaining model if any.
+            // Prefer first remaining model if any; otherwise clear the stale key
+            // so current-provider resolution does not keep a dangling alias.
             let first_remaining_model = live
                 .get("models")
                 .and_then(|item| item.as_table_like())
                 .and_then(|models| models.iter().next().map(|(alias, _)| alias.to_string()));
             if let Some(first) = first_remaining_model {
                 live["default_model"] = Item::Value(TomlEditValue::from(first));
+            } else {
+                live.as_table_mut().remove("default_model");
             }
         }
     }
@@ -1561,5 +1660,122 @@ max_context_size = 1
             assert!(!config.contains("do-not-read"));
             assert!(!config.contains("secret.json"));
         }
+    }
+
+    #[test]
+    #[serial]
+    fn rejects_model_alias_owned_by_another_provider() {
+        let temp = TempDir::new().unwrap();
+        let _guard = EnvGuard::set(&temp);
+        seed_live(&temp, sample_live_config());
+        let a = validate_owned_fragment(fragment_a()).unwrap();
+        merge_owned_fragment_into_live(&a).unwrap();
+
+        // Provider B tries to claim custom/a1 which already belongs to custom-a.
+        let colliding = r#"selected_model = "custom/a1"
+
+[providers.custom-b]
+type = "anthropic"
+base_url = "https://api.b.example"
+api_key = "sk-b"
+
+[models."custom/a1"]
+provider = "custom-b"
+model = "stolen"
+max_context_size = 1
+"#;
+        let b = validate_owned_fragment(colliding).unwrap();
+        let err = merge_owned_fragment_into_live(&b).expect_err("alias collision");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("custom/a1")
+                || msg.contains("collision")
+                || msg.contains("占用")
+                || msg.contains("owned"),
+            "unexpected error: {msg}"
+        );
+
+        let raw = read_live_config_raw().unwrap();
+        assert!(raw.contains("[providers.custom-a]"));
+        assert!(!raw.contains("[providers.custom-b]"));
+        assert!(raw.contains("model-a1"));
+        assert!(!raw.contains("stolen"));
+    }
+
+    #[test]
+    #[serial]
+    fn edit_removes_dropped_model_aliases() {
+        let temp = TempDir::new().unwrap();
+        let _guard = EnvGuard::set(&temp);
+        seed_live(&temp, sample_live_config());
+        let a = validate_owned_fragment(fragment_a()).unwrap();
+        merge_owned_fragment_into_live(&a).unwrap();
+        apply_switch_defaults("custom/a2").unwrap();
+
+        // Updated fragment keeps only custom/a1.
+        let edited = r#"selected_model = "custom/a1"
+
+[providers.custom-a]
+type = "openai"
+base_url = "https://api.a.example/v1"
+api_key = "sk-a-updated"
+
+[models."custom/a1"]
+provider = "custom-a"
+model = "model-a1"
+max_context_size = 128000
+display_name = "A1"
+"#;
+        let frag = validate_owned_fragment(edited).unwrap();
+        merge_owned_fragment_into_live(&frag).unwrap();
+
+        let raw = read_live_config_raw().unwrap();
+        assert!(raw.contains("custom/a1"));
+        assert!(!raw.contains("custom/a2"));
+        assert!(raw.contains("sk-a-updated"));
+        // default_model pointed at dropped a2 → should re-point to a remaining model
+        assert!(
+            raw.contains("default_model = \"custom/a1\"")
+                || raw.contains("default_model=\"custom/a1\"")
+                || raw.contains("default_model = \"kimi-code/k3\"")
+        );
+        assert!(!raw.contains("default_model = \"custom/a2\""));
+    }
+
+    #[test]
+    #[serial]
+    fn delete_clears_default_model_when_no_models_remain() {
+        let temp = TempDir::new().unwrap();
+        let _guard = EnvGuard::set(&temp);
+        // Live config with only one custom provider/model and no official leftovers.
+        seed_live(
+            &temp,
+            r#"default_model = "custom/a1"
+
+[providers.custom-a]
+type = "openai"
+base_url = "https://api.a.example/v1"
+api_key = "sk-a"
+
+[models."custom/a1"]
+provider = "custom-a"
+model = "model-a1"
+max_context_size = 128000
+"#,
+        );
+        let a = validate_owned_fragment(fragment_a()).unwrap();
+        // fragment_a also has a2; merge first so both exist then delete the whole fragment.
+        merge_owned_fragment_into_live(&a).unwrap();
+        apply_switch_defaults("custom/a1").unwrap();
+        remove_owned_fragment_from_live(&a).unwrap();
+
+        let raw = read_live_config_raw().unwrap();
+        assert!(!raw.contains("[providers.custom-a]"));
+        assert!(!raw.contains("custom/a1"));
+        assert!(
+            !raw.lines()
+                .any(|l| l.trim_start().starts_with("default_model")),
+            "default_model should be cleared when no models remain, got:\n{raw}"
+        );
     }
 }
