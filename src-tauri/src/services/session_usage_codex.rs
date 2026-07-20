@@ -307,6 +307,8 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         skipped: 0,
         files_scanned: files.len() as u32,
         errors: vec![],
+        suspected_duplicates: 0,
+        deferred_files: 0,
     };
 
     if files.is_empty() {
