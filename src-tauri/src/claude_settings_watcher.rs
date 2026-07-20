@@ -128,12 +128,13 @@ pub(crate) fn spawn_claude_settings_watcher(
                     return;
                 }
             };
-            // watch 父目录会收到目录下所有文件事件，只处理 settings.json
-            let target_file_name = path_clone.file_name();
-            for event in events {
-                if event.path.file_name() == target_file_name {
-                    handle_settings_change(&path_clone, &provider_clone, &state_clone);
-                }
+            // watch 父目录会收到目录下所有文件事件。任意事件都读一次
+            // settings.json 检查 model 字段，should_process 会跳过 model
+            // 没变的情况，避免不必要的写入。不过滤 event.path 是因为某些
+            // 平台（如 macOS FSEvents）可能报告目录级别事件，file_name
+            // 过滤会漏掉。
+            for _event in events {
+                handle_settings_change(&path_clone, &provider_clone, &state_clone);
             }
         },
     )
