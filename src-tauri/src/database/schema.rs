@@ -513,7 +513,7 @@ impl Database {
                             "迁移数据库从 v15 到 v16（CodeFree-O 支持：添加 enabled_codefree 列）"
                         );
                         Self::migrate_v15_to_v16(conn)?;
-                        Self::set_user_version(conn, 14)?;
+                        Self::set_user_version(conn, 16)?;
                     }                
                     _ => {
                         return Err(AppError::Database(format!(
