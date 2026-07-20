@@ -455,8 +455,11 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
 
 #[derive(Deserialize)]
 struct CodexAuthJson {
+    #[serde(default)]
     auth_mode: Option<String>,
+    #[serde(default)]
     tokens: Option<CodexTokens>,
+    #[serde(default)]
     last_refresh: Option<String>,
 }
 
@@ -474,41 +477,76 @@ type CodexCredentials = (
     Option<String>,
 );
 
-/// A Codex credential source plus the refresh timestamp used to select the
-/// freshest copy when macOS Keychain and ~/.codex/auth.json diverge.
-struct CodexCredentialSource {
-    credentials: CodexCredentials,
-    #[cfg(target_os = "macos")]
-    last_refresh: Option<String>,
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+enum CodexCredentialsStoreMode {
+    File,
+    Keyring,
+    Auto,
+    Ephemeral,
 }
 
 /// 读取 Codex OAuth 凭据。
 ///
-/// macOS 上 Codex 可能同时留下 Keychain 和 `~/.codex/auth.json` 两份
-/// 凭据。Keychain 不是永远较新的副本（例如 CLI 重新登录后只更新文件），
-/// 因此不能固定优先它；在两份凭据都存在时，优先凭据状态更好的一份，
-/// 状态相同则优先 `last_refresh` 更新的一份。
+/// 在 macOS 上必须遵循 Codex 的 `cli_auth_credentials_store` 配置，不能
+/// 合并或按更新时间猜测两份凭据的优先级：`auto` 由 Codex 本身定义为
+/// Keychain 优先、文件兜底；默认和 `file` 模式只读取 `auth.json`。
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
 fn read_codex_credentials() -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
-        let keychain = read_codex_credentials_from_keychain();
-        let file = read_codex_credentials_from_file_source();
-        choose_codex_credentials(file, keychain)
+        match codex_credentials_store_mode() {
+            CodexCredentialsStoreMode::File => read_codex_credentials_from_file(),
+            CodexCredentialsStoreMode::Keyring => read_codex_credentials_from_keychain()
+                .unwrap_or((None, None, CredentialStatus::NotFound, None)),
+            CodexCredentialsStoreMode::Auto => match read_codex_credentials_from_keychain() {
+                Some(credentials) if !matches!(credentials.2, CredentialStatus::ParseError) => {
+                    credentials
+                }
+                _ => read_codex_credentials_from_file(),
+            },
+            CodexCredentialsStoreMode::Ephemeral => (None, None, CredentialStatus::NotFound, None),
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        read_codex_credentials_from_file_source()
-            .map(|source| source.credentials)
-            .unwrap_or((None, None, CredentialStatus::NotFound, None))
+        read_codex_credentials_from_file()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn codex_credentials_store_mode() -> CodexCredentialsStoreMode {
+    let config_path = crate::codex_config::get_codex_config_path();
+    let config_text = std::fs::read_to_string(config_path).unwrap_or_default();
+    codex_credentials_store_mode_from_config(&config_text)
+}
+
+#[cfg(target_os = "macos")]
+fn codex_credentials_store_mode_from_config(config_text: &str) -> CodexCredentialsStoreMode {
+    let mode = config_text
+        .parse::<toml::Value>()
+        .ok()
+        .and_then(|config| {
+            config
+                .get("cli_auth_credentials_store")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+        })
+        .map(|mode| mode.trim().to_ascii_lowercase());
+
+    match mode.as_deref() {
+        Some("keyring") => CodexCredentialsStoreMode::Keyring,
+        Some("auto") => CodexCredentialsStoreMode::Auto,
+        Some("ephemeral") => CodexCredentialsStoreMode::Ephemeral,
+        _ => CodexCredentialsStoreMode::File,
     }
 }
 
 /// 从 macOS Keychain 读取 Codex 凭据
 #[cfg(target_os = "macos")]
-fn read_codex_credentials_from_keychain() -> Option<CodexCredentialSource> {
+fn read_codex_credentials_from_keychain() -> Option<CodexCredentials> {
     let output = std::process::Command::new("security")
         .args(["find-generic-password", "-s", "Codex Auth", "-w"])
         .output()
@@ -524,104 +562,30 @@ fn read_codex_credentials_from_keychain() -> Option<CodexCredentialSource> {
         return None;
     }
 
-    Some(codex_credential_source_from_content(json_str))
+    Some(parse_codex_credentials_json(json_str))
 }
 
 /// 从文件读取 Codex 凭据
-fn read_codex_credentials_from_file_source() -> Option<CodexCredentialSource> {
+fn read_codex_credentials_from_file() -> CodexCredentials {
     let auth_path = crate::codex_config::get_codex_auth_path();
 
     if !auth_path.exists() {
-        return None;
+        return (None, None, CredentialStatus::NotFound, None);
     }
 
     let content = match std::fs::read_to_string(&auth_path) {
         Ok(c) => c,
         Err(e) => {
-            return Some(CodexCredentialSource {
-                credentials: (
-                    None,
-                    None,
-                    CredentialStatus::ParseError,
-                    Some(format!("Failed to read Codex auth file: {e}")),
-                ),
-                #[cfg(target_os = "macos")]
-                last_refresh: None,
-            });
+            return (
+                None,
+                None,
+                CredentialStatus::ParseError,
+                Some(format!("Failed to read Codex auth file: {e}")),
+            );
         }
     };
 
-    Some(codex_credential_source_from_content(&content))
-}
-
-fn codex_credential_source_from_content(content: &str) -> CodexCredentialSource {
-    CodexCredentialSource {
-        credentials: parse_codex_credentials_json(content),
-        #[cfg(target_os = "macos")]
-        last_refresh: serde_json::from_str::<CodexAuthJson>(content)
-            .ok()
-            .and_then(|auth| auth.last_refresh),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn credential_quality(status: &CredentialStatus) -> u8 {
-    match status {
-        CredentialStatus::Valid => 3,
-        CredentialStatus::Expired => 2,
-        CredentialStatus::ParseError => 1,
-        CredentialStatus::NotFound => 0,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn refresh_timestamp(source: &CodexCredentialSource) -> Option<i64> {
-    source
-        .last_refresh
-        .as_deref()
-        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| value.timestamp())
-}
-
-/// Select the most useful credential copy without exposing or merging tokens.
-///
-/// A fresh file copy must win over an old Keychain copy, while still allowing
-/// a newer Keychain copy to win when the file is stale or missing.
-#[cfg(target_os = "macos")]
-fn choose_codex_credentials(
-    file: Option<CodexCredentialSource>,
-    keychain: Option<CodexCredentialSource>,
-) -> CodexCredentials {
-    match (file, keychain) {
-        (Some(file), Some(keychain)) => {
-            let file_quality = credential_quality(&file.credentials.2);
-            let keychain_quality = credential_quality(&keychain.credentials.2);
-
-            if file_quality != keychain_quality {
-                return if file_quality > keychain_quality {
-                    file.credentials
-                } else {
-                    keychain.credentials
-                };
-            }
-
-            match (refresh_timestamp(&file), refresh_timestamp(&keychain)) {
-                (Some(file_ts), Some(keychain_ts)) if file_ts != keychain_ts => {
-                    if file_ts > keychain_ts {
-                        file.credentials
-                    } else {
-                        keychain.credentials
-                    }
-                }
-                (Some(_), None) => file.credentials,
-                (None, Some(_)) => keychain.credentials,
-                _ => keychain.credentials,
-            }
-        }
-        (Some(file), None) => file.credentials,
-        (None, Some(keychain)) => keychain.credentials,
-        (None, None) => (None, None, CredentialStatus::NotFound, None),
-    }
+    parse_codex_credentials_json(&content)
 }
 
 /// 解析 Codex 凭据 JSON（Keychain 和文件共用）
@@ -1444,24 +1408,6 @@ fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
-    fn test_source(
-        token: &str,
-        status: CredentialStatus,
-        last_refresh: Option<&str>,
-    ) -> CodexCredentialSource {
-        CodexCredentialSource {
-            credentials: (
-                Some(token.to_string()),
-                Some("test-account".to_string()),
-                status,
-                None,
-            ),
-            #[cfg(target_os = "macos")]
-            last_refresh: last_refresh.map(str::to_string),
-        }
-    }
-
     #[test]
     fn window_seconds_map_to_expected_tier_names() {
         // 官方特例窗口
@@ -1477,41 +1423,35 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn newer_valid_file_wins_over_stale_keychain() {
-        let selected = choose_codex_credentials(
-            Some(test_source(
-                "file-token",
-                CredentialStatus::Valid,
-                Some("2026-07-10T03:02:51Z"),
-            )),
-            Some(test_source(
-                "keychain-token",
-                CredentialStatus::Expired,
-                Some("2026-02-27T07:04:28Z"),
-            )),
+    fn codex_credentials_store_defaults_to_file() {
+        assert_eq!(
+            codex_credentials_store_mode_from_config("model = \"gpt-5\""),
+            CodexCredentialsStoreMode::File
         );
-
-        assert!(matches!(selected.2, CredentialStatus::Valid));
-        assert_eq!(selected.0.as_deref(), Some("file-token"));
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"unexpected\""),
+            CodexCredentialsStoreMode::File
+        );
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn newest_source_wins_when_both_credentials_are_valid() {
-        let selected = choose_codex_credentials(
-            Some(test_source(
-                "file-token",
-                CredentialStatus::Valid,
-                Some("2026-07-10T03:02:51Z"),
-            )),
-            Some(test_source(
-                "keychain-token",
-                CredentialStatus::Valid,
-                Some("2026-07-11T03:02:51Z"),
-            )),
+    fn codex_credentials_store_reads_explicit_mode() {
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"file\""),
+            CodexCredentialsStoreMode::File
         );
-
-        assert!(matches!(selected.2, CredentialStatus::Valid));
-        assert_eq!(selected.0.as_deref(), Some("keychain-token"));
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"auto\""),
+            CodexCredentialsStoreMode::Auto
+        );
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"keyring\""),
+            CodexCredentialsStoreMode::Keyring
+        );
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"ephemeral\""),
+            CodexCredentialsStoreMode::Ephemeral
+        );
     }
 }
