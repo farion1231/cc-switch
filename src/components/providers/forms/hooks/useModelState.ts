@@ -111,6 +111,22 @@ export function setModelSuffix(model: string, windowStr: string): string {
 }
 
 /**
+ * 改模型名时保留原 model 的 context window 后缀。
+ * 例如原 model 是 "deepseek[200k]"，用户改成 "glm-5.2"，
+ * 返回 "glm-5.2[200k]"，避免改模型名丢窗口配置。
+ * 若新输入本身带后缀，以原 model 的后缀为准（用户改的是名字不是窗口）。
+ */
+export function reapplySuffix(oldModel: string, newInput: string): string {
+  const suffixResult = parseModelSuffix(oldModel);
+  const oldSuffix = suffixResult.window
+    ? oldModel.slice(oldModel.lastIndexOf("["))
+    : "";
+  const newBase = stripModelSuffix(newInput).trim();
+  if (!newBase) return "";
+  return oldSuffix ? `${newBase}${oldSuffix}` : newBase;
+}
+
+/**
  * Parse model values from settings config JSON
  */
 function parseModelsFromConfig(settingsConfig: string) {
