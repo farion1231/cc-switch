@@ -1748,6 +1748,19 @@ mod tests {
     }
 
     #[test]
+    fn test_responses_prefixed_gpt_5_model_sets_reasoning_effort() {
+        let input = json!({
+            "model": "b-gpt-5.6-sol",
+            "max_tokens": 1024,
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "high");
+    }
+
+    #[test]
     fn test_responses_thinking_enabled_medium_budget_sets_reasoning_medium() {
         let input = json!({
             "model": "gpt-5.4",

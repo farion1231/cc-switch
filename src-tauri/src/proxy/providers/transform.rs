@@ -60,12 +60,25 @@ pub fn is_openai_o_series(model: &str) -> bool {
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
 pub fn supports_reasoning_effort(model: &str) -> bool {
-    is_openai_o_series(model)
-        || model
-            .to_lowercase()
-            .strip_prefix("gpt-")
-            .and_then(|rest| rest.chars().next())
-            .is_some_and(|c| c.is_ascii_digit() && c >= '5')
+    is_openai_o_series(model) || is_gpt_reasoning_model(model)
+}
+
+fn is_gpt_reasoning_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+
+    lower.match_indices("gpt-").any(|(index, _)| {
+        let has_boundary = index == 0
+            || lower[..index]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_ascii_alphanumeric());
+        let starts_at_gpt_5_or_newer = lower[index + 4..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit() && c >= '5');
+
+        has_boundary && starts_at_gpt_5_or_newer
+    })
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -1566,7 +1579,13 @@ mod tests {
         assert!(supports_reasoning_effort("gpt-5"));
         assert!(supports_reasoning_effort("gpt-5.4"));
         assert!(supports_reasoning_effort("gpt-5-codex"));
+        assert!(supports_reasoning_effort("b-gpt-5.6-sol"));
+        assert!(supports_reasoning_effort("x-gpt-5.4"));
+        assert!(supports_reasoning_effort("B-GPT-5.6-SOL"));
+        assert!(supports_reasoning_effort("openai/gpt-5.4"));
         assert!(!supports_reasoning_effort("gpt-4o"));
+        assert!(!supports_reasoning_effort("b-gpt-4o"));
+        assert!(!supports_reasoning_effort("bgpt-5"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
     }
 
