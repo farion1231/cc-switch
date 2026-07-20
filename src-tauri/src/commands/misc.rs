@@ -4464,7 +4464,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
                 )
             );
         }
