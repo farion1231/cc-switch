@@ -39,6 +39,7 @@ pub(crate) use dao::proxy::{
     validate_cost_multiplier, validate_pricing_source, PRICING_SOURCE_REQUEST,
     PRICING_SOURCE_RESPONSE,
 };
+pub(crate) use dao::usage_rollup::compute_local_midnight_cutoff;
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
 

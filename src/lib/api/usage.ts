@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   UsageSummary,
   UsageSummaryByApp,
-  DailyStats,
+  TrendGranularityRequest,
+  UsageTrendResponse,
   ProviderStats,
   ModelStats,
   RequestLog,
@@ -79,18 +80,20 @@ export const usageApi = {
   },
 
   getUsageTrends: async (
-    startDate?: number,
-    endDate?: number,
-    appType?: string,
-    providerName?: string,
-    model?: string,
-  ): Promise<DailyStats[]> => {
+    startDate: number | undefined,
+    endDate: number | undefined,
+    appType: string | undefined,
+    providerName: string | undefined,
+    model: string | undefined,
+    granularity: TrendGranularityRequest,
+  ): Promise<UsageTrendResponse> => {
     return invoke("get_usage_trends", {
       startDate,
       endDate,
       appType,
       providerName,
       model,
+      granularity,
     });
   },
 

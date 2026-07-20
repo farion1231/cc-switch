@@ -84,8 +84,30 @@ export interface UsageSummaryByApp {
   summary: UsageSummary;
 }
 
-export interface DailyStats {
-  date: string;
+export type TrendUnit = "second" | "minute" | "hour" | "day";
+
+export type TrendGranularityRequest =
+  | {
+      mode: "auto";
+      targetPoints?: number;
+      maxPoints?: number;
+    }
+  | {
+      mode: "fixed";
+      value: number;
+      unit: TrendUnit;
+    };
+
+export interface TrendGranularity {
+  value: number;
+  unit: TrendUnit;
+}
+
+export type TrendPrecision = "detail" | "daily";
+
+export interface UsageTrendPoint {
+  bucketStart: number;
+  bucketSeconds: number;
   requestCount: number;
   totalCost: string;
   totalTokens: number;
@@ -93,6 +115,13 @@ export interface DailyStats {
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
+}
+
+export interface UsageTrendResponse {
+  data: UsageTrendPoint[];
+  granularity: TrendGranularity;
+  precision: TrendPrecision;
+  detailCutoff: number;
 }
 
 export interface ProviderStats {

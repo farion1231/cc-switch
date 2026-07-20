@@ -1,8 +1,14 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type {
   LogFilters,
+  TrendGranularityRequest,
   UsageRangeSelection,
   UsageScopeFilters,
 } from "@/types/usage";
@@ -75,7 +81,8 @@ export const usageKeys = {
     preset: UsageRangeSelection["preset"],
     customStartDate: number | undefined,
     customEndDate: number | undefined,
-    filters?: UsageScopeFilters,
+    filters: UsageScopeFilters | undefined,
+    granularity: TrendGranularityRequest,
     liveEndTime?: boolean,
   ) =>
     [
@@ -88,6 +95,13 @@ export const usageKeys = {
       filters?.appType ?? null,
       filters?.providerName ?? null,
       filters?.model ?? null,
+      granularity.mode,
+      granularity.mode === "auto"
+        ? (granularity.targetPoints ?? null)
+        : granularity.value,
+      granularity.mode === "auto"
+        ? (granularity.maxPoints ?? null)
+        : granularity.unit,
     ] as const,
   providerStats: (
     preset: UsageRangeSelection["preset"],
@@ -217,7 +231,8 @@ export function useUsageSummaryByApp(
 
 export function useUsageTrends(
   range: UsageRangeSelection,
-  filters?: UsageScopeFilters,
+  filters: UsageScopeFilters | undefined,
+  granularity: TrendGranularityRequest,
   options?: UsageQueryOptions,
 ) {
   const effective = normalizeScopeFilters(filters);
@@ -227,6 +242,7 @@ export function useUsageTrends(
       range.customStartDate,
       range.customEndDate,
       effective,
+      granularity,
       range.liveEndTime,
     ),
     queryFn: () => {
@@ -237,8 +253,10 @@ export function useUsageTrends(
         effective.appType,
         effective.providerName,
         effective.model,
+        granularity,
       );
     },
+    placeholderData: keepPreviousData,
     refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });

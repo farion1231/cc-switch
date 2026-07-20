@@ -8,7 +8,7 @@ use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
     fresh_input_sql, INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL,
 };
-use chrono::{Local, NaiveDate, TimeZone, Timelike};
+use chrono::{Duration, Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -60,7 +60,90 @@ fn derive_real_total_and_hit_rate(
     (real_total, hit_rate)
 }
 
-/// 每日统计
+/// 趋势请求支持的时间单位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrendUnit {
+    Second,
+    Minute,
+    Hour,
+    Day,
+}
+
+impl TrendUnit {
+    fn seconds(self) -> Option<i64> {
+        match self {
+            Self::Second => Some(1),
+            Self::Minute => Some(60),
+            Self::Hour => Some(60 * 60),
+            Self::Day => None,
+        }
+    }
+}
+
+/// 调用方请求的趋势颗粒度。Auto 由服务端按范围与可用精度决定。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+pub enum TrendGranularityRequest {
+    Auto {
+        #[serde(default, rename = "targetPoints")]
+        target_points: Option<u32>,
+        #[serde(default, rename = "maxPoints")]
+        max_points: Option<u32>,
+    },
+    Fixed {
+        value: u32,
+        unit: TrendUnit,
+    },
+}
+
+impl Default for TrendGranularityRequest {
+    fn default() -> Self {
+        Self::Auto {
+            target_points: None,
+            max_points: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendGranularity {
+    pub value: u32,
+    pub unit: TrendUnit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrendPrecision {
+    Detail,
+    Daily,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrendPoint {
+    pub bucket_start: i64,
+    pub bucket_seconds: i64,
+    pub request_count: u64,
+    pub total_cost: String,
+    pub total_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTrendResponse {
+    pub data: Vec<UsageTrendPoint>,
+    pub granularity: TrendGranularity,
+    pub precision: TrendPrecision,
+    pub detail_cutoff: i64,
+}
+
+/// 每日统计（旧趋势实现的内部兼容结构）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyStats {
@@ -506,6 +589,272 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
     local_midnight.to_rfc3339()
 }
 
+const AUTO_TARGET_TREND_POINTS: u32 = 500;
+const MAX_TREND_POINTS: u32 = 2_000;
+const DETAIL_RETENTION_DAYS: i64 = 30;
+
+fn local_day_start_timestamp(day: NaiveDate) -> Result<i64, AppError> {
+    let naive = day
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| AppError::Database("本地日期超出可表示范围".to_string()))?;
+    let local = match Local.from_local_datetime(&naive) {
+        chrono::LocalResult::Single(value) => value,
+        chrono::LocalResult::Ambiguous(earliest, _) => earliest,
+        chrono::LocalResult::None => {
+            let bumped = naive
+                .checked_add_signed(Duration::hours(1))
+                .ok_or_else(|| AppError::Database("本地日期边界溢出".to_string()))?;
+            match Local.from_local_datetime(&bumped) {
+                chrono::LocalResult::Single(value) => value,
+                chrono::LocalResult::Ambiguous(earliest, _) => earliest,
+                chrono::LocalResult::None => {
+                    return Err(AppError::Database(
+                        "本地日期边界落入无法解析的时区间隙".to_string(),
+                    ))
+                }
+            }
+        }
+    };
+    Ok(local.timestamp())
+}
+
+fn ceil_div_positive(value: i64, divisor: i64) -> i64 {
+    debug_assert!(value >= 0 && divisor > 0);
+    value / divisor + i64::from(value % divisor != 0)
+}
+
+fn trend_point_count(start_ts: i64, end_ts: i64, bucket_seconds: i64) -> u64 {
+    if start_ts >= end_ts || bucket_seconds <= 0 {
+        return 0;
+    }
+    let first = start_ts.div_euclid(bucket_seconds);
+    let last = (end_ts - 1).div_euclid(bucket_seconds);
+    (last - first + 1).max(0) as u64
+}
+
+fn granularity_seconds(value: u32, unit: TrendUnit) -> Result<i64, AppError> {
+    if value == 0 {
+        return Err(AppError::InvalidInput("趋势颗粒度必须为正整数".to_string()));
+    }
+    let base = unit
+        .seconds()
+        .ok_or_else(|| AppError::InvalidInput("自然日颗粒度不能转换为固定秒数".to_string()))?;
+    i64::from(value)
+        .checked_mul(base)
+        .ok_or_else(|| AppError::InvalidInput("趋势颗粒度过大".to_string()))
+}
+
+fn empty_trend_point(bucket_start: i64, bucket_seconds: i64) -> UsageTrendPoint {
+    UsageTrendPoint {
+        bucket_start,
+        bucket_seconds,
+        request_count: 0,
+        total_cost: "0.000000".to_string(),
+        total_tokens: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_creation_tokens: 0,
+        total_cache_read_tokens: 0,
+    }
+}
+
+/// Clip a boundary trend bucket's `[bucket_start, bucket_start + bucket_seconds]`
+/// into `[start_ts, end_ts]`. Coarse buckets align to granularity boundaries that
+/// can extend past the query range; without this, the axis would stretch beyond
+/// the user's selection, a short range's only bucket could fall outside the
+/// viewport, and the tooltip would show out-of-range bucket end times. The
+/// aggregate is already the in-range portion (the SQL filters to the query
+/// range), so only the reported boundaries and bucket_seconds are adjusted.
+fn clip_boundary_bucket(point: &mut UsageTrendPoint, start_ts: i64, end_ts: i64) {
+    let original_end = point.bucket_start.saturating_add(point.bucket_seconds);
+    let new_start = point.bucket_start.max(start_ts);
+    let new_end = original_end.min(end_ts);
+    if new_end > new_start {
+        point.bucket_start = new_start;
+        point.bucket_seconds = new_end - new_start;
+    }
+}
+
+fn merge_daily_stat(point: &mut UsageTrendPoint, stat: &DailyStats) {
+    point.request_count += stat.request_count;
+    let current_cost = point.total_cost.parse::<f64>().unwrap_or(0.0);
+    let added_cost = stat.total_cost.parse::<f64>().unwrap_or(0.0);
+    point.total_cost = format!("{:.6}", current_cost + added_cost);
+    point.total_tokens += stat.total_tokens;
+    point.total_input_tokens += stat.total_input_tokens;
+    point.total_output_tokens += stat.total_output_tokens;
+    point.total_cache_creation_tokens += stat.total_cache_creation_tokens;
+    point.total_cache_read_tokens += stat.total_cache_read_tokens;
+}
+
+/// Merge another trend bucket's aggregates into `point` (used to fold a boundary
+/// bucket into the last in-range bucket). Only aggregates move; the bucket's own
+/// boundaries/seconds are unchanged.
+fn merge_trend_point(point: &mut UsageTrendPoint, other: &UsageTrendPoint) {
+    point.request_count += other.request_count;
+    let current_cost = point.total_cost.parse::<f64>().unwrap_or(0.0);
+    let added_cost = other.total_cost.parse::<f64>().unwrap_or(0.0);
+    point.total_cost = format!("{:.6}", current_cost + added_cost);
+    point.total_tokens += other.total_tokens;
+    point.total_input_tokens += other.total_input_tokens;
+    point.total_output_tokens += other.total_output_tokens;
+    point.total_cache_creation_tokens += other.total_cache_creation_tokens;
+    point.total_cache_read_tokens += other.total_cache_read_tokens;
+}
+
+fn day_count_for_range(start_ts: i64, end_ts: i64) -> Result<u64, AppError> {
+    if start_ts >= end_ts {
+        return Ok(0);
+    }
+    let start_day = local_datetime_from_timestamp(start_ts)?.date_naive();
+    let end_day = local_datetime_from_timestamp(end_ts - 1)?.date_naive();
+    Ok((end_day.signed_duration_since(start_day).num_days() + 1).max(0) as u64)
+}
+
+fn resolve_trend_granularity(
+    request: &TrendGranularityRequest,
+    start_ts: i64,
+    end_ts: i64,
+    detail_cutoff: i64,
+) -> Result<(TrendGranularity, TrendPrecision), AppError> {
+    let precision = if start_ts < detail_cutoff {
+        TrendPrecision::Daily
+    } else {
+        TrendPrecision::Detail
+    };
+    let max_points = match request {
+        TrendGranularityRequest::Auto { max_points, .. } => max_points
+            .unwrap_or(MAX_TREND_POINTS)
+            .clamp(1, MAX_TREND_POINTS),
+        TrendGranularityRequest::Fixed { .. } => MAX_TREND_POINTS,
+    };
+
+    if precision == TrendPrecision::Daily {
+        let day_count = day_count_for_range(start_ts, end_ts)?.max(1);
+        let requested_value = match request {
+            TrendGranularityRequest::Fixed {
+                value,
+                unit: TrendUnit::Day,
+            } => {
+                if *value == 0 {
+                    return Err(AppError::InvalidInput("趋势颗粒度必须为正整数".to_string()));
+                }
+                u64::from(*value)
+            }
+            TrendGranularityRequest::Auto { target_points, .. } => {
+                let target = u64::from(
+                    target_points
+                        .unwrap_or(AUTO_TARGET_TREND_POINTS)
+                        .clamp(1, max_points),
+                );
+                day_count.div_ceil(target).max(1)
+            }
+            TrendGranularityRequest::Fixed { value, .. } => {
+                if *value == 0 {
+                    return Err(AppError::InvalidInput("趋势颗粒度必须为正整数".to_string()));
+                }
+                1
+            }
+        };
+        let minimum_value = day_count.div_ceil(u64::from(max_points)).max(1);
+        let value = requested_value.max(minimum_value).min(u64::from(u32::MAX)) as u32;
+        return Ok((
+            TrendGranularity {
+                value,
+                unit: TrendUnit::Day,
+            },
+            precision,
+        ));
+    }
+
+    match request {
+        TrendGranularityRequest::Auto { target_points, .. } => {
+            let target = target_points
+                .unwrap_or(AUTO_TARGET_TREND_POINTS)
+                .clamp(1, max_points);
+            let desired = ceil_div_positive((end_ts - start_ts).max(1), i64::from(target));
+            const NICE_BUCKETS: &[(u32, TrendUnit, i64)] = &[
+                (1, TrendUnit::Second, 1),
+                (5, TrendUnit::Second, 5),
+                (15, TrendUnit::Second, 15),
+                (30, TrendUnit::Second, 30),
+                (1, TrendUnit::Minute, 60),
+                (5, TrendUnit::Minute, 300),
+                (15, TrendUnit::Minute, 900),
+                (30, TrendUnit::Minute, 1_800),
+                (1, TrendUnit::Hour, 3_600),
+                (3, TrendUnit::Hour, 10_800),
+                (6, TrendUnit::Hour, 21_600),
+                (12, TrendUnit::Hour, 43_200),
+            ];
+            if let Some((value, unit, _)) = NICE_BUCKETS.iter().find(|(_, _, seconds)| {
+                *seconds >= desired
+                    && trend_point_count(start_ts, end_ts, *seconds) <= u64::from(max_points)
+            }) {
+                return Ok((
+                    TrendGranularity {
+                        value: *value,
+                        unit: *unit,
+                    },
+                    precision,
+                ));
+            }
+
+            let day_count = day_count_for_range(start_ts, end_ts)?.max(1);
+            let value = day_count
+                .div_ceil(u64::from(target))
+                .max(day_count.div_ceil(u64::from(max_points)))
+                .max(1)
+                .min(u64::from(u32::MAX)) as u32;
+            Ok((
+                TrendGranularity {
+                    value,
+                    unit: TrendUnit::Day,
+                },
+                precision,
+            ))
+        }
+        TrendGranularityRequest::Fixed { value, unit } => {
+            if *value == 0 {
+                return Err(AppError::InvalidInput("趋势颗粒度必须为正整数".to_string()));
+            }
+            if *unit == TrendUnit::Day {
+                let day_count = day_count_for_range(start_ts, end_ts)?.max(1);
+                let value = u64::from(*value)
+                    .max(day_count.div_ceil(u64::from(max_points)))
+                    .min(u64::from(u32::MAX)) as u32;
+                return Ok((TrendGranularity { value, unit: *unit }, precision));
+            }
+
+            let base_seconds = unit.seconds().expect("sub-day unit has seconds");
+            let requested_seconds = granularity_seconds(*value, *unit)?;
+            let point_count = trend_point_count(start_ts, end_ts, requested_seconds);
+            let mut adjusted_value = if point_count > u64::from(max_points) {
+                let required_seconds =
+                    ceil_div_positive((end_ts - start_ts).max(1), i64::from(max_points));
+                ceil_div_positive(required_seconds, base_seconds).max(i64::from(*value))
+            } else {
+                i64::from(*value)
+            };
+            while trend_point_count(
+                start_ts,
+                end_ts,
+                adjusted_value
+                    .checked_mul(base_seconds)
+                    .ok_or_else(|| AppError::InvalidInput("趋势颗粒度过大".to_string()))?,
+            ) > u64::from(max_points)
+            {
+                adjusted_value = adjusted_value
+                    .checked_add(1)
+                    .ok_or_else(|| AppError::InvalidInput("趋势颗粒度过大".to_string()))?;
+            }
+            let value = u32::try_from(adjusted_value)
+                .map_err(|_| AppError::InvalidInput("趋势颗粒度过大".to_string()))?;
+            Ok((TrendGranularity { value, unit: *unit }, precision))
+        }
+    }
+}
+
 impl Database {
     /// 获取使用量汇总
     pub fn get_usage_summary(
@@ -831,7 +1180,234 @@ impl Database {
         Ok(summaries)
     }
 
-    /// 获取每日趋势（滑动窗口，<=24h 按小时，>24h 按天，窗口与汇总一致）
+    /// 获取可协商颗粒度的使用趋势。
+    pub fn get_usage_trends(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        granularity: Option<TrendGranularityRequest>,
+    ) -> Result<UsageTrendResponse, AppError> {
+        let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
+        let start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
+        if start_ts >= end_ts {
+            return Err(AppError::InvalidInput(
+                "趋势起始时间必须早于结束时间".to_string(),
+            ));
+        }
+
+        let detail_cutoff =
+            crate::database::compute_local_midnight_cutoff(Local::now(), DETAIL_RETENTION_DAYS)?;
+        let request = granularity.unwrap_or_default();
+        let (actual, precision) =
+            resolve_trend_granularity(&request, start_ts, end_ts, detail_cutoff)?;
+
+        let data = if actual.unit == TrendUnit::Day {
+            self.get_calendar_day_trends(
+                start_ts,
+                end_ts,
+                app_type,
+                provider_name,
+                model,
+                actual.value,
+            )?
+        } else {
+            let bucket_seconds = granularity_seconds(actual.value, actual.unit)?;
+            self.get_fixed_interval_trends(
+                start_ts,
+                end_ts,
+                app_type,
+                provider_name,
+                model,
+                bucket_seconds,
+            )?
+        };
+
+        Ok(UsageTrendResponse {
+            data,
+            granularity: actual,
+            precision,
+            detail_cutoff,
+        })
+    }
+
+    fn get_fixed_interval_trends(
+        &self,
+        start_ts: i64,
+        end_ts: i64,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        bucket_seconds: i64,
+    ) -> Result<Vec<UsageTrendPoint>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let first_bucket = start_ts.div_euclid(bucket_seconds) * bucket_seconds;
+        let bucket_count = trend_point_count(start_ts, end_ts, bucket_seconds);
+        if bucket_count > u64::from(MAX_TREND_POINTS) {
+            return Err(AppError::InvalidInput(
+                "趋势数据点超过服务端上限".to_string(),
+            ));
+        }
+
+        let mut conditions = vec![
+            "l.created_at >= ?".to_string(),
+            "l.created_at <= ?".to_string(),
+            effective_usage_log_filter("l"),
+        ];
+        let mut values: Vec<Box<dyn rusqlite::ToSql>> = vec![
+            Box::new(bucket_seconds),
+            Box::new(start_ts),
+            Box::new(end_ts),
+        ];
+        if let Some(value) = app_type {
+            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            values.push(Box::new(value.to_string()));
+        }
+        push_provider_model_filters(&mut conditions, &mut values, "l", "p", provider_name, model);
+        let join = if provider_name.is_some() {
+            providers_join("l", "p")
+        } else {
+            String::new()
+        };
+        let fresh_input = fresh_input_sql("l");
+        let sql = format!(
+            "SELECT
+                CAST(l.created_at / ?1 AS INTEGER) * ?1 AS bucket_start,
+                COUNT(*),
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0),
+                COALESCE(SUM({fresh_input} + l.output_tokens), 0),
+                COALESCE(SUM({fresh_input}), 0),
+                COALESCE(SUM(l.output_tokens), 0),
+                COALESCE(SUM(l.cache_creation_tokens), 0),
+                COALESCE(SUM(l.cache_read_tokens), 0)
+             FROM proxy_request_logs l {join}
+             WHERE {}
+             GROUP BY bucket_start
+             ORDER BY bucket_start ASC",
+            conditions.join(" AND ")
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = values.iter().map(|value| value.as_ref()).collect();
+        let rows = statement.query_map(refs.as_slice(), |row| {
+            Ok(UsageTrendPoint {
+                bucket_start: row.get(0)?,
+                bucket_seconds,
+                request_count: row.get::<_, i64>(1)? as u64,
+                total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
+                total_tokens: row.get::<_, i64>(3)? as u64,
+                total_input_tokens: row.get::<_, i64>(4)? as u64,
+                total_output_tokens: row.get::<_, i64>(5)? as u64,
+                total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
+                total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+            })
+        })?;
+        let mut mapped = HashMap::new();
+        for row in rows {
+            let point = row?;
+            mapped.insert(point.bucket_start, point);
+        }
+
+        let mut result = Vec::with_capacity(bucket_count as usize);
+        for index in 0..bucket_count {
+            let bucket_start = first_bucket
+                .checked_add((index as i64).saturating_mul(bucket_seconds))
+                .ok_or_else(|| AppError::InvalidInput("趋势桶边界溢出".to_string()))?;
+            result.push(
+                mapped
+                    .remove(&bucket_start)
+                    .unwrap_or_else(|| empty_trend_point(bucket_start, bucket_seconds)),
+            );
+        }
+        // With created_at <= end, a log exactly at `end` that falls on a bucket
+        // boundary is grouped into a bucket starting at `end`, which the loop
+        // above (aligned to end-1) didn't generate. Fold it into the last in-range
+        // bucket so the boundary log is counted, matching the summary's inclusive
+        // end. (When `end` is not a boundary, no such bucket exists in `mapped`.)
+        if let Some(boundary) = mapped.remove(&end_ts) {
+            if let Some(last) = result.last_mut() {
+                merge_trend_point(last, &boundary);
+            }
+        }
+        // Clip the first/last buckets into the query range so coarse boundary
+        // buckets don't extend the axis past the user's selection.
+        if let Some(first) = result.first_mut() {
+            clip_boundary_bucket(first, start_ts, end_ts);
+        }
+        if result.len() > 1 {
+            if let Some(last) = result.last_mut() {
+                clip_boundary_bucket(last, start_ts, end_ts);
+            }
+        }
+        Ok(result)
+    }
+
+    fn get_calendar_day_trends(
+        &self,
+        start_ts: i64,
+        end_ts: i64,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        day_span: u32,
+    ) -> Result<Vec<UsageTrendPoint>, AppError> {
+        let daily = self.get_daily_trends_inner(
+            Some(start_ts),
+            Some(end_ts),
+            app_type,
+            provider_name,
+            model,
+            true,
+        )?;
+        let first_day = local_datetime_from_timestamp(start_ts)?.date_naive();
+        let last_day = local_datetime_from_timestamp(end_ts - 1)?.date_naive();
+        let mut result = Vec::new();
+        let mut day = first_day;
+        let mut daily_index = 0usize;
+        let step = i64::from(day_span.max(1));
+
+        while day <= last_day {
+            let next_day = day
+                .checked_add_signed(Duration::days(step))
+                .ok_or_else(|| AppError::InvalidInput("趋势自然日边界溢出".to_string()))?;
+            let bucket_start = local_day_start_timestamp(day)?;
+            let bucket_end = local_day_start_timestamp(next_day)?;
+            let mut point = empty_trend_point(bucket_start, bucket_end - bucket_start);
+            for _ in 0..day_span.max(1) {
+                if daily_index >= daily.len() {
+                    break;
+                }
+                merge_daily_stat(&mut point, &daily[daily_index]);
+                daily_index += 1;
+            }
+            result.push(point);
+            day = next_day;
+        }
+        // With created_at <= end, a log exactly at `end` on a day boundary
+        // (midnight) lands in the next day's daily stat, which the loop above
+        // (last_day from end-1) didn't merge. Fold it into the last in-range day
+        // bucket so the boundary log is counted. (For a non-midnight end, all
+        // daily stats are already consumed and this is a no-op.)
+        if daily_index < daily.len() {
+            if let Some(last) = result.last_mut() {
+                merge_daily_stat(last, &daily[daily_index]);
+            }
+        }
+        // Clip the first/last day buckets into the query range so a range that
+        // starts or ends mid-day doesn't extend the axis beyond the selection.
+        if let Some(first) = result.first_mut() {
+            clip_boundary_bucket(first, start_ts, end_ts);
+        }
+        if result.len() > 1 {
+            if let Some(last) = result.last_mut() {
+                clip_boundary_bucket(last, start_ts, end_ts);
+            }
+        }
+        Ok(result)
+    }
+
+    /// 获取每日趋势（旧接口；滑动窗口 <=24h 按小时，>24h 按天）。
     pub fn get_daily_trends(
         &self,
         start_date: Option<i64>,
@@ -839,6 +1415,18 @@ impl Database {
         app_type: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+    ) -> Result<Vec<DailyStats>, AppError> {
+        self.get_daily_trends_inner(start_date, end_date, app_type, provider_name, model, false)
+    }
+
+    fn get_daily_trends_inner(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        force_daily: bool,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
@@ -850,7 +1438,7 @@ impl Database {
         }
 
         let duration = end_ts - start_ts;
-        if duration <= 24 * 60 * 60 {
+        if !force_daily && duration <= 24 * 60 * 60 {
             let bucket_seconds: i64 = 60 * 60;
             let mut bucket_count: i64 = if duration <= 0 {
                 1
@@ -2342,6 +2930,175 @@ mod tests {
             )",
             [],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_fixed_interval_trends_include_end_boundary() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let start = Local::now().timestamp() - 100;
+        let end = start + 60;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "inside",
+                "claude",
+                "p1",
+                "m",
+                "proxy",
+                start + 1,
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0.1",
+            )?;
+            insert_usage_log(
+                &conn, "boundary", "claude", "p1", "m", "proxy", end, 100, 50, 0, 0, 200, "1.0",
+            )?;
+        }
+
+        let response = db.get_usage_trends(
+            Some(start),
+            Some(end),
+            Some("claude"),
+            None,
+            None,
+            Some(TrendGranularityRequest::Fixed {
+                value: 5,
+                unit: TrendUnit::Second,
+            }),
+        )?;
+        assert_eq!(response.granularity.value, 5);
+        assert_eq!(response.granularity.unit, TrendUnit::Second);
+        assert!(response.data.len() <= 13);
+        // The trend interval is inclusive of `end` (created_at <= end), matching
+        // the summary/provider/model/log interfaces, so the boundary log at `end`
+        // is counted alongside the interior log.
+        assert_eq!(
+            response
+                .data
+                .iter()
+                .map(|point| point.request_count)
+                .sum::<u64>(),
+            2
+        );
+        assert_eq!(
+            response
+                .data
+                .iter()
+                .map(|point| point.total_input_tokens)
+                .sum::<u64>(),
+            110
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_fixed_interval_trends_clip_boundary_buckets_to_query_range() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        // Recent 30s range (detail precision) with 60s buckets: the coarse
+        // boundary buckets would otherwise extend past the selection. After
+        // clipping, every bucket must lie within [start, end] so the axis doesn't
+        // overrun and every point stays visible.
+        let start = Local::now().timestamp();
+        let end = start + 30;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "inside",
+                "claude",
+                "p1",
+                "m",
+                "proxy",
+                start + 10,
+                10,
+                5,
+                0,
+                0,
+                200,
+                "0.1",
+            )?;
+        }
+
+        let response = db.get_usage_trends(
+            Some(start),
+            Some(end),
+            Some("claude"),
+            None,
+            None,
+            Some(TrendGranularityRequest::Fixed {
+                value: 60,
+                unit: TrendUnit::Second,
+            }),
+        )?;
+        assert!(
+            !response.data.is_empty(),
+            "trend should produce at least one bucket"
+        );
+        for point in &response.data {
+            assert!(
+                point.bucket_start >= start,
+                "bucket_start {} is before query start {}",
+                point.bucket_start,
+                start
+            );
+            let bucket_end = point.bucket_start + point.bucket_seconds;
+            assert!(
+                bucket_end <= end,
+                "bucket_end {} is after query end {}",
+                bucket_end,
+                end
+            );
+        }
+        // The interior log is counted.
+        assert_eq!(
+            response
+                .data
+                .iter()
+                .map(|point| point.request_count)
+                .sum::<u64>(),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_fixed_interval_granularity_is_adjusted_to_point_limit() -> Result<(), AppError> {
+        let now = Local::now().timestamp();
+        let request = TrendGranularityRequest::Fixed {
+            value: 1,
+            unit: TrendUnit::Second,
+        };
+        let (actual, precision) =
+            resolve_trend_granularity(&request, now - 10_000, now, now - 20_000)?;
+        assert_eq!(precision, TrendPrecision::Detail);
+        assert_eq!(actual.unit, TrendUnit::Second);
+        assert!(actual.value >= 5);
+        assert!(trend_point_count(now - 10_000, now, i64::from(actual.value)) <= 2_000);
+        Ok(())
+    }
+
+    #[test]
+    fn test_old_ranges_downgrade_sub_day_granularity_to_calendar_days() -> Result<(), AppError> {
+        let end = Local::now().timestamp();
+        let start = end - 40 * 86_400;
+        let cutoff = end - 30 * 86_400;
+        let (actual, precision) = resolve_trend_granularity(
+            &TrendGranularityRequest::Fixed {
+                value: 15,
+                unit: TrendUnit::Minute,
+            },
+            start,
+            end,
+            cutoff,
+        )?;
+        assert_eq!(precision, TrendPrecision::Daily);
+        assert_eq!(actual.unit, TrendUnit::Day);
+        assert_eq!(actual.value, 1);
         Ok(())
     }
 
