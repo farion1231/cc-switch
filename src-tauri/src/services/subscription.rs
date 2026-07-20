@@ -545,6 +545,7 @@ fn read_codex_credentials_from_file_source() -> Option<CodexCredentialSource> {
                     CredentialStatus::ParseError,
                     Some(format!("Failed to read Codex auth file: {e}")),
                 ),
+                #[cfg(target_os = "macos")]
                 last_refresh: None,
             });
         }
