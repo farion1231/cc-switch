@@ -14,6 +14,7 @@ import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
 } from "@/utils/providerConfigUtils";
+import { parseGrokBuildConfig } from "@/utils/grokBuildConfig";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
 import * as parserBabel from "prettier/parser-babel";
@@ -261,6 +262,15 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           return {
             apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY,
             baseUrl: env.GOOGLE_GEMINI_BASE_URL,
+          };
+        } else if (appId === "grokbuild") {
+          const grokConfig = parseGrokBuildConfig(
+            (config as any).config,
+            provider.name,
+          );
+          return {
+            apiKey: grokConfig.apiKey,
+            baseUrl: grokConfig.baseUrl,
           };
         } else if (appId === "hermes") {
           // Hermes: settingsConfig 顶层扁平（snake_case，对应 config.yaml）

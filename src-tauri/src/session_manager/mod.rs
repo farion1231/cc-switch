@@ -4,7 +4,7 @@ pub mod terminal;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use providers::{claude, codefree, codex, gemini, hermes, openclaw, opencode};
+use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode, codefree};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,14 +56,15 @@ pub struct DeleteSessionOutcome {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let (r1, r2, r3, r4, r5, r6, r7) = std::thread::scope(|s| {
+    let (r1, r2, r3, r4, r5, r6, r7, r8) = std::thread::scope(|s| {
         let h1 = s.spawn(codex::scan_sessions);
         let h2 = s.spawn(claude::scan_sessions);
         let h3 = s.spawn(opencode::scan_sessions);
         let h4 = s.spawn(openclaw::scan_sessions);
         let h5 = s.spawn(gemini::scan_sessions);
         let h6 = s.spawn(hermes::scan_sessions);
-        let h7 = s.spawn(codefree::scan_sessions);
+        let h7 = s.spawn(grokbuild::scan_sessions);
+        let h8 = s.spawn(codefree::scan_sessions);
         (
             h1.join().unwrap_or_default(),
             h2.join().unwrap_or_default(),
@@ -72,6 +73,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             h5.join().unwrap_or_default(),
             h6.join().unwrap_or_default(),
             h7.join().unwrap_or_default(),
+            h8.join().unwrap_or_default(),
         )
     });
 
@@ -112,6 +114,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "opencode" => opencode::load_messages(path),
         "openclaw" => openclaw::load_messages(path),
         "gemini" => gemini::load_messages(path),
+        "grokbuild" => grokbuild::load_messages(path),
         "hermes" => hermes::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
@@ -174,6 +177,9 @@ fn delete_session_with_roots(
                     openclaw::delete_session(&validated_root, &validated_source, session_id)
                 }
                 "gemini" => gemini::delete_session(&validated_root, &validated_source, session_id),
+                "grokbuild" => {
+                    grokbuild::delete_session(&validated_root, &validated_source, session_id)
+                }
                 "hermes" => hermes::delete_session(&validated_root, &validated_source, session_id),
                 _ => Err(format!("Unsupported provider: {provider_id}")),
             };
@@ -203,6 +209,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "opencode" => vec![opencode::get_opencode_data_dir()],
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],
         "gemini" => vec![crate::gemini_config::get_gemini_dir().join("tmp")],
+        "grokbuild" => grokbuild::session_roots(),
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "codefree" => vec![crate::codefree_config::get_codefree_data_dir()],
         _ => return Err(format!("Unsupported provider: {provider_id}")),
