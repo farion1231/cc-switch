@@ -82,6 +82,7 @@ pub fn import_from_codefree(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         claude: false,
                         codex: false,
                         gemini: false,
+                        grokbuild: false,
                         opencode: false,
                         hermes: false,
                         codefree: true,

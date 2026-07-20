@@ -85,6 +85,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r5);
     sessions.extend(r6);
     sessions.extend(r7);
+    sessions.extend(r8);
 
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
