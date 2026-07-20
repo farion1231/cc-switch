@@ -1478,6 +1478,8 @@ pub fn run() {
             commands::set_hermes_memory,
             commands::get_hermes_memory_limits,
             commands::set_hermes_memory_enabled,
+            // Kimi Code specific
+            commands::get_kimi_code_live_provider_ids,
             // Global upstream proxy
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,

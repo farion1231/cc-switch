@@ -519,6 +519,11 @@ pub fn list_live_providers() -> Result<BTreeMap<String, Value>, AppError> {
     Ok(out)
 }
 
+/// Live provider ids present in config.toml (for UI In-Config / copy uniqueness).
+pub fn list_live_provider_ids() -> Result<Vec<String>, AppError> {
+    Ok(list_live_providers()?.into_keys().collect())
+}
+
 fn toml_to_json(value: &toml::Value) -> Result<Value, AppError> {
     serde_json::to_value(value).map_err(|e| AppError::JsonSerialize { source: e })
 }
@@ -1798,6 +1803,21 @@ max_context_size = 128000
                 .any(|l| l.trim_start().starts_with("default_model")),
             "default_model should be cleared when no models remain, got:\n{raw}"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn list_live_provider_ids_returns_live_keys() {
+        let temp = TempDir::new().unwrap();
+        let _guard = EnvGuard::set(&temp);
+        seed_live(&temp, sample_live_config());
+        let a = validate_owned_fragment(fragment_a()).unwrap();
+        merge_owned_fragment_into_live(&a).unwrap();
+
+        let ids = list_live_provider_ids().expect("ids");
+        assert!(ids.contains(&"managed:kimi-code".to_string()));
+        assert!(ids.contains(&"custom-a".to_string()));
+        assert!(!ids.contains(&"custom-b".to_string()));
     }
 
     #[test]
