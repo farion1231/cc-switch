@@ -642,7 +642,8 @@ async fn log_usage_internal(
         model
     };
 
-    let request_id = usage.dedup_request_id();
+    let dedup_scope = (app_type != "claude").then_some((app_type, provider_id));
+    let request_id = usage.dedup_request_id(dedup_scope);
 
     log::debug!(
         "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
