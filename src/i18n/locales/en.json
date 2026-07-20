@@ -3061,6 +3061,7 @@
     "credits": "Credits",
     "copilotPremium": "Premium",
     "utilization": "{{value}}%",
+    "estQuota": "Quota {{value}} est.",
     "resetsIn": "Resets in {{time}}",
     "extraUsage": "Extra Usage",
     "expired": "Session expired",

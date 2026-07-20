@@ -3061,6 +3061,7 @@
     "credits": "额度",
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
+    "estQuota": "额度 {{value}} est.",
     "resetsIn": "{{time}}后重置",
     "extraUsage": "超额用量",
     "expired": "会话已过期",
