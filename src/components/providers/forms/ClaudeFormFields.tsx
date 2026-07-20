@@ -60,6 +60,7 @@ import type {
 import {
   parseModelSuffix,
   setModelSuffix,
+  reapplySuffix,
   stripModelSuffix,
   type ClaudeModelEnvField,
 } from "./hooks/useModelState";
@@ -707,10 +708,12 @@ export function ClaudeFormFields({
 
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
     const oldModelBase = stripModelSuffix(row.model).trim();
-    const nextModelBase = stripModelSuffix(value).trim();
+    // 改模型名时保留原 context window 后缀，避免丢窗口配置
+    const nextModel = reapplySuffix(row.model, value);
+    const nextModelBase = stripModelSuffix(nextModel).trim();
     const displayName = row.displayName?.trim() ?? "";
     const shouldSyncDisplayName = !displayName || displayName === oldModelBase;
-    onModelChange(row.modelField, value);
+    onModelChange(row.modelField, nextModel);
     if (row.displayNameField && shouldSyncDisplayName) {
       onModelChange(row.displayNameField, nextModelBase);
     }
@@ -1143,7 +1146,11 @@ export function ClaudeFormFields({
                   stripModelSuffix(claudeModel),
                   "ANTHROPIC_MODEL",
                   t("providerForm.modelPlaceholder", { defaultValue: "" }),
-                  (value) => onModelChange("ANTHROPIC_MODEL", value),
+                  (value) =>
+                    onModelChange(
+                      "ANTHROPIC_MODEL",
+                      reapplySuffix(claudeModel, value),
+                    ),
                 )}
                 <Input
                   inputMode="text"

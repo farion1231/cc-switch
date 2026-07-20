@@ -6,6 +6,7 @@ import {
   setClaudeOneMMarker,
   stripClaudeOneMMarker,
   setModelSuffix,
+  reapplySuffix,
   stripModelSuffix,
   useModelState,
 } from "@/components/providers/forms/hooks/useModelState";
@@ -281,7 +282,7 @@ describe("setModelSuffix - 多元化输入", () => {
     expect(setModelSuffix("model", "1_000_000")).toBe("model[1000000]");
   });
 
-  it("accepts space-separated \"1 000 000\"", () => {
+  it('accepts space-separated "1 000 000"', () => {
     expect(setModelSuffix("model", "1 000 000")).toBe("model[1000000]");
   });
 
@@ -301,5 +302,27 @@ describe("setModelSuffix - 多元化输入", () => {
 describe("stripModelSuffix", () => {
   it("strips [200k]", () => {
     expect(stripModelSuffix("model[200k]")).toBe("model");
+  });
+});
+
+describe("reapplySuffix", () => {
+  it("preserves suffix when changing model name", () => {
+    expect(reapplySuffix("deepseek-v4-pro[200k]", "glm-5.2")).toBe(
+      "glm-5.2[200k]",
+    );
+  });
+
+  it("returns base unchanged when old model has no suffix", () => {
+    expect(reapplySuffix("deepseek-v4-pro", "glm-5.2")).toBe("glm-5.2");
+  });
+
+  it("returns empty string when new input is empty", () => {
+    expect(reapplySuffix("deepseek-v4-pro[200k]", "")).toBe("");
+  });
+
+  it("old suffix wins when new input also has a suffix", () => {
+    expect(reapplySuffix("deepseek-v4-pro[200k]", "glm-5.2[100k]")).toBe(
+      "glm-5.2[200k]",
+    );
   });
 });
