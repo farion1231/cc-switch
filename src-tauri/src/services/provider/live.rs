@@ -746,7 +746,9 @@ pub(crate) fn build_effective_settings_with_common_config(
     // 启动 settings.json 监听器，在后台自动同步 ACW/MAX 当用户 /model 切换时
     if matches!(app_type, AppType::Claude) {
         let settings_path = get_claude_settings_path();
-        if settings_path.exists() {
+        // 检查父目录存在（而不是文件存在）：watch 父目录能检测文件创建，
+        // 解决 fresh 安装时 settings.json 不存在导致 watcher 不启动的问题。
+        if settings_path.parent().map(|p| p.exists()).unwrap_or(false) {
             let provider_arc = std::sync::Arc::new(provider.clone());
             match crate::claude_settings_watcher::spawn_claude_settings_watcher(
                 settings_path,
