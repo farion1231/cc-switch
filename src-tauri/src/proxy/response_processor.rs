@@ -186,12 +186,22 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
+    let force_response_model =
+        if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
+            && !ctx.request_model.trim().is_empty()
+        {
+            Some(ctx.request_model.clone())
+        } else {
+            None
+        };
+
     let logged_stream = create_logged_passthrough_stream(
         stream,
         ctx.tag,
         usage_collector,
         timeout_config,
         connection_guard,
+        force_response_model,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -300,6 +310,38 @@ pub async fn handle_non_streaming(
         }
     } else {
         log::debug!("[{}] usage logging 已关闭，跳过非流式 usage 解析", ctx.tag);
+    }
+
+    // Claude /v1/messages 透传：把响应 model 写回客户端请求模型，避免 Claude Code 因
+    // message.model 与本轮请求 model 不一致而剥离带 signature 的 thinking。
+    let mut body_bytes = body_bytes;
+    if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
+        && !ctx.request_model.trim().is_empty()
+    {
+        if let Ok(mut json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+            if super::model_mapper::rewrite_anthropic_response_model(
+                &mut json_value,
+                &ctx.request_model,
+            ) {
+                match serde_json::to_vec(&json_value) {
+                    Ok(rewritten) => {
+                        log::debug!(
+                            "[{}] response model rewritten to client request model={}",
+                            ctx.tag,
+                            ctx.request_model
+                        );
+                        body_bytes = Bytes::from(rewritten);
+                        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[{}] failed to serialize rewritten response model body: {e}",
+                            ctx.tag
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // 构建响应
@@ -680,6 +722,7 @@ pub fn create_logged_passthrough_stream(
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    force_response_model: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
@@ -687,8 +730,13 @@ pub fn create_logged_passthrough_stream(
         let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
+        let force_model = force_response_model;
+        let rewrite_models = force_model
+            .as_ref()
+            .map(|m| !m.trim().is_empty())
+            .unwrap_or(false);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            rewrite_models || collector.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -739,43 +787,87 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    if inspect_sse_events {
+                    if rewrite_models {
+                        // 模型回写需要按完整 SSE event 边界处理，避免 JSON 跨 chunk 半包。
                         crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
-
-                        // 尝试解析并记录完整的 SSE 事件
+                        let client_model = force_model.as_deref().unwrap_or("");
                         while let Some(event_text) = take_sse_block(&mut buffer) {
-                            if !event_text.trim().is_empty() {
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
-                                for line in event_text.lines() {
-                                    if let Some(data) = strip_sse_field(line, "data") {
-                                        if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
-                                                        }
-                                                        Err(_) => false,
+                            if event_text.trim().is_empty() {
+                                continue;
+                            }
+                            for line in event_text.lines() {
+                                if let Some(data) = strip_sse_field(line, "data") {
+                                    if data.trim() != "[DONE]" {
+                                        let collected = match &collector {
+                                            Some(c) if c.should_collect(data) => {
+                                                match serde_json::from_str::<Value>(data) {
+                                                    Ok(json_value) => {
+                                                        c.push(json_value).await;
+                                                        true
                                                     }
+                                                    Err(_) => false,
                                                 }
-                                                _ => false,
-                                            };
-                                            if collected {
-                                                log::debug!("[{tag}] <<< SSE 事件: {data}");
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE 数据: {data}");
                                             }
+                                            _ => false,
+                                        };
+                                        if collected {
+                                            log::debug!("[{tag}] <<< SSE 事件: {data}");
                                         } else {
-                                            log::debug!("[{tag}] <<< SSE: [DONE]");
+                                            log::debug!("[{tag}] <<< SSE 数据: {data}");
+                                        }
+                                    } else {
+                                        log::debug!("[{tag}] <<< SSE: [DONE]");
+                                    }
+                                }
+                            }
+                            let rewritten =
+                                super::model_mapper::rewrite_anthropic_sse_event_block(
+                                    &event_text,
+                                    client_model,
+                                );
+                            let mut out = rewritten;
+                            out.push_str("\n\n");
+                            yield Ok(Bytes::from(out));
+                        }
+                    } else {
+                        if inspect_sse_events {
+                            crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+
+                            // 尝试解析并记录完整的 SSE 事件
+                            while let Some(event_text) = take_sse_block(&mut buffer) {
+                                if !event_text.trim().is_empty() {
+                                    // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
+                                    for line in event_text.lines() {
+                                        if let Some(data) = strip_sse_field(line, "data") {
+                                            if data.trim() != "[DONE]" {
+                                                let collected = match &collector {
+                                                    Some(c) if c.should_collect(data) => {
+                                                        match serde_json::from_str::<Value>(data) {
+                                                            Ok(json_value) => {
+                                                                c.push(json_value).await;
+                                                                true
+                                                            }
+                                                            Err(_) => false,
+                                                        }
+                                                    }
+                                                    _ => false,
+                                                };
+                                                if collected {
+                                                    log::debug!("[{tag}] <<< SSE 事件: {data}");
+                                                } else {
+                                                    log::debug!("[{tag}] <<< SSE 数据: {data}");
+                                                }
+                                            } else {
+                                                log::debug!("[{tag}] <<< SSE: [DONE]");
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    yield Ok(bytes);
+                        yield Ok(bytes);
+                    }
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
@@ -786,6 +878,21 @@ pub fn create_logged_passthrough_stream(
                     // 流正常结束
                     break;
                 }
+            }
+        }
+
+        if rewrite_models {
+            if !utf8_remainder.is_empty() {
+                buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+                utf8_remainder.clear();
+            }
+            if !buffer.trim().is_empty() {
+                let client_model = force_model.as_deref().unwrap_or("");
+                let rewritten = super::model_mapper::rewrite_anthropic_sse_event_block(
+                    buffer.trim_end(),
+                    client_model,
+                );
+                yield Ok(Bytes::from(rewritten));
             }
         }
 

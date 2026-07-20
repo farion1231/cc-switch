@@ -492,6 +492,7 @@ async fn handle_claude_transform(
             usage_collector,
             timeout_config,
             connection_guard,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1076,6 +1077,7 @@ async fn handle_codex_chat_to_responses_transform(
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1442,6 +1444,7 @@ fn build_codex_anthropic_sse_response(
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        None,
     );
 
     let mut headers = axum::http::HeaderMap::new();
