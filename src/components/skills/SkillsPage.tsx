@@ -85,6 +85,7 @@ export const getSkillsPageHeaderActions = (source: SkillsPageSource) =>
   );
 
 const SKILLSSH_PAGE_SIZE = 20;
+const REPO_SKILL_BATCH_SIZE = 48;
 
 /**
  * Skills 发现面板
@@ -99,6 +100,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [repoSkillLimit, setRepoSkillLimit] = useState(REPO_SKILL_BATCH_SIZE);
 
     // skills.sh 搜索状态
     const [searchSource, setSearchSource] = useState<SkillsPageSource>("repos");
@@ -208,7 +210,8 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     const loading =
       searchSource === "repos"
-        ? loadingDiscoverable || fetchingDiscoverable
+        ? (loadingDiscoverable || fetchingDiscoverable) &&
+          !discoverableSkills?.length
         : false;
 
     useImperativeHandle(ref, () => ({
@@ -349,6 +352,21 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
+    const displayedRepoSkills = filteredSkills.slice(0, repoSkillLimit);
+
+    useEffect(() => {
+      setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+    }, [searchQuery, filterRepo, filterStatus]);
+
+    useEffect(() => {
+      if (loading || repoSkillLimit >= filteredSkills.length) return;
+      const frame = requestAnimationFrame(() =>
+        setRepoSkillLimit((current) =>
+          Math.min(current + REPO_SKILL_BATCH_SIZE, filteredSkills.length),
+        ),
+      );
+      return () => cancelAnimationFrame(frame);
+    }, [filteredSkills.length, loading, repoSkillLimit]);
 
     // 是否有更多 skills.sh 结果
     const hasMoreSkillsSh =
@@ -560,7 +578,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredSkills.map((skill) => (
+                  {displayedRepoSkills.map((skill) => (
                     <SkillCard
                       key={skill.key}
                       skill={skill}
