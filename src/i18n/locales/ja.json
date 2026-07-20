@@ -2224,6 +2224,7 @@
     "checkUpdates": "更新を確認",
     "checkingUpdates": "確認中...",
     "noUpdates": "すべてのスキルは最新です",
+    "updateCheckIncomplete": "{{count}} 件のリポジトリを確認できませんでした",
     "updatesFound": "{{count}} 個のスキルに更新があります",
     "updateAll": "すべて更新 ({{count}})",
     "updatingAll": "更新中...",

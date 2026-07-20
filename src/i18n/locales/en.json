@@ -2224,6 +2224,7 @@
     "checkUpdates": "Check Updates",
     "checkingUpdates": "Checking...",
     "noUpdates": "All skills are up to date",
+    "updateCheckIncomplete": "{{count}} repositories could not be checked",
     "updatesFound": "{{count}} skill(s) have updates available",
     "updateAll": "Update All ({{count}})",
     "updatingAll": "Updating...",

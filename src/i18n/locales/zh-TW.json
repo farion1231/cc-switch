@@ -2196,6 +2196,7 @@
     "checkUpdates": "檢查更新",
     "checkingUpdates": "檢查中...",
     "noUpdates": "所有技能已是最新版本",
+    "updateCheckIncomplete": "{{count}} 個倉庫未完成檢查",
     "updatesFound": "發現 {{count}} 個技能有可用更新",
     "updateAll": "全部更新 ({{count}})",
     "updatingAll": "更新中...",

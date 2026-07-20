@@ -186,6 +186,24 @@ pub struct SkillUpdateInfo {
     pub remote_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillRepoCheckFailure {
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_id: Option<String>,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateCheckResult {
+    pub updates: Vec<SkillUpdateInfo>,
+    pub failures: Vec<SkillRepoCheckFailure>,
+}
+
 /// Skill 存储位置迁移结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -868,9 +886,10 @@ impl SkillService {
     ///
     /// 仅检查有 repo_owner 的 Skill（本地 Skill 跳过），
     /// 按仓库分组下载，避免重复下载同一仓库。
-    pub async fn check_updates(&self, db: &Arc<Database>) -> Result<Vec<SkillUpdateInfo>> {
+    pub async fn check_updates(&self, db: &Arc<Database>) -> Result<SkillUpdateCheckResult> {
         let skills = db.get_all_installed_skills()?;
         let mut updates = Vec::new();
+        let mut failures = Vec::new();
 
         // 按 (owner, name, branch) 分组
         let mut repo_groups: HashMap<(String, String, String), Vec<InstalledSkill>> =
@@ -909,17 +928,69 @@ impl SkillService {
                 Ok(Ok(result)) => result,
                 Ok(Err(e)) => {
                     log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
+                    failures.push(SkillRepoCheckFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: branch.clone(),
+                        skill_id: None,
+                        error: e.to_string(),
+                    });
                     continue;
                 }
                 Err(_) => {
                     log::warn!("检查更新时下载 {}/{} 超时", owner, name);
+                    failures.push(SkillRepoCheckFailure {
+                        owner: owner.clone(),
+                        name: name.clone(),
+                        branch: branch.clone(),
+                        skill_id: None,
+                        error: format_skill_error(
+                            "DOWNLOAD_TIMEOUT",
+                            &[("owner", owner), ("name", name), ("timeout", "60")],
+                            Some("checkNetwork"),
+                        ),
+                    });
                     continue;
                 }
             };
 
             // 扫描仓库中的所有 Skill 目录
             let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
-            let _ = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills);
+            if let Err(e) = self.scan_dir_recursive(&temp_dir, &temp_dir, &repo, &mut remote_skills)
+            {
+                failures.push(SkillRepoCheckFailure {
+                    owner: owner.clone(),
+                    name: name.clone(),
+                    branch: branch.clone(),
+                    skill_id: None,
+                    error: e.to_string(),
+                });
+                let _ = fs::remove_dir_all(&temp_dir);
+                continue;
+            }
+
+            if let Some(missing) = group_skills.iter().find(|skill| {
+                !remote_skills.iter().any(|remote| {
+                    remote
+                        .directory
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&remote.directory)
+                        .eq_ignore_ascii_case(&skill.directory)
+                })
+            }) {
+                failures.push(SkillRepoCheckFailure {
+                    owner: owner.clone(),
+                    name: name.clone(),
+                    branch: branch.clone(),
+                    skill_id: Some(missing.id.clone()),
+                    error: format_skill_error(
+                        "SKILL_DIR_NOT_FOUND",
+                        &[("path", &missing.directory)],
+                        Some("checkRepoUrl"),
+                    ),
+                });
+            }
 
             for skill in group_skills {
                 // 在远程仓库中找到匹配的 Skill 目录
@@ -978,7 +1049,29 @@ impl SkillService {
             let _ = fs::remove_dir_all(&temp_dir);
         }
 
-        Ok(updates)
+        let current_skills = db.get_all_installed_skills()?;
+        failures.retain(|failure| {
+            if let Some(skill_id) = &failure.skill_id {
+                return current_skills.contains_key(skill_id);
+            }
+            current_skills.values().any(|skill| {
+                skill
+                    .repo_owner
+                    .as_deref()
+                    .is_some_and(|owner| owner.eq_ignore_ascii_case(&failure.owner))
+                    && skill
+                        .repo_name
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(&failure.name))
+                    && skill
+                        .repo_branch
+                        .as_deref()
+                        .unwrap_or("main")
+                        .eq_ignore_ascii_case(&failure.branch)
+            })
+        });
+
+        Ok(SkillUpdateCheckResult { updates, failures })
     }
 
     /// 更新单个 Skill（重新下载并替换本地文件）
