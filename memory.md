@@ -1,5 +1,12 @@
 # CC Switch Repository Memory
 
+## 2026-07-20 本机构建缓存与旧发布输出清理
+
+- 清理前仓库最大的可再生成项是 `src-tauri/target`：`52264183717` bytes（48.675 GiB），其中 debug 约 39.011 GiB、release 约 9.663 GiB；现场没有进程从该目录运行，因此可整目录删除，后续 Cargo/Tauri 构建会按需重建。
+- 同步删除可再生成的 `node_modules`（约 278 MiB）、`dist`（约 5 MiB）和未跟踪的 `scripts/logs`（约 318 MiB）。pnpm 的链接节点可能让第一次递归删除报 access denied；部分删除完成后再次对已核验的 `node_modules` 根目录执行目录删除即可，不要扩大到 pnpm 全局 store。
+- 删除 `output/release-v3.16.4-4-upload`、`output/release-v3.16.4-5wizard`、`output/release-v3.16.5-3` 三组已过期本地发布产物，合计约 210 MiB；保留 `output/pdf/codex-multirouter-guide-zh.pdf`。清理后工作区除 `.git` 外约 54 MiB。
+- 清理前后均保留用户未提交的 `src-tauri/src/proxy/forwarder.rs`、`src-tauri/src/proxy/providers/codex.rs`、`src-tauri/src/proxy/providers/mod.rs` 修改。以后做空间回收应先检查 `git status` 和运行进程，再只删 target、dist、node_modules、旧 release output、诊断 logs 这类可再生成或已交付内容。
+
 ## 2026-07-15 Windows WM_ENDSESSION tao Destroyed panic 根修
 
 - 用户报告的 `app-exit-events.jsonl` 在 2026-07-15 11:18:55 记录主线程 panic：`tao-0.34.6/src/platform_impl/windows/event_loop/runner.rs:371 cannot move state from Destroyed`。同一次运行在 11:18:44 托盘 `show_main` 后发生，但 `show_main` 只会增加重绘消息，不能产生 `Destroyed`；没有 `ExitRequested` 日志也排除了 CCSwitchMulti 主动退出路径。
