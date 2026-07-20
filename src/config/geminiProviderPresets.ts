@@ -413,6 +413,24 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "UnoRouter",
+    websiteUrl: "https://unorouter.com",
+    apiKeyUrl: "https://unorouter.com/token",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.unorouter.com",
+        GEMINI_MODEL: "gemini-3.5-flash",
+      },
+    },
+    baseURL: "https://api.unorouter.com",
+    model: "gemini-3.5-flash",
+    description: "UnoRouter",
+    category: "aggregator",
+    endpointCandidates: ["https://api.unorouter.com"],
+    icon: "unorouter",
+    iconColor: "#FF2A0C",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

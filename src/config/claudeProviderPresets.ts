@@ -688,6 +688,23 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#006FFB",
   },
   {
+    name: "UnoRouter",
+    websiteUrl: "https://unorouter.com",
+    apiKeyUrl: "https://unorouter.com/token",
+    // 说明：该供应商使用 ANTHROPIC_API_KEY（而非 ANTHROPIC_AUTH_TOKEN）
+    apiKeyField: "ANTHROPIC_API_KEY",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.unorouter.com",
+        ANTHROPIC_API_KEY: "",
+      },
+    },
+    endpointCandidates: ["https://api.unorouter.com"],
+    category: "aggregator",
+    icon: "unorouter",
+    iconColor: "#FF2A0C",
+  },
+  {
     name: "CherryIN",
     websiteUrl: "https://open.cherryin.ai",
     apiKeyUrl: "https://open.cherryin.ai/console/token",

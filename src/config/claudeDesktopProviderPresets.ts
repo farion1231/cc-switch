@@ -338,6 +338,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "UnoRouter",
+    websiteUrl: "https://unorouter.com",
+    apiKeyUrl: "https://unorouter.com/token",
+    category: "aggregator",
+    baseUrl: "https://api.unorouter.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    icon: "unorouter",
+  },
+  {
     name: "Unity2.ai",
     websiteUrl: "https://unity2.ai",
     apiKeyUrl: "https://unity2.ai/register?source=ccs",
