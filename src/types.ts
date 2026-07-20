@@ -168,6 +168,24 @@ export interface LocalProxyRequestOverrides {
   body?: Record<string, unknown>;
 }
 
+// 聚合供应商的单档路由：将某个 Claude 模型档映射到指定 provider 的指定模型
+export interface AggregateRoute {
+  // 目标 provider ID（必须属于同一 app，且不能是聚合供应商）
+  providerId: string;
+  // 发往目标 provider 上游的模型名
+  model: string;
+}
+
+// 聚合供应商的模型分层路由表（JSON camelCase，与后端一致）。
+// 聚合供应商自身没有端点；任一档位非空即视为聚合供应商，
+// 代理接管模式下按请求模型的档位（Haiku/Sonnet/Opus/Fable）分流。
+export interface AggregateRoutes {
+  haiku?: AggregateRoute;
+  sonnet?: AggregateRoute;
+  opus?: AggregateRoute;
+  fable?: AggregateRoute;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -178,6 +196,8 @@ export interface ProviderMeta {
   claudeDesktopMode?: "direct" | "proxy";
   // Claude Desktop 本地路由模式：Claude-safe route -> upstream model
   claudeDesktopModelRoutes?: Record<string, ClaudeDesktopModelRoute>;
+  // 聚合供应商的模型分层路由表（仅 Claude）；非空即视为聚合供应商
+  aggregateRoutes?: AggregateRoutes;
   // 用量查询脚本配置
   usage_script?: UsageScript;
   // 请求地址管理：测速后自动选择最佳端点

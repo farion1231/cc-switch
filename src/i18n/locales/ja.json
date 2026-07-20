@@ -254,6 +254,7 @@
     "settingsSaved": "設定を保存しました",
     "settingsSaveFailed": "設定の保存に失敗しました: {{error}}",
     "proxyRequiredForSwitch": "このプロバイダーは{{reason}}、ルーティングサービスが必要です。先にルーティングを起動してください",
+    "aggregateRequiresTakeover": "集約プロバイダーにはプロキシ引き継ぎモードが必要です。有効にしてから切り替えてください。",
     "proxyReasonCopilot": "GitHub Copilot を Claude プロバイダーとして使用しており",
     "proxyReasonOpenAIChat": "OpenAI Chat API フォーマットを使用しており",
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
@@ -994,6 +995,25 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "aggregate": {
+      "title": "集約プロバイダー",
+      "hint": "Haiku、Sonnet、Opus、Fable のリクエストを別々のプロバイダーのモデルへ振り分けます。プロキシ引き継ぎが必要です。",
+      "tier": "モデル階層",
+      "targetProvider": "対象プロバイダー",
+      "targetModel": "実際のモデル",
+      "selectProvider": "プロバイダーを選択",
+      "notConfigured": "未設定",
+      "modelPlaceholder": "例: kimi-k3",
+      "noTargets": "先にローカルルーティングで利用可能なサードパーティ Claude プロバイダーを1つ以上追加してください。",
+      "empty": "集約ルートを1つ以上設定してください。",
+      "incomplete": "{{tier}} にはプロバイダーとモデルの両方が必要です。",
+      "tiers": {
+        "haiku": "Haiku",
+        "sonnet": "Sonnet",
+        "opus": "Opus",
+        "fable": "Fable"
+      }
+    },
     "supplierName": "プロバイダー名",
     "supplierNameRequired": "プロバイダー名 *",
     "supplierNamePlaceholder": "例: Anthropic Official",

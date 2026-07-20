@@ -122,9 +122,9 @@ mod tests {
     use crate::claude_desktop_config::PROFILE_ID;
     use crate::config::{get_claude_settings_path, read_json_file, write_json_file};
     use crate::database::Database;
+    use crate::provider::{AggregateRoute, AggregateRoutes, ProviderMeta, UsageScript};
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::provider::{ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -700,6 +700,355 @@ mod tests {
             err.to_string().contains("auth"),
             "expected auth error, got {err:?}"
         );
+    }
+
+    fn aggregate_provider_with_routes(id: &str, routes: AggregateRoutes) -> Provider {
+        let mut provider = Provider::with_id(id.into(), format!("Agg {id}"), json!({}), None);
+        provider.meta = Some(ProviderMeta {
+            aggregate_routes: Some(routes),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn validate_aggregate_routes_accepts_valid_routes() {
+        with_test_home(|state, _| {
+            let kimi = Provider::with_id(
+                "kimi".into(),
+                "Kimi".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "sk"}}),
+                None,
+            );
+            state.db.save_provider("claude", &kimi).unwrap();
+
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            ProviderService::validate_aggregate_routes(state.db.as_ref(), &AppType::Claude, &agg)
+                .expect("valid routes should pass");
+        });
+    }
+
+    #[test]
+    fn validate_aggregate_routes_rejects_missing_target() {
+        with_test_home(|state, _| {
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "ghost".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            let err = ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Claude,
+                &agg,
+            )
+            .expect_err("missing target should be rejected");
+            assert!(err.to_string().contains("ghost"), "got {err:?}");
+        });
+    }
+
+    #[test]
+    fn validate_aggregate_routes_rejects_nested_aggregate() {
+        with_test_home(|state, _| {
+            let inner = aggregate_provider_with_routes(
+                "inner",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "ghost".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            state.db.save_provider("claude", &inner).unwrap();
+
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                AggregateRoutes {
+                    haiku: Some(AggregateRoute {
+                        provider_id: "inner".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            let err = ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Claude,
+                &agg,
+            )
+            .expect_err("nested aggregate should be rejected");
+            assert!(err.to_string().contains("inner"), "got {err:?}");
+        });
+    }
+
+    #[test]
+    fn validate_aggregate_routes_rejects_converting_referenced_target() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id("target".into(), "Target".into(), json!({}), None);
+            state.db.save_provider("claude", &target).unwrap();
+
+            let outer = aggregate_provider_with_routes(
+                "outer",
+                AggregateRoutes {
+                    sonnet: Some(AggregateRoute {
+                        provider_id: "target".into(),
+                        model: "target-model".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            state.db.save_provider("claude", &outer).unwrap();
+
+            let converted_target = aggregate_provider_with_routes(
+                "target",
+                AggregateRoutes {
+                    haiku: Some(AggregateRoute {
+                        provider_id: "missing".into(),
+                        model: "nested-model".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            let error = ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Claude,
+                &converted_target,
+            )
+            .expect_err("referenced target must not become an aggregate provider");
+            assert!(error.to_string().contains("outer"), "got {error:?}");
+        });
+    }
+
+    #[test]
+    fn validate_aggregate_routes_rejects_self_reference_and_empty_model() {
+        with_test_home(|state, _| {
+            let self_ref = aggregate_provider_with_routes(
+                "agg",
+                AggregateRoutes {
+                    sonnet: Some(AggregateRoute {
+                        provider_id: "agg".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Claude,
+                &self_ref,
+            )
+            .expect_err("self reference should be rejected");
+
+            let kimi = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
+            state.db.save_provider("claude", &kimi).unwrap();
+            let empty_model = aggregate_provider_with_routes(
+                "agg2",
+                AggregateRoutes {
+                    opus: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "   ".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Claude,
+                &empty_model,
+            )
+            .expect_err("empty model should be rejected");
+        });
+    }
+
+    #[test]
+    fn validate_aggregate_routes_rejects_non_claude_app() {
+        with_test_home(|state, _| {
+            let agg = aggregate_provider_with_routes(
+                "agg",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            ProviderService::validate_aggregate_routes(state.db.as_ref(), &AppType::Codex, &agg)
+                .expect_err("non-Claude app should be rejected");
+        });
+    }
+
+    #[test]
+    fn switch_aggregate_provider_requires_proxy_takeover() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id(
+                "kimi".into(),
+                "Kimi".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "sk"}}),
+                None,
+            );
+            state.db.save_provider("claude", &target).unwrap();
+
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            state.db.save_provider("claude", &aggregate).unwrap();
+
+            let error = ProviderService::switch(state, AppType::Claude, "aggregate")
+                .expect_err("normal switch must reject aggregate provider");
+            assert!(error.to_string().contains("代理接管"), "got {error:?}");
+        });
+    }
+
+    #[test]
+    fn add_aggregate_without_current_provider_keeps_it_inactive() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
+            state.db.save_provider("claude", &target).unwrap();
+
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                AggregateRoutes {
+                    fable: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            ProviderService::add(state, AppType::Claude, aggregate, false)
+                .expect("aggregate should be saved");
+
+            assert_eq!(state.db.get_current_provider("claude").unwrap(), None);
+            assert_eq!(
+                crate::settings::get_current_provider(&AppType::Claude),
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn update_active_provider_to_aggregate_requires_takeover() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
+            let current = Provider::with_id(
+                "current".into(),
+                "Current".into(),
+                json!({"env": {"ANTHROPIC_AUTH_TOKEN": "sk"}}),
+                None,
+            );
+            state.db.save_provider("claude", &target).unwrap();
+            state.db.save_provider("claude", &current).unwrap();
+            state.db.set_current_provider("claude", "current").unwrap();
+            crate::settings::set_current_provider(&AppType::Claude, Some("current")).unwrap();
+
+            let aggregate = aggregate_provider_with_routes(
+                "current",
+                AggregateRoutes {
+                    sonnet: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "k3".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            ProviderService::update(state, AppType::Claude, None, aggregate)
+                .expect_err("active provider conversion must require takeover");
+            let saved = state
+                .db
+                .get_provider_by_id("current", "claude")
+                .unwrap()
+                .unwrap();
+            assert!(!saved.is_aggregate());
+        });
+    }
+
+    #[test]
+    fn delete_referenced_aggregate_target_is_rejected() {
+        with_test_home(|state, _| {
+            let target = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                AggregateRoutes {
+                    haiku: Some(AggregateRoute {
+                        provider_id: "kimi".into(),
+                        model: "deepseek-chat".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            state.db.save_provider("claude", &target).unwrap();
+            state.db.save_provider("claude", &aggregate).unwrap();
+
+            let error = ProviderService::delete(state, AppType::Claude, "kimi")
+                .expect_err("referenced target must not be deleted");
+            let message = error.to_string();
+            assert!(
+                message.contains("聚合") || message.contains("aggregate"),
+                "got {error:?}"
+            );
+            assert!(state
+                .db
+                .get_provider_by_id("kimi", "claude")
+                .unwrap()
+                .is_some());
+        });
+    }
+
+    #[test]
+    fn validate_aggregate_routes_rejects_official_target() {
+        with_test_home(|state, _| {
+            let mut official =
+                Provider::with_id("official".into(), "Anthropic".into(), json!({}), None);
+            official.category = Some("official".into());
+            state.db.save_provider("claude", &official).unwrap();
+
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                AggregateRoutes {
+                    opus: Some(AggregateRoute {
+                        provider_id: "official".into(),
+                        model: "claude-opus-4-8".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+
+            ProviderService::validate_aggregate_routes(
+                state.db.as_ref(),
+                &AppType::Claude,
+                &aggregate,
+            )
+            .expect_err("official target should follow takeover safety policy");
+        });
     }
 
     #[test]
@@ -1966,6 +2315,33 @@ impl ProviderService {
         }
     }
 
+    /// Live 配置是否由代理接管持有。备份和占位配置都视为接管中，覆盖代理
+    /// 暂停以及启用过程尚未提交 enabled 状态的短窗口。
+    fn proxy_takeover_owns_live(state: &AppState, app_type: &AppType) -> bool {
+        futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+            .ok()
+            .flatten()
+            .is_some()
+            || state
+                .proxy_service
+                .detect_takeover_in_live_config_for_app(app_type)
+    }
+
+    fn find_aggregate_dependent(
+        db: &crate::database::Database,
+        app_type: &AppType,
+        target_id: &str,
+    ) -> Result<Option<Provider>, AppError> {
+        Ok(db
+            .get_all_providers(app_type.as_str())?
+            .into_values()
+            .find(|provider| {
+                provider
+                    .aggregate_routes()
+                    .is_some_and(|routes| routes.references_provider(target_id))
+            }))
+    }
+
     /// Check whether a provider exists in live config, tolerating parse errors
     /// only for providers that are explicitly marked as DB-only.
     fn check_live_config_exists(
@@ -2095,6 +2471,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
+        Self::validate_aggregate_routes(state.db.as_ref(), &app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         if app_type.is_additive_mode() {
@@ -2123,7 +2500,7 @@ impl ProviderService {
 
         // For other apps: Check if sync is needed (if this is current provider, or no current provider)
         let current = state.db.get_current_provider(app_type.as_str())?;
-        if current.is_none() {
+        if current.is_none() && !provider.is_aggregate() {
             // No current provider, set as current and sync
             state
                 .db
@@ -2150,6 +2527,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
+        Self::validate_aggregate_routes(state.db.as_ref(), &app_type, &provider)?;
         normalize_provider_common_config_for_storage(state.db.as_ref(), &app_type, &mut provider)?;
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
@@ -2283,13 +2661,25 @@ impl ProviderService {
             return Ok(true);
         }
 
-        // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
-
-        // For other apps: Check if this is current provider (use effective current, not just DB)
+        // For other apps: Check if this is current provider (use effective current, not just DB).
+        // Converting the active provider into a route-only aggregate without takeover would
+        // replace the client's usable endpoint with an empty aggregate config.
         let effective_current =
             crate::settings::get_effective_current_provider(&state.db, &app_type)?;
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
+        if is_current
+            && provider.is_aggregate()
+            && !Self::proxy_takeover_owns_live(state, &app_type)
+        {
+            return Err(AppError::localized(
+                "provider.aggregate.active_requires_takeover",
+                "当前供应商只有在代理接管模式下才能改为聚合供应商",
+                "The active provider can only be converted to an aggregate provider while proxy takeover is enabled",
+            ));
+        }
+
+        // Save to database only after the active-aggregate guard above succeeds.
+        state.db.save_provider(app_type.as_str(), &provider)?;
 
         if is_current {
             // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
@@ -2424,6 +2814,20 @@ impl ProviderService {
             ));
         }
 
+        if matches!(app_type, AppType::Claude) {
+            let dependent = Self::find_aggregate_dependent(state.db.as_ref(), &app_type, id)?;
+            if let Some(provider) = dependent {
+                return Err(AppError::localized(
+                    "provider.aggregate.target_in_use",
+                    format!("供应商正被聚合供应商 {} 引用，无法删除", provider.name),
+                    format!(
+                        "Provider is referenced by aggregate provider '{}' and cannot be deleted",
+                        provider.name
+                    ),
+                ));
+            }
+        }
+
         state.db.delete_provider(app_type.as_str(), id)
     }
 
@@ -2541,16 +2945,18 @@ impl ProviderService {
         // Backup or live placeholders mean the live file is owned by proxy
         // takeover, even if the proxy server is temporarily stopped or is in the
         // activation window before enabled=true is committed.
-        let is_app_taken_over =
-            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-                .ok()
-                .flatten()
-                .is_some();
-        let live_taken_over = state
-            .proxy_service
-            .detect_takeover_in_live_config_for_app(&app_type);
+        let should_hot_switch = Self::proxy_takeover_owns_live(state, &app_type);
 
-        let should_hot_switch = is_app_taken_over || live_taken_over;
+        // 聚合供应商自身没有可直写 Claude 的上游端点与凭据，只能在代理接管
+        // 持有 Live 配置时作为逻辑路由目标使用。阻止普通切换，避免把占位配置
+        // 写入 ~/.claude/settings.json 后导致 Claude Code 无法连接。
+        if _provider.is_aggregate() && !should_hot_switch {
+            return Err(AppError::localized(
+                "switch.aggregate_requires_takeover",
+                "聚合供应商需要先开启代理接管模式才能切换",
+                "Aggregate providers require proxy takeover mode before switching",
+            ));
+        }
 
         // Block switching to official providers when proxy takeover is active.
         // Using a proxy with official APIs (Anthropic/OpenAI/Google) may cause account bans.
@@ -3550,6 +3956,114 @@ impl ProviderService {
             }
         }
 
+        Ok(())
+    }
+
+    /// 校验聚合供应商路由：仅 Claude 应用支持；每档的目标 provider 必须存在、
+    /// 不指向自身、且不能也是聚合供应商（禁止嵌套）；模型名非空。
+    fn validate_aggregate_routes(
+        db: &crate::database::Database,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        let Some(routes) = provider.aggregate_routes() else {
+            return Ok(());
+        };
+        if !routes.has_any_route() {
+            return Ok(());
+        }
+        if !matches!(app_type, AppType::Claude) {
+            return Err(AppError::localized(
+                "provider.aggregate.unsupported_app",
+                "聚合供应商仅支持 Claude 应用",
+                "Aggregate providers are only supported for the Claude app",
+            ));
+        }
+        if let Some(dependent) = Self::find_aggregate_dependent(db, app_type, provider.id.as_str())?
+        {
+            return Err(AppError::localized(
+                "provider.aggregate.target_cannot_be_aggregate",
+                format!(
+                    "供应商正被聚合供应商 {} 引用，不能再改为聚合供应商",
+                    dependent.name
+                ),
+                format!(
+                    "Provider is referenced by aggregate provider '{}' and cannot itself become an aggregate provider",
+                    dependent.name
+                ),
+            ));
+        }
+
+        for (tier, route) in [
+            ("haiku", routes.haiku.as_ref()),
+            ("sonnet", routes.sonnet.as_ref()),
+            ("opus", routes.opus.as_ref()),
+            ("fable", routes.fable.as_ref()),
+        ] {
+            let Some(route) = route else {
+                continue;
+            };
+
+            if route.model.trim().is_empty() {
+                return Err(AppError::localized(
+                    "provider.aggregate.model_empty",
+                    format!("聚合供应商 {tier} 档的模型名不能为空"),
+                    format!("Aggregate route model for tier '{tier}' cannot be empty"),
+                ));
+            }
+            if route.provider_id == provider.id {
+                return Err(AppError::localized(
+                    "provider.aggregate.self_reference",
+                    format!("聚合供应商 {tier} 档不能指向自身"),
+                    format!(
+                        "Aggregate route for tier '{tier}' cannot point to the provider itself"
+                    ),
+                ));
+            }
+            let target = db
+                .get_provider_by_id(&route.provider_id, app_type.as_str())?
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "provider.aggregate.target_missing",
+                        format!(
+                            "聚合供应商 {tier} 档的目标供应商 {} 不存在",
+                            route.provider_id
+                        ),
+                        format!(
+                            "Aggregate route target '{}' for tier '{tier}' does not exist",
+                            route.provider_id
+                        ),
+                    )
+                })?;
+            if target.is_aggregate() {
+                return Err(AppError::localized(
+                    "provider.aggregate.nested",
+                    format!(
+                        "聚合供应商 {tier} 档的目标 {} 也是聚合供应商，不支持嵌套",
+                        target.name
+                    ),
+                    format!(
+                        "Aggregate route target '{}' for tier '{tier}' is itself an aggregate provider",
+                        target.name
+                    ),
+                ));
+            }
+            if target.category.as_deref() == Some("official")
+                && !official_provider_supports_proxy_takeover(app_type, &target)
+            {
+                return Err(AppError::localized(
+                    "provider.aggregate.official_target",
+                    format!(
+                        "聚合供应商 {tier} 档不能使用官方供应商 {}；官方供应商不允许经过本地路由",
+                        target.name
+                    ),
+                    format!(
+                        "Aggregate route tier '{tier}' cannot use official provider '{}'; official providers are not allowed through local routing",
+                        target.name
+                    ),
+                ));
+            }
+        }
         Ok(())
     }
 

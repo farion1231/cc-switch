@@ -125,6 +125,9 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    /// 聚合路由合成的 provider id 集合：这些 provider 命中时不触发"当前供应商"切换，
+    /// 避免不同档位的请求把当前供应商在各路由目标之间来回切换
+    routed_provider_ids: std::collections::HashSet<String>,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
@@ -204,6 +207,7 @@ impl RequestForwarder {
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
+        routed_provider_ids: std::collections::HashSet<String>,
         session_id: String,
         session_client_provided: bool,
         streaming_first_byte_timeout: u64,
@@ -225,6 +229,7 @@ impl RequestForwarder {
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            routed_provider_ids,
             session_id,
             session_client_provided,
             rectifier_config,
@@ -236,6 +241,15 @@ impl RequestForwarder {
             ),
             max_attempts,
         }
+    }
+
+    /// 成功后是否需要把"当前供应商"同步为实际使用的 provider。
+    ///
+    /// 聚合路由合成的 provider（`routed_provider_ids`）不触发同步：否则不同档位的
+    /// 请求会把当前供应商在各路由目标之间来回切换，UI/托盘随之抖动。
+    fn should_sync_current_provider(&self, provider_id: &str) -> bool {
+        self.current_provider_id_at_start.as_str() != provider_id
+            && !self.routed_provider_ids.contains(provider_id)
     }
 
     async fn record_success_result(
@@ -509,8 +523,7 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch =
-                            self.current_provider_id_at_start.as_str() != provider.id.as_str();
+                        let should_switch = self.should_sync_current_provider(&provider.id);
                         if should_switch {
                             status.failover_count += 1;
 
@@ -613,8 +626,7 @@ impl RequestForwarder {
                                         status.success_requests += 1;
                                         status.last_error = None;
                                         let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                            self.should_sync_current_provider(&provider.id);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -759,8 +771,7 @@ impl RequestForwarder {
                                             status.success_requests += 1;
                                             status.last_error = None;
                                             let should_switch =
-                                                self.current_provider_id_at_start.as_str()
-                                                    != provider.id.as_str();
+                                                self.should_sync_current_provider(&provider.id);
                                             if should_switch {
                                                 status.failover_count += 1;
 
@@ -923,8 +934,7 @@ impl RequestForwarder {
                                         status.success_requests += 1;
                                         status.last_error = None;
                                         let should_switch =
-                                            self.current_provider_id_at_start.as_str()
-                                                != provider.id.as_str();
+                                            self.should_sync_current_provider(&provider.id);
                                         if should_switch {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
@@ -3504,6 +3514,7 @@ mod tests {
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
             current_provider_id_at_start: String::new(),
+            routed_provider_ids: std::collections::HashSet::new(),
             session_id: String::new(),
             session_client_provided: false,
             rectifier_config: RectifierConfig::default(),
@@ -3513,6 +3524,20 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    #[test]
+    fn should_sync_current_provider_skips_routed_providers() {
+        let mut forwarder = test_forwarder(Duration::from_secs(0), Duration::from_secs(0));
+        forwarder.current_provider_id_at_start = "agg".to_string();
+        forwarder.routed_provider_ids.insert("kimi".to_string());
+
+        // 聚合路由合成的 provider：不触发"当前供应商"同步，避免随档位来回跳动
+        assert!(!forwarder.should_sync_current_provider("kimi"));
+        // 普通故障转移目标：保持原有同步行为
+        assert!(forwarder.should_sync_current_provider("other"));
+        // 当前供应商自身：不同步
+        assert!(!forwarder.should_sync_current_provider("agg"));
     }
 
     #[test]

@@ -103,7 +103,11 @@ impl ProxyService {
             ClaudeTakeoverAuthPolicy::PreserveExistingOrAuthToken
         };
         // Copilot/Codex 接管时 live config 可能还是旧供应商；显示模型必须跟随目标 provider。
-        let takeover_model_fields = if provider.uses_managed_account_auth() {
+        let takeover_model_fields = if provider.is_aggregate() {
+            // 聚合供应商自身没有模型 env；对已配置路由的档位写入稳定别名，
+            // 让 Claude Code 发出可分类的别名模型名，由代理按档分流。
+            Self::build_aggregate_takeover_model_fields(provider)
+        } else if provider.uses_managed_account_auth() {
             Self::build_claude_takeover_model_fields(&provider.settings_config)
         } else {
             Self::build_claude_takeover_model_fields(config)
@@ -274,6 +278,64 @@ impl ProxyService {
         if let Some(subagent_model) = subagent_model {
             fields.push(("CLAUDE_CODE_SUBAGENT_MODEL", subagent_model.to_string()));
         }
+        fields
+    }
+
+    /// 聚合供应商的接管模型字段：对已配置路由的档位写入稳定别名，
+    /// 显示名使用该档路由的上游模型名（剥离 [1M] 标记）。
+    fn build_aggregate_takeover_model_fields(provider: &Provider) -> Vec<(&'static str, String)> {
+        let mut fields = Vec::new();
+        let Some(routes) = provider.aggregate_routes() else {
+            return fields;
+        };
+
+        // env 仅用于 NAME 键查表；聚合供应商没有模型 env，传空表，
+        // 显示名自然回退为路由的上游模型名。
+        let empty_env = Map::new();
+        let mut push = |model_key: &'static str,
+                        name_key: &'static str,
+                        takeover_model: &'static str,
+                        supports_one_m: bool,
+                        route: Option<&crate::provider::AggregateRoute>| {
+            Self::push_claude_takeover_role_fields(
+                &mut fields,
+                &empty_env,
+                model_key,
+                name_key,
+                takeover_model,
+                supports_one_m,
+                route.map(|r| r.model.as_str()),
+            );
+        };
+
+        push(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            CLAUDE_TAKEOVER_HAIKU_MODEL,
+            false,
+            routes.haiku.as_ref(),
+        );
+        push(
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            CLAUDE_TAKEOVER_SONNET_MODEL,
+            true,
+            routes.sonnet.as_ref(),
+        );
+        push(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            CLAUDE_TAKEOVER_OPUS_MODEL,
+            true,
+            routes.opus.as_ref(),
+        );
+        push(
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+            CLAUDE_TAKEOVER_FABLE_MODEL,
+            true,
+            routes.fable.as_ref(),
+        );
         fields
     }
 
@@ -3181,7 +3243,7 @@ impl ProxyService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderMeta;
+    use crate::provider::{AggregateRoute, AggregateRoutes, ProviderMeta};
     use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
@@ -3267,6 +3329,62 @@ mod tests {
             .expect("serialize models_cache"),
         )
         .expect("write models_cache.json");
+    }
+
+    #[test]
+    fn aggregate_claude_takeover_writes_stable_aliases_for_configured_tiers() {
+        let mut provider = Provider::with_id(
+            "agg".to_string(),
+            "Aggregate".to_string(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "placeholder"}}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            aggregate_routes: Some(AggregateRoutes {
+                haiku: Some(AggregateRoute {
+                    provider_id: "deepseek".to_string(),
+                    model: "deepseek-v4-pro".to_string(),
+                }),
+                fable: Some(AggregateRoute {
+                    provider_id: "kimi".to_string(),
+                    model: "k3".to_string(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+
+        // 配置了路由的档：写入稳定别名 + 以上游模型名为显示名
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            Some("claude-haiku-4-5"),
+        );
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            Some("deepseek-v4-pro"),
+        );
+        assert_env_str(env, "ANTHROPIC_DEFAULT_FABLE_MODEL", Some("claude-fable-5"));
+        assert_env_str(env, "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", Some("k3"));
+        // 未配置路由的档：不写别名
+        assert_env_str(env, "ANTHROPIC_DEFAULT_SONNET_MODEL", None);
+        assert_env_str(env, "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", None);
+        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", None);
+        // 接管基础字段仍生效
+        assert_env_str(env, "ANTHROPIC_BASE_URL", Some("http://127.0.0.1:15721"));
     }
 
     #[test]

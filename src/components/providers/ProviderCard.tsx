@@ -29,6 +29,7 @@ import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
+import { isAggregateProvider } from "@/utils/aggregateRoutes";
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -70,6 +71,9 @@ interface ProviderCardProps {
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
+  if (isAggregateProvider(provider)) {
+    return false;
+  }
   if (provider.category === "official") {
     return true;
   }
@@ -194,6 +198,7 @@ export function ProviderCard({
   }, [provider.notes, displayUrl, fallbackUrlText]);
 
   const usageEnabled = provider.meta?.usage_script?.enabled ?? false;
+  const isAggregate = isAggregateProvider(provider);
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
     isOfficial && ["claude", "codex", "gemini"].includes(appId);
@@ -377,6 +382,14 @@ export function ProviderCard({
               {isOmoSlim && (
                 <span className="inline-flex items-center rounded-md bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                   Slim
+                </span>
+              )}
+
+              {isAggregate && (
+                <span className="inline-flex items-center rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                  {t("providerForm.aggregate.title", {
+                    defaultValue: "Aggregate provider",
+                  })}
                 </span>
               )}
 
@@ -585,11 +598,12 @@ export function ProviderCard({
                 // (category === "official") 一律隐藏：它们 base_url 故意留空、走客户端
                 // 默认/OAuth 端点，cc-switch 没有可靠的探测目标（尤其 Claude Desktop
                 // 官方是原生 1P 模式，根本不在请求路径上）。
-                onTest && provider.category !== "official"
+                onTest && provider.category !== "official" && !isAggregate
                   ? () => onTest(provider)
                   : undefined
               }
               onConfigureUsage={
+                isAggregate ||
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
                 isCodexOauth

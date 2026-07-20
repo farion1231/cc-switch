@@ -35,6 +35,7 @@ interface AddProviderDialogProps {
       ensureCodexOfficialSeed?: boolean;
     },
   ) => Promise<void> | void;
+  availableProviders?: Provider[];
 }
 
 export function AddProviderDialog({
@@ -42,6 +43,7 @@ export function AddProviderDialog({
   onOpenChange,
   appId,
   onSubmit,
+  availableProviders = [],
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
@@ -382,6 +384,7 @@ export function AddProviderDialog({
               onCancel={() => onOpenChange(false)}
               onSubmittingChange={setIsFormSubmitting}
               showButtons={false}
+              availableProviders={availableProviders}
             />
           </TabsContent>
 
@@ -398,6 +401,7 @@ export function AddProviderDialog({
           onCancel={() => onOpenChange(false)}
           onSubmittingChange={setIsFormSubmitting}
           showButtons={false}
+          availableProviders={availableProviders}
         />
       )}
 

@@ -26,6 +26,7 @@ import {
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
+import { isAggregateProvider } from "@/utils/aggregateRoutes";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -155,6 +156,20 @@ export function useProviderActions(
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      if (
+        activeApp === "claude" &&
+        isAggregateProvider(provider) &&
+        !isProxyTakeover
+      ) {
+        toast.error(
+          t("notifications.aggregateRequiresTakeover", {
+            defaultValue:
+              "聚合供应商需要代理接管模式。请先开启代理接管，再进行切换。",
+          }),
+        );
+        return;
+      }
+
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
