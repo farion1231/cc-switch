@@ -128,18 +128,27 @@ pub(crate) fn spawn_claude_settings_watcher(
                     return;
                 }
             };
-            // 任意一个事件触发就处理
-            for _event in events {
-                handle_settings_change(&path_clone, &provider_clone, &state_clone);
+            // watch 父目录会收到目录下所有文件事件，只处理 settings.json
+            let target_file_name = path_clone.file_name();
+            for event in events {
+                if event.path.file_name() == target_file_name {
+                    handle_settings_change(&path_clone, &provider_clone, &state_clone);
+                }
             }
         },
     )
     .map_err(|e| AppError::Message(format!("failed to create settings watcher: {e}")))?;
 
+    // watch 父目录而不是文件本身：atomic_write 用 rename 覆盖文件，
+    // 在 inotify（Linux）上文件 watch 附加旧 inode，rename 后失效；
+    // watch 父目录能持续观察文件替换 + 创建（fresh 安装时文件还不存在）。
+    let watch_dir = settings_path
+        .parent()
+        .ok_or_else(|| AppError::Message("settings.json has no parent directory".to_string()))?;
     debouncer
         .watcher()
-        .watch(&settings_path, RecursiveMode::NonRecursive)
-        .map_err(|e| AppError::Message(format!("failed to watch settings.json: {e}")))?;
+        .watch(watch_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| AppError::Message(format!("failed to watch settings.json dir: {e}")))?;
 
     Ok(ClaudeSettingsWatcher {
         state,
@@ -265,6 +274,7 @@ fn update_env_fields(content: &str, writes: &[(&'static str, String)]) -> Result
 mod tests {
     use super::*;
     use serde_json::json;
+    use serial_test::serial;
 
     fn make_provider(env: Value) -> Provider {
         Provider::with_id(
@@ -673,7 +683,10 @@ mod tests {
 
         let result = spawn_claude_settings_watcher(path, provider);
         // 文件不存在 → 应该出错（watch 失败）
-        assert!(result.is_err());
+        assert!(
+            result.is_ok(),
+            "父目录存在时 spawn 应成功，能检测后续文件创建"
+        );
     }
     /// 回归测试：production 路径下 spawn 的 watcher 必须靠 replace_watcher 存活，
     /// 不能因为返回值没绑定到局部变量就被 Drop。
@@ -683,6 +696,7 @@ mod tests {
     /// 修复后（spawn 的 Ok 交给 replace_watcher 存进进程单例）：watcher 存活，
     /// 改 model 字段后 ACW/MAX 正确写入。
     #[test]
+    #[serial]
     fn fs_watcher_survives_via_replace_watcher_without_local_binding() {
         use std::fs;
         use std::thread;
@@ -731,6 +745,7 @@ mod tests {
     /// 验证开关关闭后终端切模型不会同步（开关行为链路：toggle OFF -> save ->
     /// update -> write_live -> replace_watcher(新 provider 快照) -> watcher 读到 false -> skip）。
     #[test]
+    #[serial]
     fn fs_watcher_auto_sync_disabled_skips_writes() {
         use std::fs;
         use std::thread;
@@ -789,5 +804,52 @@ mod tests {
             "autoSync OFF 时不应写 MAX，但实际写入了: {:?}",
             v["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
         );
+    }
+
+    /// 回归测试 P1#1：watch 父目录后，atomic_write（rename 覆盖）仍能被观察到。
+    /// write_live_snapshot 用 atomic_write 写 settings.json，在 inotify（Linux）
+    /// 上 watch 文件会因 inode 替换失效；watch 父目录能持续观察文件替换。
+    #[test]
+    #[serial]
+    fn fs_watcher_observes_atomic_write_replacement() {
+        use std::fs;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let initial = json!({
+            "model": "sonnet",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+            }
+        });
+        fs::write(&path, initial.to_string()).unwrap();
+
+        let provider = Arc::new(make_provider(json!({
+            "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+        })));
+
+        let spawned = spawn_claude_settings_watcher(path.clone(), provider).unwrap();
+        replace_watcher(spawned);
+
+        // 用 atomic_write 覆盖 settings.json（模拟 write_live_snapshot）
+        let new_content = json!({
+            "model": "haiku",
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL":"MiniMax-M3[1M]",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL":"Kimi-K2.7-Code[30k]"
+            }
+        });
+        crate::config::atomic_write(&path, new_content.to_string().as_bytes()).unwrap();
+
+        thread::sleep(Duration::from_millis(800));
+
+        let content = fs::read_to_string(&path).unwrap();
+        let v: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["model"], "haiku");
+        assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "24000");
+        assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "30000");
     }
 }
