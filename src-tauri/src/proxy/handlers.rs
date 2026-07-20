@@ -153,6 +153,105 @@ pub async fn handle_claude_desktop_models(
     Ok(Json(response))
 }
 
+/// 处理 `/v1/messages/count_tokens`（Claude API）
+///
+/// 始终透传到上游：只做供应商选择 / 模型映射 / 鉴权，不做 openai/gemini 格式转换。
+/// 上游若不支持该接口，会把上游错误原样返回给客户端。
+pub async fn handle_count_tokens(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_count_tokens_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
+}
+
+/// 处理 Claude Desktop gateway 的 `/v1/messages/count_tokens`
+pub async fn handle_claude_desktop_count_tokens(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    validate_claude_desktop_gateway_auth(&state, request.headers())?;
+    handle_count_tokens_for_app(
+        state,
+        request,
+        AppType::ClaudeDesktop,
+        "Claude Desktop",
+        "claude-desktop",
+        Some("/claude-desktop"),
+    )
+    .await
+}
+
+async fn handle_count_tokens_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+    strip_prefix: Option<&'static str>,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, body) = request.into_parts();
+    let method = parts.method.clone();
+    let uri = parts.uri;
+    let headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+
+    let raw_endpoint = uri
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str())
+        .unwrap_or(uri.path());
+    let endpoint = strip_prefix
+        .and_then(|prefix| raw_endpoint.strip_prefix(prefix))
+        .unwrap_or(raw_endpoint);
+
+    // count_tokens 是非流式探测接口，不参与 messages 的格式转换分支。
+    let forwarder = ctx.create_forwarder(&state);
+    let mut result = match forwarder
+        .forward_with_retry(
+            &app_type,
+            method,
+            endpoint,
+            body,
+            headers,
+            extensions,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, false, &err.error);
+            return Err(err.error);
+        }
+    };
+
+    let connection_guard = result.connection_guard.take();
+    ctx.outbound_model = result.outbound_model.take();
+    ctx.provider = result.provider;
+
+    // 始终透传响应（不做 Claude openai/gemini transform）
+    process_response(
+        result.response,
+        &ctx,
+        &state,
+        &CLAUDE_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
+}
+
 async fn handle_messages_for_app(
     state: ProxyState,
     request: axum::extract::Request,
