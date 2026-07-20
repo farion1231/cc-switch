@@ -85,6 +85,7 @@ export const getSkillsPageHeaderActions = (source: SkillsPageSource) =>
   );
 
 const SKILLSSH_PAGE_SIZE = 20;
+const REPO_SKILL_BATCH_SIZE = 48;
 
 /**
  * Skills 发现面板
@@ -99,6 +100,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
     const [filterStatus, setFilterStatus] = useState<
       "all" | "installed" | "uninstalled"
     >("all");
+    const [repoSkillLimit, setRepoSkillLimit] = useState(REPO_SKILL_BATCH_SIZE);
 
     // skills.sh 搜索状态
     const [searchSource, setSearchSource] = useState<SkillsPageSource>("repos");
@@ -120,7 +122,11 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       refetch: refetchDiscoverable,
     } = useDiscoverableSkills();
     const { data: installedSkills } = useInstalledSkills();
-    const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
+    const {
+      data: repos = [],
+      isLoading: loadingRepos,
+      refetch: refetchRepos,
+    } = useSkillRepos();
 
     // skills.sh 搜索
     const {
@@ -208,12 +214,13 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     const loading =
       searchSource === "repos"
-        ? loadingDiscoverable || fetchingDiscoverable
+        ? (loadingDiscoverable || fetchingDiscoverable) &&
+          !discoverableSkills?.length
         : false;
 
     useImperativeHandle(ref, () => ({
       refresh: () => {
-        refetchDiscoverable();
+        refetchDiscoverable({ cancelRefetch: false });
         refetchRepos();
       },
       openRepoManager: () => setRepoManagerOpen(true),
@@ -283,7 +290,9 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
       try {
         await addRepoMutation.mutateAsync(repo);
         // Await discovery so we can report the real count
-        const { data: freshSkills } = await refetchDiscoverable();
+        const { data: freshSkills } = await refetchDiscoverable({
+          cancelRefetch: false,
+        });
         const count =
           freshSkills?.filter(
             (s) =>
@@ -349,6 +358,17 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
         return name.includes(query) || repo.includes(query);
       });
     }, [skills, searchQuery, filterRepo, filterStatus]);
+    const displayedRepoSkills = filteredSkills.slice(0, repoSkillLimit);
+
+    useEffect(() => {
+      if (loading || repoSkillLimit >= filteredSkills.length) return;
+      const frame = requestAnimationFrame(() =>
+        setRepoSkillLimit((current) =>
+          Math.min(current + REPO_SKILL_BATCH_SIZE, filteredSkills.length),
+        ),
+      );
+      return () => cancelAnimationFrame(frame);
+    }, [filteredSkills.length, loading, repoSkillLimit]);
 
     // 是否有更多 skills.sh 结果
     const hasMoreSkillsSh =
@@ -358,7 +378,10 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
 
     // 无仓库配置时默认切换到 skills.sh；仓库发现结果为空时仍保留仓库视图，方便手动刷新重试。
     const effectiveSource =
-      searchSource === "repos" && repos.length === 0 && !loading
+      searchSource === "repos" &&
+      repos.length === 0 &&
+      !loadingRepos &&
+      !loading
         ? "skillssh"
         : searchSource;
 
@@ -412,13 +435,22 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                       type="text"
                       placeholder={t("skills.searchPlaceholder")}
                       value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+                        setSearchQuery(e.target.value);
+                      }}
                       className="pl-9 pr-3"
                     />
                   </div>
                   {/* 仓库筛选 */}
                   <div className="w-full md:w-56">
-                    <Select value={filterRepo} onValueChange={setFilterRepo}>
+                    <Select
+                      value={filterRepo}
+                      onValueChange={(value) => {
+                        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
+                        setFilterRepo(value);
+                      }}
+                    >
                       <SelectTrigger className="bg-card border shadow-sm text-foreground">
                         <SelectValue
                           placeholder={t("skills.filter.repo")}
@@ -451,11 +483,12 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                   <div className="w-full md:w-36">
                     <Select
                       value={filterStatus}
-                      onValueChange={(val) =>
+                      onValueChange={(val) => {
+                        setRepoSkillLimit(REPO_SKILL_BATCH_SIZE);
                         setFilterStatus(
                           val as "all" | "installed" | "uninstalled",
-                        )
-                      }
+                        );
+                      }}
                     >
                       <SelectTrigger className="bg-card border shadow-sm text-foreground">
                         <SelectValue
@@ -560,7 +593,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredSkills.map((skill) => (
+                  {displayedRepoSkills.map((skill) => (
                     <SkillCard
                       key={skill.key}
                       skill={skill}

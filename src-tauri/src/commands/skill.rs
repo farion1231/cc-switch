@@ -130,6 +130,15 @@ pub async fn discover_available_skills(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn load_cached_discoverable_skills(
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<DiscoverableSkill>, String> {
+    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    Ok(service.0.load_cached_discovery(&repos))
+}
+
 /// 检查 Skills 更新
 #[tauri::command]
 pub async fn check_skill_updates(
@@ -323,6 +332,9 @@ pub fn remove_skill_repo(
         .db
         .delete_skill_repo(&owner, &name)
         .map_err(|e| e.to_string())?;
+    if let Err(error) = SkillService::remove_discovery_cache(&owner, &name) {
+        log::warn!("删除仓库发现缓存失败 {owner}/{name}: {error}");
+    }
     Ok(true)
 }
 
