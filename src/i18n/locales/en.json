@@ -1519,6 +1519,17 @@
       "upToDate": "Session logs are up to date",
       "failed": "Session sync failed"
     },
+    "rebuildCodex": {
+      "title": "Codex Usage Maintenance",
+      "description": "Rebuild Codex session usage from local rollout logs",
+      "warning": "The database is backed up first. History whose source JSONL has been deleted cannot be re-imported.",
+      "action": "Rebuild Codex Usage",
+      "confirmTitle": "Rebuild Codex usage?",
+      "confirmMessage": "This clears existing Codex session details and rollups, then imports them again from local Codex logs.\n\nHistory with deleted logs will be lost. Forks whose parent rollout is missing will be deferred.",
+      "confirmAction": "Back Up and Rebuild",
+      "completed": "Rebuild complete: {{imported}} imported, {{errors}} errors, {{suspected}} suspected duplicates, {{deferred}} deferred files",
+      "failed": "Codex usage rebuild failed: {{error}}"
+    },
     "totalRecords": "{{total}} records total",
     "goToPage": "Go",
     "pageInputPlaceholder": "Page",

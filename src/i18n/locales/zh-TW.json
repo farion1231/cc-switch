@@ -1491,6 +1491,17 @@
       "upToDate": "工作階段日誌已是最新",
       "failed": "工作階段同步失敗"
     },
+    "rebuildCodex": {
+      "title": "Codex 用量維護",
+      "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
+      "warning": "重建前會自動備份資料庫。若來源 JSONL 已刪除，對應歷史將無法重新匯入。",
+      "action": "重建 Codex 用量",
+      "confirmTitle": "確認重建 Codex 用量",
+      "confirmMessage": "此操作會清除現有 Codex 工作階段明細與彙總，再從本機 Codex 日誌重新匯入。\n\n已刪除日誌對應的歷史將遺失；缺少父 rollout 的 fork 會暫緩匯入。",
+      "confirmAction": "備份並重建",
+      "completed": "重建完成：匯入 {{imported}} 筆，錯誤 {{errors}}，疑似重複 {{suspected}}，暫緩檔案 {{deferred}}",
+      "failed": "Codex 用量重建失敗：{{error}}"
+    },
     "totalRecords": "共 {{total}} 筆紀錄",
     "goToPage": "跳轉",
     "pageInputPlaceholder": "頁碼",

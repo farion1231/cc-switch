@@ -1519,6 +1519,17 @@
       "upToDate": "セッションログは最新です",
       "failed": "セッション同期に失敗しました"
     },
+    "rebuildCodex": {
+      "title": "Codex 使用量メンテナンス",
+      "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
+      "warning": "最初にデータベースを自動バックアップします。元の JSONL が削除済みの履歴は再インポートできません。",
+      "action": "Codex 使用量を再構築",
+      "confirmTitle": "Codex 使用量を再構築しますか？",
+      "confirmMessage": "既存の Codex セッション明細と集計を削除し、ローカルの Codex ログから再インポートします。\n\n削除済みログの履歴は失われます。親 rollout がない fork は保留されます。",
+      "confirmAction": "バックアップして再構築",
+      "completed": "再構築完了：{{imported}} 件インポート、{{errors}} 件エラー、重複候補 {{suspected}} 件、保留ファイル {{deferred}} 件",
+      "failed": "Codex 使用量の再構築に失敗しました：{{error}}"
+    },
     "totalRecords": "全 {{total}} 件",
     "goToPage": "移動",
     "pageInputPlaceholder": "ページ",
