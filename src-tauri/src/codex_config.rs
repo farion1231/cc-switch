@@ -488,11 +488,25 @@ fn codex_catalog_model_entry(
     entry_obj.insert("auto_compact_token_limit".to_string(), Value::Null);
 
     // truncation_policy.limit follows context_window (issue #4832/#5110)
-    let truncation_limit = if spec.context_window > 0 { spec.context_window } else { 10_000 };
-    entry_obj.insert(
-        "truncation_policy".to_string(),
-        json!({ "mode": "bytes", "limit": truncation_limit }),
-    );
+    // 保留模板原有的 mode（gpt5_5 模板是 tokens，codex_native_responses 是 bytes），
+    // 只更新 limit。原来无条件覆盖成 bytes 会导致 tokens 模板的单位错配
+    //（128K tokens 变成 128K bytes ≈ 32K tokens，1/4 容量）。
+    let truncation_limit = if spec.context_window > 0 {
+        spec.context_window
+    } else {
+        10_000
+    };
+    if let Some(tp) = entry_obj
+        .get_mut("truncation_policy")
+        .and_then(|v| v.as_object_mut())
+    {
+        tp.insert("limit".to_string(), json!(truncation_limit));
+    } else {
+        entry_obj.insert(
+            "truncation_policy".to_string(),
+            json!({ "mode": "bytes", "limit": truncation_limit }),
+        );
+    }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -3785,13 +3799,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
                 ]
             }
         });
-        let catalog = codex_model_catalog_from_settings(
-            &settings,
-            "",
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .expect("catalog generation")
-        .expect("non-empty catalog");
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
         let entry = &catalog["models"][0];
         assert_eq!(entry["effective_context_window_percent"], json!(100));
         assert_eq!(entry["auto_compact_token_limit"], json!(null));
@@ -3806,16 +3817,33 @@ model_catalog_json = "cc-switch-model-catalog.json"
                 ]
             }
         });
-        let catalog = codex_model_catalog_from_settings(
-            &settings,
-            "",
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .expect("catalog generation")
-        .expect("non-empty catalog");
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
         let entry = &catalog["models"][0];
         assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
-        assert_eq!(entry["truncation_policy"]["mode"], json!("bytes"));
+        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
+    }
+    #[test]
+    fn catalog_entry_truncation_preserves_template_mode_tokens() {
+        // ProxyChat 用 gpt5_5_template（mode=tokens）。修复前代码无条件覆盖成
+        // bytes，导致 128K-token 模型得到 128KB budget（≈32K tokens，1/4 容量）。
+        // 修复后应保留模板的 tokens mode，只更新 limit。
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "128000" }
+                ]
+            }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(128000));
     }
 
     #[test]
@@ -3829,13 +3857,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
                 ]
             }
         });
-        let catalog = codex_model_catalog_from_settings(
-            &settings,
-            "",
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .expect("catalog generation")
-        .expect("non-empty catalog");
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
         let entry = &catalog["models"][0];
         let cw = entry["context_window"].as_u64().expect("context_window");
         assert_eq!(entry["truncation_policy"]["limit"].as_u64(), Some(cw));
@@ -3846,7 +3871,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert_eq!(parse_codex_positive_u64(Some(&json!("1M"))), Some(1000000));
         assert_eq!(parse_codex_positive_u64(Some(&json!("200K"))), Some(200000));
         assert_eq!(parse_codex_positive_u64(Some(&json!("200k"))), Some(200000));
-        assert_eq!(parse_codex_positive_u64(Some(&json!("128000"))), Some(128000));
+        assert_eq!(
+            parse_codex_positive_u64(Some(&json!("128000"))),
+            Some(128000)
+        );
         assert_eq!(parse_codex_positive_u64(Some(&json!(128000))), Some(128000));
         assert_eq!(parse_codex_positive_u64(Some(&json!("0"))), None);
         assert_eq!(parse_codex_positive_u64(Some(&json!("invalid"))), None);
@@ -3862,13 +3890,10 @@ model_catalog_json = "cc-switch-model-catalog.json"
                 ]
             }
         });
-        let catalog = codex_model_catalog_from_settings(
-            &settings,
-            "",
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .expect("catalog generation")
-        .expect("non-empty catalog");
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
         let entry = &catalog["models"][0];
         assert_eq!(entry["context_window"], json!(1000000));
         assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
