@@ -169,6 +169,20 @@ pub async fn handle_streaming(
     let mut response_headers = response.headers().clone();
     strip_hop_by_hop_response_headers(&mut response_headers);
 
+    // Claude /v1/messages 透传：把响应 model 回写为客户端请求 model。rewrite 会改变
+    // SSE 字节数，必须剥掉 Content-Length 等 entity 头，否则下游按旧长度截断/挂起。
+    let force_response_model =
+        if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
+            && !ctx.request_model.trim().is_empty()
+        {
+            Some(ctx.request_model.clone())
+        } else {
+            None
+        };
+    if force_response_model.is_some() {
+        strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    }
+
     let mut builder = axum::response::Response::builder().status(status);
 
     // 复制响应头
@@ -186,15 +200,6 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
-    let force_response_model =
-        if super::model_mapper::should_force_response_model_for_app(&ctx.app_type)
-            && !ctx.request_model.trim().is_empty()
-        {
-            Some(ctx.request_model.clone())
-        } else {
-            None
-        };
-
     let logged_stream = create_logged_passthrough_stream(
         stream,
         ctx.tag,
