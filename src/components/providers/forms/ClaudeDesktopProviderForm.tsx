@@ -70,6 +70,7 @@ import {
 } from "@/lib/api/providers";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { useCopilotAuth, useCodexOauth, useXaiOauth } from "./hooks";
+import { isOAuthProviderType } from "@/config/constants";
 
 export type ClaudeDesktopProviderFormValues = ProviderFormData & {
   presetId?: string;
@@ -258,9 +259,10 @@ export function ClaudeDesktopProviderForm({
   showButtons = true,
 }: ClaudeDesktopProviderFormProps) {
   const { t } = useTranslation();
-  const initialMode = initialData?.meta?.claudeDesktopMode ?? "direct";
+  const initialMode = isOAuthProviderType(initialData?.meta?.providerType)
+    ? "proxy"
+    : (initialData?.meta?.claudeDesktopMode ?? "direct");
   const [mode, setMode] = useState<"direct" | "proxy">(initialMode);
-  const needsModelMapping = mode === "proxy";
   const [apiFormat, setApiFormat] = useState<ClaudeApiFormat>(
     initialData?.meta?.apiFormat ?? "anthropic",
   );
@@ -397,9 +399,9 @@ export function ClaudeDesktopProviderForm({
     activePreset?.category === "official";
   const usesManagedOAuth =
     activePreset?.requiresOAuth === true ||
-    activeProviderType === "github_copilot" ||
-    activeProviderType === "codex_oauth" ||
-    activeProviderType === "xai_oauth";
+    isOAuthProviderType(activeProviderType);
+  const effectiveMode: "direct" | "proxy" = usesManagedOAuth ? "proxy" : mode;
+  const needsModelMapping = effectiveMode === "proxy";
 
   // API Key 获取/邀请链接（与 Claude Code 表单同款，见 ClaudeFormFields）
   const apiKeyLinkCategory = activePreset?.category ?? initialData?.category;
@@ -428,9 +430,13 @@ export function ClaudeDesktopProviderForm({
     setApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setApiFormat(preset.apiFormat ?? "anthropic");
 
+    const presetMode =
+      preset.requiresOAuth === true || isOAuthProviderType(preset.providerType)
+        ? "proxy"
+        : preset.mode;
     didSeedDefaultRoutes.current = true;
-    setMode(preset.mode);
-    if (preset.mode === "proxy" && preset.modelRoutes) {
+    setMode(presetMode);
+    if (presetMode === "proxy" && preset.modelRoutes) {
       setRoutes(
         normalizeProxyRows(
           preset.modelRoutes.map((r) =>
@@ -485,6 +491,7 @@ export function ClaudeDesktopProviderForm({
   };
 
   const handleModelMappingChange = (checked: boolean) => {
+    if (usesManagedOAuth) return;
     setMode(checked ? "proxy" : "direct");
     if (checked) {
       // 切到 proxy：归一化成固定 Sonnet / Opus / Haiku 三档；
@@ -511,7 +518,7 @@ export function ClaudeDesktopProviderForm({
   useEffect(() => {
     if (
       didSeedDefaultRoutes.current ||
-      mode !== "proxy" ||
+      effectiveMode !== "proxy" ||
       routes.length > 0 ||
       defaultProxyRouteRows.length === 0
     ) {
@@ -520,7 +527,7 @@ export function ClaudeDesktopProviderForm({
 
     didSeedDefaultRoutes.current = true;
     setRoutes(normalizeProxyRows(defaultProxyRouteRows));
-  }, [defaultProxyRouteRows, mode, routes.length]);
+  }, [defaultProxyRouteRows, effectiveMode, routes.length]);
 
   const handleFetchModels = async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -665,7 +672,6 @@ export function ClaudeDesktopProviderForm({
       }))
       .filter((route) => route.route || route.model);
 
-    const effectiveMode = activeProviderType === "xai_oauth" ? "proxy" : mode;
     if (effectiveMode === "proxy") {
       // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
       // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
@@ -925,7 +931,7 @@ export function ClaudeDesktopProviderForm({
                 <Switch
                   checked={needsModelMapping}
                   onCheckedChange={handleModelMappingChange}
-                  disabled={activeProviderType === "xai_oauth"}
+                  disabled={usesManagedOAuth}
                   aria-label={t("claudeDesktop.modelMappingToggle", {
                     defaultValue: "需要模型映射",
                   })}
