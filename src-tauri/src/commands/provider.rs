@@ -117,6 +117,46 @@ pub async fn switch_provider(
 }
 
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
+    if matches!(app_type, AppType::GrokBuild) {
+        // 官方登录态（live 语法合法且无自定义模型表）+ 用户手动导入：
+        // 导入的正确结果是让 Grok Official 成为当前供应商，而非报错。
+        // 只挂在命令层 = 只有手动动作可达；启动自动导入走 service 层、
+        // 官方态照旧报错静默跳过，删掉的官方条目不会被重启复活
+        //（全项目惯例：启动自动导入只产出 default，从不产出官方条目）。
+        if let Ok(settings) = crate::grok_config::read_grok_live_settings() {
+            let config = settings
+                .get("config")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if crate::grok_config::is_official_live_config(config) {
+                state.db.ensure_official_seed_by_id(
+                    crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+                    AppType::GrokBuild,
+                )?;
+                state.db.set_current_provider(
+                    app_type.as_str(),
+                    crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+                )?;
+                crate::settings::set_current_provider(
+                    &app_type,
+                    Some(crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID),
+                )?;
+                return Ok(true);
+            }
+        }
+
+        // Safety net: 与 claude-desktop 导入同语义 —— 用户主动点导入是"重新
+        // 整理该表"的隐式信号，把官方入口补回来。覆盖导入必然失败的场景
+        //（live 文件缺失 / TOML 语法错误 / 残缺的自定义配置），避免
+        // "报错 + 空列表"死胡同。失败只 warn，不影响导入主流程。
+        if let Err(e) = state.db.ensure_official_seed_by_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+            AppType::GrokBuild,
+        ) {
+            log::warn!("Failed to ensure grokbuild-official seed during import: {e}");
+        }
+    }
+
     let imported = ProviderService::import_default_config(state, app_type.clone())?;
 
     if imported {
@@ -243,6 +283,17 @@ pub fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool
     state
         .db
         .ensure_official_seed_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn ensure_grokbuild_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
+    state
+        .db
+        .ensure_official_seed_by_id(
+            crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
+            AppType::GrokBuild,
+        )
         .map_err(|e| e.to_string())
 }
 
