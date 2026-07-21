@@ -1479,6 +1479,7 @@
     "dataSource": {
       "proxy": "路由",
       "session_log": "会话日志",
+      "cowork_session_log": "Cowork 会话日志",
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",

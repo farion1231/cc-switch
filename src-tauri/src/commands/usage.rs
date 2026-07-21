@@ -281,6 +281,19 @@ pub fn sync_session_usage(
     // 同步 Claude 会话日志
     let mut result = crate::services::session_usage::sync_claude_session_logs(&state.db)?;
 
+    // 同步 Cowork 会话日志
+    match crate::services::session_usage_cowork::sync_cowork_usage(&state.db) {
+        Ok(cowork_result) => {
+            result.imported += cowork_result.imported;
+            result.skipped += cowork_result.skipped;
+            result.files_scanned += cowork_result.files_scanned;
+            result.errors.extend(cowork_result.errors);
+        }
+        Err(e) => {
+            result.errors.push(format!("Cowork 同步失败: {e}"));
+        }
+    }
+
     // 同步 Codex 使用数据
     match crate::services::session_usage_codex::sync_codex_usage(&state.db) {
         Ok(codex_result) => {

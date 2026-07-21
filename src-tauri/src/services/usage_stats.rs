@@ -299,7 +299,7 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
     let proxy_data_source = data_source_expr("proxy_dedup");
     format!(
         "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+            {data_source} IN ('session_log', 'cowork_session_log', 'codex_session', 'gemini_session', 'opencode_session')
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -3404,6 +3404,102 @@ mod tests {
         assert_eq!(codex_session_count, Some(1));
         assert_eq!(gemini_session_count, None);
         assert_eq!(session_log_count, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_usage_dedup_covers_cowork_session_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // Cowork 走 Desktop 网关时 proxy 行按入口记 app_type="claude-desktop"
+            insert_usage_log(
+                &conn,
+                "desktop-proxy",
+                "claude-desktop",
+                "openai-compatible",
+                "claude-sonnet-4-5",
+                "proxy",
+                25_000,
+                300,
+                60,
+                20,
+                5,
+                200,
+                "0.30",
+            )?;
+            // 与 proxy 行各字段一致（60 秒窗口内）的 Cowork 会话行 → 应被去重；
+            // 会话行同样记 app_type="claude-desktop"，与网关入口对齐
+            insert_usage_log(
+                &conn,
+                "cowork-session-dup",
+                "claude-desktop",
+                "_session",
+                "claude-sonnet-4-5",
+                "cowork_session_log",
+                25_060,
+                300,
+                60,
+                20,
+                5,
+                200,
+                "0.30",
+            )?;
+            // cache_creation 不一致的 Cowork 行 → 不应被去重：Cowork transcript
+            // 提供真实 cache_creation 值，因此刻意不进 cache_creation==0 的
+            // codex/gemini/opencode 特例
+            insert_usage_log(
+                &conn,
+                "cowork-session-nocache",
+                "claude-desktop",
+                "_session",
+                "claude-sonnet-4-5",
+                "cowork_session_log",
+                25_061,
+                300,
+                60,
+                20,
+                0,
+                200,
+                "0.30",
+            )?;
+        }
+
+        let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
+        let request_ids: Vec<&str> = logs
+            .data
+            .iter()
+            .map(|log| log.request_id.as_str())
+            .collect();
+        assert_eq!(logs.total, 2);
+        assert!(request_ids.contains(&"desktop-proxy"));
+        assert!(
+            !request_ids.contains(&"cowork-session-dup"),
+            "与 Desktop 网关 proxy 行完全匹配的 Cowork 会话行应被去重"
+        );
+        assert!(
+            request_ids.contains(&"cowork-session-nocache"),
+            "cache_creation 不匹配的 Cowork 行不应套用 0 值特例被去重"
+        );
+
+        // 读侧折叠：appType="claude" 筛选应包含 claude-desktop 的 Cowork 行
+        let claude_logs = db.get_request_logs(
+            &LogFilters {
+                app_type: Some("claude".to_string()),
+                ..LogFilters::default()
+            },
+            0,
+            10,
+        )?;
+        assert!(
+            claude_logs
+                .data
+                .iter()
+                .any(|log| log.request_id == "cowork-session-nocache"),
+            "claude-desktop 的 Cowork 行应折叠进 claude 筛选口径"
+        );
 
         Ok(())
     }
