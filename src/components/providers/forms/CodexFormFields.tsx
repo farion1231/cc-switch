@@ -295,6 +295,19 @@ export function CodexFormFields({
     lastSentModelsRef.current = catalogModels;
   }, [catalogModels]);
 
+  // The Anthropic adapter always emits the full Responses shape. Run this
+  // after parent-to-child synchronization so an incoming enabled override
+  // cannot replace the effective disabled state.
+  useEffect(() => {
+    if (!isAnthropicFormat) return;
+    setCatalogRows((current) => {
+      if (current.every((row) => row.useResponsesLite === false)) {
+        return current;
+      }
+      return current.map((row) => ({ ...row, useResponsesLite: false }));
+    });
+  }, [isAnthropicFormat, catalogModels]);
+
   // 子 → 父：rowId 是视图层概念，不应进入持久化数据；剥离后再回传。
   // 注意：依赖数组不包含 catalogModels，避免父→子更新触发子→父回调形成循环。
   useEffect(() => {
@@ -1052,12 +1065,15 @@ export function CodexFormFields({
                           })}
                         />
                         <Select
+                          disabled={isAnthropicFormat}
                           value={
-                            typeof row.useResponsesLite === "boolean"
-                              ? row.useResponsesLite
-                                ? "enabled"
-                                : "disabled"
-                              : "auto"
+                            isAnthropicFormat
+                              ? "disabled"
+                              : typeof row.useResponsesLite === "boolean"
+                                ? row.useResponsesLite
+                                  ? "enabled"
+                                  : "disabled"
+                                : "auto"
                           }
                           onValueChange={(value) =>
                             handleUpdateCatalogRow(index, {
@@ -1073,10 +1089,20 @@ export function CodexFormFields({
                               "codexConfig.catalogColumnResponsesLite",
                               { defaultValue: "Responses Lite" },
                             )}
-                            title={t("codexConfig.responsesLiteHint", {
-                              defaultValue:
-                                "自动模式按 Codex 官方模型能力选择；仅在上游明确支持时手动开启。",
-                            })}
+                            title={
+                              isAnthropicFormat
+                                ? t(
+                                    "codexConfig.responsesLiteAnthropicUnsupported",
+                                    {
+                                      defaultValue:
+                                        "Anthropic Messages 转换不支持 Responses Lite，因此固定关闭。",
+                                    },
+                                  )
+                                : t("codexConfig.responsesLiteHint", {
+                                    defaultValue:
+                                      "自动模式按 Codex 官方模型能力选择；仅在上游明确支持时手动开启。",
+                                  })
+                            }
                           >
                             <SelectValue />
                           </SelectTrigger>

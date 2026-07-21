@@ -1363,6 +1363,7 @@
     "responsesLiteEnabled": "Enabled",
     "responsesLiteDisabled": "Disabled",
     "responsesLiteHint": "Auto follows the bundled Codex capability for recognized official models. Enable it manually only when the upstream explicitly supports Responses Lite.",
+    "responsesLiteAnthropicUnsupported": "Responses Lite is not supported by the Anthropic Messages conversion and is always disabled.",
     "reasoningModeToggle": "Supports Thinking Mode",
     "reasoningModeHint": "Enable when the upstream Chat Completions API supports toggling thinking on/off. Providers like Kimi, GLM and Qwen usually fall into this category.",
     "reasoningEffortToggle": "Supports Reasoning Effort",
