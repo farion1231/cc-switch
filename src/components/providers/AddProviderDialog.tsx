@@ -44,11 +44,12 @@ export function AddProviderDialog({
   onSubmit,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
+  // OpenCode, OpenClaw, Hermes, and Pi don't support universal providers
   const showUniversalTab =
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
+    appId !== "pi" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   const [activeTab, setActiveTab] = useState<"app-specific" | "universal">(
@@ -149,9 +150,9 @@ export function AddProviderDialog({
           preset?.category === "official";
       }
 
-      // OpenCode/OpenClaw: pass providerKey for ID generation
+      // OpenCode/OpenClaw/Hermes/Pi: pass providerKey for ID generation
       if (
-        (appId === "opencode" || appId === "openclaw" || appId === "hermes") &&
+        (appId === "opencode" || appId === "openclaw" || appId === "hermes" || appId === "pi") &&
         values.providerKey
       ) {
         providerData.providerKey = values.providerKey;
@@ -277,6 +278,11 @@ export function AddProviderDialog({
         } else if (appId === "hermes") {
           if (parsedConfig.base_url) {
             addUrl(parsedConfig.base_url as string);
+          }
+        } else if (appId === "pi") {
+          // Pi uses baseUrl directly (same as openclaw)
+          if (parsedConfig.baseUrl) {
+            addUrl(parsedConfig.baseUrl as string);
           }
         }
 

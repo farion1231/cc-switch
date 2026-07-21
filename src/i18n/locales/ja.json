@@ -765,6 +765,8 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
+    "piConfigDir": "Pi 設定ディレクトリ",
+    "piConfigDirDescription": "Pi の設定ディレクトリ（models.json / settings.json）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -772,6 +774,7 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderPi": "例: /home/<your-username>/.pi",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -882,7 +885,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "pi": "Pi"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -2151,6 +2155,33 @@
       "loadFailed": "記憶ファイルの読み込みに失敗しました",
       "openConfig": "Hermes Web UI で上限を調整",
       "runtimeNote": "変更は Hermes の再起動または新規セッション時に反映されます。"
+    }
+  },
+  "pi": {
+    "form": {
+      "baseUrl": "API エンドポイント",
+      "providerKey": "プロバイダーキー",
+      "providerKeyPlaceholder": "my-provider",
+      "providerKeyHint": "小文字・数字・ハイフンのみ。models.json のプロバイダー名として使われます。",
+      "providerKeyLockedHint": "このプロバイダーは Pi 設定に追加済みのため、キーは変更できません。",
+      "providerKeyRequired": "プロバイダーキーは必須です",
+      "providerKeyInvalid": "プロバイダーキーは小文字・数字・ハイフンのみ使用できます",
+      "providerKeyDuplicate": "このプロバイダーキーは既に存在します",
+      "api": "API プロトコル",
+      "models": "モデル一覧",
+      "modelsEmpty": "モデルがありません。追加するか API から取得してください。",
+      "modelId": "モデル ID",
+      "modelName": "表示名",
+      "advanced": "詳細設定",
+      "contextWindow": "コンテキスト窓",
+      "maxTokens": "最大トークン",
+      "reasoning": "推論モデル"
+    },
+    "health": {
+      "title": "Pi 設定の警告を検出しました",
+      "duplicateProvider": "models.json に重複したプロバイダー名があります。",
+      "missingBaseUrl": "プロバイダーに baseUrl がありません。",
+      "missingApi": "プロバイダーに api フィールドがありません。"
     }
   },
   "env": {

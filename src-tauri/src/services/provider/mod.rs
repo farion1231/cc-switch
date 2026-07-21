@@ -23,7 +23,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_pi_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
     update_toml_common_config_snippet,
 };
@@ -39,7 +39,7 @@ pub(crate) use live::{
 // Internal re-exports
 use live::{
     remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live, write_gemini_live,
+    remove_opencode_provider_from_live, remove_pi_provider_from_live, write_gemini_live,
 };
 use usage::validate_usage_script;
 
@@ -2407,6 +2407,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(id)?,
                     AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
+                    AppType::Pi => remove_pi_provider_from_live(id)?,
                     _ => {}
                 }
             }
@@ -2471,6 +2472,9 @@ impl ProviderService {
             }
             AppType::Hermes => {
                 remove_hermes_provider_from_live(id)?;
+            }
+            AppType::Pi => {
+                remove_pi_provider_from_live(id)?;
             }
             _ => {
                 return Err(AppError::Message(format!(
@@ -2698,6 +2702,18 @@ impl ProviderService {
             }
         }
 
+        if matches!(app_type, AppType::Pi) {
+            if let Err(e) = crate::pi_config::set_active_provider(&provider.id) {
+                log::warn!(
+                    "Failed to update Pi defaultProvider after switching to '{}': {e}",
+                    provider.id
+                );
+                result
+                    .warnings
+                    .push(format!("pi_default_provider_failed:{}", provider.id));
+            }
+        }
+
         // For additive-mode providers that were DB-only (live_config_managed == Some(false)),
         // flip the flag to true now that the provider has been successfully written to the live
         // file. This ensures sync_all_providers_to_live() will include it on future syncs.
@@ -2713,6 +2729,7 @@ impl ProviderService {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
+                    AppType::Pi => remove_pi_provider_from_live(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -2999,6 +3016,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -3016,6 +3034,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -3535,6 +3554,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Pi => {
+                // Pi uses config structure: { baseUrl, apiKey, api, models }
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.pi.settings.not_object",
+                        "Pi 配置必须是 JSON 对象",
+                        "Pi configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -3739,8 +3768,8 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
-                // OpenClaw/Hermes use apiKey and baseUrl directly on the object
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
+                // OpenClaw/Hermes/Pi use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
                     .get("apiKey")

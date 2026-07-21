@@ -29,6 +29,9 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
+import { usePiLiveProviderIds, usePiActiveProvider } from "@/hooks/usePi";
+import { piApi } from "@/lib/api/pi";
+import { piKeys } from "@/hooks/usePi";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -111,9 +114,15 @@ export function ProviderList({
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
 
+  // Pi: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: piLiveIds } = usePiLiveProviderIds(appId === "pi");
+
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const hermesCurrentProviderId = hermesModelConfig?.provider;
+
+  // Pi: 读取当前 active provider，用于判断哪个供应商是"当前激活"（高亮）
+  const { data: piActiveProviderId } = usePiActiveProvider(appId === "pi");
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
@@ -127,9 +136,12 @@ export function ProviderList({
       if (appId === "hermes") {
         return hermesLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "pi") {
+        return piLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds, piLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -222,6 +234,10 @@ export function ProviderList({
         const count = await providersApi.importHermesFromLive();
         return count > 0;
       }
+      if (appId === "pi") {
+        const count = await piApi.importFromLive();
+        return count > 0;
+      }
       if (appId === "claude-desktop") {
         const count = await providersApi.importClaudeDesktopFromClaude();
         return count > 0;
@@ -233,6 +249,9 @@ export function ProviderList({
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
+        }
+        if (appId === "pi") {
+          queryClient.invalidateQueries({ queryKey: piKeys.liveProviderIds });
         }
         toast.success(t("provider.importCurrentDescription"));
       } else {
@@ -387,6 +406,8 @@ export function ProviderList({
               isOmoSlim && provider.id === (currentOmoSlimId || "");
             const isHermesCurrent =
               appId === "hermes" && hermesCurrentProviderId === provider.id;
+            const isPiCurrent =
+              appId === "pi" && piActiveProviderId === provider.id;
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -398,7 +419,9 @@ export function ProviderList({
                       ? isOmoSlimCurrent
                       : appId === "hermes"
                         ? isHermesCurrent
-                        : provider.id === currentProviderId
+                        : appId === "pi"
+                          ? isPiCurrent
+                          : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
@@ -429,7 +452,9 @@ export function ProviderList({
                 isDefaultModel={
                   appId === "hermes"
                     ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
+                    : appId === "pi"
+                      ? isPiCurrent
+                      : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined

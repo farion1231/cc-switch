@@ -50,6 +50,7 @@ impl Database {
                             grokbuild: enabled_grokbuild,
                             opencode: enabled_opencode,
                             hermes: enabled_hermes,
+                            pi: false,
                         },
                         description,
                         homepage,
