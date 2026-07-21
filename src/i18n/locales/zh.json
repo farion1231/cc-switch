@@ -2684,6 +2684,7 @@
     "colModel": "实际请求模型",
     "fetchedForUpstream": "已获取 {{count}} 个模型（下方映射输入框可自动补全）",
     "needRole": "请至少为一个 Claude 角色配置上游与模型",
+    "duplicateModelRoute": "相同模型名不能在不同 Claude 角色中指向不同上游（忽略大小写和 [1M]）",
     "addRoute": "添加映射",
     "noRoutes": "暂无模型映射。先获取模型并点击添加，或手动添加「模型名 → 上游」。",
     "modelPlaceholder": "模型名 / 通配（如 gpt-*）",

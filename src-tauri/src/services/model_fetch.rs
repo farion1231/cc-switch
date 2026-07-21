@@ -33,6 +33,33 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
+/// Gemini Native `models.list` response shape.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeminiModelsResponse {
+    #[serde(default)]
+    models: Vec<GeminiModelEntry>,
+    next_page_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiModelEntry {
+    name: String,
+}
+
+fn gemini_model_to_fetched(model: GeminiModelEntry) -> Option<FetchedModel> {
+    let id = model
+        .name
+        .trim()
+        .strip_prefix("models/")
+        .unwrap_or(model.name.trim())
+        .trim();
+    (!id.is_empty()).then(|| FetchedModel {
+        id: id.to_string(),
+        owned_by: None,
+    })
+}
+
 const FETCH_TIMEOUT_SECS: u64 = 15;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
@@ -63,7 +90,19 @@ pub async fn fetch_models(
     models_url_override: Option<&str>,
     user_agent: Option<HeaderValue>,
     api_key_field: Option<&str>,
+    api_format: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
+    if api_format == Some("gemini_native") {
+        return fetch_gemini_models(
+            base_url,
+            api_key,
+            is_full_url,
+            models_url_override,
+            user_agent,
+        )
+        .await;
+    }
+
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
     let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
@@ -129,6 +168,107 @@ pub async fn fetch_models(
         "All candidates failed: {}",
         last_err.unwrap_or_else(|| "no candidates".to_string())
     ))
+}
+
+/// Fetch a Gemini Native model catalog using the native URL, authentication,
+/// response shape, and pagination semantics.
+async fn fetch_gemini_models(
+    base_url: &str,
+    api_key: &str,
+    is_full_url: bool,
+    models_url_override: Option<&str>,
+    user_agent: Option<HeaderValue>,
+) -> Result<Vec<FetchedModel>, String> {
+    let url = build_gemini_models_url(base_url, is_full_url, models_url_override)?;
+    let client = crate::proxy::http_client::get();
+    let mut models = Vec::new();
+    let mut page_token: Option<String> = None;
+    let mut seen_page_tokens = std::collections::HashSet::new();
+
+    loop {
+        let mut request = client
+            .get(&url)
+            .query(&[("pageSize", "1000")])
+            .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        if let Some(token) = page_token.as_deref() {
+            request = request.query(&[("pageToken", token)]);
+        }
+        if !api_key.is_empty() {
+            request = request.header("x-goog-api-key", api_key);
+        }
+        if let Some(ua) = &user_agent {
+            request = request.header(USER_AGENT, ua.clone());
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {e}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = truncate_body(response.text().await.unwrap_or_default());
+            return Err(format!("HTTP {status}: {body}"));
+        }
+
+        let page: GeminiModelsResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+        models.extend(page.models.into_iter().filter_map(gemini_model_to_fetched));
+
+        let Some(next) = page.next_page_token.filter(|token| !token.is_empty()) else {
+            break;
+        };
+        if !seen_page_tokens.insert(next.clone()) {
+            return Err("Gemini models endpoint returned a repeated page token".to_string());
+        }
+        page_token = Some(next);
+    }
+
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.dedup_by(|a, b| a.id == b.id);
+    Ok(models)
+}
+
+/// Build the native Gemini `models.list` endpoint.
+pub fn build_gemini_models_url(
+    base_url: &str,
+    is_full_url: bool,
+    models_url_override: Option<&str>,
+) -> Result<String, String> {
+    if let Some(override_url) = models_url_override.map(str::trim).filter(|url| !url.is_empty()) {
+        return Ok(override_url.to_string());
+    }
+
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err("Base URL is empty".to_string());
+    }
+
+    if is_full_url {
+        if let Some(index) = base.find("/models/") {
+            return Ok(format!("{}/models", &base[..index]));
+        }
+        if base.ends_with("/models") {
+            return Ok(base.to_string());
+        }
+        return Err("Cannot derive Gemini models endpoint from full URL".to_string());
+    }
+
+    let last_segment = base.rsplit('/').next().unwrap_or_default();
+    let version_tail = last_segment.strip_prefix('v').unwrap_or_default();
+    if version_tail
+        .as_bytes()
+        .first()
+        .is_some_and(|character| character.is_ascii_digit())
+        && version_tail.chars().all(|character| character.is_ascii_alphanumeric())
+    {
+        Ok(format!("{base}/models"))
+    } else if base.ends_with("/models") {
+        Ok(base.to_string())
+    } else {
+        Ok(format!("{base}/v1beta/models"))
+    }
 }
 
 /// 构造「模型列表端点」的候选 URL 列表
@@ -286,6 +426,7 @@ mod tests {
             None,
             None,
             api_key_field.as_deref(),
+            None,
         )
         .await
         .expect("fetch live models");
@@ -302,6 +443,49 @@ mod tests {
     fn test_candidates_trailing_slash() {
         let c = build_models_url_candidates("https://api.example.com/", false, None).unwrap();
         assert_eq!(c, vec!["https://api.example.com/v1/models"]);
+    }
+
+    #[test]
+    fn test_gemini_native_models_url() {
+        assert_eq!(
+            build_gemini_models_url(
+                "https://generativelanguage.googleapis.com/v1beta",
+                false,
+                None
+            )
+            .unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            build_gemini_models_url("https://relay.example/google", false, None).unwrap(),
+            "https://relay.example/google/v1beta/models"
+        );
+        assert_eq!(
+            build_gemini_models_url("https://relay.example/vertex", false, None).unwrap(),
+            "https://relay.example/vertex/v1beta/models"
+        );
+        assert_eq!(
+            build_gemini_models_url(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+                true,
+                None
+            )
+            .unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+    }
+
+    #[test]
+    fn test_parses_gemini_native_catalog_shape() {
+        let response: GeminiModelsResponse = serde_json::from_value(serde_json::json!({
+            "models": [{"name": "models/gemini-2.5-pro"}],
+            "nextPageToken": "next-page"
+        }))
+        .expect("parse Gemini model catalog");
+
+        let model = gemini_model_to_fetched(response.models.into_iter().next().unwrap()).unwrap();
+        assert_eq!(model.id, "gemini-2.5-pro");
+        assert_eq!(response.next_page_token.as_deref(), Some("next-page"));
     }
 
     #[test]

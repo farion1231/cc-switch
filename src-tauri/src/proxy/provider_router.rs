@@ -12,6 +12,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// 从熔断标识中取真实 provider 基础 id。
+///
+/// 聚合供应商合成的上游标识形如 `"{provider_id}#{upstream_id}"`（见
+/// [`Provider::circuit_id`]）；真实 provider id 由后端生成，不含 `#`，故取首段即可。
+/// 用于数据库健康表等必须落到真实 provider 的场景。
+fn base_provider_id(id: &str) -> &str {
+    id.split('#').next().unwrap_or(id)
+}
+
 /// 供应商路由器
 pub struct ProviderRouter {
     /// 数据库连接
@@ -66,6 +75,14 @@ impl ProviderRouter {
                 let Some(provider) = all_providers.get(&provider_id).cloned() else {
                     continue;
                 };
+
+                // The request model is not known here, so an aggregation provider
+                // cannot yet be associated with a specific upstream circuit. Its
+                // resolved upstream is checked by RequestForwarder instead.
+                if crate::aggregation::is_aggregation_provider(&provider) {
+                    result.push(provider);
+                    continue;
+                }
 
                 let circuit_key = format!("{app_type}:{}", provider.id);
                 let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
@@ -148,9 +165,12 @@ impl ProviderRouter {
         }
 
         // 3. 更新数据库健康状态（使用配置的阈值）
+        //    熔断器可按聚合上游隔离（circuit_key 形如 "provider#upstream"），但
+        //    provider_health 表对 providers(id, app_type) 有外键约束，只能按真实
+        //    provider 记录，因此这里取 `#` 前的基础 id。
         self.db
             .update_provider_health_with_threshold(
-                provider_id,
+                base_provider_id(provider_id),
                 app_type,
                 success,
                 error_msg.clone(),
@@ -172,7 +192,13 @@ impl ProviderRouter {
     /// 重置指定供应商的熔断器
     pub async fn reset_provider_breaker(&self, provider_id: &str, app_type: &str) {
         let circuit_key = format!("{app_type}:{provider_id}");
-        self.reset_circuit_breaker(&circuit_key).await;
+        let aggregation_prefix = format!("{circuit_key}#");
+        let breakers = self.circuit_breakers.read().await;
+        for (key, breaker) in breakers.iter() {
+            if key == &circuit_key || key.starts_with(&aggregation_prefix) {
+                breaker.reset().await;
+            }
+        }
     }
 
     /// 仅释放 HalfOpen permit，不影响健康统计（neutral 接口）
@@ -519,5 +545,50 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn aggregation_upstreams_have_independent_circuits() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let provider =
+            Provider::with_id("agg".to_string(), "Aggregation".to_string(), json!({}), None);
+        db.save_provider("claude", &provider).unwrap();
+
+        db.update_circuit_breaker_config(&CircuitBreakerConfig {
+            failure_threshold: 1,
+            timeout_seconds: 60,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+        let router = ProviderRouter::new(db);
+        router
+            .record_result(
+                "agg#upstream-a",
+                "claude",
+                false,
+                false,
+                Some("fail".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert!(!router
+            .allow_provider_request("agg#upstream-a", "claude")
+            .await
+            .allowed);
+        assert!(router
+            .allow_provider_request("agg#upstream-b", "claude")
+            .await
+            .allowed);
+
+        router.reset_provider_breaker("agg", "claude").await;
+        assert!(router
+            .allow_provider_request("agg#upstream-a", "claude")
+            .await
+            .allowed);
     }
 }

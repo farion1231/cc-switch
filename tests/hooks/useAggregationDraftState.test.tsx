@@ -100,6 +100,35 @@ describe("useAggregationDraftState", () => {
     expect(result.current.toConfig().roles).toEqual({});
   });
 
+  it("rejects normalized duplicate role models targeting different upstreams", () => {
+    const { result } = renderHook(() => useAggregationDraftState());
+    const firstId = result.current.upstreams[0].id;
+
+    act(() => {
+      result.current.updateUpstream(firstId, {
+        baseUrl: "http://first.example",
+      });
+      result.current.addUpstream();
+    });
+
+    const secondId = result.current.upstreams[1].id;
+    act(() => {
+      result.current.updateUpstream(secondId, {
+        baseUrl: "http://second.example",
+      });
+      result.current.updateRole("sonnet", {
+        upstreamId: firstId,
+        model: "Claude-Sonnet-4[1M]",
+      });
+      result.current.updateRole("default", {
+        upstreamId: secondId,
+        model: "claude-sonnet-4",
+      });
+    });
+
+    expect(result.current.validate()).toBe("duplicate_model_route");
+  });
+
   it("preserves legacy routes until the user explicitly removes them", () => {
     const initial = {
       upstreams: [

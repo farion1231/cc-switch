@@ -1226,6 +1226,15 @@ function ProviderFormFull({
         );
         return;
       }
+      if (aggregationError === "duplicate_model_route") {
+        toast.error(
+          t("aggregation.duplicateModelRoute", {
+            defaultValue:
+              "相同模型名不能在不同 Claude 角色中指向不同上游（忽略大小写和 [1M]）",
+          }),
+        );
+        return;
+      }
     }
 
     // 非官方供应商端点 / API Key 空：A 类

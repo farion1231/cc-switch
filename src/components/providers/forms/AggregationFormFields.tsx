@@ -121,6 +121,7 @@ export function AggregationFormFields({ draft }: AggregationFormFieldsProps) {
           undefined,
           undefined,
           u.apiKeyField,
+          u.apiFormat,
         );
         next[u.id] = models.map((m) => m.id);
         anySuccess = true;

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import { toast } from "sonner";
+import type { ClaudeApiFormat } from "@/types";
 
 export interface FetchedModel {
   id: string;
@@ -20,6 +21,7 @@ export async function fetchModelsForConfig(
   modelsUrl?: string,
   customUserAgent?: string,
   apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY",
+  apiFormat?: ClaudeApiFormat,
 ): Promise<FetchedModel[]> {
   return invoke("fetch_models_for_config", {
     baseUrl,
@@ -28,6 +30,7 @@ export async function fetchModelsForConfig(
     modelsUrl,
     customUserAgent,
     apiKeyField,
+    apiFormat,
   });
 }
 

@@ -71,6 +71,14 @@ export const AGG_MANAGED_ENV_KEYS: string[] = [
 
 const ONE_M_MARKER = "[1M]";
 
+function normalizeRoutedModel(model: string): string {
+  return model
+    .trim()
+    .replace(/\[1m\]\s*$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
 /** 单个角色映射草稿：左=Claude 角色，右=聚合提供的（上游 + 模型） */
 export interface AggRoleDraft {
   upstreamId: string;
@@ -81,7 +89,10 @@ export interface AggRoleDraft {
 /** 序列化后的聚合配置（写入 provider meta.aggregation） */
 export type AggregationConfigPayload = AggregationConfig;
 
-export type AggregationValidationError = "no_upstream" | "no_role";
+export type AggregationValidationError =
+  | "no_upstream"
+  | "no_role"
+  | "duplicate_model_route";
 
 function genId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -293,6 +304,19 @@ export function useAggregationDraftState(initial?: unknown) {
         route.model.trim() && validUpstreamIds.has(route.upstreamId.trim()),
     );
     if (!hasRole && !hasLegacyRoute) return "no_role";
+
+    // Claude Code sends only the model string, not the role that selected it.
+    const modelUpstreams = new Map<string, string>();
+    for (const [, role] of validRoleEntries()) {
+      const upstreamId = role.upstreamId.trim();
+      if (!validUpstreamIds.has(upstreamId)) continue;
+      const model = normalizeRoutedModel(role.model);
+      const previousUpstream = modelUpstreams.get(model);
+      if (previousUpstream && previousUpstream !== upstreamId) {
+        return "duplicate_model_route";
+      }
+      modelUpstreams.set(model, upstreamId);
+    }
     return null;
   };
 

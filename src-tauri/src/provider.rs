@@ -86,6 +86,25 @@ impl Provider {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
+    /// 熔断器 / 健康记录使用的身份标识。
+    ///
+    /// 普通供应商直接返回 `id`；聚合供应商解析出的合成供应商则返回
+    /// `"{id}#{upstream_id}"`，使同一聚合 provider 下的不同上游拥有各自独立的
+    /// 熔断 / 探测状态，避免一个上游故障连坐拖垮其余健康上游。数据库健康表按
+    /// 真实 provider（`#` 前的基础 id）记录，见 `ProviderRouter::record_result`。
+    pub fn circuit_id(&self) -> String {
+        match self
+            .meta
+            .as_ref()
+            .and_then(|m| m.routing_upstream_id.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(upstream) => format!("{}#{}", self.id, upstream),
+            None => self.id.clone(),
+        }
+    }
+
     fn claude_base_url_contains(&self, needle: &str) -> bool {
         self.settings_config
             .pointer("/env/ANTHROPIC_BASE_URL")
@@ -516,6 +535,14 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 运行时字段（不持久化）：聚合供应商解析出的上游 ID。
+    ///
+    /// 聚合供应商会为同一 provider 下的不同上游合成多个「等价普通供应商」，
+    /// 它们共享同一 `id`（避免误触发持久切换）。为了让熔断器 / 健康状态按上游
+    /// 独立，这里记录被选中的上游 ID，`Provider::circuit_id()` 据此派生出
+    /// 上游级的熔断标识。仅存在于内存中的合成供应商上，绝不写库 / 序列化。
+    #[serde(skip)]
+    pub routing_upstream_id: Option<String>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。

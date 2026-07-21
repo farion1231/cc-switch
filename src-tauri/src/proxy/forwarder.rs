@@ -289,6 +289,7 @@ impl RequestForwarder {
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
     ) -> Option<ForwardError> {
+        let circuit_id = provider.circuit_id();
         // Provider 错误：本家上游/网络确实出问题，下一家 provider 可能可用 → 继续故障转移。
         // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
         let is_provider_error = match &retry_err {
@@ -301,7 +302,7 @@ impl RequestForwarder {
             let _ = self
                 .router
                 .record_result(
-                    &provider.id,
+                    &circuit_id,
                     app_type_str,
                     used_half_open_permit,
                     false,
@@ -321,7 +322,7 @@ impl RequestForwarder {
         }
 
         self.router
-            .release_permit_neutral(&provider.id, app_type_str, used_half_open_permit)
+            .release_permit_neutral(&circuit_id, app_type_str, used_half_open_permit)
             .await;
         let mut status = self.status.write().await;
         status.failed_requests += 1;
@@ -413,6 +414,9 @@ impl RequestForwarder {
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
+            // Runtime health is isolated per aggregation upstream while provider.id
+            // remains the persistent identity used by UI and failover switching.
+            let circuit_id = provider.circuit_id();
             // 整流器重试标记：每个 provider 独立持有，避免标记跨 provider 短路故障转移
             // —— 首家 provider 整流后被 5xx/timeout 击落时，下家仍能用整流后的请求体走整流流程
             let mut rectifier_retried = false;
@@ -437,7 +441,7 @@ impl RequestForwarder {
             } else {
                 let permit = self
                     .router
-                    .allow_provider_request(&provider.id, app_type_str)
+                    .allow_provider_request(&circuit_id, app_type_str)
                     .await;
                 (permit.allowed, permit.used_half_open_permit)
             };
@@ -492,7 +496,7 @@ impl RequestForwarder {
                 Ok((response, claude_api_format, outbound_model)) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
-                    self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
+                    self.record_success_result(&circuit_id, app_type_str, used_half_open_permit)
                         .await;
 
                     // 更新当前应用类型使用的 provider
@@ -593,7 +597,7 @@ impl RequestForwarder {
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
                                     );
                                     self.record_success_result(
-                                        &provider.id,
+                                        &circuit_id,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
@@ -680,7 +684,7 @@ impl RequestForwarder {
                                 // 释放 HalfOpen permit（不记录熔断器，这是客户端兼容性问题）
                                 self.router
                                     .release_permit_neutral(
-                                        &provider.id,
+                                        &circuit_id,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
@@ -737,7 +741,7 @@ impl RequestForwarder {
                                     Ok((response, claude_api_format, outbound_model)) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
-                                            &provider.id,
+                                            &circuit_id,
                                             app_type_str,
                                             used_half_open_permit,
                                         )
@@ -832,7 +836,7 @@ impl RequestForwarder {
                                 );
                                 self.router
                                     .release_permit_neutral(
-                                        &provider.id,
+                                        &circuit_id,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
@@ -858,7 +862,7 @@ impl RequestForwarder {
                                 );
                                 self.router
                                     .release_permit_neutral(
-                                        &provider.id,
+                                        &circuit_id,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
@@ -903,7 +907,7 @@ impl RequestForwarder {
                                 Ok((response, claude_api_format, outbound_model)) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
-                                        &provider.id,
+                                        &circuit_id,
                                         app_type_str,
                                         used_half_open_permit,
                                     )
@@ -980,7 +984,7 @@ impl RequestForwarder {
                     if signature_rectifier_non_retryable_client_error {
                         self.router
                             .release_permit_neutral(
-                                &provider.id,
+                                &circuit_id,
                                 app_type_str,
                                 used_half_open_permit,
                             )
@@ -1010,7 +1014,7 @@ impl RequestForwarder {
                             let _ = self
                                 .router
                                 .record_result(
-                                    &provider.id,
+                                    &circuit_id,
                                     app_type_str,
                                     used_half_open_permit,
                                     false,
@@ -1041,7 +1045,7 @@ impl RequestForwarder {
                             // 不可重试：客户端层错误或客户端断连 → 不污染健康度，仅释放 HalfOpen permit
                             self.router
                                 .release_permit_neutral(
-                                    &provider.id,
+                                    &circuit_id,
                                     app_type_str,
                                     used_half_open_permit,
                                 )

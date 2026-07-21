@@ -176,6 +176,42 @@ impl AggregationConfig {
         routes.extend(self.routes.iter().cloned());
         routes
     }
+
+    /// Claude Code requests contain only a model name, not the semantic role that
+    /// selected it. Reject role mappings that are indistinguishable at runtime.
+    fn validate_role_route_conflicts(&self) -> Result<(), AppError> {
+        let Some(roles) = &self.roles else {
+            return Ok(());
+        };
+        let entries = [
+            ("sonnet", &roles.sonnet),
+            ("opus", &roles.opus),
+            ("fable", &roles.fable),
+            ("haiku", &roles.haiku),
+            ("subagent", &roles.subagent),
+            ("default", &roles.default),
+        ];
+        let mut seen = std::collections::HashMap::<String, (&str, &str)>::new();
+
+        for (role_name, role) in entries {
+            let Some((model, upstream)) = role.as_ref().and_then(|route| route.as_valid()) else {
+                continue;
+            };
+            let normalized = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model)
+                .trim()
+                .to_lowercase();
+            if let Some((previous_role, previous_upstream)) = seen.get(&normalized) {
+                if *previous_upstream != upstream {
+                    return Err(AppError::Config(format!(
+                        "聚合角色 '{previous_role}' 与 '{role_name}' 的模型 '{model}' 归一化后相同，但指向不同上游"
+                    )));
+                }
+            } else {
+                seen.insert(normalized, (role_name, upstream));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// provider 是否为聚合供应商
@@ -221,6 +257,7 @@ pub fn resolve_aggregation_upstream(
     }
     let cfg = AggregationConfig::from_provider(provider)
         .ok_or_else(|| AppError::Config("聚合供应商未配置任何上游".to_string()))?;
+    cfg.validate_role_route_conflicts()?;
 
     // 去掉本地 [1m] 上下文标记后再匹配
     let normalized = crate::proxy::model_mapper::strip_one_m_suffix_for_upstream(model);
@@ -297,6 +334,9 @@ pub fn resolve_aggregation_upstream(
     meta.api_format = upstream.api_format.clone();
     meta.is_full_url = upstream.is_full_url;
     meta.api_key_field = Some(key_field);
+    // 记录被选中的上游 ID：合成供应商共享聚合 provider 的 id（避免持久切换误判），
+    // 但熔断 / 健康需要按上游隔离，交给 `Provider::circuit_id()` 据此派生。
+    meta.routing_upstream_id = Some(upstream.id.clone());
 
     let upstream_label = upstream
         .name
@@ -416,6 +456,7 @@ mod tests {
         assert!(s.meta.as_ref().unwrap().aggregation.is_none());
         assert!(s.meta.as_ref().unwrap().provider_type.is_none());
         assert_eq!(s.id, "agg1"); // 保持同 id，避免触发切换
+        assert_eq!(s.circuit_id(), "agg1#u1");
     }
 
     #[test]
@@ -574,5 +615,39 @@ mod tests {
             Some("https://a.example.com")
         );
         assert_eq!(env_of(&s, "ANTHROPIC_MODEL"), Some("claude-default"));
+    }
+
+    #[test]
+    fn conflicting_normalized_role_models_are_rejected() {
+        let mut p = agg_provider();
+        p.meta.as_mut().unwrap().aggregation = Some(json!({
+            "upstreams": [
+                {"id":"u1","baseUrl":"https://a.example.com"},
+                {"id":"u2","baseUrl":"https://b.example.com"}
+            ],
+            "roles": {
+                "sonnet": {"upstreamId":"u1","model":"Claude-Sonnet-4[1M]"},
+                "default": {"upstreamId":"u2","model":"claude-sonnet-4"}
+            }
+        }));
+
+        let error = resolve_aggregation_upstream(&p, "claude-sonnet-4").unwrap_err();
+        assert!(error.to_string().contains("指向不同上游"));
+    }
+
+    #[test]
+    fn duplicate_role_models_on_same_upstream_are_allowed() {
+        let mut p = agg_provider();
+        p.meta.as_mut().unwrap().aggregation = Some(json!({
+            "upstreams": [{"id":"u1","baseUrl":"https://a.example.com"}],
+            "roles": {
+                "sonnet": {"upstreamId":"u1","model":"Claude-Sonnet-4[1M]"},
+                "default": {"upstreamId":"u1","model":"claude-sonnet-4"}
+            }
+        }));
+
+        assert!(resolve_aggregation_upstream(&p, "claude-sonnet-4")
+            .unwrap()
+            .is_some());
     }
 }

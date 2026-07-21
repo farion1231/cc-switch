@@ -2656,6 +2656,7 @@
     "colModel": "實際請求模型",
     "fetchedForUpstream": "已取得 {{count}} 個模型（下方對應輸入框可自動補全）",
     "needRole": "請至少為一個 Claude 角色設定上游與模型",
+    "duplicateModelRoute": "相同模型名稱不可在不同 Claude 角色中指向不同上游（忽略大小寫與 [1M]）",
     "addRoute": "新增對應",
     "noRoutes": "尚無模型對應。先取得模型並點擊新增，或手動新增「模型名 → 上游」。",
     "modelPlaceholder": "模型名 / 萬用字元（如 gpt-*）",
