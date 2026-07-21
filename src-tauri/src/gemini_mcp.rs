@@ -16,6 +16,9 @@ fn read_json_value(path: &Path) -> Result<Value, AppError> {
         return Ok(serde_json::json!({}));
     }
     let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    if content.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
     let value: Value = serde_json::from_str(&content).map_err(|e| AppError::json(path, e))?;
     Ok(value)
 }
@@ -83,8 +86,24 @@ pub fn set_mcp_servers_map(
         serde_json::json!({})
     };
 
-    // 构建 mcpServers 对象：移除 UI 辅助字段（enabled/source），仅保留实际 MCP 规范
-    let mut out: Map<String, Value> = Map::new();
+    let out = build_gemini_mcp_servers_object(servers)?;
+
+    {
+        let obj = root
+            .as_object_mut()
+            .ok_or_else(|| AppError::Config("~/.gemini/settings.json 根必须是对象".into()))?;
+        obj.insert("mcpServers".into(), Value::Object(out));
+    }
+
+    write_json_value(&path, &root)?;
+
+    Ok(())
+}
+
+fn build_gemini_mcp_servers_object(
+    servers: &std::collections::HashMap<String, Value>,
+) -> Result<Map<String, Value>, AppError> {
+    let mut out = Map::new();
     for (id, spec) in servers.iter() {
         let mut obj = if let Some(map) = spec.as_object() {
             map.clone()
@@ -155,13 +174,5 @@ pub fn set_mcp_servers_map(
         out.insert(id.clone(), Value::Object(obj));
     }
 
-    {
-        let obj = root
-            .as_object_mut()
-            .ok_or_else(|| AppError::Config("~/.gemini/settings.json 根必须是对象".into()))?;
-        obj.insert("mcpServers".into(), Value::Object(out));
-    }
-
-    write_json_value(&path, &root)?;
-    Ok(())
+    Ok(out)
 }

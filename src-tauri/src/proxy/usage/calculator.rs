@@ -59,13 +59,22 @@ impl CostCalculator {
         pricing: &ModelPricing,
         cost_multiplier: Decimal,
     ) -> CostBreakdown {
-        let input_includes_cache_read = matches!(app_type, "codex" | "gemini" | "grokbuild");
+        let input_includes_cache_read = Self::input_includes_cache_read(app_type);
         Self::calculate_with_cache_semantics(
             usage,
             pricing,
             cost_multiplier,
             input_includes_cache_read,
         )
+    }
+
+    /// Returns whether a stored row's input counter includes cache reads.
+    ///
+    /// All Gemini rows, including imported Antigravity sessions, are normalized
+    /// at import time to the upstream Gemini convention: `input_tokens` includes
+    /// `cache_read_tokens`.
+    pub fn input_includes_cache_read(app_type: &str) -> bool {
+        matches!(app_type, "codex" | "gemini" | "grokbuild")
     }
 
     fn calculate_with_cache_semantics(
@@ -209,6 +218,27 @@ mod tests {
             Decimal::from_str("0.000375").unwrap()
         );
         assert_eq!(cost.total_cost, Decimal::from_str("0.010035").unwrap());
+    }
+
+    #[test]
+    fn test_antigravity_session_uses_normalized_gemini_input() {
+        let usage = TokenUsage {
+            // Antigravity f2=1,000 fresh input plus f5=2,000 cache reads.
+            input_tokens: 3_000,
+            output_tokens: 500,
+            cache_read_tokens: 2_000,
+            cache_creation_tokens: 0,
+            model: None,
+            message_id: None,
+        };
+        let pricing = ModelPricing::from_strings("3.0", "15.0", "0.3", "0").unwrap();
+
+        let cost = CostCalculator::calculate_for_app("gemini", &usage, &pricing, Decimal::ONE);
+
+        assert_eq!(cost.input_cost, Decimal::from_str("0.003").unwrap());
+        assert_eq!(cost.output_cost, Decimal::from_str("0.0075").unwrap());
+        assert_eq!(cost.cache_read_cost, Decimal::from_str("0.0006").unwrap());
+        assert_eq!(cost.total_cost, Decimal::from_str("0.0111").unwrap());
     }
 
     #[test]
