@@ -27,9 +27,9 @@
 
 [![Kimi K2.7 Code](assets/partners/banners/kimi-banner-zh.png)](https://platform.kimi.com?aff=cc-switch)
 
-Kimi K2.7 Code 是 Moonshot AI 开发的编程专用开源智能体模型。它在编程与智能体执行能力上全面增强，在真实长程编程任务中实现显著提升，带来复杂软件工程工作流中更高的端到端任务成功率。同时，K2.7 Code 优化了推理效率，相较 K2.6 平均减少约 30% 的推理 token 消耗。**[点击此处开启 Kimi 使用体验](https://platform.kimi.com?aff=cc-switch)**
+Kimi K3 是 Moonshot AI 迄今能力最强的模型，也是全球首个开源 3T 级模型。K3 拥有 2.8T 参数、原生视觉能力与 100 万 Token 上下文，在长程编码、知识工作和推理任务中展现前沿性能。使用 CC Switch，可以在各类 Agent 工具中便捷配置和切换 Kimi。**[点击此处开始使用 Kimi](https://platform.kimi.com?aff=cc-switch)**
 
-主要做编程工作？可以试试 **[Kimi For Coding 编程套餐](https://www.kimi.com/code/?aff=cc-switch)**，专为编程打造的订阅服务！
+主要进行编程工作？可以试试 **[Kimi Code 订阅](https://www.kimi.com/code/?aff=cc-switch)**。
 
 ---
 

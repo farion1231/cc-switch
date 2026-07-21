@@ -27,9 +27,9 @@
 
 [![Kimi K2.7 Code](assets/partners/banners/kimi-banner-en.png)](https://platform.kimi.ai?aff=cc-switch)
 
-Kimi K2.7 Code ist ein quelloffenes, auf Programmierung spezialisiertes Agenten-Modell von Moonshot AI. Es bietet eine stärkere Programmier- und Agentenleistung mit erheblichen Verbesserungen bei realen, langfristigen Programmieraufgaben. Diese Fortschritte führen zu höheren End-to-End-Erfolgsraten in komplexen Software-Engineering-Workflows. Zudem verbessert K2.7 Code die Reasoning-Effizienz und reduziert den Verbrauch an Thinking-Tokens um rund 30 % gegenüber K2.6. **[Hier klicken, um Kimi auszuprobieren](https://platform.kimi.ai?aff=cc-switch)**
+Kimi K3 ist das bislang leistungsstärkste Modell von Moonshot AI und das weltweit erste offene Modell der 3T-Klasse. Mit 2,8 Billionen Parametern, nativen visuellen Fähigkeiten und einem Kontextfenster von 1 Million Token liefert K3 Spitzenleistung bei langfristigen Programmieraufgaben, Wissensarbeit und Reasoning. Mit CC Switch lässt sich Kimi in den verschiedensten Agenten-Tools bequem konfigurieren und umschalten. **[Hier klicken, um Kimi zu nutzen](https://platform.kimi.ai?aff=cc-switch)**
 
-Hauptsächlich mit Programmierung beschäftigt? Probieren Sie den **[Kimi-For-Coding-Plan](https://www.kimi.com/code/?aff=cc-switch)** – ein Abo, das speziell fürs Programmieren entwickelt wurde!
+Hauptsächlich mit Programmierung beschäftigt? Probieren Sie das **[Kimi-Code-Abo](https://www.kimi.com/code/?aff=cc-switch)** aus!
 
 ---
 
