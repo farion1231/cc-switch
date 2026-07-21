@@ -74,7 +74,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     if (initialData?.apps) {
       return {
         ...initialData.apps,
-        grokbuild: initialData.apps.grokbuild ?? false, 
+        grokbuild: initialData.apps.grokbuild ?? false,
         codefree: initialData.apps.codefree ?? false,
       };
     }

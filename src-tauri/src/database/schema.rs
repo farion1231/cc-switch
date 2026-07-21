@@ -514,7 +514,7 @@ impl Database {
                         );
                         Self::migrate_v15_to_v16(conn)?;
                         Self::set_user_version(conn, 16)?;
-                    }                
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -1530,7 +1530,7 @@ impl Database {
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }
-    
+
         if Self::table_exists(conn, "skills")? {
             Self::add_column_if_missing(
                 conn,
@@ -1538,7 +1538,7 @@ impl Database {
                 "enabled_codefree",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
-        }    
+        }
 
         log::info!("v15 -> v16 迁移完成：已添加 CodeFree-O 支持");
         Ok(())
@@ -3052,7 +3052,7 @@ mod tests {
         )?;
         assert_eq!(mcp_values, (1, 0));
         assert_eq!(skill_values, (1, 0));
-        
+
         Ok(())
     }
 }

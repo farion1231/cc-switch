@@ -46,7 +46,7 @@ impl Database {
                         grokbuild: row.get(11)?,
                         opencode: row.get(12)?,
                         hermes: row.get(13)?,
-                         codefree: row.get(14)?,
+                        codefree: row.get(14)?,
                     },
                     installed_at: row.get(15)?,
                     content_hash: row.get(16)?,

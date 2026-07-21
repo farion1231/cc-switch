@@ -1468,7 +1468,7 @@ function App() {
                               : activeApp === "hermes"
                                 ? "hermes"
                                 : activeApp === "grokbuild"
-                                  ? "grokbuild" 
+                                  ? "grokbuild"
                                   : activeApp === "codefree"
                                     ? "codefree"
                                     : "default"
