@@ -309,6 +309,39 @@ pub fn apply_codex_upstream_model(provider: &Provider, body: &mut JsonValue) -> 
     Some(upstream_model)
 }
 
+/// For Codex Chat providers, inject a provider-configured default
+/// `max_output_tokens` when the client (e.g. Codex CLI) omits it.
+///
+/// Many OpenAI-compatible upstreams default to a low `max_tokens` (e.g. 4096)
+/// when the parameter is absent. With high-reasoning models the entire budget
+/// can be consumed by thinking, leaving `last_agent_message: null`. This
+/// mirrors `apply_codex_chat_upstream_model` by reading the default from the
+/// provider's `settings_config` (direct field or TOML `config` string) and
+/// writing it into the request body before the Responses->Chat conversion,
+/// so the existing mapping logic in `transform_codex_chat` picks it up.
+pub fn apply_codex_chat_default_max_output_tokens(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> bool {
+    if !codex_provider_uses_chat_completions(provider) {
+        return false;
+    }
+    // Client already specified a limit via any of the three fields
+    // accepted by the Responses->Chat converter - respect it and don't
+    // inject a conflicting default.
+    if body.get("max_output_tokens").is_some()
+        || body.get("max_tokens").is_some()
+        || body.get("max_completion_tokens").is_some()
+    {
+        return false;
+    }
+    let Some(default) = codex_provider_default_max_output_tokens(provider) else {
+        return false;
+    };
+    body["max_output_tokens"] = JsonValue::Number(default.into());
+    true
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
@@ -558,6 +591,32 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
+}
+
+/// Extract a provider-level `max_output_tokens` default, checking the
+/// `settings_config.max_output_tokens` field first, then falling back to the
+/// TOML `config` string (top-level `max_output_tokens` key).
+fn codex_provider_default_max_output_tokens(provider: &Provider) -> Option<u64> {
+    provider
+        .settings_config
+        .get("max_output_tokens")
+        .and_then(|v| v.as_u64())
+        .filter(|&n| n > 0)
+        .or_else(|| {
+            provider
+                .settings_config
+                .get("config")
+                .and_then(|v| v.as_str())
+                .and_then(extract_codex_max_output_tokens_from_toml)
+        })
+}
+
+fn extract_codex_max_output_tokens_from_toml(config_text: &str) -> Option<u64> {
+    let doc = config_text.parse::<TomlValue>().ok()?;
+    doc.get("max_output_tokens")
+        .and_then(|v| v.as_integer())
+        .filter(|n| *n > 0)
+        .map(|n| n as u64)
 }
 
 fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
@@ -1508,5 +1567,250 @@ wire_api = "chat"
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_injected_from_settings_config() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(injected);
+        assert_eq!(
+            body.get("max_output_tokens").and_then(|v| v.as_u64()),
+            Some(8192)
+        );
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_injected_from_toml_config() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "glm"
+model = "glm-4.6"
+max_output_tokens = 16384
+
+[model_providers.glm]
+name = "GLM"
+base_url = "https://api.example.com/v1/chat/completions"
+wire_api = "chat"
+"#
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(injected);
+        assert_eq!(
+            body.get("max_output_tokens").and_then(|v| v.as_u64()),
+            Some(16384)
+        );
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_skipped_when_client_specified() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping",
+            "max_output_tokens": 2048
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(!injected);
+        // Client value preserved, not overwritten.
+        assert_eq!(
+            body.get("max_output_tokens").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_skipped_when_not_chat_provider() {
+        // wire_api = "responses" -> not a chat completions provider
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "openai"
+model = "o3"
+max_output_tokens = 8192
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "responses"
+"#
+        }));
+        let mut body = json!({
+            "model": "o3",
+            "input": "ping"
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(!injected);
+        assert!(body.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_skipped_when_not_configured() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions"
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(!injected);
+        assert!(body.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn test_default_max_output_tokens_skipped_when_zero() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 0
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+
+        assert!(!injected);
+        assert!(body.get("max_output_tokens").is_none());
+    }
+
+    // --- Conversion-level regression tests ---
+    // Verify that apply_codex_chat_default_max_output_tokens + the Responses->Chat
+    // converter never produce conflicting limit fields in the final output.
+
+    #[test]
+    fn conversion_default_injected_non_o_series_uses_max_tokens() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping"
+        });
+
+        apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
+
+        // Non-o-series: max_output_tokens maps to max_tokens only.
+        assert_eq!(
+            result.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(8192)
+        );
+        assert!(result.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn conversion_default_injected_o_series_uses_max_completion_tokens() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "o3",
+            "input": "ping"
+        });
+
+        apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
+
+        // O-series: max_output_tokens maps to max_completion_tokens only.
+        assert_eq!(
+            result.get("max_completion_tokens").and_then(|v| v.as_u64()),
+            Some(8192)
+        );
+        assert!(result.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn conversion_client_max_tokens_no_conflict_with_default() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "glm-4.6",
+            "input": "ping",
+            "max_tokens": 2048
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        assert!(!injected);
+
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
+
+        // Client's max_tokens preserved; no conflicting max_completion_tokens.
+        assert_eq!(
+            result.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
+        assert!(result.get("max_completion_tokens").is_none());
+        assert!(result.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn conversion_client_max_completion_tokens_no_conflict_with_default() {
+        let provider = create_provider(json!({
+            "base_url": "https://api.example.com/v1/chat/completions",
+            "max_output_tokens": 8192
+        }));
+        let mut body = json!({
+            "model": "o3",
+            "input": "ping",
+            "max_completion_tokens": 2048
+        });
+
+        let injected = apply_codex_chat_default_max_output_tokens(&provider, &mut body);
+        assert!(!injected);
+
+        let result =
+            super::super::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                body, None,
+            )
+            .unwrap();
+
+        // Client's max_completion_tokens preserved; no conflicting max_tokens.
+        assert_eq!(
+            result.get("max_completion_tokens").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
+        assert!(result.get("max_tokens").is_none());
+        assert!(result.get("max_output_tokens").is_none());
     }
 }
