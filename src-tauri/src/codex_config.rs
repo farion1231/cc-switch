@@ -21,6 +21,9 @@ pub const CC_SWITCH_CODEX_MODEL_PROVIDER_ID: &str = "custom";
 /// cleaned up without mistaking a user's own local provider for takeover.
 pub const CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID: &str = "cc-switch-official";
 pub const CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME: &str = "cc-switch-model-catalog.json";
+const CC_SWITCH_CODEX_CATALOG_METADATA_KEY: &str = "cc_switch";
+const CC_SWITCH_CODEX_CATALOG_METADATA_VERSION: u64 = 1;
+const CC_SWITCH_CODEX_LITE_OVERRIDES_KEY: &str = "use_responses_lite_overrides";
 const CODEX_PROXY_AUTH_PLACEHOLDER: &str = "PROXY_MANAGED";
 
 #[cfg(target_os = "windows")]
@@ -1044,7 +1047,27 @@ fn codex_model_catalog_from_specs(
         .map(|(index, spec)| codex_catalog_model_entry(template, spec, index, profile))
         .collect();
 
-    json!({ "models": entries })
+    // The rendered `use_responses_lite` value is profile-dependent: Chat and
+    // Anthropic catalogs force it off even when the user's stored choice is
+    // Auto or Enabled. Keep the original explicit overrides in cc-switch-only
+    // top-level metadata so reverse-parsing the generated catalog does not
+    // turn those derived values into new user choices. Codex's ModelsResponse
+    // ignores unknown top-level fields.
+    let use_responses_lite_overrides: serde_json::Map<String, Value> = specs
+        .iter()
+        .filter_map(|spec| {
+            spec.use_responses_lite
+                .map(|value| (spec.model.clone(), json!(value)))
+        })
+        .collect();
+
+    json!({
+        "models": entries,
+        (CC_SWITCH_CODEX_CATALOG_METADATA_KEY): {
+            "version": CC_SWITCH_CODEX_CATALOG_METADATA_VERSION,
+            (CC_SWITCH_CODEX_LITE_OVERRIDES_KEY): use_responses_lite_overrides,
+        }
+    })
 }
 
 fn codex_model_catalog_from_settings(
@@ -1188,6 +1211,11 @@ pub fn prepare_codex_config_text_with_model_catalog(
 /// the "user left it blank" intent across round-trip; an unavoidable edge case
 /// is that a user-typed value that happens to equal the fallback also collapses
 /// to blank, but the next save writes the same fallback so behavior is stable.
+/// `useResponsesLite` is restored only from cc-switch provenance metadata,
+/// never from the rendered model entry: the latter is an effective value that
+/// conversion profiles may force to `false`. Catalogs created before that
+/// metadata existed therefore migrate to Auto, which was their only possible
+/// user state before the three-way control was introduced.
 ///
 /// All failure modes (missing file, parse error, no `model_catalog_json`,
 /// entries without `slug`) collapse to `Ok(None)` so callers can treat this
@@ -1247,6 +1275,15 @@ pub(crate) fn resolve_cc_switch_catalog_path(
 fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) -> Option<Value> {
     let catalog: Value = serde_json::from_str(catalog_text).ok()?;
     let models = catalog.get("models").and_then(|m| m.as_array())?;
+    let use_responses_lite_overrides = catalog
+        .get(CC_SWITCH_CODEX_CATALOG_METADATA_KEY)
+        .and_then(Value::as_object)
+        .filter(|metadata| {
+            metadata.get("version").and_then(Value::as_u64)
+                == Some(CC_SWITCH_CODEX_CATALOG_METADATA_VERSION)
+        })
+        .and_then(|metadata| metadata.get(CC_SWITCH_CODEX_LITE_OVERRIDES_KEY))
+        .and_then(Value::as_object);
 
     let default_context_window =
         extract_codex_top_level_u64(config_text, "model_context_window").unwrap_or(128_000);
@@ -1282,7 +1319,9 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             obj.insert("contextWindow".to_string(), json!(context_window));
         }
 
-        if let Some(use_responses_lite) = entry.get("use_responses_lite").and_then(|v| v.as_bool())
+        if let Some(use_responses_lite) = use_responses_lite_overrides
+            .and_then(|overrides| overrides.get(model))
+            .and_then(Value::as_bool)
         {
             obj.insert("useResponsesLite".to_string(), json!(use_responses_lite));
         }
@@ -3539,6 +3578,13 @@ web_search = "disabled"
     fn build_simplified_catalog_round_trips_user_input() {
         let config = "";
         let catalog = r#"{
+            "cc_switch": {
+                "version": 1,
+                "use_responses_lite_overrides": {
+                    "deepseek-v4-pro": true,
+                    "deepseek-v4-flash": false
+                }
+            },
             "models": [
                 { "slug": "deepseek-v4-pro", "display_name": "deepseek-v4-pro", "context_window": 1000000, "use_responses_lite": true },
                 { "slug": "deepseek-v4-flash", "display_name": "DeepSeek Flash", "context_window": 1000000, "use_responses_lite": false }
@@ -3570,6 +3616,79 @@ web_search = "disabled"
             Some("DeepSeek Flash")
         );
         assert_eq!(models[1].get("useResponsesLite"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn responses_lite_override_provenance_survives_profile_projection() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "custom-enabled", "useResponsesLite": true },
+                    { "model": "custom-disabled", "useResponsesLite": false }
+                ]
+            }
+        });
+        let specs = codex_catalog_model_specs(&settings, "");
+        let catalog =
+            codex_model_catalog_from_specs(&specs, &json!({}), CodexCatalogToolProfile::ProxyChat);
+
+        for entry in catalog["models"].as_array().expect("models") {
+            assert_eq!(
+                entry["use_responses_lite"],
+                json!(false),
+                "ProxyChat must render Lite disabled for every row"
+            );
+        }
+        assert_eq!(
+            catalog[CC_SWITCH_CODEX_CATALOG_METADATA_KEY][CC_SWITCH_CODEX_LITE_OVERRIDES_KEY],
+            json!({
+                "custom-enabled": true,
+                "custom-disabled": false
+            })
+        );
+
+        let catalog_text = serde_json::to_string(&catalog).expect("serialize catalog");
+        let simplified =
+            build_simplified_catalog_from_texts("", &catalog_text).expect("reverse parse");
+        let models = simplified["models"].as_array().expect("models");
+        let entry = |slug: &str| {
+            models
+                .iter()
+                .find(|model| model["model"] == slug)
+                .unwrap_or_else(|| panic!("missing simplified row for {slug}"))
+        };
+
+        assert!(
+            entry("gpt-5.6-sol").get("useResponsesLite").is_none(),
+            "an automatic choice must stay automatic even though ProxyChat rendered false"
+        );
+        assert_eq!(
+            entry("custom-enabled").get("useResponsesLite"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            entry("custom-disabled").get("useResponsesLite"),
+            Some(&json!(false))
+        );
+    }
+
+    #[test]
+    fn unprovenanced_responses_lite_values_migrate_to_auto() {
+        let catalog = r#"{
+            "models": [
+                { "slug": "gpt-5.6-sol", "use_responses_lite": false },
+                { "slug": "custom", "use_responses_lite": true }
+            ]
+        }"#;
+        let simplified = build_simplified_catalog_from_texts("", catalog).expect("reverse parse");
+
+        for entry in simplified["models"].as_array().expect("models") {
+            assert!(
+                entry.get("useResponsesLite").is_none(),
+                "legacy effective values have no user-override provenance"
+            );
+        }
     }
 
     #[test]
