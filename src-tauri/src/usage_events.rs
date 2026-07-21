@@ -44,6 +44,9 @@ pub fn init(handle: AppHandle) {
 /// 调用方**不**需要持有 AppHandle，可以从任意线程/任意写入路径调用。
 /// 内部 200ms 防抖合并，绝不阻塞调用线程。
 pub fn notify_log_recorded() {
+    #[cfg(test)]
+    TEST_NOTIFY_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+
     // AppHandle 未注入（典型出现在单元测试或 setup 之前）：直接放弃。
     let Some(handle) = APP_HANDLE.get() else {
         return;
@@ -65,4 +68,14 @@ pub fn notify_log_recorded() {
             log::warn!("emit {EVENT_USAGE_LOG_RECORDED} 失败: {e}");
         }
     });
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_NOTIFY_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_test_notify_count() -> u32 {
+    TEST_NOTIFY_COUNT.with(|count| count.replace(0))
 }

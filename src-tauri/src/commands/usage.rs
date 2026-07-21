@@ -275,52 +275,47 @@ pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Res
 
 /// 手动触发会话日志同步
 #[tauri::command]
-pub fn sync_session_usage(
+pub async fn sync_session_usage(
     state: State<'_, AppState>,
 ) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
-    // 同步 Claude 会话日志
-    let mut result = crate::services::session_usage::sync_claude_session_logs(&state.db)?;
+    let db = state.db.clone();
+    let _guard = crate::services::session_usage::session_sync_mutex()
+        .lock()
+        .await;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::session_usage::sync_all_unlocked(&db)
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("会话用量同步任务失败: {error}")))
+}
 
-    // 同步 Codex 使用数据
-    match crate::services::session_usage_codex::sync_codex_usage(&state.db) {
-        Ok(codex_result) => {
-            result.imported += codex_result.imported;
-            result.skipped += codex_result.skipped;
-            result.files_scanned += codex_result.files_scanned;
-            result.errors.extend(codex_result.errors);
-        }
-        Err(e) => {
-            result.errors.push(format!("Codex 同步失败: {e}"));
-        }
-    }
+/// Codex reset 成功后，无论重导是否导入新行或返回错误，都必须通知前端刷新。
+/// 调用方应只在 reset 成功后调用，避免把未发生的数据变更误报为重建完成。
+fn finish_codex_rebuild(
+    result: Result<crate::services::session_usage::SessionSyncResult, AppError>,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    crate::usage_events::notify_log_recorded();
+    result
+}
 
-    // 同步 Gemini 使用数据
-    match crate::services::session_usage_gemini::sync_gemini_usage(&state.db) {
-        Ok(gemini_result) => {
-            result.imported += gemini_result.imported;
-            result.skipped += gemini_result.skipped;
-            result.files_scanned += gemini_result.files_scanned;
-            result.errors.extend(gemini_result.errors);
-        }
-        Err(e) => {
-            result.errors.push(format!("Gemini 同步失败: {e}"));
-        }
-    }
-
-    // 同步 OpenCode 使用数据
-    match crate::services::session_usage_opencode::sync_opencode_usage(&state.db) {
-        Ok(opencode_result) => {
-            result.imported += opencode_result.imported;
-            result.skipped += opencode_result.skipped;
-            result.files_scanned += opencode_result.files_scanned;
-            result.errors.extend(opencode_result.errors);
-        }
-        Err(e) => {
-            result.errors.push(format!("OpenCode 同步失败: {e}"));
-        }
-    }
-
-    Ok(result)
+/// 备份数据库后，仅重建 Codex session 用量。锁覆盖 backup → reset → import
+/// 整个序列，避免后台同步在清理和重导之间插入数据。
+#[tauri::command]
+pub async fn rebuild_codex_usage(
+    state: State<'_, AppState>,
+) -> Result<crate::services::session_usage::SessionSyncResult, AppError> {
+    let db = state.db.clone();
+    let _guard = crate::services::session_usage::session_sync_mutex()
+        .lock()
+        .await;
+    tauri::async_runtime::spawn_blocking(move || {
+        db.backup_database_file()?;
+        db.reset_codex_usage()?;
+        let result = crate::services::session_usage_codex::sync_codex_usage(&db);
+        finish_codex_rebuild(result)
+    })
+    .await
+    .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
 }
 
 /// 获取数据来源分布
@@ -341,4 +336,34 @@ pub struct ModelPricingInfo {
     pub output_cost_per_million: String,
     pub cache_read_cost_per_million: String,
     pub cache_creation_cost_per_million: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_rebuild_notifies_when_reimport_is_empty() {
+        crate::usage_events::take_test_notify_count();
+
+        let result = finish_codex_rebuild(Ok(
+            crate::services::session_usage::SessionSyncResult::default(),
+        ))
+        .expect("空重导应成功");
+
+        assert_eq!(result.imported, 0);
+        assert_eq!(crate::usage_events::take_test_notify_count(), 1);
+    }
+
+    #[test]
+    fn codex_rebuild_notifies_when_reimport_fails_after_reset() {
+        crate::usage_events::take_test_notify_count();
+
+        let result = finish_codex_rebuild(Err(AppError::Message(
+            "synthetic reimport failure".to_string(),
+        )));
+
+        assert!(result.is_err());
+        assert_eq!(crate::usage_events::take_test_notify_count(), 1);
+    }
 }
