@@ -188,7 +188,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     auth: grokAuth(),
     config: grokPresetConfig("ZetaAPI", "https://api.zetaapi.ai/v1"),
     endpointCandidates: ["https://api.zetaapi.ai/v1"],

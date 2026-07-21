@@ -407,7 +407,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       baseUrl: "https://api.zetaapi.ai/v1",
       apiKey: "",

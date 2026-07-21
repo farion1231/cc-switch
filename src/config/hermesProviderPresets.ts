@@ -192,7 +192,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       name: "zetaapi",
       base_url: "https://api.zetaapi.ai/v1",

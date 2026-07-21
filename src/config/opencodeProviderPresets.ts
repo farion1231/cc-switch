@@ -377,7 +377,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "ZetaAPI",
