@@ -60,7 +60,7 @@ export interface ProviderPreset {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -275,7 +275,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.zetaapi.ai",
@@ -801,7 +801,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://apinebula.com",
@@ -837,7 +837,7 @@ export const providerPresets: ProviderPreset[] = [
     icon: "atlascloud",
   },
   {
-    name: "SudoCode",
+    name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
@@ -853,6 +853,22 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "sudocode",
     icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://sudocode.us",
+        ANTHROPIC_AUTH_TOKEN: "",
+        API_TIMEOUT_MS: "300000",
+      },
+    },
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "ClaudeAPI",
@@ -1251,6 +1267,26 @@ export const providerPresets: ProviderPreset[] = [
     providerType: "codex_oauth",
     requiresOAuth: true,
     icon: "openai",
+    iconColor: "#000000",
+  },
+  {
+    name: "xAI (Grok)",
+    websiteUrl: "https://x.ai/grok",
+    settingsConfig: {
+      env: {
+        // The proxy enforces both this origin and the Responses wire format.
+        ANTHROPIC_BASE_URL: "https://api.x.ai/v1",
+        ANTHROPIC_MODEL: "grok-4.5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "grok-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "grok-4.5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "grok-4.5",
+      },
+    },
+    category: "third_party",
+    apiFormat: "openai_responses",
+    providerType: "xai_oauth",
+    requiresOAuth: true,
+    icon: "xai",
     iconColor: "#000000",
   },
   {

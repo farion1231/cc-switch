@@ -416,6 +416,42 @@ pub(crate) fn has_matching_proxy_usage_log(
     .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
 }
 
+pub(crate) fn has_suspected_codex_session_duplicate(
+    conn: &Connection,
+    request_id: &str,
+    key: &DedupKey,
+) -> Result<bool, AppError> {
+    let data_source = data_source_expr("l");
+    let sql = format!(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM proxy_request_logs l
+            WHERE l.app_type = 'codex'
+              AND {data_source} = 'codex_session'
+              AND l.request_id <> ?1
+              AND LOWER(l.model) = LOWER(?2)
+              AND l.input_tokens = ?3
+              AND l.output_tokens = ?4
+              AND l.cache_read_tokens = ?5
+              AND l.created_at BETWEEN ?6 - ?7 AND ?6 + ?7
+        )"
+    );
+    conn.query_row(
+        &sql,
+        params![
+            request_id,
+            key.model,
+            key.input_tokens as i64,
+            key.output_tokens as i64,
+            key.cache_read_tokens as i64,
+            key.created_at,
+            SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+        ],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|error| AppError::Database(format!("查询疑似重复 Codex 会话用量失败: {error}")))
+}
+
 #[derive(Debug, Clone, Default)]
 struct RollupDateBounds {
     start: Option<String>,

@@ -259,6 +259,8 @@
     "proxyReasonOpenAIResponses": "OpenAI Responses API フォーマットを使用しており",
     "proxyReasonAnthropicMessages": "Anthropic Messages API フォーマットを使用しており",
     "proxyReasonFullUrl": "完全 URL 接続モードが有効になっており",
+    "proxyReasonManagedOAuth": "マネージド OAuth ログイン（トークンはローカルルーティングが注入）を使用しており",
+    "proxyReasonRoutingRequired": "リクエスト処理にローカルルーティングが必要であり",
     "openAIFormatHint": "このプロバイダーは OpenAI 互換フォーマットを使用しており、ルーティングサービスの有効化が必要です",
     "copilotProxyHint": "GitHub Copilot を Claude プロバイダーとして使用する場合、ローカルルーティングが常に必要です。ルーティングは現在のモデルに応じて Chat Completions または Responses を自動的に選択します。",
     "openLinkFailed": "リンクを開けませんでした",
@@ -326,7 +328,8 @@
       "description": "Claude Code で他のサブスクリプションをご利用いただけます。コンプライアンスリスクにご注意ください。",
       "beta": "Beta",
       "copilotDescription": "GitHub Copilot アカウントを管理します",
-      "codexOauthDescription": "ChatGPT アカウントを管理します"
+      "codexOauthDescription": "ChatGPT アカウントを管理します",
+      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
     },
     "advanced": {
       "configDir": {
@@ -397,10 +400,10 @@
         "cacheInjectionDescription": "リクエストの重要な位置に標準の 5 分間 Cache ブレークポイントを自動注入し、重複トークンの課金を削減"
       },
       "logConfig": {
-        "title": "ログ管理",
-        "description": "ログ出力レベルを制御",
-        "enabled": "ログを有効化",
-        "enabledDescription": "マスタースイッチ、オフにするとすべてのログが無効になります",
+        "title": "アプリ診断ログ",
+        "description": "アプリ診断ログの出力レベルを制御",
+        "enabled": "診断ログを有効化",
+        "enabledDescription": "cc-switch.log を制御します。リクエスト使用量記録と crash.log には影響しません",
         "level": "ログレベル",
         "levelDescription": "出力する最小ログレベルを設定",
         "levels": {
@@ -1014,6 +1017,7 @@
     "customApiKeyHint": "💡 カスタム設定では必要な項目をすべて手動で入力してください",
     "omoHint": "💡 OMO 設定は Agent のモデル割り当てを管理し、oh-my-openagent.jsonc / oh-my-opencode.jsonc の両方に対応します",
     "officialHint": "💡 公式プロバイダーはブラウザログインで、API Key は不要です",
+    "providerKeyStatusLoading": "プロバイダー識別子の状態を読み込んでいます。しばらくしてからもう一度お試しください",
     "getApiKey": "API Key を取得",
     "partnerPromotion": {
       "sudocode": "SudoCode の1つのキーで、Claude Code と Claude Desktop では Claude Opus 4.8、Codex では GPT-5.6 を利用できます。登録後 QQ グループ 726213516 に参加し、管理者へ連絡すると CNY ¥10 のトライアルクレジットを受け取れます。",
@@ -1221,6 +1225,31 @@
     "copyCode": "コードをコピー",
     "fastMode": "FAST モード",
     "fastModeDescription": "低遅延のため service_tier=\"priority\" を送信します。既定ではオフ——オンにすると ChatGPT のクォータがより速く消費されます。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 認証",
+    "accountCount": "利用可能なアカウント: {{count}} 件",
+    "reauthRequired": "再ログインが必要です",
+    "notAuthenticated": "未認証",
+    "selectAccount": "アカウントを選択",
+    "selectAccountPlaceholder": "xAI アカウントを選択",
+    "useDefaultAccount": "デフォルトアカウントを使用",
+    "accounts": "xAI アカウント",
+    "defaultAccount": "デフォルト",
+    "expired": "認証情報が失効しました",
+    "setAsDefault": "デフォルトに設定",
+    "removeAccount": "アカウントを削除",
+    "addOrReauth": "アカウントを追加または再ログイン",
+    "login": "xAI でログイン",
+    "waitingForAuth": "xAI の認証を待っています…",
+    "enterCode": "ブラウザに自動入力されていない場合は、次を入力してください：",
+    "retry": "再試行",
+    "logoutAll": "すべての xAI アカウントを削除",
+    "loginRequired": "先に xAI アカウントへログインしてください"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "リンクされたアカウントが存在しないか、再ログインが必要です",
+    "selectedAccountUnavailable": "リンクされたアカウントが存在しないか、再ログインが必要です。別のアカウントを選択してください"
   },
   "endpointTest": {
     "title": "API エンドポイント管理",
@@ -1492,6 +1521,17 @@
       "upToDate": "セッションログは最新です",
       "failed": "セッション同期に失敗しました"
     },
+    "rebuildCodex": {
+      "title": "Codex 使用量メンテナンス",
+      "description": "ローカルの rollout ログから Codex セッション使用量を再構築します",
+      "warning": "最初にデータベースを自動バックアップします。元の JSONL が削除済みの履歴は再インポートできません。",
+      "action": "Codex 使用量を再構築",
+      "confirmTitle": "Codex 使用量を再構築しますか？",
+      "confirmMessage": "既存の Codex セッション明細と集計を削除し、ローカルの Codex ログから再インポートします。\n\n削除済みログの履歴は失われます。親 rollout がない fork は保留されます。",
+      "confirmAction": "バックアップして再構築",
+      "completed": "再構築完了：{{imported}} 件インポート、{{errors}} 件エラー、重複候補 {{suspected}} 件、保留ファイル {{deferred}} 件",
+      "failed": "Codex 使用量の再構築に失敗しました：{{error}}"
+    },
     "totalRecords": "全 {{total}} 件",
     "goToPage": "移動",
     "pageInputPlaceholder": "ページ",
@@ -1701,7 +1741,10 @@
   "errors": {
     "usage_query_failed": "利用状況の取得に失敗しました",
     "configLoadFailedTitle": "設定の読み込みに失敗しました",
-    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。"
+    "configLoadFailedMessage": "設定ファイルを読み込めません:\n{{path}}\n\nエラー詳細:\n{{detail}}\n\nJSON が正しいか確認するか、同じディレクトリのバックアップファイル（config.json.bak など）から復元してください。\n\nアプリを終了して修正してください。",
+    "frontendCrashTitle": "画面で問題が発生しました",
+    "frontendCrashMessage": "エラー情報をアプリ診断ログに保存しようとしました。画面を再読み込みし、問題が続く場合は Issue にログを添付してください。",
+    "reloadInterface": "画面を再読み込み"
   },
   "presetSelector": {
     "title": "設定タイプを選択",
@@ -2533,8 +2576,8 @@
           "description": "単一リクエストの最大待機時間（0 = 無制限、または 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "ログ記録を有効化",
-          "description": "トラブルシューティングのためにすべてのルーティングリクエストを記録"
+          "label": "リクエスト使用量を記録",
+          "description": "ルーティングリクエストの使用量と状態をローカル統計データベースに保存"
         },
         "streamingFirstByteTimeout": {
           "label": "ストリーミング初回バイトタイムアウト（秒）",
