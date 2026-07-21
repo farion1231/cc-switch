@@ -315,7 +315,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     auth: grokAuth(),
     config: grokPresetConfig("APINebula", "https://apinebula.com/v1"),
     endpointCandidates: ["https://apinebula.com/v1"],
