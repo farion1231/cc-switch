@@ -1478,7 +1478,12 @@ impl RequestForwarder {
         let is_count_tokens = is_count_tokens_endpoint(endpoint);
 
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mut mapped_body = normalize_thinking_type(mapped_body);
+        // count_tokens 透传：跳过 thinking 类型规范，保留客户端原始 body。
+        let mut mapped_body = if is_count_tokens {
+            mapped_body
+        } else {
+            normalize_thinking_type(mapped_body)
+        };
         let is_copilot_codex_responses = matches!(app_type, AppType::Codex)
             && is_copilot
             && super::providers::is_codex_responses_endpoint(endpoint);
@@ -1707,7 +1712,8 @@ impl RequestForwarder {
         } else {
             None
         };
-        if adapter.name() == "Claude" {
+        // count_tokens 透传：跳过 Claude 的 thinking/media 内容改写，保留客户端原始 body。
+        if adapter.name() == "Claude" && !is_count_tokens {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
                 // 主动剥离 thinking block — Copilot 的 OpenAI 兼容端点不识别该块，避免上游拒绝后
                 // 由 rectifier 反应式重试（首次请求已消耗 quota）。原生 Messages 透传保留它们：
@@ -1723,11 +1729,7 @@ impl RequestForwarder {
                     provider,
                     api_format,
                 );
-                // count_tokens 的 body 结构本身就是计数输入，不能做 media 剥离，
-                // 否则 Desktop 看到的上下文占用会系统性偏低。
-                if !is_count_tokens {
-                    self.apply_media_prevention(&mut mapped_body, provider);
-                }
+                self.apply_media_prevention(&mut mapped_body, provider);
             }
         }
         // count_tokens 永远透传：忽略 apiFormat 的 openai/gemini 转换开关。
@@ -1735,9 +1737,7 @@ impl RequestForwarder {
             false
         } else {
             match resolved_claude_api_format.as_deref() {
-                Some(api_format) => {
-                    super::providers::claude_api_format_needs_transform(api_format)
-                }
+                Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
                 None => adapter.needs_transform(provider),
             }
         };
