@@ -20,7 +20,8 @@ CC Switch User Manual
 │   ├── 2.3 Edit Provider
 │   ├── 2.4 Sort & Duplicate
 │   ├── 2.5 Usage Query
-│   └── 2.6 Claude Desktop
+│   ├── 2.6 Claude Desktop
+│   └── 2.7 Codex Memories
 │
 ├── 3. Extensions
 │   ├── 3.1 MCP Server Management
@@ -65,6 +66,7 @@ CC Switch User Manual
 | [2.4-sort-duplicate.md](./2-providers/2.4-sort-duplicate.md) | Drag-to-reorder, duplicate provider, delete |
 | [2.5-usage-query.md](./2-providers/2.5-usage-query.md) | Usage query, remaining balance, multi-plan display |
 | [2.6-claude-desktop.md](./2-providers/2.6-claude-desktop.md) | Claude Desktop third-party providers, direct mode, and model mapping |
+| [2.7-codex-memories.md](./2-providers/2.7-codex-memories.md) | Codex Memories / Chronicle, model-sync toggle for custom providers |
 
 ### 3. Extensions
 
@@ -101,6 +103,7 @@ CC Switch User Manual
 - **Installation issues**: See [1.2 Installation Guide](./1-getting-started/1.2-installation.md)
 - **Configure providers**: See [2.1 Add Provider](./2-providers/2.1-add.md)
 - **Use Claude Desktop**: See [2.6 Claude Desktop](./2-providers/2.6-claude-desktop.md)
+- **Codex memories not working**: See [2.7 Codex Memories](./2-providers/2.7-codex-memories.md)
 - **Using proxy**: See [4.1 Proxy Service](./4-proxy/4.1-service.md)
 - **Having trouble**: See [5.2 FAQ](./5-faq/5.2-questions.md)
 

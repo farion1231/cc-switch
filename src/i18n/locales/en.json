@@ -1277,6 +1277,8 @@
     "enableGoalMode": "Enable Goal mode",
     "enableRemoteCompaction": "Enable remote compaction",
     "remoteCompactionHint": "When enabled, the active model_providers entry name is written as OpenAI so Codex can try remote compaction.",
+    "enableMemories": "Enable Codex memories",
+    "memoriesHint": "When enabled, cc-switch manages three things at once: (1) writes [memories].extract_model and [memories].consolidation_model from the active model on every switch so Codex's memory/chronicle backend always uses a model your current provider serves; (2) writes [features].memories = true, the Codex feature flag that actually turns the memory feature on. When disabled, only those three keys are removed; other [memories] fields (generate_memories, use_memories, disable_on_external_context, min_rate_limit_remaining_percent) and other [features] fields are preserved. Note: cc-switch owns the [features].memories key regardless of value — a hand-written `false` is also cleared on disable. See https://developers.openai.com/codex/memories for details.",
     "apiUrlLabel": "API Request URL",
     "extractFromCurrent": "Extract from Editor",
     "extractNoCommonConfig": "No common config available to extract from editor",

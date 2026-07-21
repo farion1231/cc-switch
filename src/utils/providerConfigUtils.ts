@@ -394,6 +394,18 @@ const TOML_PROVIDER_NAME_REPLACE_PATTERN =
 const TOML_GOALS_FEATURE_PATTERN = /^\s*goals\s*=\s*(true|false)\s*(?:#.*)?$/;
 const TOML_GOALS_FEATURE_REPLACE_PATTERN =
   /^(\s*goals\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
+const TOML_MEMORIES_EXTRACT_MODEL_PATTERN =
+  /^\s*extract_model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN =
+  /^(\s*extract_model\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
+const TOML_MEMORIES_CONSOLIDATION_MODEL_PATTERN =
+  /^\s*consolidation_model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN =
+  /^(\s*consolidation_model\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
+const TOML_FEATURES_MEMORIES_PATTERN =
+  /^\s*memories\s*=\s*(true|false)\s*(?:#.*)?$/;
+const TOML_FEATURES_MEMORIES_REPLACE_PATTERN =
+  /^(\s*memories\s*=\s*)(true|false)(\s*(?:#.*)?)$/;
 const CODEX_RESERVED_MODEL_PROVIDER_IDS = new Set([
   "amazon-bedrock",
   "openai",
@@ -1059,6 +1071,334 @@ export const setCodexRemoteCompaction = (
   targetSectionRange = getTomlSectionRange(lines, targetSectionName);
   return targetSectionRange ? finalizeTomlText(lines) : normalizedText;
 };
+
+// ========== Codex 记忆功能状态工具 ==========
+//
+// cc-switch 的「启用 Codex 记忆功能」开关同步管理三处：
+//   - [memories].extract_model  / [memories].consolidation_model
+//   - [features].memories  （Codex 真正启用记忆功能的 feature flag）
+//
+// 后者是 feature flag；前者是后端用哪个模型跑记忆抽取/整合。
+//
+// 关闭开关时只删这三处键，其他 [memories] / [features] 字段
+// （generate_memories / use_memories / disable_on_external_context /
+// min_rate_limit_remaining_percent / web_search 等）原样保留；
+// 段变空则整段删除。空 model 时整体 no-op（不写半成品配置）。
+
+export type CodexMemoriesState = {
+  extractModel?: string;
+  consolidationModel?: string;
+  /** `[features].memories` 显式为 true/false；缺失/非 bool 则 undefined */
+  featuresMemories?: boolean;
+};
+
+const isCodexMemoriesStateEnabled = (
+  state: CodexMemoriesState | null,
+): boolean => {
+  if (!state) return false;
+  return (
+    typeof state.extractModel === "string" ||
+    typeof state.consolidationModel === "string" ||
+    state.featuresMemories === true
+  );
+};
+
+export const extractCodexMemoriesModels = (
+  configText: string | undefined | null,
+): CodexMemoriesState | null => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    const text = normalizeTomlText(raw);
+    if (!text) return null;
+    const lines = text.split("\n");
+
+    const memoriesRange = getTomlSectionRange(lines, "memories");
+    const featuresRange = getTomlSectionRange(lines, "features");
+
+    const extractMatch = memoriesRange
+      ? findTomlAssignmentInRange(
+          lines,
+          TOML_MEMORIES_EXTRACT_MODEL_PATTERN,
+          memoriesRange.bodyStartIndex,
+          memoriesRange.bodyEndIndex,
+        )
+      : undefined;
+    const consolidationMatch = memoriesRange
+      ? findTomlAssignmentInRange(
+          lines,
+          TOML_MEMORIES_CONSOLIDATION_MODEL_PATTERN,
+          memoriesRange.bodyStartIndex,
+          memoriesRange.bodyEndIndex,
+        )
+      : undefined;
+    const featuresMatch = featuresRange
+      ? findTomlAssignmentInRange(
+          lines,
+          TOML_FEATURES_MEMORIES_PATTERN,
+          featuresRange.bodyStartIndex,
+          featuresRange.bodyEndIndex,
+        )
+      : undefined;
+
+    const extractModel = extractMatch?.value;
+    const consolidationModel = consolidationMatch?.value;
+    const featuresMemories =
+      typeof featuresMatch?.value === "string"
+        ? featuresMatch.value.trim() === "true"
+        : undefined;
+
+    // 三处全空时返回 null，等价「未启用」——与 sync effect 配合
+    if (
+      typeof extractModel !== "string" &&
+      typeof consolidationModel !== "string" &&
+      featuresMemories !== true
+    ) {
+      return null;
+    }
+
+    return {
+      extractModel: extractModel,
+      consolidationModel: consolidationModel,
+      featuresMemories: featuresMemories,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export const setCodexMemoriesSection = (
+  configText: string,
+  enabled: boolean,
+  extractModel: string,
+  consolidationModel: string,
+): string => {
+  const normalizedText = normalizeTomlText(configText);
+  const lines = normalizedText ? normalizedText.split("\n") : [];
+
+  if (!enabled) {
+    return removeCodexMemoriesTargets(lines, normalizedText);
+  }
+
+  const extractTrimmed = extractModel.trim();
+  const consolidationTrimmed = consolidationModel.trim();
+
+  // 防御：开启状态下若两个目标值都为空（用户尚未设置顶层 model），
+  // 整体 no-op——既不写 model 字段，也不写 [features].memories = true。
+  if (!extractTrimmed && !consolidationTrimmed) {
+    return normalizedText;
+  }
+
+  // 短路：现状已与目标一致时直接返回原文，避免无谓的 mtime 抖动。
+  const current = extractCodexMemoriesModels(normalizedText);
+  if (
+    current &&
+    current.extractModel === extractTrimmed &&
+    current.consolidationModel === consolidationTrimmed &&
+    current.featuresMemories === true
+  ) {
+    return normalizedText;
+  }
+
+  upsertCodexMemoriesTable(lines, extractTrimmed, consolidationTrimmed);
+  upsertCodexFeaturesMemoriesFlag(lines);
+  return finalizeTomlText(lines);
+};
+
+/**
+ * 关闭开关：移除 [memories] 段内两个 model 字段 + [features].memories。
+ * 段内若无其他键则整段删除；三处键全无时整体 no-op（不返回规范化后的文本）。
+ *
+ * 注意：替换用 callback replacer 而非字符串 replacer，避免 `String.replace`
+ * 对 `$1` / `$$` / `$&` 的展开——模型 ID 含 `$` 时会破坏 TOML。
+ */
+const removeCodexMemoriesTargets = (
+  lines: string[],
+  normalizedText: string,
+): string => {
+  const memoriesRange = getTomlSectionRange(lines, "memories");
+  const featuresRange = getTomlSectionRange(lines, "features");
+
+  const hasExtract = memoriesRange
+    ? findTomlLineInRange(
+        lines,
+        TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN,
+        memoriesRange.bodyStartIndex,
+        memoriesRange.bodyEndIndex,
+      ) !== -1
+    : false;
+  const hasConsolidation = memoriesRange
+    ? findTomlLineInRange(
+        lines,
+        TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN,
+        memoriesRange.bodyStartIndex,
+        memoriesRange.bodyEndIndex,
+      ) !== -1
+    : false;
+  const hasFeaturesFlag = featuresRange
+    ? findTomlLineInRange(
+        lines,
+        TOML_FEATURES_MEMORIES_REPLACE_PATTERN,
+        featuresRange.bodyStartIndex,
+        featuresRange.bodyEndIndex,
+      ) !== -1
+    : false;
+
+  if (!hasExtract && !hasConsolidation && !hasFeaturesFlag) {
+    return normalizedText;
+  }
+
+  // [memories] 段处理
+  if (memoriesRange) {
+    if (hasExtract) {
+      const idx = findTomlLineInRange(
+        lines,
+        TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN,
+        memoriesRange.bodyStartIndex,
+        memoriesRange.bodyEndIndex,
+      );
+      if (idx !== -1) lines.splice(idx, 1);
+    }
+    const memoriesAfter = getTomlSectionRange(lines, "memories");
+    if (memoriesAfter) {
+      if (hasConsolidation) {
+        const idx = findTomlLineInRange(
+          lines,
+          TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN,
+          memoriesAfter.bodyStartIndex,
+          memoriesAfter.bodyEndIndex,
+        );
+        if (idx !== -1) lines.splice(idx, 1);
+      }
+      // 段变空则整段删除
+      const finalRange = getTomlSectionRange(lines, "memories");
+      if (finalRange && !hasTomlSectionBodyContent(lines, finalRange)) {
+        lines.splice(
+          finalRange.headerLineIndex,
+          finalRange.bodyEndIndex - finalRange.headerLineIndex,
+        );
+      }
+    }
+  }
+
+  // [features] 段处理（独立处理，不与 memories 联动）
+  const featuresRangeAfter = getTomlSectionRange(lines, "features");
+  if (featuresRangeAfter && hasFeaturesFlag) {
+    const idx = findTomlLineInRange(
+      lines,
+      TOML_FEATURES_MEMORIES_REPLACE_PATTERN,
+      featuresRangeAfter.bodyStartIndex,
+      featuresRangeAfter.bodyEndIndex,
+    );
+    if (idx !== -1) lines.splice(idx, 1);
+    const finalFeatures = getTomlSectionRange(lines, "features");
+    if (finalFeatures && !hasTomlSectionBodyContent(lines, finalFeatures)) {
+      lines.splice(
+        finalFeatures.headerLineIndex,
+        finalFeatures.bodyEndIndex - finalFeatures.headerLineIndex,
+      );
+    }
+  }
+
+  return finalizeTomlText(lines);
+};
+
+const upsertCodexMemoriesTable = (
+  lines: string[],
+  extractTrimmed: string,
+  consolidationTrimmed: string,
+): void => {
+  let memoriesRange = getTomlSectionRange(lines, "memories");
+
+  if (memoriesRange) {
+    const extractIndex = findTomlLineInRange(
+      lines,
+      TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN,
+      memoriesRange.bodyStartIndex,
+      memoriesRange.bodyEndIndex,
+    );
+    if (extractIndex !== -1) {
+      // callback replacer 避免 `$` 展开坑——模型 ID 含 `$` 时字符串
+      // replacer 会把 `$1` 之类展开成捕获组值
+      lines[extractIndex] = lines[extractIndex].replace(
+        TOML_MEMORIES_EXTRACT_MODEL_REPLACE_PATTERN,
+        (_match, p1: string, p2: string) =>
+          `${p1}${tomlBasicString(extractTrimmed)}${p2}`,
+      );
+    } else {
+      lines.splice(
+        getTomlSectionInsertIndex(lines, memoriesRange),
+        0,
+        `extract_model = ${tomlBasicString(extractTrimmed)}`,
+      );
+    }
+
+    // 重新定位
+    memoriesRange = getTomlSectionRange(lines, "memories") ?? memoriesRange;
+    const consolidationIndex = findTomlLineInRange(
+      lines,
+      TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN,
+      memoriesRange.bodyStartIndex,
+      memoriesRange.bodyEndIndex,
+    );
+    if (consolidationIndex !== -1) {
+      lines[consolidationIndex] = lines[consolidationIndex].replace(
+        TOML_MEMORIES_CONSOLIDATION_MODEL_REPLACE_PATTERN,
+        (_match, p1: string, p2: string) =>
+          `${p1}${tomlBasicString(consolidationTrimmed)}${p2}`,
+      );
+    } else {
+      lines.splice(
+        getTomlSectionInsertIndex(lines, memoriesRange),
+        0,
+        `consolidation_model = ${tomlBasicString(consolidationTrimmed)}`,
+      );
+    }
+    return;
+  }
+
+  // 段不存在：追加
+  if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+    lines.push("");
+  }
+  lines.push(
+    "[memories]",
+    `extract_model = ${tomlBasicString(extractTrimmed)}`,
+    `consolidation_model = ${tomlBasicString(consolidationTrimmed)}`,
+  );
+};
+
+const upsertCodexFeaturesMemoriesFlag = (lines: string[]): void => {
+  const featuresRange = getTomlSectionRange(lines, "features");
+  const flagLine = `memories = true`;
+
+  if (featuresRange) {
+    const idx = findTomlLineInRange(
+      lines,
+      TOML_FEATURES_MEMORIES_REPLACE_PATTERN,
+      featuresRange.bodyStartIndex,
+      featuresRange.bodyEndIndex,
+    );
+    if (idx !== -1) {
+      lines[idx] = lines[idx].replace(
+        TOML_FEATURES_MEMORIES_REPLACE_PATTERN,
+        (_match, p1: string, _p2: string, p3: string) => `${p1}true${p3}`,
+      );
+      return;
+    }
+    // 段内无此 key：插到段尾
+    lines.splice(getTomlSectionInsertIndex(lines, featuresRange), 0, flagLine);
+    return;
+  }
+
+  // 段不存在：追加
+  if (lines.length > 0 && lines[lines.length - 1].trim() !== "") {
+    lines.push("");
+  }
+  lines.push("[features]", flagLine);
+};
+
+// 重新导出供组件层使用「开关是否亮」时计算
+export { isCodexMemoriesStateEnabled };
 
 // 从 Codex 的 TOML 配置文本中提取 base_url（支持单/双引号）
 export const extractCodexBaseUrl = (

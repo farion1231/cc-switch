@@ -39,6 +39,10 @@ interface CodexConfigEditorProps {
   onExtract?: () => void;
 
   isExtracting?: boolean;
+
+  /** 「启用 Codex 记忆功能」开关：开启时把 [memories] 段的两个模型字段
+   *  同步为顶层 model。状态由 TOML 段存在性反推，无需回调。 */
+  memoriesEnabled?: boolean;
 }
 
 const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
@@ -60,6 +64,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
   configError,
   onExtract,
   isExtracting,
+  memoriesEnabled = false,
 }) => {
   const { t } = useTranslation();
   const [isCommonConfigModalOpen, setIsCommonConfigModalOpen] = useState(false);
@@ -100,6 +105,7 @@ const CodexConfigEditor: React.FC<CodexConfigEditorProps> = ({
         commonConfigError={commonConfigError}
         configError={configError}
         isProxyTakeover={isProxyTakeover}
+        memoriesEnabled={memoriesEnabled}
       />
 
       {/* Common Config Modal */}
