@@ -275,7 +275,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.zetaapi.ai",

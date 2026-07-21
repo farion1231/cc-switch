@@ -216,7 +216,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     category: "aggregator",
     baseUrl: "https://api.zetaapi.ai",
     mode: "direct",
