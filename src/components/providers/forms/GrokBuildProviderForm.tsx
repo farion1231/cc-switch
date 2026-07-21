@@ -33,9 +33,10 @@ import { BasicFormFields } from "./BasicFormFields";
 import { CodexFormFields } from "./CodexFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import {
-  codexProviderPresets,
-  type CodexProviderPreset,
-} from "@/config/codexProviderPresets";
+  grokBuildOfficialPreset,
+  grokBuildProviderPresets,
+  type GrokBuildProviderPreset,
+} from "@/config/grokBuildProviderPresets";
 import {
   codexApiFormatFromWireApi,
   extractCodexBaseUrl,
@@ -53,36 +54,17 @@ import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
-// 官方条目与后端 seed（providers_seed.rs 的 "Grok Official"）对应：
-// 空 config = 不写自定义模型表，Grok CLI 回落到自带的 xAI OAuth 登录。
-// 预设 id 复用固定 provider id，AddProviderDialog 据此走 ensure seed 流程。
-const grokOfficialPreset: CodexProviderPreset = {
-  name: "Grok Official",
-  websiteUrl: "https://x.ai/grok",
-  isOfficial: true,
-  category: "official",
-  auth: {},
-  config: "",
-  icon: "grok",
-  iconColor: "currentColor",
-};
-
+// 预设列表见 grokBuildProviderPresets.ts：独立维护（与 Codex 预设无联动），
+// 不含官方 / OAuth / 国产官方直连 / 纯开源托管站，默认模型为 Grok 系。
 const grokPresetEntries: Array<{
   id: string;
-  preset: CodexProviderPreset;
+  preset: GrokBuildProviderPreset;
 }> = [
-  { id: GROKBUILD_OFFICIAL_PROVIDER_ID, preset: grokOfficialPreset },
-  ...codexProviderPresets
-    .map((preset, index) => ({ id: `grokbuild-${index}`, preset }))
-    .filter(
-      // 托管 OAuth 预设（如 "xAI (Grok) OAuth"）只在 Codex 表单接线；
-      // Grok CLI 原生支持订阅登录，这里选中只会产出无 key 的坏配置，故排除。
-      ({ preset }) =>
-        preset.category !== "official" &&
-        !preset.isOfficial &&
-        !preset.providerType &&
-        !preset.requiresOAuth,
-    ),
+  { id: GROKBUILD_OFFICIAL_PROVIDER_ID, preset: grokBuildOfficialPreset },
+  ...grokBuildProviderPresets.map((preset, index) => ({
+    id: `grokbuild-${index}`,
+    preset,
+  })),
 ];
 
 export const grokApiBackendFromApiFormat = (format: CodexApiFormat): string => {
@@ -205,12 +187,10 @@ export function GrokBuildProviderForm({
     onSubmittingChange?.(isSubmitting);
   }, [isSubmitting, onSubmittingChange]);
 
+  // Grok Build 预设已不含 cn_official（国产官方直连无法在 Grok CLI 使用）
   const presetCategoryLabels = useMemo(
     () => ({
       official: t("providerForm.categoryOfficial", { defaultValue: "官方" }),
-      cn_official: t("providerForm.categoryCnOfficial", {
-        defaultValue: "国内官方",
-      }),
       aggregator: t("providerForm.categoryAggregation", {
         defaultValue: "聚合服务",
       }),
@@ -261,10 +241,10 @@ export function GrokBuildProviderForm({
 
     if (presetId === GROKBUILD_OFFICIAL_PROVIDER_ID) {
       // 官方登录：无 API Key / 地址 / 模型表可填，提交走 ensure seed 流程
-      form.setValue("name", grokOfficialPreset.name);
-      form.setValue("websiteUrl", grokOfficialPreset.websiteUrl);
-      form.setValue("icon", grokOfficialPreset.icon ?? "");
-      form.setValue("iconColor", grokOfficialPreset.iconColor ?? "");
+      form.setValue("name", grokBuildOfficialPreset.name);
+      form.setValue("websiteUrl", grokBuildOfficialPreset.websiteUrl);
+      form.setValue("icon", grokBuildOfficialPreset.icon ?? "");
+      form.setValue("iconColor", grokBuildOfficialPreset.iconColor ?? "");
       setCategory("official");
       setIsPartner(false);
       setPartnerPromotionKey(undefined);
