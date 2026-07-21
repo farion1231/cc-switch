@@ -204,9 +204,15 @@ pub async fn ensure_remote_directories(
             s if s == StatusCode::CREATED || s.is_success() => {
                 log::info!("[WebDAV] MKCOL ok: {}", redact_url(&dir_url));
             }
-            // Ambiguous — verify directory actually exists via PROPFIND
+            // Ambiguous — verify directory actually exists via PROPFIND.
+            // Some servers (e.g. several NAS WebDAV implementations) return
+            // `400 Bad Request` when MKCOL targets a path that already exists
+            // (e.g. an existing shared folder root) instead of the standard
+            // `405 Method Not Allowed`. Treat it as ambiguous and confirm with
+            // PROPFIND rather than failing outright.
             s if s == StatusCode::METHOD_NOT_ALLOWED
                 || s == StatusCode::CONFLICT
+                || s == StatusCode::BAD_REQUEST
                 || s.is_redirection() =>
             {
                 if !propfind_exists(&client, &dir_url, auth).await? {
