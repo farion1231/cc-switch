@@ -5,7 +5,7 @@
 //! ## 客户端检测
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
-use super::{AuthInfo, AuthStrategy, ProviderAdapter};
+use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
 use regex::Regex;
@@ -219,6 +219,21 @@ pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
     provider.is_xai_oauth()
 }
 
+/// Whether a Codex Responses request should be bridged to Kiro's AWS JSON
+/// runtime protocol. Kiro is intentionally detected by provider identity,
+/// rather than treating `kiro` as an Anthropic wire API: the request and
+/// response need one additional conversion layer around Anthropic Messages.
+pub fn should_convert_codex_responses_to_kiro(provider: &Provider, endpoint: &str) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+
+    matches!(
+        path,
+        "/responses" | "/v1/responses" | "/responses/compact" | "/v1/responses/compact"
+    ) && provider.is_kiro()
+}
+
 /// The single built-in official Codex provider.  Unlike managed Codex OAuth
 /// providers used by Claude, this route receives authentication from the
 /// calling Codex client (`requires_openai_auth = true`).
@@ -246,7 +261,7 @@ pub fn resolve_codex_catalog_tool_profile(
     if provider.is_xai_oauth() {
         return CodexCatalogToolProfile::NativeResponses;
     }
-    if codex_provider_uses_anthropic(provider) {
+    if codex_provider_uses_anthropic(provider) || provider.is_kiro() {
         return CodexCatalogToolProfile::Anthropic;
     }
     CodexCatalogToolProfile::from_api_format(
@@ -724,6 +739,14 @@ impl ProviderAdapter for CodexAdapter {
             }
         }
 
+        // Managed Kiro providers intentionally do not need to persist an
+        // endpoint in Codex config.toml. The runtime host is derived from the
+        // selected Kiro account's region by the forwarder, starting from this
+        // canonical default endpoint.
+        if provider.is_kiro() {
+            return Ok(ProviderType::Kiro.default_endpoint().to_string());
+        }
+
         Err(ProxyError::ConfigError(
             "Codex Provider 缺少 base_url 配置".to_string(),
         ))
@@ -736,6 +759,16 @@ impl ProviderAdapter for CodexAdapter {
             return Some(AuthInfo::new(
                 "xai_oauth_placeholder".to_string(),
                 AuthStrategy::XaiOAuth,
+            ));
+        }
+
+        // Kiro credentials are managed by KiroAuthManager. Return the same
+        // placeholder strategy as Claude's Kiro adapter so the forwarder can
+        // resolve the selected account dynamically.
+        if provider.is_kiro() {
+            return Some(AuthInfo::new(
+                "kiro_placeholder".to_string(),
+                AuthStrategy::Kiro,
             ));
         }
 
@@ -799,6 +832,9 @@ impl ProviderAdapter for CodexAdapter {
         &self,
         auth: &AuthInfo,
     ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        if auth.strategy == AuthStrategy::Kiro {
+            return super::ClaudeAdapter::new().get_auth_headers(auth);
+        }
         use super::adapter::auth_header_value;
         let bearer = format!("Bearer {}", auth.api_key);
         // Anthropic gateway: send only x-api-key (anthropic-version is filled in by
@@ -891,6 +927,48 @@ context_window = 500000
                 "/responses/compact"
             ),
             "https://chatgpt.com/backend-api/codex/responses/compact"
+        );
+    }
+
+    #[test]
+    fn kiro_provider_uses_managed_auth_and_responses_bridge() {
+        let mut provider = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "PROXY_MANAGED" },
+            "config": r#"
+model = "claude-sonnet-4-6"
+[model_providers.custom]
+base_url = "https://runtime.us-east-1.kiro.dev"
+wire_api = "responses"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("kiro".to_string()),
+            api_format: Some("kiro".to_string()),
+            ..Default::default()
+        });
+
+        assert!(should_convert_codex_responses_to_kiro(
+            &provider,
+            "/v1/responses"
+        ));
+        assert!(should_convert_codex_responses_to_kiro(
+            &provider,
+            "/responses/compact?foo=bar"
+        ));
+        assert!(!should_convert_codex_responses_to_kiro(
+            &provider,
+            "/v1/chat/completions"
+        ));
+
+        let auth = CodexAdapter::new().extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Kiro);
+        assert_eq!(
+            CodexAdapter::new().extract_base_url(&provider).unwrap(),
+            "https://runtime.us-east-1.kiro.dev"
+        );
+        assert_eq!(
+            resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::Anthropic
         );
     }
 

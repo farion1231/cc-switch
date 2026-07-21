@@ -199,6 +199,10 @@ export function useProviderActions(
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
           });
+        } else if (provider.meta?.providerType === "kiro") {
+          proxyRequiredReason = t("notifications.proxyReasonKiro", {
+            defaultValue: "使用 Kiro 协议转换",
+          });
         } else if (isOAuthProviderType(provider.meta?.providerType)) {
           // 托管 OAuth（codex_oauth / xai_oauth 等）：凭据由本地代理注入，
           // 是否需路由由 providerType 权威决定，不看 apiFormat（后端亦无视，

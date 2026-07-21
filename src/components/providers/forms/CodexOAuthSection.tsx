@@ -229,7 +229,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       {!hasAnyAccount && pollingState === "idle" && (
         <Button
           type="button"
-          onClick={addAccount}
+          onClick={() => addAccount()}
           className="w-full"
           variant="outline"
         >
@@ -242,7 +242,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
       {hasAnyAccount && pollingState === "idle" && (
         <Button
           type="button"
-          onClick={addAccount}
+          onClick={() => addAccount()}
           className="w-full"
           variant="outline"
           disabled={isAddingAccount}
@@ -316,7 +316,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
           <div className="flex gap-2">
             <Button
               type="button"
-              onClick={addAccount}
+              onClick={() => addAccount()}
               variant="outline"
               size="sm"
             >

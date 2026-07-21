@@ -230,6 +230,7 @@ export function ProviderCard({
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  const isKiro = provider.meta?.providerType === PROVIDER_TYPES.KIRO;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
   // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
   const codexNeedsRouting =
@@ -583,7 +584,8 @@ export function ProviderCard({
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
                 isCodexOauth ||
-                isXaiOauth
+                isXaiOauth ||
+                isKiro
                   ? undefined
                   : () => onConfigureUsage(provider)
               }

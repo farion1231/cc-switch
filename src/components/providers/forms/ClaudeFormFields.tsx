@@ -37,6 +37,7 @@ import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
 import { XaiOAuthSection } from "./XaiOAuthSection";
+import { KiroAuthSection } from "./KiroAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -45,6 +46,7 @@ import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
+  fetchKiroModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -105,6 +107,12 @@ interface ClaudeFormFieldsProps {
   isXaiOauthAuthenticated?: boolean;
   selectedXaiAccountId?: string | null;
   onXaiAccountSelect?: (accountId: string | null) => void;
+
+  // Kiro OAuth (AWS Builder ID / IAM Identity Center)
+  isKiroPreset?: boolean;
+  isKiroAuthenticated?: boolean;
+  selectedKiroAccountId?: string | null;
+  onKiroAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -186,6 +194,10 @@ export function ClaudeFormFields({
   isXaiOauthAuthenticated,
   selectedXaiAccountId,
   onXaiAccountSelect,
+  isKiroPreset,
+  isKiroAuthenticated,
+  selectedKiroAccountId,
+  onKiroAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -268,6 +280,11 @@ export function ClaudeFormFields({
   const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
   const xaiOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
+
+  // Kiro 可用模型列表
+  const [kiroModels, setKiroModels] = useState<FetchedModel[]>([]);
+  const [kiroModelsLoading, setKiroModelsLoading] = useState(false);
+  const kiroModelsRequestRef = useRef(0);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -424,6 +441,37 @@ export function ClaudeFormFields({
       });
   }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
 
+  const handleFetchKiroModels = useCallback(() => {
+    if (!isKiroAuthenticated) {
+      toast.error(
+        t("kiro.loginRequired", {
+          defaultValue: "请先登录 Kiro 账号",
+        }),
+      );
+      return;
+    }
+
+    const requestId = kiroModelsRequestRef.current + 1;
+    kiroModelsRequestRef.current = requestId;
+    setKiroModelsLoading(true);
+    fetchKiroModels(selectedKiroAccountId)
+      .then((models) => {
+        if (kiroModelsRequestRef.current !== requestId) return;
+        setKiroModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (kiroModelsRequestRef.current !== requestId) return;
+        console.warn("[Kiro] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (kiroModelsRequestRef.current === requestId) {
+          setKiroModelsLoading(false);
+        }
+      });
+  }, [isKiroAuthenticated, selectedKiroAccountId, showModelFetchResult, t]);
+
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels([]);
@@ -442,12 +490,20 @@ export function ClaudeFormFields({
     setXaiOauthModelsLoading(false);
   }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
 
+  useEffect(() => {
+    kiroModelsRequestRef.current += 1;
+    setKiroModels([]);
+    setKiroModelsLoading(false);
+  }, [isKiroPreset, isKiroAuthenticated, selectedKiroAccountId]);
+
   const modelFetchLoading = isCopilotPreset
     ? modelsLoading
     : isCodexOauthPreset
       ? codexOauthModelsLoading
       : isXaiOauthPreset
         ? xaiOauthModelsLoading
+      : isKiroPreset
+        ? kiroModelsLoading
         : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
@@ -455,6 +511,8 @@ export function ClaudeFormFields({
       ? handleFetchCodexOauthModels
       : isXaiOauthPreset
         ? handleFetchXaiOauthModels
+      : isKiroPreset
+        ? handleFetchKiroModels
         : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
@@ -490,6 +548,19 @@ export function ClaudeFormFields({
           placeholder={placeholder}
           fetchedModels={xaiOauthModels}
           isLoading={xaiOauthModelsLoading}
+        />
+      );
+    }
+
+    if (isKiroPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={kiroModels}
+          isLoading={kiroModelsLoading}
         />
       );
     }
@@ -700,6 +771,14 @@ export function ClaudeFormFields({
         />
       )}
 
+      {/* Kiro OAuth 认证 */}
+      {isKiroPreset && (
+        <KiroAuthSection
+          selectedAccountId={selectedKiroAccountId}
+          onAccountSelect={onKiroAccountSelect}
+        />
+      )}
+
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
@@ -819,13 +898,16 @@ export function ClaudeFormFields({
             </p>
           )}
           <CollapsibleContent className="space-y-4 pt-2">
-            {/* API 格式选择（仅非云服务商显示） */}
             {category !== "cloud_provider" && !isXaiOauthPreset && (
               <div className="space-y-2">
                 <FormLabel htmlFor="apiFormat">
                   {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
                 </FormLabel>
-                <Select value={apiFormat} onValueChange={onApiFormatChange}>
+                <Select
+                  value={apiFormat}
+                  onValueChange={onApiFormatChange}
+                  disabled={isKiroPreset}
+                >
                   <SelectTrigger id="apiFormat" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -850,12 +932,25 @@ export function ClaudeFormFields({
                         defaultValue: "Gemini Native generateContent (需转换)",
                       })}
                     </SelectItem>
+                    {/* Kiro 仅在 Kiro 预设时可选（由预设固定） */}
+                    {isKiroPreset && (
+                      <SelectItem value="kiro">
+                        {t("providerForm.apiFormatKiro", {
+                          defaultValue: "Kiro (AWS CodeWhisperer)",
+                        })}
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {t("providerForm.apiFormatHint", {
-                    defaultValue: "选择供应商 API 的输入格式",
-                  })}
+                  {isKiroPreset
+                    ? t("providerForm.apiFormatHintKiro", {
+                        defaultValue:
+                          "Kiro 供应商使用固定的 Kiro 格式（AWS CodeWhisperer），不可更改。",
+                      })
+                    : t("providerForm.apiFormatHint", {
+                        defaultValue: "选择供应商 API 的输入格式",
+                      })}
                 </p>
               </div>
             )}

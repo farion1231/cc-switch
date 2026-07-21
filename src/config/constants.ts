@@ -3,6 +3,7 @@ export const PROVIDER_TYPES = {
   GITHUB_COPILOT: "github_copilot",
   CODEX_OAUTH: "codex_oauth",
   XAI_OAUTH: "xai_oauth",
+  KIRO: "kiro",
 } as const;
 
 // 托管 OAuth 供应商类型：真实凭据由本地代理按请求注入，因此无论上游是否
@@ -12,6 +13,7 @@ export const OAUTH_PROVIDER_TYPES: readonly string[] = [
   PROVIDER_TYPES.GITHUB_COPILOT,
   PROVIDER_TYPES.CODEX_OAUTH,
   PROVIDER_TYPES.XAI_OAUTH,
+  PROVIDER_TYPES.KIRO,
 ];
 
 /** 判断某 providerType 是否为托管 OAuth（凭据由代理注入、必须开启路由）。 */

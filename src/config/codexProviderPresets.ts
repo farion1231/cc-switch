@@ -43,6 +43,9 @@ export interface CodexProviderPreset {
   codexChatReasoning?: CodexChatReasoning;
   // Session-based prompt-cache routing override for Chat Completions upstreams
   promptCacheRouting?: PromptCacheRoutingMode;
+  // Managed provider identity and authentication requirements.
+  providerType?: "kiro";
+  requiresOAuth?: boolean;
 }
 
 /**
@@ -92,6 +95,8 @@ function modelCatalog(
         // Vendor's OFFICIAL base_instructions; omit to inherit the neutral
         // template default. Required by Codex, so the backend always emits one.
         baseInstructions?: string;
+        reasoningEfforts?: string[];
+        defaultReasoningEffort?: string;
       }
   >,
 ): CodexCatalogModel[] {
@@ -105,6 +110,8 @@ function modelCatalog(
           supportsParallelToolCalls: entry.supportsParallelToolCalls,
           inputModalities: entry.inputModalities,
           baseInstructions: entry.baseInstructions,
+          reasoningEfforts: entry.reasoningEfforts,
+          defaultReasoningEffort: entry.defaultReasoningEffort,
         },
   );
 }
@@ -333,6 +340,82 @@ requires_openai_auth = true`,
     icon: "unity2",
   },
   {
+    name: "Kiro",
+    websiteUrl: "https://kiro.dev",
+    category: "third_party",
+    auth: generateThirdPartyAuth("PROXY_MANAGED"),
+    config: `model_provider = "custom"
+model = "gpt-5.6-luna"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "Kiro"
+base_url = "https://runtime.us-east-1.kiro.dev"
+wire_api = "responses"
+requires_openai_auth = true`,
+    apiFormat: "kiro",
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-5.6-sol",
+        displayName: "5.6 Sol",
+        contextWindow: 272000,
+        reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningEffort: "high",
+      },
+      {
+        model: "gpt-5.6-terra",
+        displayName: "5.6 Terra",
+        contextWindow: 272000,
+        reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningEffort: "high",
+      },
+      {
+        model: "gpt-5.6-luna",
+        displayName: "5.6 Luna",
+        contextWindow: 272000,
+        reasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        defaultReasoningEffort: "high",
+      },
+    ]),
+    providerType: "kiro",
+    requiresOAuth: true,
+    icon: "kiro",
+    iconColor: "#9046FF",
+  },
+  {
+    name: "AICoding",
+    websiteUrl: "https://aicoding.sh",
+    apiKeyUrl: "https://aicoding.sh/i/CCSWITCH",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aicoding",
+      "https://api.aicoding.sh",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.aicoding.sh"],
+    isPartner: true,
+    partnerPromotionKey: "aicoding",
+    icon: "aicoding",
+    iconColor: "#000000",
+  },
+  {
+    name: "AIGoCode",
+    websiteUrl: "https://aigocode.com",
+    apiKeyUrl: "https://aigocode.com/invite/CC-SWITCH",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "aigocode",
+      "https://api.aigocode.com",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.aigocode.com"],
+    isPartner: true, // 合作伙伴
+    partnerPromotionKey: "aigocode", // 促销信息 i18n key
+    icon: "aigocode",
+    iconColor: "#5B7FFF",
+  },
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",

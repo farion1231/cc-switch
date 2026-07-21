@@ -275,7 +275,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       {!hasAnyAccount && pollingState === "idle" && (
         <Button
           type="button"
-          onClick={addAccount}
+          onClick={() => addAccount()}
           className="w-full"
           variant="outline"
           disabled={deploymentType === "enterprise" && !enterpriseDomain.trim()}
@@ -289,7 +289,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
       {hasAnyAccount && pollingState === "idle" && (
         <Button
           type="button"
-          onClick={addAccount}
+          onClick={() => addAccount()}
           className="w-full"
           variant="outline"
           disabled={
@@ -369,7 +369,7 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
           <div className="flex gap-2">
             <Button
               type="button"
-              onClick={addAccount}
+              onClick={() => addAccount()}
               variant="outline"
               size="sm"
             >

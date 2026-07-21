@@ -21,3 +21,4 @@ export { useHermesFormState } from "./useHermesFormState";
 export { useCopilotAuth } from "./useCopilotAuth";
 export { useCodexOauth } from "./useCodexOauth";
 export { useXaiOauth } from "./useXaiOauth";
+export { useKiroAuth } from "./useKiroAuth";

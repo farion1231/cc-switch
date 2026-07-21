@@ -135,6 +135,13 @@ pub enum AuthStrategy {
     ///
     /// access token 由 xAI Device Code 流程获取并由 forwarder 动态注入。
     XaiOAuth,
+
+    /// Kiro 认证方式
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    ///
+    /// 使用动态获取 of Kiro access_token（通过 AWS OIDC 流程获取）
+    Kiro,
 }
 
 #[cfg(test)]
