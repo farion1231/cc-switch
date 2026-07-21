@@ -64,6 +64,13 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       modalities: { input: ["text", "image", "video"], output: ["text"] },
     },
     {
+      id: "kimi-k3",
+      name: "Kimi K3",
+      contextLimit: 1048576,
+      outputLimit: 131072,
+      modalities: { input: ["text", "image", "video"], output: ["text"] },
+    },
+    {
       id: "step-3.5-flash-2603",
       name: "Step 3.5 Flash 2603",
       contextLimit: 262144,
@@ -370,7 +377,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "ZetaAPI",
@@ -828,6 +835,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
       },
       models: {
         "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
+        "kimi-k3": { name: "Kimi K3" },
       },
     },
     category: "cn_official",
@@ -1565,7 +1573,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     settingsConfig: {
       npm: "@ai-sdk/openai-compatible",
       name: "APINebula",
@@ -1619,13 +1627,13 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
-    name: "SudoCode",
+    name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
     settingsConfig: {
       npm: "@ai-sdk/openai",
-      name: "SudoCode",
+      name: "SudoCode.chat",
       options: {
         baseURL: "https://api.sudocode.chat/v1",
         apiKey: "",
@@ -1639,6 +1647,33 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "sudocode",
     icon: "sudocode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "SudoCode.us",
+      options: {
+        baseURL: "https://sudocode.us/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-5.5": { name: "GPT-5.5" },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -1769,7 +1804,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "ClaudeCN",
@@ -1799,7 +1834,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     settingsConfig: {
       npm: "@ai-sdk/anthropic",
       name: "RunAPI",

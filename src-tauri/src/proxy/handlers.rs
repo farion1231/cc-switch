@@ -28,13 +28,13 @@ use super::{
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::create_anthropic_sse_stream_from_responses,
-        transform, transform_codex_anthropic, transform_codex_chat, transform_gemini,
-        transform_responses,
+        transform, transform_codex_anthropic, transform_codex_chat,
+        transform_codex_responses_namespace, transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, process_response, read_decoded_body,
-        strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
-        usage_logging_enabled, SseUsageCollector,
+        create_logged_passthrough_stream, create_usage_collector, process_response,
+        read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -538,16 +538,22 @@ async fn handle_claude_transform(
                 } else {
                     chat_sse_to_response_value(&body_str)
                 };
-                // 聚合也失败时：保留全量 body 服务端日志，并给客户端错误附带同款
-                // 现场诊断（content-type/body 摘要），否则命中嗅探臂的用户只拿到
+                // 聚合也失败时：服务端日志只记录长度，并给客户端错误附带同款
+                // 现场诊断（content-type/body 分类），否则命中嗅探臂的用户只拿到
                 // 裸聚合错误、丢失非嗅探臂已有的诊断增强（C7）
                 aggregated.map_err(|e| {
-                    log::error!("[Claude] SSE 聚合兜底失败: {e}, body: {body_str}");
+                    log::error!(
+                        "[Claude] SSE 聚合兜底失败: {e}, body_bytes={}",
+                        body_bytes.len()
+                    );
                     aggregate_fallback_error(e, &response_headers, &body_str)
                 })?
             }
             Err(e) => {
-                log::error!("[Claude] 解析上游响应失败: {e}, body: {body_str}");
+                log::error!(
+                    "[Claude] 解析上游响应失败: {e}, body_bytes={}",
+                    body_bytes.len()
+                );
                 return Err(upstream_body_parse_error(
                     "Failed to parse upstream response",
                     &e,
@@ -806,6 +812,10 @@ async fn handle_responses_for_app(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    // Captured before `body` is moved into the forwarder: the flat-name →
+    // {namespace, name} map used to restore the native Responses upstream's
+    // function-call names (see the namespace-restore dispatch below).
+    let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -855,6 +865,24 @@ async fn handle_responses_for_app(
             is_stream,
             connection_guard,
             codex_tool_context,
+        )
+        .await;
+    }
+
+    // Native Responses passthrough to a strict gateway (xAI): the request-side
+    // flatten (in the forwarder) turned Codex `namespace` tools into flat
+    // function tools, so the upstream returns flat function-call names. Restore
+    // them to `{name, namespace}` so the Codex client matches them against its
+    // namespaced tool registry.
+    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+        && !namespace_restore_map.is_empty()
+    {
+        return handle_codex_responses_namespace_restore(
+            response,
+            &ctx,
+            &state,
+            connection_guard,
+            namespace_restore_map,
         )
         .await;
     }
@@ -921,6 +949,7 @@ async fn handle_responses_compact_for_app(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
+    let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -974,6 +1003,19 @@ async fn handle_responses_compact_for_app(
         .await;
     }
 
+    if super::providers::provider_needs_responses_namespace_flatten(&ctx.provider)
+        && !namespace_restore_map.is_empty()
+    {
+        return handle_codex_responses_namespace_restore(
+            response,
+            &ctx,
+            &state,
+            connection_guard,
+            namespace_restore_map,
+        )
+        .await;
+    }
+
     process_response(
         response,
         &ctx,
@@ -982,6 +1024,154 @@ async fn handle_responses_compact_for_app(
         connection_guard,
     )
     .await
+}
+
+/// Response handler for the native Responses passthrough to a strict gateway
+/// (xAI), restoring the flattened `function_call` names produced by the
+/// request-side namespace flatten. Success bodies only carry a light rename;
+/// error bodies and everything unrelated pass through unchanged. Usage is
+/// collected exactly as `process_response` would (same `CODEX_PARSER_CONFIG`).
+async fn handle_codex_responses_namespace_restore(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    connection_guard: Option<ActiveConnectionGuard>,
+    restore_map: std::collections::HashMap<
+        String,
+        transform_codex_responses_namespace::NamespacedName,
+    >,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+
+    // Error bodies (and any non-SSE, non-success response) never contain
+    // restorable function calls; hand them to the generic passthrough so error
+    // shape and usage handling stay identical to the untransformed path.
+    if !status.is_success() {
+        return process_response(response, ctx, state, &CODEX_PARSER_CONFIG, connection_guard)
+            .await;
+    }
+
+    if response.is_sse() {
+        let mut response_headers = response.headers().clone();
+        strip_hop_by_hop_response_headers(&mut response_headers);
+
+        let mut builder = axum::response::Response::builder().status(status);
+        for (key, value) in &response_headers {
+            builder = builder.header(key, value);
+        }
+
+        let restore_stream =
+            transform_codex_responses_namespace::create_namespace_restore_sse_stream(
+                response.bytes_stream(),
+                restore_map,
+            );
+        let usage_collector =
+            create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+        let logged_stream = create_logged_passthrough_stream(
+            restore_stream,
+            ctx.tag,
+            usage_collector,
+            ctx.streaming_timeout_config(),
+            connection_guard,
+        );
+
+        let body = axum::body::Body::from_stream(logged_stream);
+        return builder.body(body).map_err(|e| {
+            log::error!("[{}] 构建 namespace 还原流式响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build streaming response: {e}"))
+        });
+    }
+
+    // Non-streaming: restore the flattened function-call names in the full body,
+    // then account usage from the (restore-neutral) Responses payload.
+    let _connection_guard = connection_guard;
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            std::time::Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            std::time::Duration::ZERO
+        };
+    let (mut response_headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    strip_hop_by_hop_response_headers(&mut response_headers);
+
+    // Restore names when the body parses as JSON; otherwise pass the bytes
+    // through untouched (a native Responses non-stream body is always JSON, so
+    // this only guards against a malformed upstream).
+    let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
+        Ok(mut value) => {
+            transform_codex_responses_namespace::restore_response_namespaces(
+                &mut value,
+                &restore_map,
+            );
+            if let Some(usage) =
+                TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
+            {
+                let model = value
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| ctx.outbound_model.clone())
+                    .unwrap_or_else(|| ctx.request_model.clone());
+                let request_model = ctx.request_model.clone();
+                let outbound_model = ctx
+                    .outbound_model
+                    .clone()
+                    .unwrap_or_else(|| ctx.request_model.clone());
+                let app_type_str = ctx.app_type_str;
+                tokio::spawn({
+                    let state = state.clone();
+                    let provider_id = ctx.provider.id.clone();
+                    let session_id = ctx.session_id.clone();
+                    let latency_ms = ctx.latency_ms();
+                    async move {
+                        log_usage(
+                            &state,
+                            &provider_id,
+                            app_type_str,
+                            &model,
+                            &request_model,
+                            &outbound_model,
+                            usage,
+                            latency_ms,
+                            None,
+                            false,
+                            status.as_u16(),
+                            Some(session_id),
+                        )
+                        .await;
+                    }
+                });
+            }
+            match serde_json::to_vec(&value) {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(e) => {
+                    log::error!("[{}] 序列化 namespace 还原响应失败: {e}", ctx.tag);
+                    body_bytes
+                }
+            }
+        }
+        Err(_) => body_bytes,
+    };
+
+    strip_entity_headers_for_rebuilt_body(&mut response_headers);
+    response_headers.remove(axum::http::header::CONTENT_TYPE);
+
+    let mut builder = axum::response::Response::builder().status(status);
+    for (key, value) in response_headers.iter() {
+        builder = builder.header(key, value);
+    }
+    builder = builder.header(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    builder
+        .body(axum::body::Body::from(restored_bytes))
+        .map_err(|e| {
+            log::error!("[{}] 构建 namespace 还原响应失败: {e}", ctx.tag);
+            ProxyError::Internal(format!("Failed to build response: {e}"))
+        })
 }
 
 async fn handle_codex_chat_to_responses_transform(
@@ -1108,14 +1298,20 @@ async fn handle_codex_chat_to_responses_transform(
         // 上游对 stream:false 返回未标记 Content-Type 的 SSE 体时按 SSE 聚合。
         Err(_) if body_looks_like_sse(&body_str) => {
             log::warn!("[Codex] 上游对非流请求返回未标记的 SSE 体，按 Chat SSE 聚合兜底");
-            // 聚合也失败时：保留全量 body 服务端日志，并给客户端错误附带现场诊断（C7）
+            // 聚合也失败时：服务端日志只记录长度，并给客户端错误附带现场诊断（C7）
             chat_sse_to_response_value(&body_str).map_err(|e| {
-                log::error!("[Codex] SSE 聚合兜底失败: {e}, body: {body_str}");
+                log::error!(
+                    "[Codex] SSE 聚合兜底失败: {e}, body_bytes={}",
+                    body_bytes.len()
+                );
                 aggregate_fallback_error(e, &response_headers, &body_str)
             })?
         }
         Err(e) => {
-            log::error!("[Codex] 解析 Chat 上游响应失败: {e}, body: {body_str}");
+            log::error!(
+                "[Codex] 解析 Chat 上游响应失败: {e}, body_bytes={}",
+                body_bytes.len()
+            );
             return Err(upstream_body_parse_error(
                 "Failed to parse upstream chat response",
                 &e,
@@ -1270,7 +1466,8 @@ async fn handle_codex_anthropic_to_responses_transform(
         }
         Err(e) => {
             log::error!(
-                "[Codex] Failed to parse Anthropic upstream response: {e}, body: {body_str}"
+                "[Codex] Failed to parse Anthropic upstream response: {e}, body_bytes={}",
+                body_bytes.len()
             );
             return Err(upstream_body_parse_error(
                 "Failed to parse upstream anthropic response",
@@ -1494,7 +1691,10 @@ async fn handle_codex_chat_error_response(
             } else {
                 lossy.into_owned()
             };
-            log::warn!("[Codex] Chat 错误响应不是合法 JSON，按文本透传: {truncated}");
+            log::warn!(
+                "[Codex] Chat 错误响应不是合法 JSON，按文本透传: body_bytes={} (content omitted)",
+                body_bytes.len()
+            );
             Value::String(truncated)
         }
     };
@@ -1914,9 +2114,8 @@ fn body_looks_like_sse(body: &str) -> bool {
         .any(|prefix| trimmed.starts_with(prefix))
 }
 
-/// 构造带现场诊断的上游解析错误：附 content-type / content-encoding 与 body
-/// 前缀摘要，让客户端收到的报错自带根因判别（"data:"=错标 SSE、"<"=HTML
-/// 拦截页、� 乱码=未解压二进制），不再依赖向用户索要服务端日志。
+/// 构造带现场诊断的上游解析错误：只附结构化分类与元数据，
+/// 避免响应正文经错误链间接进入持久化日志。
 fn upstream_body_parse_error(
     prefix: &str,
     err: &serde_json::Error,
@@ -1929,8 +2128,8 @@ fn upstream_body_parse_error(
     ))
 }
 
-/// SSE 聚合兜底失败时，给聚合器内部错误附加同款现场诊断（content-type/
-/// content-encoding/body 摘要），使命中 #2234 嗅探臂的客户端也拿到根因线索，
+/// SSE 聚合兜底失败时，给聚合器内部错误附加同款现场诊断，
+/// 使命中 #2234 嗅探臂的客户端也拿到根因线索，
 /// 而非仅 "No chat completion choices in upstream SSE" 这类无 header/body 的裸消息。
 fn aggregate_fallback_error(
     err: ProxyError,
@@ -1944,7 +2143,43 @@ fn aggregate_fallback_error(
     ProxyError::TransformError(format!("{base} {}", body_diagnostics_suffix(headers, body)))
 }
 
-/// 现场诊断后缀：content-type、content-encoding 与 body 前 120 字符摘要。
+/// 将正文归入有限类别，保留 HTML/SSE/乱码等关键线索而不记录正文。
+fn classify_body_for_diagnostics(body: &str) -> &'static str {
+    let trimmed = body.trim_start_matches('\u{feff}').trim_start();
+    if trimmed.is_empty() {
+        return "empty";
+    }
+    if body_looks_like_sse(trimmed) {
+        return "sse";
+    }
+
+    // 分类只检查前 4 KiB，避免为了诊断再次线性扫描异常返回的超大正文。
+    let sample = trimmed.chars().take(4096).collect::<String>();
+    let prefix = sample
+        .chars()
+        .take(256)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if ["<!doctype html", "<html", "<head", "<body"]
+        .iter()
+        .any(|marker| prefix.starts_with(marker))
+    {
+        return "html";
+    }
+    if sample.contains('\u{fffd}')
+        || sample
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return "binary-or-encoded";
+    }
+    if prefix.starts_with('{') || prefix.starts_with('[') {
+        return "json-like";
+    }
+    "text"
+}
+
+/// 现场诊断后缀：content-type、content-encoding、body 长度与安全分类，不含正文。
 fn body_diagnostics_suffix(headers: &axum::http::HeaderMap, body: &str) -> String {
     let header_str = |name: &str| {
         headers
@@ -1953,10 +2188,11 @@ fn body_diagnostics_suffix(headers: &axum::http::HeaderMap, body: &str) -> Strin
             .unwrap_or("<none>")
     };
     format!(
-        "(content-type: {}; content-encoding: {}; body[..120]: '{}')",
+        "(content-type: {}; content-encoding: {}; body-bytes: {}; body-kind: {}; content omitted)",
         header_str("content-type"),
         header_str("content-encoding"),
-        body_snippet(body, 120),
+        body.len(),
+        classify_body_for_diagnostics(body),
     )
 }
 
@@ -1971,24 +2207,6 @@ fn error_event_message(error: &Value) -> Option<String> {
         return (!s.is_empty()).then(|| s.to_string());
     }
     None
-}
-
-/// 取 body 前 `max_chars` 个字符的单行摘要：\r 丢弃、\n 折叠为字面 \n、
-/// 其余控制字符替换为 �，超长加省略号。
-fn body_snippet(body: &str, max_chars: usize) -> String {
-    let mut snippet = String::new();
-    for c in body.chars().take(max_chars) {
-        match c {
-            '\n' => snippet.push_str("\\n"),
-            '\r' => {}
-            c if c.is_control() => snippet.push('\u{FFFD}'),
-            c => snippet.push(c),
-        }
-    }
-    if body.chars().nth(max_chars).is_some() {
-        snippet.push('…');
-    }
-    snippet
 }
 
 /// 解析单个 SSE 块的 event 名与 data 负载（多行 data 按规范以 \n 连接）。
@@ -2412,7 +2630,8 @@ async fn log_usage(
         model
     };
 
-    let request_id = usage.dedup_request_id();
+    let dedup_scope = (app_type != "claude").then_some((app_type, provider_id));
+    let request_id = usage.dedup_request_id(dedup_scope);
 
     if let Err(e) = logger.log_with_calculation(
         request_id,
@@ -2437,9 +2656,9 @@ async fn log_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        body_looks_like_sse, body_snippet, chat_sse_to_response_value, codex_proxy_error_json,
-        responses_sse_to_response_value, should_use_claude_transform_streaming, transform,
-        upstream_body_parse_error,
+        body_looks_like_sse, chat_sse_to_response_value, classify_body_for_diagnostics,
+        codex_proxy_error_json, responses_sse_to_response_value,
+        should_use_claude_transform_streaming, transform, upstream_body_parse_error,
     };
     use crate::proxy::ProxyError;
 
@@ -2480,7 +2699,9 @@ mod tests {
             ProxyError::TransformError(msg) => {
                 assert!(msg.contains("content-type: text/html"), "{msg}");
                 assert!(msg.contains("content-encoding: gzip"), "{msg}");
-                assert!(msg.contains("<html>\\nblocked</html>"), "{msg}");
+                assert!(msg.contains("body-bytes: 21"), "{msg}");
+                assert!(msg.contains("body-kind: html"), "{msg}");
+                assert!(!msg.contains("blocked"), "{msg}");
             }
             other => panic!("expected TransformError, got {other:?}"),
         }
@@ -2497,9 +2718,23 @@ mod tests {
             ProxyError::TransformError(msg) => {
                 assert!(msg.contains("content-type: <none>"), "{msg}");
                 assert!(msg.contains("content-encoding: <none>"), "{msg}");
+                assert!(msg.contains("body-kind: sse"), "{msg}");
             }
             other => panic!("expected TransformError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn body_diagnostics_classifies_without_exposing_content() {
+        assert_eq!(classify_body_for_diagnostics(""), "empty");
+        assert_eq!(classify_body_for_diagnostics("  <HTML>blocked"), "html");
+        assert_eq!(classify_body_for_diagnostics("data: {}\n\n"), "sse");
+        assert_eq!(classify_body_for_diagnostics("{\"ok\":true}"), "json-like");
+        assert_eq!(
+            classify_body_for_diagnostics("decoded\u{fffd}payload"),
+            "binary-or-encoded"
+        );
+        assert_eq!(classify_body_for_diagnostics("Bad Gateway"), "text");
     }
 
     #[test]
@@ -2639,18 +2874,6 @@ data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant
         let response = chat_sse_to_response_value(sse).unwrap();
 
         assert_eq!(response["choices"][0]["message"]["content"], "hi");
-    }
-
-    #[test]
-    fn body_snippet_sanitizes_controls_and_truncates() {
-        assert_eq!(
-            body_snippet("<html>\r\nblocked\u{0}</html>", 120),
-            "<html>\\nblocked\u{FFFD}</html>"
-        );
-        let long = "a".repeat(200);
-        let snippet = body_snippet(&long, 120);
-        assert_eq!(snippet.chars().count(), 121); // 120 个字符 + 省略号
-        assert!(snippet.ends_with('…'));
     }
 
     #[test]
