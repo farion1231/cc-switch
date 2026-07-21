@@ -135,8 +135,8 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://claudecn.top"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
-<td>Danke an ClaudeCN für die Unterstützung dieses Projekts! ClaudeCN ist eine unternehmensgerechte KI-Gateway-Plattform, die von einem eingetragenen Unternehmen betrieben wird. Sie bietet hochverfügbaren kommerziellen API-Zugriff auf beliebte Modelle wie Claude, GPT und DeepSeek und ist auf formelle Unternehmensbeschaffungsprozesse ausgerichtet — Banküberweisungen von Firmen, unterzeichnete Verträge und volle Compliance. Registrieren Sie sich über <a href="https://claudecn.top">diesen Link</a>!</td>
+<td width="180"><a href="https://claudecn.ai/register?aff=HEL9"><img src="assets/partners/logos/claudecn.jpg" alt="ClaudeCN" width="150"></a></td>
+<td>Danke an ClaudeCN für die Unterstützung dieses Projekts! ClaudeCN ist eine unternehmensgerechte KI-Gateway-Plattform, die von einem eingetragenen Unternehmen betrieben wird. Sie bietet hochverfügbaren kommerziellen API-Zugriff auf beliebte Modelle wie Claude, GPT und DeepSeek und ist auf formelle Unternehmensbeschaffungsprozesse ausgerichtet — Banküberweisungen von Firmen, unterzeichnete Verträge und volle Compliance. Registrieren Sie sich über <a href="https://claudecn.ai/register?aff=HEL9">diesen Link</a>!</td>
 </tr>
 
 <tr>

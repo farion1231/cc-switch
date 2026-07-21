@@ -1137,7 +1137,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
     settingsConfig: {
       name: "claudecn",
       base_url: "https://claudecn.top",
