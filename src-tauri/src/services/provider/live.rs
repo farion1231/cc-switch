@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
+use crate::aggregation::{is_aggregation_provider, AGGREGATION_MANAGED_MODEL_ENV_KEYS};
 use crate::app_config::AppType;
 use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
@@ -163,6 +164,40 @@ fn apply_kimi_for_coding_context_defaults(settings: &mut Value, provider: &Provi
     }
 }
 
+/// 让聚合供应商自身保存的角色映射始终覆盖通用配置中的模型键。
+///
+/// 对于供应商配置中不存在的托管键也要从合并结果删除，否则旧共享片段会悄悄
+/// 恢复已经在聚合表单里清空的角色。
+fn restore_aggregation_model_env(settings: &mut Value, provider: &Provider) {
+    if !is_aggregation_provider(provider) {
+        return;
+    }
+
+    let provider_env = provider
+        .settings_config
+        .get("env")
+        .and_then(Value::as_object);
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let env = root.entry("env".to_string()).or_insert_with(|| json!({}));
+    let Some(env) = env.as_object_mut() else {
+        log::warn!(
+            "Cannot restore aggregation model env for '{}': env is not an object",
+            provider.id
+        );
+        return;
+    };
+
+    for key in AGGREGATION_MANAGED_MODEL_ENV_KEYS {
+        if let Some(value) = provider_env.and_then(|provider_env| provider_env.get(key)) {
+            env.insert(key.to_string(), value.clone());
+        } else {
+            env.remove(key);
+        }
+    }
+}
+
 pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
     let mut v = settings.clone();
     if let Some(obj) = v.as_object_mut() {
@@ -171,6 +206,9 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
+        // Legacy provider aggregation config contains upstream credentials and
+        // is DB-only. Never project it into Claude settings.json.
+        obj.remove("aggregation");
     }
     v
 }
@@ -688,6 +726,7 @@ pub(crate) fn build_effective_settings_with_common_config(
     }
 
     if matches!(app_type, AppType::Claude) {
+        restore_aggregation_model_env(&mut effective_settings, provider);
         apply_codex_oauth_claude_context_defaults(&mut effective_settings, provider);
         apply_kimi_for_coding_context_defaults(&mut effective_settings, provider);
     }
@@ -1953,6 +1992,82 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn claude_live_sanitizer_strips_legacy_aggregation_credentials() {
+        let settings = json!({
+            "env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:15721"},
+            "aggregation": {
+                "upstreams": [{"id": "u1", "apiKey": "secret-key"}],
+                "routes": []
+            }
+        });
+
+        let sanitized = sanitize_claude_settings_for_live(&settings);
+        assert!(sanitized.get("aggregation").is_none());
+        assert_eq!(
+            sanitized["env"]["ANTHROPIC_BASE_URL"],
+            json!("http://127.0.0.1:15721")
+        );
+    }
+
+    #[test]
+    fn aggregation_role_models_override_common_config() {
+        let db = Database::memory().expect("create memory db");
+        db.set_config_snippet(
+            AppType::Claude.as_str(),
+            Some(
+                json!({
+                    "env": {
+                        "ANTHROPIC_DEFAULT_SONNET_MODEL": "stale-sonnet",
+                        "ANTHROPIC_DEFAULT_FABLE_MODEL": "stale-fable",
+                        "ENABLE_TOOL_SEARCH": "true"
+                    }
+                })
+                .to_string(),
+            ),
+        )
+        .expect("save common config");
+
+        let mut provider = Provider::with_id(
+            "aggregation".to_string(),
+            "Aggregation".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-opus-4-8[1M]"
+                }
+            }),
+            None,
+        );
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some(crate::aggregation::AGGREGATION_PROVIDER_TYPE.to_string()),
+            common_config_enabled: Some(true),
+            aggregation: Some(json!({
+                "upstreams": [{
+                    "id": "u1",
+                    "baseUrl": "https://example.com",
+                    "apiKey": ""
+                }],
+                "roles": {
+                    "sonnet": {"upstreamId": "u1", "model": "claude-opus-4-8"}
+                }
+            })),
+            ..Default::default()
+        });
+
+        let effective =
+            build_effective_settings_with_common_config(&db, &AppType::Claude, &provider)
+                .expect("build effective settings");
+
+        assert_eq!(
+            effective["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            json!("claude-opus-4-8[1M]")
+        );
+        assert!(effective["env"]
+            .get("ANTHROPIC_DEFAULT_FABLE_MODEL")
+            .is_none());
+        assert_eq!(effective["env"]["ENABLE_TOOL_SEARCH"], json!("true"));
+    }
 
     #[test]
     fn kimi_for_coding_effective_settings_backfill_256k_context() {

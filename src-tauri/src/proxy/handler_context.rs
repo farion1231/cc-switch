@@ -143,6 +143,16 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
+        // 供应商聚合：按请求模型名解析故障转移链中的每个聚合供应商，
+        // 保留完整链路与顺序，之后复用现有转发/转换/故障转移逻辑。
+        // 仅 Claude 应用支持（模型名在请求体中，Codex/Gemini 形态不同）。
+        let providers = if matches!(app_type, AppType::Claude) {
+            crate::aggregation::resolve_aggregation_chain(providers, &request_model)
+                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+        } else {
+            providers
+        };
+
         let provider = providers
             .first()
             .cloned()

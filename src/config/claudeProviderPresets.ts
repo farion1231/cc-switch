@@ -60,7 +60,7 @@ export interface ProviderPreset {
   // 供应商类型标识（用于特殊供应商检测）
   // - "github_copilot": GitHub Copilot 供应商（需要 OAuth 认证）
   // - "codex_oauth": OpenAI Codex via ChatGPT Plus/Pro 反代（需要 OAuth 认证）
-  providerType?: "github_copilot" | "codex_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "aggregation";
 
   // 是否需要 OAuth 认证（而非 API Key）
   requiresOAuth?: boolean;
@@ -89,6 +89,22 @@ export const providerPresets: ProviderPreset[] = [
     },
     icon: "anthropic",
     iconColor: "#D4915D",
+  },
+  {
+    name: "供应商聚合",
+    nameKey: "aggregation.presetName",
+    websiteUrl: "",
+    // Aggregation routes/credentials are stored in provider meta (DB-only).
+    settingsConfig: {},
+    category: "aggregation",
+    providerType: "aggregation",
+    theme: {
+      icon: "generic",
+      backgroundColor: "#6366F1",
+      textColor: "#FFFFFF",
+    },
+    icon: "layers",
+    iconColor: "#6366F1",
   },
   {
     name: "Shengsuanyun",

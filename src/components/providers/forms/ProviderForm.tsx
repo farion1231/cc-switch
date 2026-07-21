@@ -81,6 +81,9 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { OmoFormFields } from "./OmoFormFields";
+import { AggregationFormFields } from "./AggregationFormFields";
+import { useAggregationDraftState } from "./hooks/useAggregationDraftState";
+import { AGG_MANAGED_ENV_KEYS } from "./hooks/useAggregationDraftState";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import {
   ProviderAdvancedConfig,
@@ -339,6 +342,14 @@ function ProviderFormFull({
   });
   const isOmoCategory = appId === "opencode" && category === "omo";
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
+  // 「供应商聚合」：Claude 应用下的特殊供应商（多上游 + 模型路由）
+  const isAggregationCategory =
+    appId === "claude" && category === "aggregation";
+  const aggDraft = useAggregationDraftState(
+    initialData?.meta?.aggregation ??
+      (initialData?.settingsConfig as { aggregation?: unknown } | undefined)
+        ?.aggregation,
+  );
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
   useEffect(() => {
@@ -660,6 +671,9 @@ function ProviderFormFull({
       }),
       aggregator: t("providerForm.categoryAggregation", {
         defaultValue: "聚合服务",
+      }),
+      aggregation: t("aggregation.categoryLabel", {
+        defaultValue: "供应商聚合",
       }),
       third_party: t("providerForm.categoryThirdParty", {
         defaultValue: "第三方",
@@ -1194,9 +1208,33 @@ function ProviderFormFull({
       }
     }
 
+    if (isAggregationCategory) {
+      const aggregationError = aggDraft.validate();
+      if (aggregationError === "no_upstream") {
+        toast.error(
+          t("aggregation.needUpstream", {
+            defaultValue: "请先添加至少一条带 URL 的上游",
+          }),
+        );
+        return;
+      }
+      if (aggregationError === "no_role") {
+        toast.error(
+          t("aggregation.needRole", {
+            defaultValue: "请至少为一个 Claude 角色配置上游与模型",
+          }),
+        );
+        return;
+      }
+    }
+
     // 非官方供应商端点 / API Key 空：A 类
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
-    if (category !== "official" && category !== "cloud_provider") {
+    if (
+      category !== "official" &&
+      category !== "cloud_provider" &&
+      !isAggregationCategory
+    ) {
       if (appId === "claude") {
         if (!isCodexOauthProvider && !baseUrl.trim()) {
           issues.push(
@@ -1358,6 +1396,28 @@ function ProviderFormFull({
         }
       }
       settingsConfig = JSON.stringify(omoConfig);
+    } else if (appId === "claude" && category === "aggregation") {
+      // 聚合：凭据+路由存 provider.meta.aggregation（不投影到 live）；
+      // 但按角色生成 ANTHROPIC_DEFAULT_*_MODEL 等 env 写入 settings.json，
+      // 使 Claude Code 按角色发送对应模型名，代理再据此路由到各上游。
+      const liveSettings = JSON.parse(values.settingsConfig.trim() || "{}");
+      const base =
+        liveSettings &&
+        typeof liveSettings === "object" &&
+        !Array.isArray(liveSettings)
+          ? liveSettings
+          : {};
+      delete (base as Record<string, unknown>).aggregation;
+      const existingEnv =
+        base.env && typeof base.env === "object" && !Array.isArray(base.env)
+          ? (base.env as Record<string, string>)
+          : {};
+      // 清空角色映射托管的 env 键，再按当前角色重建（删除的角色不残留）
+      const nextEnv: Record<string, string> = { ...existingEnv };
+      for (const key of AGG_MANAGED_ENV_KEYS) delete nextEnv[key];
+      Object.assign(nextEnv, aggDraft.toEnv());
+      base.env = nextEnv;
+      settingsConfig = JSON.stringify(base);
     } else {
       settingsConfig = values.settingsConfig.trim();
     }
@@ -1510,6 +1570,7 @@ function ProviderFormFull({
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
+      aggregation: isAggregationCategory ? aggDraft.toConfig() : undefined,
       costMultiplier: pricingConfig.enabled
         ? pricingConfig.costMultiplier
         : undefined,
@@ -2085,7 +2146,11 @@ function ProviderFormFull({
             }
           />
 
-          {appId === "claude" && (
+          {appId === "claude" && isAggregationCategory && (
+            <AggregationFormFields draft={aggDraft} />
+          )}
+
+          {appId === "claude" && !isAggregationCategory && (
             <ClaudeFormFields
               providerId={providerId}
               shouldShowApiKey={

@@ -322,6 +322,7 @@ export function CodexFormFields({
       isFullUrl,
       undefined,
       customUserAgent,
+      apiFormat === "anthropic" ? anthropicAuthField : undefined,
     )
       .then((models) => {
         if (seq !== fetchModelsSeqRef.current) return;
@@ -340,7 +341,15 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
+  }, [
+    codexBaseUrl,
+    codexApiKey,
+    isFullUrl,
+    customUserAgent,
+    apiFormat,
+    anthropicAuthField,
+    t,
+  ]);
 
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;

@@ -5,6 +5,7 @@ export type ProviderCategory =
   | "aggregator" // 聚合网站
   | "third_party" // 第三方供应商
   | "custom" // 自定义
+  | "aggregation" // 供应商聚合（多上游 + 模型路由）
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
@@ -168,6 +169,48 @@ export interface LocalProxyRequestOverrides {
   body?: Record<string, unknown>;
 }
 
+export interface AggregationUpstreamConfig {
+  id: string;
+  name?: string;
+  baseUrl: string;
+  apiKey: string;
+  apiFormat: ClaudeApiFormat;
+  apiKeyField?: ClaudeApiKeyField;
+  isFullUrl?: boolean;
+}
+
+export interface AggregationRouteConfig {
+  model: string;
+  upstreamId: string;
+  upstreamModel?: string;
+}
+
+/** 单个 Claude 角色 → 上游 + 实际请求模型 */
+export interface AggregationRoleRouteConfig {
+  upstreamId: string;
+  model: string;
+  supports1m?: boolean;
+}
+
+/** 按 Claude 角色组织的映射 */
+export interface AggregationRolesConfig {
+  sonnet?: AggregationRoleRouteConfig;
+  opus?: AggregationRoleRouteConfig;
+  fable?: AggregationRoleRouteConfig;
+  haiku?: AggregationRoleRouteConfig;
+  subagent?: AggregationRoleRouteConfig;
+  default?: AggregationRoleRouteConfig;
+}
+
+/** DB-only provider aggregation config. Never project this into Claude settings.json. */
+export interface AggregationConfig {
+  upstreams: AggregationUpstreamConfig[];
+  /** 按 Claude 角色的映射（新版） */
+  roles?: AggregationRolesConfig;
+  /** 旧版自由映射（保留兼容） */
+  routes?: AggregationRouteConfig[];
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -227,6 +270,8 @@ export interface ProviderMeta {
   customUserAgent?: string;
   // Local proxy request overrides. Only applied by the local proxy after route transforms.
   localProxyRequestOverrides?: LocalProxyRequestOverrides;
+  // Provider aggregation routes and credentials. DB-only; never written to live config.
+  aggregation?: AggregationConfig;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

@@ -21,10 +21,14 @@ pub struct FetchedModel {
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Option<Vec<ModelEntry>>,
+    // Codex-compatible model catalogs use `models` with `slug` instead of
+    // OpenAI's `data` with `id`.
+    models: Option<Vec<ModelEntry>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ModelEntry {
+    #[serde(alias = "slug")]
     id: String,
     owned_by: Option<String>,
 }
@@ -50,18 +54,16 @@ const KNOWN_COMPAT_SUFFIXES: &[&str] = &[
 
 /// 获取供应商的可用模型列表
 ///
-/// 使用 OpenAI 兼容的 GET /v1/models 端点，按候选列表顺序尝试。
+/// 使用 OpenAI/Codex 兼容的 GET /v1/models 端点，按候选列表顺序尝试。
+/// API Key 可为空（兼容无需鉴权的局域网上游）；有 Key 时按指定字段发送。
 pub async fn fetch_models(
     base_url: &str,
     api_key: &str,
     is_full_url: bool,
     models_url_override: Option<&str>,
     user_agent: Option<HeaderValue>,
+    api_key_field: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
-    if api_key.is_empty() {
-        return Err("API Key is required to fetch models".to_string());
-    }
-
     let candidates = build_models_url_candidates(base_url, is_full_url, models_url_override)?;
     let client = crate::proxy::http_client::get();
     let mut last_err: Option<String> = None;
@@ -70,8 +72,14 @@ pub async fn fetch_models(
         log::debug!("[ModelFetch] Trying endpoint: {url}");
         let mut request = client
             .get(url)
-            .header("Authorization", format!("Bearer {api_key}"))
             .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS));
+        if !api_key.is_empty() {
+            request = if api_key_field == Some("ANTHROPIC_API_KEY") {
+                request.header("x-api-key", api_key)
+            } else {
+                request.header("Authorization", format!("Bearer {api_key}"))
+            };
+        }
         // 自定义 User-Agent：部分 /models 端点同样有 UA 白名单（如 Kimi Coding Plan），
         // 与转发 / 检测路径共用同一 UA，避免"代理可用但取模型失败"。
         if let Some(ua) = &user_agent {
@@ -94,6 +102,7 @@ pub async fn fetch_models(
 
             let mut models: Vec<FetchedModel> = resp
                 .data
+                .or(resp.models)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|m| FetchedModel {
@@ -239,6 +248,54 @@ mod tests {
     fn test_candidates_plain_root() {
         let c = build_models_url_candidates("https://api.siliconflow.cn", false, None).unwrap();
         assert_eq!(c, vec!["https://api.siliconflow.cn/v1/models"]);
+    }
+
+    #[test]
+    fn test_parses_codex_models_catalog_shape() {
+        let response: ModelsResponse = serde_json::from_value(serde_json::json!({
+            "models": [{
+                "slug": "claude-opus-4-8",
+                "display_name": "Claude Opus 4.8"
+            }]
+        }))
+        .expect("parse Codex model catalog");
+
+        let models = response.models.expect("models");
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "claude-opus-4-8");
+        assert_eq!(models[0].owned_by, None);
+    }
+
+    /// Manual LAN/API compatibility check. Run with:
+    /// CC_SWITCH_MODEL_FETCH_LIVE_BASE_URL=http://host:port \
+    /// CC_SWITCH_MODEL_FETCH_LIVE_EXPECTED_MODEL=model-id \
+    /// cargo test test_fetch_models_from_live_endpoint -- --ignored --exact
+    #[tokio::test]
+    #[ignore]
+    async fn test_fetch_models_from_live_endpoint() {
+        let base_url = std::env::var("CC_SWITCH_MODEL_FETCH_LIVE_BASE_URL")
+            .expect("CC_SWITCH_MODEL_FETCH_LIVE_BASE_URL is required");
+        let api_key = std::env::var("CC_SWITCH_MODEL_FETCH_LIVE_API_KEY").unwrap_or_default();
+        let api_key_field = std::env::var("CC_SWITCH_MODEL_FETCH_LIVE_API_KEY_FIELD").ok();
+        let expected_model = std::env::var("CC_SWITCH_MODEL_FETCH_LIVE_EXPECTED_MODEL").ok();
+
+        let models = fetch_models(
+            &base_url,
+            &api_key,
+            false,
+            None,
+            None,
+            api_key_field.as_deref(),
+        )
+        .await
+        .expect("fetch live models");
+        assert!(!models.is_empty(), "live endpoint returned no models");
+        if let Some(expected_model) = expected_model {
+            assert!(
+                models.iter().any(|model| model.id == expected_model),
+                "expected model '{expected_model}' was not returned: {models:?}"
+            );
+        }
     }
 
     #[test]

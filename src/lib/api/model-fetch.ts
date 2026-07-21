@@ -19,6 +19,7 @@ export async function fetchModelsForConfig(
   isFullUrl?: boolean,
   modelsUrl?: string,
   customUserAgent?: string,
+  apiKeyField?: "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY",
 ): Promise<FetchedModel[]> {
   return invoke("fetch_models_for_config", {
     baseUrl,
@@ -26,6 +27,7 @@ export async function fetchModelsForConfig(
     isFullUrl,
     modelsUrl,
     customUserAgent,
+    apiKeyField,
   });
 }
 
@@ -48,14 +50,18 @@ export async function fetchCodexOauthModels(
 export function showFetchModelsError(
   err: unknown,
   t: TFunction,
-  opts?: { hasApiKey: boolean; hasBaseUrl: boolean },
+  opts?: {
+    hasApiKey: boolean;
+    hasBaseUrl: boolean;
+    apiKeyOptional?: boolean;
+  },
 ): void {
   // 前端预检：缺少必填字段
   if (opts && !opts.hasBaseUrl && !opts.hasApiKey) {
     toast.error(t("providerForm.fetchModelsNeedConfig"));
     return;
   }
-  if (opts && !opts.hasApiKey) {
+  if (opts && !opts.hasApiKey && !opts.apiKeyOptional) {
     toast.error(t("providerForm.fetchModelsNeedApiKey"));
     return;
   }
