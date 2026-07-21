@@ -1,6 +1,8 @@
 import { createRef } from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 import UnifiedSkillsPanel, {
   type UnifiedSkillsPanelHandle,
@@ -8,6 +10,7 @@ import UnifiedSkillsPanel, {
 
 const scanUnmanagedMock = vi.fn();
 const toggleSkillAppMock = vi.fn();
+const toggleSkillGlobalMock = vi.fn();
 const uninstallSkillMock = vi.fn();
 const importSkillsMock = vi.fn();
 const installFromZipMock = vi.fn();
@@ -38,6 +41,9 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useToggleSkillApp: () => ({
     mutateAsync: toggleSkillAppMock,
+  }),
+  useToggleSkillGlobal: () => ({
+    mutateAsync: toggleSkillGlobalMock,
   }),
   useRestoreSkillBackup: () => ({
     mutateAsync: restoreSkillBackupMock,
@@ -98,13 +104,16 @@ describe("UnifiedSkillsPanel", () => {
 
   it("opens the import dialog without crashing when app toggles render", async () => {
     const ref = createRef<UnifiedSkillsPanelHandle>();
+    const queryClient = createTestQueryClient();
 
     render(
-      <UnifiedSkillsPanel
-        ref={ref}
-        onOpenDiscovery={() => {}}
-        currentApp="claude"
-      />,
+      <QueryClientProvider client={queryClient}>
+        <UnifiedSkillsPanel
+          ref={ref}
+          onOpenDiscovery={() => {}}
+          currentApp="claude"
+        />
+      </QueryClientProvider>,
     );
 
     await act(async () => {
