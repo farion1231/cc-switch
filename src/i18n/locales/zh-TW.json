@@ -259,6 +259,8 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses API 格式",
     "proxyReasonAnthropicMessages": "使用 Anthropic Messages API 格式",
     "proxyReasonFullUrl": "開啟了完整 URL 連線模式",
+    "proxyReasonManagedOAuth": "使用託管 OAuth 登入（權杖由本機路由注入）",
+    "proxyReasonRoutingRequired": "需要本機路由處理請求",
     "openAIFormatHint": "此供應商使用 OpenAI 相容格式，需要開啟路由服務才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作為 Claude 供應商時始終需要本地路由；路由會根據目前模型自動選擇 Chat Completions 或 Responses。",
     "openLinkFailed": "連結開啟失敗",
@@ -326,7 +328,8 @@
       "description": "在 Claude Code 中使用您的其他訂閱，請注意合規風險。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 帳號",
-      "codexOauthDescription": "管理 ChatGPT 帳號"
+      "codexOauthDescription": "管理 ChatGPT 帳號",
+      "xaiOauthDescription": "管理 xAI / Grok 帳號"
     },
     "advanced": {
       "configDir": {
@@ -397,10 +400,10 @@
         "cacheInjectionDescription": "自動在請求關鍵位置注入標準 5 分鐘 Cache 斷點，減少重複 token 計費"
       },
       "logConfig": {
-        "title": "日誌管理",
-        "description": "控制日誌輸出層級",
-        "enabled": "啟用日誌",
-        "enabledDescription": "總開關，關閉後所有日誌將被停用",
+        "title": "應用程式診斷日誌",
+        "description": "控制應用程式診斷日誌的輸出層級",
+        "enabled": "啟用應用程式診斷日誌",
+        "enabledDescription": "控制 cc-switch.log；不影響請求用量記錄和 crash.log",
         "level": "日誌層級",
         "levelDescription": "設定輸出的最低日誌層級",
         "levels": {
@@ -985,6 +988,7 @@
     "customApiKeyHint": "自訂設定需手動填寫所有必要欄位",
     "omoHint": "OMO 設定管理 Agent 模型指派，相容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
     "officialHint": "官方供應商使用瀏覽器登入，無需設定 API Key",
+    "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
     "getApiKey": "取得 API Key",
     "partnerPromotion": {
       "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 4.8，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
@@ -1193,6 +1197,31 @@
     "copyCode": "複製程式碼",
     "fastMode": "FAST 模式",
     "fastModeDescription": "發送 service_tier=\"priority\" 換取更低延遲。預設關閉——開啟後會以更高速率消耗 ChatGPT 配額。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 驗證",
+    "accountCount": "{{count}} 個可用帳號",
+    "reauthRequired": "需要重新登入",
+    "notAuthenticated": "尚未驗證",
+    "selectAccount": "選擇帳號",
+    "selectAccountPlaceholder": "選擇 xAI 帳號",
+    "useDefaultAccount": "使用預設帳號",
+    "accounts": "xAI 帳號",
+    "defaultAccount": "預設",
+    "expired": "憑證已失效",
+    "setAsDefault": "設為預設",
+    "removeAccount": "移除帳號",
+    "addOrReauth": "新增帳號或重新登入",
+    "login": "使用 xAI 登入",
+    "waitingForAuth": "正在等待 xAI 授權…",
+    "enterCode": "若瀏覽器未自動填入，請輸入：",
+    "retry": "重試",
+    "logoutAll": "移除所有 xAI 帳號",
+    "loginRequired": "請先登入 xAI 帳號"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "已綁定的帳號不存在或需要重新登入",
+    "selectedAccountUnavailable": "已綁定的帳號不存在或需要重新登入，請重新選擇帳號"
   },
   "endpointTest": {
     "title": "請求位址管理",
@@ -1464,6 +1493,17 @@
       "upToDate": "工作階段日誌已是最新",
       "failed": "工作階段同步失敗"
     },
+    "rebuildCodex": {
+      "title": "Codex 用量維護",
+      "description": "從本機 rollout 日誌重新建構 Codex 工作階段用量",
+      "warning": "重建前會自動備份資料庫。若來源 JSONL 已刪除，對應歷史將無法重新匯入。",
+      "action": "重建 Codex 用量",
+      "confirmTitle": "確認重建 Codex 用量",
+      "confirmMessage": "此操作會清除現有 Codex 工作階段明細與彙總，再從本機 Codex 日誌重新匯入。\n\n已刪除日誌對應的歷史將遺失；缺少父 rollout 的 fork 會暫緩匯入。",
+      "confirmAction": "備份並重建",
+      "completed": "重建完成：匯入 {{imported}} 筆，錯誤 {{errors}}，疑似重複 {{suspected}}，暫緩檔案 {{deferred}}",
+      "failed": "Codex 用量重建失敗：{{error}}"
+    },
     "totalRecords": "共 {{total}} 筆紀錄",
     "goToPage": "跳轉",
     "pageInputPlaceholder": "頁碼",
@@ -1673,7 +1713,10 @@
   "errors": {
     "usage_query_failed": "用量查詢失敗",
     "configLoadFailedTitle": "設定載入失敗",
-    "configLoadFailedMessage": "無法讀取設定檔：\n{{path}}\n\n錯誤詳情：\n{{detail}}\n\n請手動檢查 JSON 是否有效，或從同目錄的備份檔案（如 config.json.bak）還原。\n\n應用程式將退出以便您進行修復。"
+    "configLoadFailedMessage": "無法讀取設定檔：\n{{path}}\n\n錯誤詳情：\n{{detail}}\n\n請手動檢查 JSON 是否有效，或從同目錄的備份檔案（如 config.json.bak）還原。\n\n應用程式將退出以便您進行修復。",
+    "frontendCrashTitle": "介面遇到了問題",
+    "frontendCrashMessage": "已嘗試將錯誤資訊寫入應用程式診斷日誌。請重新載入介面；如果問題持續，請在提交 Issue 時附上日誌。",
+    "reloadInterface": "重新載入介面"
   },
   "presetSelector": {
     "title": "選擇設定類型",
@@ -2505,8 +2548,8 @@
           "description": "單個請求的最大等待時間（0 表示不限制，或設定 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "啟用日誌紀錄",
-          "description": "紀錄所有路由請求，便於排查問題"
+          "label": "記錄請求用量",
+          "description": "將路由請求的用量與狀態寫入本機統計資料庫"
         },
         "streamingFirstByteTimeout": {
           "label": "串流首位元組逾時（秒）",

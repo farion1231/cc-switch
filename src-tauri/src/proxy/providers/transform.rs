@@ -54,18 +54,23 @@ pub fn is_openai_o_series(model: &str) -> bool {
         && model.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit())
 }
 
-/// Detect OpenAI models that support reasoning_effort.
+/// Detect Responses-compatible models that support reasoning effort.
 ///
 /// Supported families:
 /// - o-series: o1, o3, o4-mini, etc.
 /// - GPT-5+: gpt-5, gpt-5.1, gpt-5.4, gpt-5-codex, etc.
+/// - xAI Grok Build models. `grok-4.5` is the current documented Grok Build
+///   model; retain the previous `grok-build-*` family for saved providers.
 pub fn supports_reasoning_effort(model: &str) -> bool {
-    is_openai_o_series(model)
-        || model
-            .to_lowercase()
+    let normalized = model.to_lowercase();
+    is_openai_o_series(&normalized)
+        || normalized
             .strip_prefix("gpt-")
             .and_then(|rest| rest.chars().next())
             .is_some_and(|c| c.is_ascii_digit() && c >= '5')
+        || normalized == "grok-4.5"
+        || normalized.starts_with("grok-4.5-")
+        || normalized.starts_with("grok-build-")
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
@@ -1176,7 +1181,7 @@ mod tests {
             Some("chatcmpl-claude-compatible")
         );
         assert_eq!(
-            usage.dedup_request_id(),
+            usage.dedup_request_id(None),
             "session:chatcmpl-claude-compatible"
         );
     }
@@ -1566,6 +1571,8 @@ mod tests {
         assert!(supports_reasoning_effort("gpt-5"));
         assert!(supports_reasoning_effort("gpt-5.4"));
         assert!(supports_reasoning_effort("gpt-5-codex"));
+        assert!(supports_reasoning_effort("grok-4.5"));
+        assert!(supports_reasoning_effort("grok-build-0.1"));
         assert!(!supports_reasoning_effort("gpt-4o"));
         assert!(!supports_reasoning_effort("claude-sonnet-4-6"));
     }
