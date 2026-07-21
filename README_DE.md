@@ -140,8 +140,8 @@ TeamoRouter bietet außerdem Enterprise-Funktionen wie zentrale Abrechnung, Team
 </tr>
 
 <tr>
-<td width="180"><a href="https://runapi.co"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
-<td>Danke an RunAPI für die Unterstützung dieses Projekts! RunAPI ist ein leistungsstarkes und zuverlässiges KI-Modell-API-Gateway — ein API-Schlüssel gibt Ihnen Zugriff auf mehr als 150 gängige Modelle, darunter OpenAI, Claude, Gemini, DeepSeek und Grok, zu Preisen ab 10 % des offiziellen Tarifs und mit ausgezeichneter Stabilität. Es arbeitet nahtlos mit Claude Code, OpenClaw und weiteren Werkzeugen zusammen. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich und kontaktieren Sie den Kundensupport, um ein kostenloses Guthaben von ¥14 einzulösen. Registrieren Sie sich über <a href="https://runapi.co">diesen Link</a>!</td>
+<td width="180"><a href="https://runapi.co/register?aff=iOKB"><img src="assets/partners/logos/runapi.jpg" alt="RunAPI" width="150"></a></td>
+<td>Danke an RunAPI für die Unterstützung dieses Projekts! RunAPI ist ein leistungsstarkes und zuverlässiges KI-Modell-API-Gateway — ein API-Schlüssel gibt Ihnen Zugriff auf mehr als 150 gängige Modelle, darunter OpenAI, Claude, Gemini, DeepSeek und Grok, zu Preisen ab 10 % des offiziellen Tarifs und mit ausgezeichneter Stabilität. Es arbeitet nahtlos mit Claude Code, OpenClaw und weiteren Werkzeugen zusammen. Exklusiver Vorteil für CC-Switch-Nutzer: Registrieren Sie sich und kontaktieren Sie den Kundensupport, um ein kostenloses Guthaben von ¥14 einzulösen. Registrieren Sie sich über <a href="https://runapi.co/register?aff=iOKB">diesen Link</a>!</td>
 </tr>
 
 <tr>
