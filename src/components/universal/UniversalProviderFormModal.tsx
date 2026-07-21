@@ -10,7 +10,12 @@ import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import JsonEditor from "@/components/JsonEditor";
-import type { UniversalProvider, UniversalProviderModels } from "@/types";
+import { RouteTableEditor } from "./RouteTableEditor";
+import type {
+  UniversalProvider,
+  UniversalProviderModels,
+  UpstreamRoute,
+} from "@/types";
 import {
   universalProviderPresets,
   createUniversalProviderFromPreset,
@@ -42,12 +47,14 @@ export function UniversalProviderFormModal({
   // 表单状态
   const [selectedPreset, setSelectedPreset] =
     useState<UniversalProviderPreset | null>(null);
+  const isCcSwitch = selectedPreset?.providerType === "cc_switch";
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [routes, setRoutes] = useState<UpstreamRoute[]>([]);
 
   // 应用启用状态
   const [claudeEnabled, setClaudeEnabled] = useState(true);
@@ -71,6 +78,7 @@ export function UniversalProviderFormModal({
       setApiKey(editingProvider.apiKey);
       setWebsiteUrl(editingProvider.websiteUrl || "");
       setNotes(editingProvider.notes || "");
+      setRoutes(editingProvider.routes || []);
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
@@ -86,10 +94,15 @@ export function UniversalProviderFormModal({
       const defaultPreset = initialPreset || universalProviderPresets[0];
       setSelectedPreset(defaultPreset);
       setName(defaultPreset.name);
-      setBaseUrl("");
+      setBaseUrl(
+        defaultPreset.providerType === "cc_switch"
+          ? "http://127.0.0.1:15721"
+          : "",
+      );
       setApiKey("");
       setWebsiteUrl(defaultPreset.websiteUrl || "");
       setNotes("");
+      setRoutes([]);
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
@@ -107,6 +120,10 @@ export function UniversalProviderFormModal({
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
         setModels(deepClone(preset.defaultModels));
+        setRoutes([]);
+        if (preset.providerType === "cc_switch") {
+          setBaseUrl("http://127.0.0.1:15721");
+        }
       }
     },
     [isEditMode],
@@ -187,16 +204,22 @@ requires_openai_auth = true`;
 
   // 提交表单
   const handleSubmit = useCallback(() => {
-    if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
+    if (!name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))) {
       return;
     }
+
+    // CC Switch 代理强制走本地代理地址
+    const effectiveBaseUrl = isCcSwitch
+      ? "http://127.0.0.1:15721"
+      : baseUrl.trim();
+    const effectiveApiKey = isCcSwitch ? "" : apiKey.trim();
 
     const provider: UniversalProvider = editingProvider
       ? {
           ...editingProvider,
           name: name.trim(),
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
+          baseUrl: effectiveBaseUrl,
+          apiKey: effectiveApiKey,
           websiteUrl: websiteUrl.trim() || undefined,
           notes: notes.trim() || undefined,
           apps: {
@@ -205,16 +228,17 @@ requires_openai_auth = true`;
             gemini: geminiEnabled,
           },
           models,
+          routes,
         }
       : createUniversalProviderFromPreset(
           selectedPreset || universalProviderPresets[0],
           crypto.randomUUID(),
-          baseUrl.trim(),
-          apiKey.trim(),
+          effectiveBaseUrl,
+          effectiveApiKey,
           name.trim(),
         );
 
-    // 如果是新建，更新应用启用状态和模型
+    // 如果是新建，更新应用启用状态和模型（包括 routes）
     if (!editingProvider) {
       provider.apps = {
         claude: claudeEnabled,
@@ -222,6 +246,7 @@ requires_openai_auth = true`;
         gemini: geminiEnabled,
       };
       provider.models = models;
+      provider.routes = routes;
       provider.websiteUrl = websiteUrl.trim() || undefined;
       provider.notes = notes.trim() || undefined;
     }
@@ -230,6 +255,7 @@ requires_openai_auth = true`;
     onClose();
   }, [
     editingProvider,
+    isCcSwitch,
     name,
     baseUrl,
     apiKey,
@@ -246,16 +272,22 @@ requires_openai_auth = true`;
 
   // 构建 provider 对象的辅助函数
   const buildProvider = useCallback((): UniversalProvider | null => {
-    if (!name.trim() || !baseUrl.trim() || !apiKey.trim()) {
+    if (!name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))) {
       return null;
     }
+
+    // CC Switch 代理强制走本地代理地址
+    const effectiveBaseUrl = isCcSwitch
+      ? "http://127.0.0.1:15721"
+      : baseUrl.trim();
+    const effectiveApiKey = isCcSwitch ? "" : apiKey.trim();
 
     const provider: UniversalProvider = editingProvider
       ? {
           ...editingProvider,
           name: name.trim(),
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
+          baseUrl: effectiveBaseUrl,
+          apiKey: effectiveApiKey,
           websiteUrl: websiteUrl.trim() || undefined,
           notes: notes.trim() || undefined,
           apps: {
@@ -264,16 +296,17 @@ requires_openai_auth = true`;
             gemini: geminiEnabled,
           },
           models,
+          routes,
         }
       : createUniversalProviderFromPreset(
           selectedPreset || universalProviderPresets[0],
           crypto.randomUUID(),
-          baseUrl.trim(),
-          apiKey.trim(),
+          effectiveBaseUrl,
+          effectiveApiKey,
           name.trim(),
         );
 
-    // 如果是新建，更新应用启用状态和模型
+    // 如果是新建，更新应用启用状态和模型（包括 routes）
     if (!editingProvider) {
       provider.apps = {
         claude: claudeEnabled,
@@ -281,6 +314,7 @@ requires_openai_auth = true`;
         gemini: geminiEnabled,
       };
       provider.models = models;
+      provider.routes = routes;
       provider.websiteUrl = websiteUrl.trim() || undefined;
       provider.notes = notes.trim() || undefined;
     }
@@ -288,6 +322,7 @@ requires_openai_auth = true`;
     return provider;
   }, [
     editingProvider,
+    isCcSwitch,
     name,
     baseUrl,
     apiKey,
@@ -297,6 +332,7 @@ requires_openai_auth = true`;
     codexEnabled,
     geminiEnabled,
     models,
+    routes,
     selectedPreset,
   ]);
 
@@ -327,7 +363,9 @@ requires_openai_auth = true`;
       {isEditMode && onSaveAndSync ? (
         <Button
           onClick={handleSaveAndSyncClick}
-          disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
+          disabled={
+            !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
+          }
         >
           <RefreshCw className="mr-1.5 h-4 w-4" />
           {t("universalProvider.saveAndSync", { defaultValue: "保存并同步" })}
@@ -335,7 +373,9 @@ requires_openai_auth = true`;
       ) : (
         <Button
           onClick={handleSubmit}
-          disabled={!name.trim() || !baseUrl.trim() || !apiKey.trim()}
+          disabled={
+            !name.trim() || (!isCcSwitch && (!baseUrl.trim() || !apiKey.trim()))
+          }
         >
           {t("common.add", { defaultValue: "添加" })}
         </Button>
@@ -408,74 +448,83 @@ requires_openai_auth = true`;
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="baseUrl">
-              {t("universalProvider.baseUrl", { defaultValue: "API 地址" })}
-            </Label>
-            <Input
-              id="baseUrl"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com"
-            />
-          </div>
+          {isCcSwitch ? (
+            <RouteTableEditor routes={routes} onChange={setRoutes} />
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="baseUrl">
+                  {t("universalProvider.baseUrl", { defaultValue: "API 地址" })}
+                </Label>
+                <Input
+                  id="baseUrl"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder="https://api.example.com"
+                />
+              </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="apiKey">
-              {t("universalProvider.apiKey", { defaultValue: "API Key" })}
-            </Label>
-            <div className="relative">
-              <Input
-                id="apiKey"
-                type={showApiKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
-                className="pr-10"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-0 top-0 h-full px-3"
-                onClick={() => setShowApiKey(!showApiKey)}
-              >
-                {showApiKey ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
-          </div>
+              <div className="space-y-2">
+                <Label htmlFor="apiKey">
+                  {t("universalProvider.apiKey", { defaultValue: "API Key" })}
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="apiKey"
+                    type={showApiKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    className="pr-10"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-0 top-0 h-full px-3"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="websiteUrl">
-              {t("universalProvider.websiteUrl", { defaultValue: "官网地址" })}
-            </Label>
-            <Input
-              id="websiteUrl"
-              value={websiteUrl}
-              onChange={(e) => setWebsiteUrl(e.target.value)}
-              placeholder={t("universalProvider.websiteUrlPlaceholder", {
-                defaultValue: "https://example.com（可选，用于在列表中显示）",
-              })}
-            />
-          </div>
+              <div className="space-y-2">
+                <Label htmlFor="websiteUrl">
+                  {t("universalProvider.websiteUrl", {
+                    defaultValue: "官网地址",
+                  })}
+                </Label>
+                <Input
+                  id="websiteUrl"
+                  value={websiteUrl}
+                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  placeholder={t("universalProvider.websiteUrlPlaceholder", {
+                    defaultValue:
+                      "https://example.com（可选，用于在列表中显示）",
+                  })}
+                />
+              </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="notes">
-              {t("universalProvider.notes", { defaultValue: "备注" })}
-            </Label>
-            <Input
-              id="notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder={t("universalProvider.notesPlaceholder", {
-                defaultValue: "可选：添加备注信息",
-              })}
-            />
-          </div>
+              <div className="space-y-2">
+                <Label htmlFor="notes">
+                  {t("universalProvider.notes", { defaultValue: "备注" })}
+                </Label>
+                <Input
+                  id="notes"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder={t("universalProvider.notesPlaceholder", {
+                    defaultValue: "可选：添加备注信息",
+                  })}
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* 应用启用 */}
@@ -699,7 +748,6 @@ requires_openai_auth = true`;
           </div>
         )}
       </div>
-
       {/* 保存并同步确认弹窗 */}
       <ConfirmDialog
         isOpen={syncConfirmOpen}

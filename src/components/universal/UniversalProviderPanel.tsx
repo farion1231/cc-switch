@@ -6,6 +6,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UniversalProviderCard } from "./UniversalProviderCard";
 import { UniversalProviderFormModal } from "./UniversalProviderFormModal";
 import { universalProvidersApi } from "@/lib/api";
+import { proxyApi } from "@/lib/api/proxy";
 import type { UniversalProvider, UniversalProvidersMap } from "@/types";
 import { deepClone } from "@/utils/deepClone";
 
@@ -51,6 +52,21 @@ export function UniversalProviderPanel() {
     loadProviders();
   }, [loadProviders]);
 
+  /** CC Switch 代理保存后自动启用代理接管 */
+  async function autoEnableProxy(provider: UniversalProvider) {
+    const apps: string[] = [];
+    if (provider.apps.claude) apps.push("claude");
+    if (provider.apps.codex) apps.push("codex");
+    if (provider.apps.gemini) apps.push("gemini");
+    for (const app of apps) {
+      try {
+        await proxyApi.setProxyTakeoverForApp(app, true);
+      } catch (e) {
+        console.warn(`[CC Switch] 自动启用 ${app} 代理失败:`, e);
+      }
+    }
+  }
+
   // 添加/编辑供应商
   const handleSave = useCallback(
     async (provider: UniversalProvider) => {
@@ -60,6 +76,11 @@ export function UniversalProviderPanel() {
         // 新建模式下自动同步到各应用
         if (!editingProvider) {
           await universalProvidersApi.sync(provider.id);
+        }
+
+        // CC Switch 代理：自动启用代理接管
+        if (provider.providerType === "cc_switch") {
+          await autoEnableProxy(provider);
         }
 
         toast.success(
@@ -91,6 +112,12 @@ export function UniversalProviderPanel() {
       try {
         await universalProvidersApi.upsert(provider);
         await universalProvidersApi.sync(provider.id);
+
+        // CC Switch 代理：自动启用代理接管
+        if (provider.providerType === "cc_switch") {
+          await autoEnableProxy(provider);
+        }
+
         toast.success(
           t("universalProvider.savedAndSynced", {
             defaultValue: "已保存并同步到所有应用",

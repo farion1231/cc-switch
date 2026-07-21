@@ -179,8 +179,44 @@ pub fn get_claude_settings_path() -> PathBuf {
     settings
 }
 
+/// 检测便携模式配置目录
+///
+/// 从可执行文件所在目录开始，逐层向上查找 `.cc-switch/` 目录。
+/// 找到的第一个含有 `cc-switch.db` 的 `.cc-switch/` 目录即为便携配置目录。
+///
+/// 这样用户只需要在项目根目录放一个 `.cc-switch/`，不论 dev 还是 build
+/// 都能自动识别。
+fn detect_portable_config_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent()?;
+
+    // 最多向上找 5 层（target/debug/ → target/ → src-tauri/ → project root）
+    for _ in 0..5 {
+        let candidate = dir.join(".cc-switch");
+        if candidate.join("cc-switch.db").exists() || candidate.join("config.json").exists() {
+            log::info!("检测到便携配置目录: {candidate:?}");
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
+
+    None
+}
+
 /// 获取应用配置目录路径 (~/.cc-switch)
+///
+/// 优先级（从高到低）：
+/// 1. 可执行文件所在目录的 `.cc-switch/`（便携模式）
+/// 2. Tauri Store 中的配置
+/// 3. `~/.cc-switch`（默认）
+/// 4. (Windows) 兼容 v3.10.3 旧路径
 pub fn get_app_config_dir() -> PathBuf {
+    // 优先级 1：便携模式 - 检测可执行文件旁边的 .cc-switch 目录
+    if let Some(portable) = detect_portable_config_dir() {
+        return portable;
+    }
+
+    // 优先级 2：Tauri Store 覆盖
     if let Some(custom) = crate::app_store::get_app_config_dir_override() {
         return custom;
     }

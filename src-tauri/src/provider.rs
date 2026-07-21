@@ -593,6 +593,26 @@ pub struct UniversalProviderApps {
     pub gemini: bool,
 }
 
+/// CC Switch 代理内部路由表中的一条上游目标
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamRoute {
+    pub id: String,
+    pub name: String,
+    /// 协议类型：anthropic | openai | gemini
+    #[serde(default)]
+    pub protocol: String,
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
+    /// 上游支持的模型名称列表（从上游获取后选择启用）
+    #[serde(default)]
+    #[serde(rename = "modelNames")]
+    pub model_names: Vec<String>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
 /// Claude 模型配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeModelConfig {
@@ -690,6 +710,17 @@ pub struct UniversalProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "sortIndex")]
     pub sort_index: Option<usize>,
+    /// 是否启用路由（默认启用）
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// CC Switch 代理专用：内部路由表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "routes")]
+    pub routes: Vec<UpstreamRoute>,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl UniversalProvider {
@@ -716,6 +747,8 @@ impl UniversalProvider {
             meta: None,
             created_at: Some(chrono::Utc::now().timestamp_millis()),
             sort_index: None,
+            enabled: true,
+            routes: vec![],
         }
     }
 

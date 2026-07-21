@@ -102,7 +102,29 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    // 同时返回两种格式：原始 catalog 格式（Codex 使用）+ data 格式（fetchModelsForConfig 使用）
+    let mut resp = catalog;
+    let models = resp
+        .get("models")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|m| {
+            let id = m
+                .get("id")
+                .or_else(|| m.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            json!({"id": id, "owned_by": null})
+        })
+        .collect();
+    if let Some(obj) = resp.as_object_mut() {
+        obj.insert("data".to_string(), json!(data));
+    }
+    Ok(Json(resp))
 }
 
 // ============================================================================

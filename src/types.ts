@@ -582,6 +582,21 @@ export interface UniversalProvider {
   meta?: ProviderMeta;
   createdAt?: number;
   sortIndex?: number;
+  /** 是否启用代理路由 */
+  enabled?: boolean;
+  /** CC Switch 代理专用：内部路由表 */
+  routes?: UpstreamRoute[];
+}
+
+/** CC Switch 代理路由表中的一条上游目标 */
+export interface UpstreamRoute {
+  id: string;
+  name: string;
+  protocol: string; // "anthropic" | "openai" | "gemini"
+  baseUrl: string;
+  apiKey: string;
+  modelNames: string[]; // 上游支持的模型名称列表
+  enabled: boolean;
 }
 
 // 统一供应商映射（id -> UniversalProvider）

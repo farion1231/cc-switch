@@ -55,7 +55,11 @@ pub use mcp::{
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
-pub use provider::{Provider, ProviderMeta};
+pub use provider::{
+    ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, Provider, ProviderMeta,
+    UniversalProvider, UniversalProviderModels, UpstreamRoute,
+};
+pub use proxy::model_router::ModelRouter;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService},
     provider::reapply_current_codex_official_live,
@@ -1297,6 +1301,8 @@ pub fn run() {
             commands::apply_profile,
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
+            // route upstream model list fetch (protocol-aware)
+            commands::fetch_upstream_models,
             // ours: endpoint speed test + custom endpoint management
             commands::test_api_endpoints,
             commands::get_custom_endpoints,

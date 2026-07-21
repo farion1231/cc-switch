@@ -92,15 +92,18 @@ impl ModelRouter {
         let mut best: Option<MatchKind> = None;
 
         for &(_field_name, value) in fields {
-            let value = value?;
-            let kind = Self::match_value(model, value)?;
-
-            let is_better = match best {
-                None => true,
-                Some(best_kind) => kind.better_than(best_kind),
+            let value = match value {
+                Some(v) => v,
+                None => continue,
             };
-            if is_better {
-                best = Some(kind);
+            if let Some(kind) = Self::match_value(model, value) {
+                let is_better = match best {
+                    None => true,
+                    Some(best_kind) => kind.better_than(best_kind),
+                };
+                if is_better {
+                    best = Some(kind);
+                }
             }
         }
 
@@ -125,11 +128,30 @@ impl ModelRouter {
 
         None
     }
+
+    /// 检查 UpstreamRoute 是否能处理指定 model
+    pub fn match_route(model: &str, route: &crate::provider::UpstreamRoute) -> bool {
+        let model_lower = model.to_lowercase();
+        route.model_names.iter().any(|name| {
+            let name_lower = name.to_lowercase();
+            // 精确匹配
+            if model_lower == name_lower {
+                return true;
+            }
+            // 通配符匹配：name 以 * 结尾
+            if let Some(prefix) = name_lower.strip_suffix('*') {
+                if model_lower.starts_with(prefix) {
+                    return true;
+                }
+            }
+            false
+        })
+    }
 }
 
 /// 匹配类型（用于优先级排序）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MatchKind {
+pub(crate) enum MatchKind {
     /// 精确匹配（优先级最高）
     Exact,
     /// 通配符匹配（带前缀长度，越长越优先）
@@ -170,6 +192,8 @@ mod tests {
             meta: None,
             created_at: None,
             sort_index: None,
+            enabled: true,
+            routes: vec![],
         }
     }
 
@@ -193,7 +217,10 @@ mod tests {
 
     #[test]
     fn match_claude_sonnet_model() {
-        let up = make_up("up-a", claude_models(None, Some("claude-sonnet-4-6"), None, None));
+        let up = make_up(
+            "up-a",
+            claude_models(None, Some("claude-sonnet-4-6"), None, None),
+        );
         let mut map = HashMap::new();
         map.insert(up.id.clone(), up);
 
@@ -244,7 +271,10 @@ mod tests {
 
     #[test]
     fn case_insensitive() {
-        let up = make_up("up-d", claude_models(None, Some("Claude-Sonnet-4-6"), None, None));
+        let up = make_up(
+            "up-d",
+            claude_models(None, Some("Claude-Sonnet-4-6"), None, None),
+        );
         let mut map = HashMap::new();
         map.insert(up.id.clone(), up);
 
@@ -254,7 +284,10 @@ mod tests {
 
     #[test]
     fn no_match_returns_none() {
-        let up = make_up("up-e", claude_models(Some("claude-opus-4-8"), None, None, None));
+        let up = make_up(
+            "up-e",
+            claude_models(Some("claude-opus-4-8"), None, None, None),
+        );
         let mut map = HashMap::new();
         map.insert(up.id.clone(), up);
 
@@ -264,7 +297,10 @@ mod tests {
 
     #[test]
     fn wrong_app_type_skipped() {
-        let up = make_up("up-f", claude_models(Some("claude-sonnet-4-6"), None, None, None));
+        let up = make_up(
+            "up-f",
+            claude_models(Some("claude-sonnet-4-6"), None, None, None),
+        );
         let mut map = HashMap::new();
         map.insert(up.id.clone(), up);
 
