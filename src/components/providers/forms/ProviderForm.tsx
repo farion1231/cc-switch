@@ -12,7 +12,12 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import { providersApi, settingsApi, type AppId } from "@/lib/api";
+import {
+  providersApi,
+  settingsApi,
+  type AppId,
+  type ManagedAuthProvider,
+} from "@/lib/api";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -134,6 +139,16 @@ type PresetEntry = {
     | HermesProviderPreset;
 };
 
+function getPresetProviderType(
+  preset: PresetEntry["preset"] | null | undefined,
+): "github_copilot" | "codex_oauth" | undefined {
+  if (!preset || !("providerType" in preset)) return undefined;
+  return preset.providerType === "github_copilot" ||
+    preset.providerType === "codex_oauth"
+    ? preset.providerType
+    : undefined;
+}
+
 export const normalizeCodexCatalogModelsForSave = (
   models: CodexCatalogModel[],
 ): CodexCatalogModel[] => {
@@ -225,6 +240,7 @@ export interface ProviderFormProps {
   onCancel: () => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
+  onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
   onSubmittingChange?: (isSubmitting: boolean) => void;
   initialData?: {
     name?: string;
@@ -259,6 +275,7 @@ function ProviderFormFull({
   onCancel,
   onUniversalPresetSelect,
   onManageUniversalProviders,
+  onManageAuthAccounts,
   onSubmittingChange,
   initialData,
   showButtons = true,
@@ -361,6 +378,13 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setSelectedGitHubAccountId(
+      resolveManagedAccountId(initialData?.meta, "github_copilot"),
+    );
+    setSelectedCodexAccountId(
+      resolveManagedAccountId(initialData?.meta, "codex_oauth"),
+    );
+    setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
@@ -514,10 +538,18 @@ function ProviderFormFull({
   );
 
   // Copilot OAuth 认证状态（仅 Claude 应用需要）
-  const { isAuthenticated: isCopilotAuthenticated } = useCopilotAuth();
+  const {
+    isAuthenticated: isCopilotAuthenticated,
+    isStatusSuccess: isCopilotStatusSuccess,
+    isStatusError: isCopilotStatusError,
+  } = useCopilotAuth();
 
   // Codex OAuth 认证状态（ChatGPT Plus/Pro 反代）
-  const { isAuthenticated: isCodexOauthAuthenticated } = useCodexOauth();
+  const {
+    isAuthenticated: isCodexOauthAuthenticated,
+    isStatusSuccess: isCodexOauthStatusSuccess,
+    isStatusError: isCodexOauthStatusError,
+  } = useCodexOauth();
 
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
@@ -703,6 +735,40 @@ function ProviderFormFull({
         preset,
       }));
   }, [appId]);
+
+  const selectedPresetEntry = useMemo(
+    () =>
+      selectedPresetId && selectedPresetId !== "custom"
+        ? (presetEntries.find((entry) => entry.id === selectedPresetId) ?? null)
+        : null,
+    [presetEntries, selectedPresetId],
+  );
+  const selectedPresetProviderType = getPresetProviderType(
+    selectedPresetEntry?.preset,
+  );
+  const initialProviderType = initialData?.meta?.providerType;
+  const isCopilotProvider =
+    appId === "claude" &&
+    (selectedPresetProviderType === "github_copilot" ||
+      initialProviderType === "github_copilot" ||
+      baseUrl.includes("githubcopilot.com"));
+  const isClaudeCodexOauthProvider =
+    appId === "claude" &&
+    (selectedPresetProviderType === "codex_oauth" ||
+      initialProviderType === "codex_oauth");
+  const isCodexOfficialProvider =
+    appId === "codex" &&
+    (category === "official" ||
+      (selectedPresetProviderType === "codex_oauth" &&
+        selectedPresetEntry?.preset.category === "official"));
+  const isCodexOfficialManagedOauthBound =
+    isCodexOfficialProvider && Boolean(selectedCodexAccountId);
+  const wasCodexOfficialManagedOauthBound =
+    appId === "codex" &&
+    initialData?.category === "official" &&
+    Boolean(resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+  const requiresCodexOauthLogin =
+    isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound;
 
   const {
     templateValues,
@@ -1139,13 +1205,22 @@ function ProviderFormFull({
     }
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
-      initialData?.meta?.providerType === "codex_oauth";
+    if (isCopilotProvider && isCopilotStatusError) {
+      toast.error(
+        t("copilot.statusLoadFailed", {
+          defaultValue: "无法加载 GitHub Copilot 账号状态，请重试。",
+        }),
+      );
+      return;
+    }
+    if (isCopilotProvider && !isCopilotStatusSuccess) {
+      toast.error(
+        t("copilot.statusLoading", {
+          defaultValue: "正在加载 GitHub Copilot 账号状态，请稍后再试。",
+        }),
+      );
+      return;
+    }
     if (isCopilotProvider && !isCopilotAuthenticated) {
       toast.error(
         t("copilot.loginRequired", {
@@ -1154,7 +1229,23 @@ function ProviderFormFull({
       );
       return;
     }
-    if (isCodexOauthProvider && !isCodexOauthAuthenticated) {
+    if (requiresCodexOauthLogin && isCodexOauthStatusError) {
+      toast.error(
+        t("codexOauth.statusLoadFailed", {
+          defaultValue: "无法加载 ChatGPT 账号状态，请重试。",
+        }),
+      );
+      return;
+    }
+    if (requiresCodexOauthLogin && !isCodexOauthStatusSuccess) {
+      toast.error(
+        t("codexOauth.statusLoading", {
+          defaultValue: "正在加载 ChatGPT 账号状态，请稍后再试。",
+        }),
+      );
+      return;
+    }
+    if (requiresCodexOauthLogin && !isCodexOauthAuthenticated) {
       toast.error(
         t("codexOauth.loginRequired", {
           defaultValue: "请先登录 ChatGPT 账号",
@@ -1198,14 +1289,18 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !baseUrl.trim()) {
+        if (!isClaudeCodexOauthProvider && !baseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isCopilotProvider && !isCodexOauthProvider && !apiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isClaudeCodexOauthProvider &&
+          !apiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1270,20 +1365,17 @@ function ProviderFormFull({
       return;
     }
 
-    // OAuth / 其它身份识别（与 handleSubmit 保持一致）
-    const isCopilotProvider =
-      templatePreset?.providerType === "github_copilot" ||
-      initialData?.meta?.providerType === "github_copilot" ||
-      baseUrl.includes("githubcopilot.com");
-    const isCodexOauthProvider =
-      templatePreset?.providerType === "codex_oauth" ||
-      initialData?.meta?.providerType === "codex_oauth";
-
     let settingsConfig: string;
 
     if (appId === "codex") {
       try {
-        const authJson = JSON.parse(codexAuth);
+        const shouldStripManagedCodexAuth =
+          category === "official" &&
+          (isCodexOfficialManagedOauthBound ||
+            wasCodexOfficialManagedOauthBound);
+        const authJson = shouldStripManagedCodexAuth
+          ? {}
+          : JSON.parse(codexAuth);
         let normalizedCodexConfig =
           category !== "official" && (codexConfig ?? "").trim()
             ? setCodexWireApi(codexConfig ?? "", "responses")
@@ -1453,9 +1545,11 @@ function ProviderFormFull({
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
-    // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
-    const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+    const providerType = isCopilotProvider
+      ? "github_copilot"
+      : isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound
+        ? "codex_oauth"
+        : undefined;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1477,19 +1571,25 @@ function ProviderFormFull({
             authProvider: "github_copilot",
             accountId: selectedGitHubAccountId ?? undefined,
           }
-        : isCodexOauthProvider
+        : isClaudeCodexOauthProvider
           ? {
               source: "managed_account",
               authProvider: "codex_oauth",
               accountId: selectedCodexAccountId ?? undefined,
             }
-          : undefined,
+          : isCodexOfficialManagedOauthBound
+            ? {
+                source: "managed_account",
+                authProvider: "codex_oauth",
+                accountId: selectedCodexAccountId ?? undefined,
+              }
+            : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
           ? selectedGitHubAccountId
           : undefined,
-      codexFastMode: isCodexOauthProvider ? codexFastMode : undefined,
+      codexFastMode: isClaudeCodexOauthProvider ? codexFastMode : undefined,
       codexChatReasoning:
         appId === "codex" &&
         category !== "official" &&
@@ -1557,8 +1657,17 @@ function ProviderFormFull({
           : undefined,
     };
 
-    if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
+    if (!isClaudeCodexOauthProvider && "codexFastMode" in nextMeta) {
       delete nextMeta.codexFastMode;
+    }
+    if (!providerType && "providerType" in nextMeta) {
+      delete nextMeta.providerType;
+    }
+    if (!nextMeta.authBinding && "authBinding" in nextMeta) {
+      delete nextMeta.authBinding;
+    }
+    if (!nextMeta.githubAccountId && "githubAccountId" in nextMeta) {
+      delete nextMeta.githubAccountId;
     }
 
     payload.meta = nextMeta;
@@ -2100,26 +2209,17 @@ function ProviderFormFull({
               websiteUrl={claudeWebsiteUrl}
               isPartner={isClaudePartner}
               partnerPromotionKey={claudePartnerPromotionKey}
-              isCopilotPreset={
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com")
-              }
-              isCodexOauthPreset={
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
-              }
+              isCopilotPreset={isCopilotProvider}
+              isCodexOauthPreset={isClaudeCodexOauthProvider}
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
-                templatePreset?.providerType === "github_copilot" ||
-                initialData?.meta?.providerType === "github_copilot" ||
-                baseUrl.includes("githubcopilot.com") ||
-                templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
+                isCopilotProvider ||
+                isClaudeCodexOauthProvider
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
               onGitHubAccountSelect={setSelectedGitHubAccountId}
+              onManageAuthAccounts={onManageAuthAccounts}
               isCodexOauthAuthenticated={isCodexOauthAuthenticated}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
@@ -2178,6 +2278,11 @@ function ProviderFormFull({
               websiteUrl={codexWebsiteUrl}
               isPartner={isCodexPartner}
               partnerPromotionKey={codexPartnerPromotionKey}
+              isCodexOauthPreset={isCodexOfficialProvider}
+              selectedCodexAccountId={selectedCodexAccountId}
+              onCodexAccountSelect={setSelectedCodexAccountId}
+              onManageAuthAccounts={onManageAuthAccounts}
+              codexOauthNoneOptionLabel={t("codexOauth.noneOptionLabel")}
               shouldShowSpeedTest={shouldShowSpeedTest}
               codexBaseUrl={codexBaseUrl}
               onBaseUrlChange={handleCodexBaseUrlChange}

@@ -28,6 +28,25 @@ interface FullScreenPanelProps {
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px - match App.tsx
 const HEADER_HEIGHT = 64; // px - match App.tsx
 
+let bodyScrollLockCount = 0;
+let bodyOverflowBeforeFirstLock: string | null = null;
+
+const lockBodyScroll = () => {
+  if (bodyScrollLockCount === 0) {
+    bodyOverflowBeforeFirstLock = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+  }
+  bodyScrollLockCount += 1;
+};
+
+const unlockBodyScroll = () => {
+  bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
+  if (bodyScrollLockCount === 0) {
+    document.body.style.overflow = bodyOverflowBeforeFirstLock ?? "";
+    bodyOverflowBeforeFirstLock = null;
+  }
+};
+
 /**
  * Reusable full-screen panel component
  * Handles portal rendering, header with back button, and footer
@@ -42,12 +61,10 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   contentClassName,
 }) => {
   React.useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
+    if (!isOpen) return;
+
+    lockBodyScroll();
+    return unlockBodyScroll;
   }, [isOpen]);
 
   // ESC 键关闭面板

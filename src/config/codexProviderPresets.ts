@@ -37,6 +37,8 @@ export interface CodexProviderPreset {
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
   codexChatReasoning?: CodexChatReasoning;
+  // Managed OAuth provider type
+  providerType?: "codex_oauth";
   // Session-based prompt-cache routing override for Chat Completions upstreams
   promptCacheRouting?: PromptCacheRoutingMode;
 }
@@ -111,6 +113,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     websiteUrl: "https://chatgpt.com/codex",
     isOfficial: true,
     category: "official",
+    providerType: "codex_oauth",
     auth: {},
     config: ``,
     theme: {

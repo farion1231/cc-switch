@@ -50,7 +50,23 @@ export const useAddProviderMutation = (appId: AppId) => {
         if (!officialProvider) {
           throw new Error("Codex official provider was not created");
         }
-        return officialProvider;
+
+        // The fixed seed supplies identity/order, while the Add Provider form
+        // supplies the selected managed-account binding and editable metadata.
+        // Returning the seed directly would silently discard meta.authBinding,
+        // making the Official account selector appear to save while doing
+        // nothing. Persist the merged fixed-id row through the normal update
+        // path so current-provider live sync and managed auth preflight run too.
+        const updatedOfficialProvider: Provider = {
+          ...officialProvider,
+          ...rest,
+          id: CODEX_OFFICIAL_PROVIDER_ID,
+          category: "official",
+          createdAt: officialProvider.createdAt,
+          sortIndex: officialProvider.sortIndex,
+        };
+        await providersApi.update(updatedOfficialProvider, appId);
+        return updatedOfficialProvider;
       }
 
       let id: string;
