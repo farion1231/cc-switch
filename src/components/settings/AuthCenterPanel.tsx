@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { CodexIcon } from "@/components/BrandIcons";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
+import { DesktopSessionMigration } from "@/components/settings/DesktopSessionMigration";
 
 export function AuthCenterPanel() {
   const { t } = useTranslation();
@@ -69,6 +70,8 @@ export function AuthCenterPanel() {
 
         <CodexOAuthSection />
       </section>
+
+      <DesktopSessionMigration />
     </div>
   );
 }

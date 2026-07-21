@@ -12,6 +12,7 @@ export { vscodeApi } from "./vscode";
 export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
+export { desktopSessionsApi } from "./desktopSessions";
 export { workspaceApi } from "./workspace";
 export * as configApi from "./config";
 export * as authApi from "./auth";
@@ -30,3 +31,8 @@ export type {
   ManagedAuthStatus,
   ManagedAuthDeviceCodeResponse,
 } from "./auth";
+export type {
+  DesktopSessionAccount,
+  MigrateReport,
+  MigrateOptions,
+} from "./desktopSessions";

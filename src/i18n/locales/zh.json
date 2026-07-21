@@ -328,6 +328,24 @@
       "copilotDescription": "管理 GitHub Copilot 账号",
       "codexOauthDescription": "管理 ChatGPT 账号"
     },
+    "desktopSessionMigration": {
+      "title": "Claude Desktop 会话迁移",
+      "description": "切换账号后旧账号的会话会「消失」（只是存在另一个文件夹里）。把它们复制到目标账号即可重新看到——只搬历史、不搬用量额度，来源不受影响。",
+      "detecting": "正在检测…",
+      "unavailable": "未检测到 Claude Desktop 会话数据。",
+      "nothingToMigrate": "仅检测到一个账号的会话，暂无需要迁移的内容。",
+      "fromLabel": "来源账号",
+      "toLabel": "目标账号",
+      "sessionCount": "{{count}} 条会话",
+      "currentTag": "当前登录",
+      "managedTag": "受管 (3P)",
+      "sameSelection": "来源和目标不能是同一个账号。",
+      "previewBtn": "预览",
+      "migrateBtn": "开始迁移",
+      "previewResult": "将新增 {{count}} 条会话到目标账号。",
+      "migratedResult": "已复制 {{copied}} 条，目标账号现有 {{total}} 条会话。",
+      "migrateDone": "已迁移 {{count}} 条会话，重开 Claude Desktop 即可看到"
+    },
     "advanced": {
       "configDir": {
         "title": "配置文件目录",

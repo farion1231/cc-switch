@@ -328,6 +328,24 @@
       "copilotDescription": "GitHub Copilot アカウントを管理します",
       "codexOauthDescription": "ChatGPT アカウントを管理します"
     },
+    "desktopSessionMigration": {
+      "title": "Claude Desktop セッション移行",
+      "description": "アカウントを切り替えると、以前のアカウントのセッションは「消えた」ように見えます（別のフォルダーにあるだけです）。ターゲットアカウントにコピーすれば再び表示されます。履歴のみを移行し、使用量は移行しません。元のデータはそのままです。",
+      "detecting": "検出中…",
+      "unavailable": "Claude Desktop のセッションデータが見つかりません。",
+      "nothingToMigrate": "1 つのアカウントのセッションのみが見つかりました。移行する内容はありません。",
+      "fromLabel": "移行元アカウント",
+      "toLabel": "移行先アカウント",
+      "sessionCount": "{{count}} 件のセッション",
+      "currentTag": "ログイン中",
+      "managedTag": "管理対象 (3P)",
+      "sameSelection": "移行元と移行先を同じアカウントにはできません。",
+      "previewBtn": "プレビュー",
+      "migrateBtn": "移行を開始",
+      "previewResult": "移行先アカウントに {{count}} 件のセッションを追加します。",
+      "migratedResult": "{{copied}} 件をコピーしました。移行先アカウントには現在 {{total}} 件のセッションがあります。",
+      "migrateDone": "{{count}} 件のセッションを移行しました。Claude Desktop を再起動すると表示されます"
+    },
     "advanced": {
       "configDir": {
         "title": "設定ディレクトリ",

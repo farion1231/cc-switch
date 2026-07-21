@@ -11,6 +11,7 @@ mod commands;
 mod config;
 mod database;
 mod deeplink;
+mod desktop_sessions;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -1429,6 +1430,9 @@ pub fn run() {
             commands::delete_session,
             commands::delete_sessions,
             commands::launch_session_terminal,
+            // Claude Desktop 会话迁移
+            commands::list_desktop_session_accounts,
+            commands::migrate_desktop_sessions,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
             commands::probe_tool_installations,

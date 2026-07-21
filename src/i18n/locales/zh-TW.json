@@ -328,6 +328,24 @@
       "copilotDescription": "管理 GitHub Copilot 帳號",
       "codexOauthDescription": "管理 ChatGPT 帳號"
     },
+    "desktopSessionMigration": {
+      "title": "Claude Desktop 工作階段遷移",
+      "description": "切換帳號後舊帳號的工作階段會「消失」（只是存在另一個資料夾裡）。把它們複製到目標帳號即可重新看到——只搬歷史、不搬用量額度，來源不受影響。",
+      "detecting": "正在偵測…",
+      "unavailable": "未偵測到 Claude Desktop 工作階段資料。",
+      "nothingToMigrate": "僅偵測到一個帳號的工作階段，暫無需要遷移的內容。",
+      "fromLabel": "來源帳號",
+      "toLabel": "目標帳號",
+      "sessionCount": "{{count}} 個工作階段",
+      "currentTag": "目前登入",
+      "managedTag": "受管 (3P)",
+      "sameSelection": "來源和目標不能是同一個帳號。",
+      "previewBtn": "預覽",
+      "migrateBtn": "開始遷移",
+      "previewResult": "將新增 {{count}} 個工作階段到目標帳號。",
+      "migratedResult": "已複製 {{copied}} 個，目標帳號現有 {{total}} 個工作階段。",
+      "migrateDone": "已遷移 {{count}} 個工作階段，重開 Claude Desktop 即可看到"
+    },
     "advanced": {
       "configDir": {
         "title": "設定檔目錄",
