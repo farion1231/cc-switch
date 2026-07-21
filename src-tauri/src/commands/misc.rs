@@ -441,6 +441,8 @@ const CLAUDE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://claude.ai/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const OPENCODE_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+const GROK_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
 /// Hermes 官方安装器会自带/选择合适的 Python 运行时。不要再用
 /// `python3 -m pip ... || python -m pip ...`:Hermes PyPI 包要求 Python >=3.11,
@@ -454,6 +456,8 @@ const HERMES_UPDATE_UNIX: &str =
 #[cfg(target_os = "windows")]
 const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
     "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
+#[cfg(target_os = "windows")]
+const GROK_INSTALL_WINDOWS_SCRIPT: &str = "irm https://x.ai/cli/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
 fn powershell_encoded_command(script: &str) -> String {
@@ -471,6 +475,14 @@ fn hermes_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(HERMES_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn grok_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -502,7 +514,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
 
 fn official_update_args(tool: &str) -> Option<&'static str> {
     match tool {
-        "claude" | "codex" | "hermes" => Some("update"),
+        "claude" | "codex" | "grok" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
         _ => None,
@@ -534,6 +546,20 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
+    // xAI's primary Windows distribution is the native PowerShell installer.
+    // Keep npm as the network/policy fallback, matching the POSIX installer chain.
+    #[cfg(target_os = "windows")]
+    if tool == "grok"
+        && matches!(action, ToolLifecycleAction::Install)
+        && matches!(shell, LifecycleCommandShell::WindowsBatch)
+    {
+        return Some(chain_update_commands(
+            grok_install_windows_command(),
+            npm_install_command_for(tool)?.to_string(),
+            shell,
+        ));
+    }
+
     if tool == "hermes" {
         return Some(
             match (action, shell) {
@@ -1454,6 +1480,22 @@ fn opencode_extra_search_paths(
     paths
 }
 
+/// Grok's official installer writes the launcher to `$GROK_BIN_DIR` or, by
+/// default, `~/.grok/bin`. Keep these ahead of generic npm/Node locations so
+/// version probing and anchored updates can see the native distribution even
+/// when the GUI process inherited a stale PATH.
+fn grok_extra_search_paths(
+    home: &Path,
+    grok_bin_dir: Option<std::ffi::OsString>,
+) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    push_env_single_dir(&mut paths, grok_bin_dir);
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut paths, home.join(".grok").join("bin"));
+    }
+    paths
+}
+
 fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -1503,6 +1545,12 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     // 常见的安装路径（原生安装优先）
     let mut search_paths: Vec<std::path::PathBuf> = Vec::new();
+    if tool == "grok" {
+        let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
+        for path in extra_paths {
+            push_unique_path(&mut search_paths, path);
+        }
+    }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -1987,6 +2035,19 @@ fn brew_formula_from_path(real: &str) -> Option<String> {
     None
 }
 
+/// xAI's native installer uses `~/.grok/bin` for its launchers and
+/// `~/.grok/downloads/grok-<platform>` for the downloaded binary. The launcher
+/// directory also covers the default Windows layout, where the executable is
+/// copied instead of symlinked. Checking the real target additionally supports
+/// a custom `$GROK_BIN_DIR` on POSIX, whose launcher still points into the
+/// standard downloads directory.
+fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
+    [bin_path, real_target].iter().any(|path| {
+        let normalized = path.replace('\\', "/").to_ascii_lowercase();
+        normalized.contains("/.grok/bin/") || normalized.contains("/.grok/downloads/grok-")
+    })
+}
+
 /// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
 /// claude / brew / volta / bun / npm 五个锚定分支共用,避免"含空格"判定漂移。
 ///
@@ -2112,6 +2173,28 @@ fn sibling_bin(bin_path: &str, exe: &str) -> Option<String> {
     }
 }
 
+/// Build an npm command anchored to the same Node installation as `bin_path`.
+///
+/// npm's POSIX launcher is normally a JavaScript file with an
+/// `#!/usr/bin/env node` shebang. Calling npm by absolute path therefore does
+/// not make it independent of PATH: `env` still needs to find `node`. GUI apps
+/// commonly inherit only the system PATH, while nvm/fnm/mise keep Node in a
+/// user directory. Prefixing npm's sibling directory makes both npm and its
+/// transitive Node interpreter resolve to the installation we selected.
+#[cfg(not(target_os = "windows"))]
+fn anchored_npm_command(bin_path: &str, args: &str) -> Option<String> {
+    let dir = parent_dir(bin_path);
+    if dir.is_empty() {
+        return None;
+    }
+    let npm = sibling_bin(bin_path, "npm")?;
+    Some(format!(
+        "PATH={}:\"$PATH\" {} {args}",
+        shell_single_quote(&dir),
+        quote_path_if_spaced(&npm)
+    ))
+}
+
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     official_update_args(tool).map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
@@ -2158,9 +2241,10 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
 /// 二进制。唯一实测可靠的修复是先 `uninstall` 清掉残骸、再 `install` 装回完整的主包 + 平台二进制
 /// （实测输出 `added 2 packages`）。
 ///
-/// 锚定到与 codex 入口同目录的 npm（与升级路径一致，不依赖 GUI 非登录进程的 PATH）。`|| true`
-/// 让 uninstall 失败（如 nvm 上对半损坏包静默返回非 0）不触发外层 `set -e` 中止，但随后的
-/// install 若失败仍会被 `set -e` 捕获并上报给前端 toast。
+/// 锚定到与 codex 入口同目录的 npm，并把该目录放到每条 npm 命令的 PATH 首位，使 npm
+/// 的 `#!/usr/bin/env node` 能找到同一安装下的 node，不依赖 GUI 非登录进程的 PATH。
+/// `|| true` 让 uninstall 失败（如 nvm 上对半损坏包静默返回非 0）不触发外层 `set -e`
+/// 中止，但随后的 install 若失败仍会被 `set -e` 捕获并上报给前端 toast。
 ///
 /// **仅对会锚定到 sibling npm 的 node 管理器来源（nvm/fnm/mise/homebrew npm）生效**：
 /// `runnable=false` 是宽信号（权限 / node 版本 / 任意 `--version` 失败皆可触发），非 npm
@@ -2187,12 +2271,10 @@ fn codex_repair_command(bin_path: &str, real: &str) -> Option<String> {
     ) {
         return None;
     }
-    let npm = sibling_bin(bin_path, "npm")?;
-    let npm = quote_path_if_spaced(&npm);
     let pkg = "@openai/codex";
-    Some(format!(
-        "{npm} uninstall -g {pkg} || true; {npm} i -g {pkg}@latest"
-    ))
+    let uninstall = anchored_npm_command(bin_path, &format!("uninstall -g {pkg}"))?;
+    let install = anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))?;
+    Some(format!("{uninstall} || true; {install}"))
 }
 
 /// Windows 暂不做平台分发自愈：Windows 上 codex 的破坏模式不同（EPERM 文件锁 / 版本 bump
@@ -2232,8 +2314,7 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    let npm = sibling_bin(bin_path, "npm")?;
-    Some(format!("{} i -g {pkg}@latest", quote_path_if_spaced(&npm)))
+    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -2242,7 +2323,8 @@ fn package_manager_anchored_command_from_paths(
 /// 便于单测覆盖各包管理器分支。Windows 版同名函数因 sibling 扩展名歧义必须读 fs,
 /// 是刻意保留的平台差异(详见 Windows 版本 doc)。
 ///
-/// **关键不变量：返回的命令必须用绝对路径调用执行体，不依赖 PATH**。
+/// **关键不变量：返回的命令必须用绝对路径调用执行体；若执行体通过
+/// `#!/usr/bin/env` 查找解释器，还必须把其同级 bin 目录显式放到 PATH 首位**。
 /// 这条命令最终在 `run_tool_lifecycle_silently` 的非登录 `bash -c` 里执行——
 /// GUI App 启动的进程 PATH 由 launchd / Windows Service / systemd 给,通常**不含**
 /// `~/.local/bin` / `/opt/homebrew/bin` / `~/.volta/bin` 等用户级 bin 目录;而探测
@@ -2254,14 +2336,14 @@ fn package_manager_anchored_command_from_paths(
 /// 判定顺序（命中即返回）：
 /// ① Hermes → `<bin_path 绝对> update`;Hermes CLI 自己知道安装环境,避免 cc-switch
 ///    猜系统 `python3`/`python` 时撞上 Python 版本或 pyenv shim 问题。
-/// ② Claude 原生安装器（`~/.local/share/claude/versions/`）→ `<bin_path 绝对> update`；
+/// ② Claude / Grok 原生安装器 → `<bin_path 绝对> update`；
 ///    bin_path 指向 launcher,launcher 内部 dispatch update 子命令。它不归 npm 管,
 ///    且在 PATH 里比 nvm/homebrew 更靠前,用 npm 升级会装到别处且被原生那份遮蔽。
 /// ③ Homebrew formula（真身在 `Cellar/<formula>/`）→ `<bin_path 同目录>/brew upgrade <formula>`;
 ///    formula 由 Homebrew 拥有,避免 self-update 尝试改动包管理器管理的安装。
 /// ④ 其余支持官方自升级的工具 → `<bin_path 绝对> update/upgrade || <原锚定包管理器命令>`；
 ///    Codex 的 self-update 只在部分 release 可用,所以保留 npm/brew/bun/volta fallback。
-/// ⑤ 不支持官方自升级的 npm 全局包(例如 Gemini CLI / Grok Build) → 锚定到
+/// ⑤ 不支持官方自升级的 npm 全局包(例如 Gemini CLI，以及非 native 的 Grok Build) → 锚定到
 ///    "那处 bin 目录的 npm"。
 #[cfg(not(target_os = "windows"))]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
@@ -2274,6 +2356,9 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
         && (real_lower.contains("/.local/share/claude/")
             || real_lower.contains("/claude/versions/"))
     {
+        return anchored_official_update_command(tool, bin_path);
+    }
+    if tool == "grok" && is_grok_native_install(bin_path, real_target) {
         return anchored_official_update_command(tool, bin_path);
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path, real_target);
@@ -2323,7 +2408,7 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 
 /// Windows 版锚定命令生成。对平台确认可静默运行的工具优先使用官方 CLI 自升级；
 /// 对 npm/Volta/pnpm 这类可确认写回位置的安装，再接一个包管理器 fallback。不存在 brew/bun/claude-native
-/// (Windows 没 Homebrew、Bun for Windows 仍 preview、claude.ai/install.sh 是 bash 脚本)。
+/// (Windows 没 Homebrew、Bun for Windows 仍 preview；Grok native 使用 PowerShell installer)。
 /// Scoop/Chocolatey/winget/nvm-windows/MS Store node 都归 npm 类——它们都只是"如何装
 /// node"的不同入口,全局包真正的 idiom 仍是 sibling `npm.cmd`。
 ///
@@ -2332,16 +2417,15 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 /// 装 `.cmd`、Volta 装 `.exe`,纯字符串拼接无法消歧。这一平台差异**被刻意保留**:
 /// 测试用 tempdir 隔离 fs,生产侧 TOCTOU 是 by design(见 `sibling_bin_with_ext` doc)。
 ///
-/// `_real_target` 占位维持与 POSIX 版的签名对称——Windows 上未观测到需要真身路径
-/// 区分的等价类(无 Cellar、无 claude-native installer)。若未来加 Scoop persist 锚定
-/// (scoop 装的工具真身在 `<scoop_root>/persist/<app>/...`),从这里启用 `_real_target`。
+/// `real_target` 维持与 POSIX 版的签名对称，并辅助识别 Grok native。若未来加 Scoop
+/// persist 锚定(scoop 装的工具真身在 `<scoop_root>/persist/<app>/...`),也从这里取真身。
 ///
 /// **关键不变量同 POSIX 版:返回的命令必须用绝对路径,不依赖 PATH**。Windows GUI
 /// 进程 PATH 由 Service Control Manager / explorer.exe 给,通常不含用户 `%LOCALAPPDATA%`
 /// 下的 Volta/pnpm 路径;`$SHELL -lic` 的探测时 PATH 与执行时 PATH 不对称。
 ///
 /// 判定顺序(命中即返回):
-/// ① hermes → `<bin_path> update`;Hermes CLI 自己处理安装环境。
+/// ① hermes / Grok native → `<bin_path> update`;CLI 自己处理安装环境。
 /// ② 支持官方自升级且 Windows 可安全静默执行的工具 → `<bin_path> update/upgrade || call <包管理器 fallback>`。
 /// ③ 其余 npm 工具 → sibling `npm.cmd`/`.exe` i -g <pkg>@latest。
 ///
@@ -2349,8 +2433,11 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 /// 扩展名存在时,支持官方自升级的工具仍返回 `<bin_path> update/upgrade`,其余工具
 /// 才返 None 让上游兜回静态命令、`anchored=false`。
 #[cfg(target_os = "windows")]
-fn anchored_command_from_paths(tool: &str, bin_path: &str, _real_target: &str) -> Option<String> {
+fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) -> Option<String> {
     if tool == "hermes" {
+        return anchored_official_update_command(tool, bin_path);
+    }
+    if tool == "grok" && is_grok_native_install(bin_path, real_target) {
         return anchored_official_update_command(tool, bin_path);
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
@@ -2423,17 +2510,17 @@ fn static_fallback_command(tool: &str) -> String {
 ///
 /// 设计理由:
 /// - install 没有锚点可言(从无到有),但**有"上游推荐方式"这一事实** ——
-///   Anthropic 和 SST(OpenCode)都已将自家 native installer 列为首推、把 npm 列为传统方式。
+///   Anthropic、xAI 和 SST(OpenCode)都已将自家 native installer 列为首推、把 npm 列为替代方式。
 ///   把这层认知补进来,让 install 表与 update 端的锚定决策树共用同一份"上游事实"。
 /// - Hermes 使用官方 installer,避免用系统 Python/pip 安装时踩 Python >=3.11 与 pyenv
 ///   `python` shim 问题;更新路径若能锚定已安装 CLI,则走 `<hermes> update`。
 ///   **Hermes 没有 npm 包,install 端不享受 `||` 降级**——上游 installer 不可达就只能等。
-/// - 对**有 npm 包**的工具(claude/opencode),短路链(POSIX `||`)保证官方脚本不可达/
+/// - 对**有 npm 包**的工具(claude/grok/opencode),短路链(POSIX `||`)保证官方脚本不可达/
 ///   防火墙拦截时仍能装上,降级到裸 `npm i -g`。官方脚本本身不用 pipe,
 ///   所以这条路径在 WSL 的 `sh -c` 子 shell 中也不依赖外层 `pipefail`。
-/// - Windows 原生不启用:claude.ai/install.sh、opencode.ai/install 都是 bash 脚本,
-///   Windows 原生继续走 `tool_action_shell_command` 的 npm/PowerShell 命令;WSL 作为
-///   Linux 环境复用这套 POSIX 安装优先级。
+/// - Windows 上 Claude/OpenCode 原生不启用（对应 installer 都是 bash 脚本）；Grok
+///   使用官方 PowerShell installer，并同样保留 npm fallback。WSL 作为 Linux 环境
+///   复用这套 POSIX 安装优先级。
 fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
     match npm_install_command_for(tool) {
         Some(npm) => chain_update_commands(
@@ -2448,6 +2535,7 @@ fn installer_with_npm_fallback(installer: &str, tool: &str) -> String {
 fn posix_install_command_for(tool: &str) -> String {
     match tool {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
+        "grok" => installer_with_npm_fallback(GROK_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
@@ -3676,23 +3764,27 @@ mod tests {
             npm_install_command_for("grok"),
             Some("npm i -g @xai-official/grok@latest")
         );
-        assert_eq!(official_update_args("grok"), None);
+        assert_eq!(official_update_args("grok"), Some("update"));
 
-        for shell in [
-            LifecycleCommandShell::Posix,
-            LifecycleCommandShell::WindowsBatch,
-        ] {
+        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
             assert_eq!(
-                tool_action_shell_command_for_shell("grok", ToolLifecycleAction::Install, shell,)
-                    .as_deref(),
-                Some("npm i -g @xai-official/grok@latest")
-            );
-            assert_eq!(
-                tool_action_shell_command_for_shell("grok", ToolLifecycleAction::Update, shell,)
+                tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix)
                     .as_deref(),
                 Some("npm i -g @xai-official/grok@latest")
             );
         }
+
+        // Static update remains package-manager based. Only a path positively
+        // identified as xAI's native install may run `grok update`.
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "grok",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::WindowsBatch,
+            )
+            .as_deref(),
+            Some("npm i -g @xai-official/grok@latest")
+        );
     }
 
     #[test]
@@ -3948,6 +4040,35 @@ mod tests {
                 expect_quoted_path(&npm_full)
             );
             assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn grok_native_windows_uses_self_update() {
+            let (_dir, _sub, bin_path) = setup_sibling(".grok/bin", "grok.exe", &["npm.cmd"]);
+            let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
+            let expected = format!("{} update", expect_quoted_path(&bin_path));
+            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
+        }
+
+        #[test]
+        fn grok_windows_install_prefers_powershell_with_npm_fallback() {
+            let install = static_fallback_command_for("grok", ToolLifecycleAction::Install);
+            let native = grok_install_windows_command();
+            assert!(
+                install.starts_with(&native),
+                "native installer first: {install}"
+            );
+            assert!(
+                install.ends_with("|| call npm i -g @xai-official/grok@latest"),
+                "npm fallback should remain available: {install}"
+            );
+            let expected_encoded = powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT);
+            assert_eq!(
+                native
+                    .split_once("-EncodedCommand ")
+                    .map(|(_, encoded)| encoded),
+                Some(expected_encoded.as_str())
+            );
         }
 
         #[test]
@@ -4272,7 +4393,13 @@ mod tests {
             assert_eq!(codex, "npm i -g @openai/codex@latest");
 
             let grok = wsl_tool_action_shell_command("grok", ToolLifecycleAction::Install).unwrap();
-            assert_eq!(grok, "npm i -g @xai-official/grok@latest");
+            assert!(
+                grok.starts_with(
+                    "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
+                ) && grok.contains(" || npm i -g @xai-official/grok@latest"),
+                "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
+            );
+            assert!(!grok.contains("| bash"));
         }
 
         #[test]
@@ -4390,6 +4517,28 @@ mod tests {
         }
 
         #[test]
+        fn grok_native_installer_uses_self_update() {
+            // ~/.grok/bin/grok is a launcher symlink into ~/.grok/downloads.
+            // Updating it through npm would create or mutate a different install.
+            let cmd = anchored_command_from_paths(
+                "grok",
+                "/Users/me/.grok/bin/grok",
+                "/Users/me/.grok/downloads/grok-macos-aarch64",
+            );
+            assert_eq!(cmd.as_deref(), Some("/Users/me/.grok/bin/grok update"));
+        }
+
+        #[test]
+        fn grok_custom_bin_dir_is_native_when_target_is_official_download() {
+            let cmd = anchored_command_from_paths(
+                "grok",
+                "/Users/me/bin/grok",
+                "/Users/me/.grok/downloads/grok-macos-aarch64",
+            );
+            assert_eq!(cmd.as_deref(), Some("/Users/me/bin/grok update"));
+        }
+
+        #[test]
         fn gemini_homebrew_formula_uses_brew_upgrade() {
             // /opt/homebrew/bin/gemini → Cellar/gemini-cli/...:是 brew formula 而非 npm 全局包,
             // 且 formula 名(gemini-cli) ≠ npm 包名(@google/gemini-cli)。
@@ -4428,7 +4577,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @google/gemini-cli@latest"
                 )
             );
         }
@@ -4443,7 +4592,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
+                    "PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @xai-official/grok@latest"
                 )
             );
         }
@@ -4460,7 +4609,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -4475,7 +4624,7 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("/opt/homebrew/bin/openclaw update --yes || /opt/homebrew/bin/npm i -g openclaw@latest")
+                Some("/opt/homebrew/bin/openclaw update --yes || PATH='/opt/homebrew/bin':\"$PATH\" /opt/homebrew/bin/npm i -g openclaw@latest")
             );
         }
 
@@ -4602,7 +4751,7 @@ mod tests {
             assert_eq!(
                 cmd.as_deref(),
                 Some(
-                    "/Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
+                    "PATH='/Users/me/.local/share/fnm_multishells/12345_abc/bin':\"$PATH\" /Users/me/.local/share/fnm_multishells/12345_abc/bin/npm i -g @openai/codex@latest"
                 )
             );
         }
@@ -4616,7 +4765,62 @@ mod tests {
             );
             assert_eq!(
                 cmd.as_deref(),
-                Some("'/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+                Some("PATH='/Users/my name/.nvm/versions/node/v22/bin':\"$PATH\" '/Users/my name/.nvm/versions/node/v22/bin/npm' i -g @openai/codex@latest")
+            );
+        }
+
+        #[test]
+        fn npm_anchor_supplies_sibling_node_to_env_shebang() {
+            use std::os::unix::fs::PermissionsExt;
+            use std::process::Command;
+
+            let temp = tempfile::tempdir().expect("temp dir should be created");
+            let bin = temp.path().join("home dir/.nvm/versions/node/v22.14.0/bin");
+            std::fs::create_dir_all(&bin).expect("node bin should be created");
+
+            let marker = temp.path().join("sibling-node-used");
+            let node = bin.join("node");
+            let npm = bin.join("npm");
+            std::fs::write(
+                &node,
+                format!(
+                    "#!/bin/sh\nprintf sibling-node > {}\n",
+                    shell_single_quote(&marker.to_string_lossy())
+                ),
+            )
+            .expect("fake node should be written");
+            std::fs::write(&npm, "#!/usr/bin/env node\n").expect("fake npm should be written");
+            for executable in [&node, &npm] {
+                let mut permissions = std::fs::metadata(executable)
+                    .expect("fake executable metadata should exist")
+                    .permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(executable, permissions)
+                    .expect("fake executable should be executable");
+            }
+
+            let codex = bin.join("codex").to_string_lossy().into_owned();
+            let real = temp
+                .path()
+                .join("home dir/.nvm/versions/node/v22.14.0/lib/node_modules/@openai/codex/bin/codex.js")
+                .to_string_lossy()
+                .into_owned();
+            let command = anchored_command_from_paths("codex", &codex, &real)
+                .expect("nvm codex should produce an anchored npm command");
+            let output = Command::new("/bin/bash")
+                .args(["-c", &command])
+                .env("PATH", "/usr/bin:/bin")
+                .output()
+                .expect("anchored npm command should start");
+
+            assert!(
+                output.status.success(),
+                "anchored npm command failed: {}",
+                decode_command_output(&output.stderr)
+            );
+            assert_eq!(
+                std::fs::read_to_string(marker).expect("sibling node should leave a marker"),
+                "sibling-node"
             );
         }
 
@@ -4723,7 +4927,7 @@ mod tests {
             broken.runnable = false;
             assert_eq!(
                 installs_anchored_command("codex", &[broken]).as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm uninstall -g @openai/codex || true; PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
         }
 
@@ -4735,7 +4939,7 @@ mod tests {
             let cmd = installs_anchored_command("codex", &[healthy]);
             assert_eq!(
                 cmd.as_deref(),
-                Some("/Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
+                Some("PATH='/Users/me/.nvm/versions/node/v22.14.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.14.0/bin/npm i -g @openai/codex@latest")
             );
             assert!(!cmd.unwrap().contains("uninstall"));
         }
@@ -4899,9 +5103,24 @@ mod tests {
         }
 
         #[test]
-        fn grok_install_keeps_static_npm() {
+        fn grok_install_prefers_native_with_npm_fallback() {
             let cmd = install_command_for("grok");
-            assert_eq!(cmd, "npm i -g @xai-official/grok@latest");
+            assert!(
+                cmd.contains("https://x.ai/cli/install.sh"),
+                "should include official installer URL: {cmd}"
+            );
+            assert!(
+                cmd.contains("@xai-official/grok@latest"),
+                "should keep npm package as fallback: {cmd}"
+            );
+            let parts: Vec<&str> = cmd.split("||").collect();
+            assert_eq!(parts.len(), 2, "should be a two-step short-circuit chain");
+            assert!(parts[0].contains("install.sh"), "native first: {cmd}");
+            assert!(
+                !parts[0].contains('|'),
+                "native installer should avoid pipe: {cmd}"
+            );
+            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
         }
 
         #[test]
@@ -5071,6 +5290,27 @@ mod tests {
             .filter(|path| path.as_path() == Path::new("/home/tester/.bun/bin"))
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn grok_extra_search_paths_prefers_override_then_default_native_dir() {
+        let home = PathBuf::from("/home/tester");
+        let paths =
+            grok_extra_search_paths(&home, Some(std::ffi::OsString::from("/custom/grok/bin")));
+
+        assert_eq!(paths[0], PathBuf::from("/custom/grok/bin"));
+        assert_eq!(paths[1], PathBuf::from("/home/tester/.grok/bin"));
+    }
+
+    #[test]
+    fn grok_extra_search_paths_deduplicates_default_override() {
+        let home = PathBuf::from("/home/tester");
+        let paths = grok_extra_search_paths(
+            &home,
+            Some(std::ffi::OsString::from("/home/tester/.grok/bin")),
+        );
+
+        assert_eq!(paths, vec![PathBuf::from("/home/tester/.grok/bin")]);
     }
 
     #[test]

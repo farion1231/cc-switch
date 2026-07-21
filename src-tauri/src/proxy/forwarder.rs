@@ -22,9 +22,10 @@ use super::{
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
     ProxyError,
 };
-use crate::commands::{CodexOAuthState, CopilotAuthState};
+use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::{
     app_config::AppType,
     provider::{LocalProxyRequestOverrides, Provider},
@@ -1129,7 +1130,9 @@ impl RequestForwarder {
             .meta
             .as_ref()
             .and_then(|meta| meta.is_full_url)
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && !provider.is_codex_oauth()
+            && !provider.is_xai_oauth();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = provider
@@ -1518,6 +1521,48 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Native Responses passthrough to a strict third-party gateway (xAI):
+        // flatten Codex's private `namespace`/plugin tool declarations into
+        // top-level function tools so the upstream's strict serde parser does
+        // not 422 on `unknown variant "namespace"`. The Chat/Anthropic paths
+        // above already unwrap namespaces, so this only fires on the native
+        // passthrough. The response handler restores the flat names using a map
+        // re-derived from the same request tools.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+                &mut request_body,
+            )?
+        {
+            log::debug!(
+                "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
+                provider.id
+            );
+        }
+
+        // Same native-Responses path: scrub the OpenAI-backend-private fields
+        // and tool carriers (`external_web_access`, `prompt_cache_retention`,
+        // `additional_tools`, `tool_search`, …) that xAI's strict serde parser
+        // rejects with 400/422. Deterministic field removals only, gated on the
+        // xAI OAuth path, so the prompt-cache prefix stays stable and no other
+        // provider is affected. Runs after the flatten above so lifted
+        // `namespace` tools survive the tool-type whitelist.
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+                &mut request_body,
+            )
+        {
+            log::debug!(
+                "[Codex] Sanitized xAI-unsupported Responses fields (provider={})",
+                provider.id
+            );
+        }
+
         if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
             self.apply_media_prevention(&mut request_body, provider);
         }
@@ -1563,7 +1608,9 @@ impl RequestForwarder {
         let mut codex_oauth_account_id: Option<String> = None;
         let mut should_send_codex_oauth_session_headers = false;
 
-        // 获取认证头（提前准备，用于内联替换）
+        // 获取认证头（提前准备，用于内联替换），同时保留仅用于日志脱敏的
+        // 精确认证材料。实际日志永远不输出这些值。
+        let mut log_secrets: Vec<String> = Vec::new();
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
@@ -1666,6 +1713,50 @@ impl RequestForwarder {
                     return Err(ProxyError::AuthError(
                         "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
                     ));
+                }
+            }
+
+            // xAI OAuth: resolve a managed account token immediately before
+            // sending the request. Invalid refresh credentials are persisted as
+            // requiring re-authentication by the manager.
+            if auth.strategy == AuthStrategy::XaiOAuth {
+                if let Some(app_handle) = &self.app_handle {
+                    let xai_state = app_handle.state::<XaiOAuthState>();
+                    let xai_auth: tokio::sync::RwLockReadGuard<'_, XaiOAuthManager> =
+                        xai_state.0.read().await;
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.managed_account_id_for("xai_oauth"));
+                    let token_result = match &account_id {
+                        Some(id) => xai_auth.get_valid_token_for_account(id).await,
+                        None => xai_auth.get_valid_token().await,
+                    };
+                    match token_result {
+                        Ok(token) => {
+                            auth = AuthInfo::new(token, AuthStrategy::XaiOAuth);
+                            log::debug!(
+                                "[XaiOAuth] 成功获取 access_token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                        }
+                        Err(error) => {
+                            log::error!("[XaiOAuth] 获取 access_token 失败: {error}");
+                            return Err(ProxyError::AuthError(format!(
+                                "xAI OAuth 认证失败: {error}"
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ProxyError::AuthError(
+                        "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
+            for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
+                if !secret.is_empty() && !log_secrets.contains(secret) {
+                    log_secrets.push(secret.clone());
                 }
             }
 
@@ -2074,22 +2165,29 @@ impl RequestForwarder {
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
+        // 日志目标 URL 的脱敏分两种情形：
+        // - 有已知密钥(log_secrets 非空)：记录脱敏后的完整 URL，剥 userinfo/query
+        //   并抹掉已知密钥值，保留 host+path 便于诊断 base_url 配错路径导致的 404。
+        // - 无已知密钥：凭据可能整个内嵌在 path 里且无从脱敏，只记 origin，
+        //   避免默认 Info 级把形如 https://gw/<KEY>/v1 的 path 完整落盘。
+        let target_for_log = if log_secrets.is_empty() {
+            crate::redact_url_origin_for_log(&url)
+        } else {
+            crate::redact_url_for_log_with_secrets(&url, &log_secrets)
+        };
+
         // 输出请求信息日志
         let tag = adapter.name();
         let request_model = filtered_body
             .get("model")
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
-        log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
-        if log::log_enabled!(log::Level::Debug) {
-            if let Ok(body_str) = serde_json::to_string(&filtered_body) {
-                log::debug!(
-                    "[{tag}] >>> 请求体内容 ({}字节): {}",
-                    body_str.len(),
-                    body_str
-                );
-            }
-        }
+        log::info!("[{tag}] >>> 请求目标: {target_for_log} (model={request_model})");
+        log::debug!(
+            "[{tag}] >>> 请求体已准备: bytes={}, hash={} (content omitted)",
+            body_bytes.len(),
+            short_value_hash(Some(&filtered_body))
+        );
 
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -2156,11 +2254,12 @@ impl RequestForwarder {
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url
-                .parse()
-                .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+            let uri: http::Uri = url.parse().map_err(|e| {
+                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
+            })?;
             super::hyper_client::send_request(
                 uri,
+                &target_for_log,
                 method.clone(),
                 ordered_headers,
                 extensions.clone(),
@@ -2548,6 +2647,14 @@ impl RequestForwarder {
                     }
                 ))
         {
+            return ErrorCategory::NonRetryable;
+        }
+
+        // xAI OAuth mirrors the same rule for token acquisition: a local
+        // AuthError means the managed account needs re-login. Failing over
+        // would silently move the conversation off the selected Grok account
+        // and poison the provider's health state for an account-level issue.
+        if provider.is_xai_oauth() && matches!(error, ProxyError::AuthError(_)) {
             return ErrorCategory::NonRetryable;
         }
 
@@ -3127,6 +3234,7 @@ fn is_managed_account_upstream_url(url: &str) -> bool {
     host == "githubcopilot.com"
         || host.ends_with(".githubcopilot.com")
         || (host == "chatgpt.com" && uri.path().starts_with("/backend-api/codex"))
+        || (host == "api.x.ai" && uri.path().starts_with("/v1/"))
 }
 
 fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
@@ -3148,7 +3256,7 @@ fn should_preserve_exact_header_case(
         return false;
     }
 
-    if is_copilot || provider.is_codex_oauth() {
+    if is_copilot || provider.is_codex_oauth() || provider.is_xai_oauth() {
         return false;
     }
 
@@ -3186,11 +3294,11 @@ fn should_force_identity_encoding(
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
     if error.is_timeout() {
-        ProxyError::Timeout(format!("请求超时: {error}"))
+        ProxyError::Timeout(format!("上游请求超时: {}", error.without_url()))
     } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("连接失败: {error}"))
+        ProxyError::ForwardFailed(format!("上游连接失败: {}", error.without_url()))
     } else {
-        ProxyError::ForwardFailed(error.to_string())
+        ProxyError::ForwardFailed(format!("上游请求发送失败: {}", error.without_url()))
     }
 }
 
@@ -3390,7 +3498,8 @@ fn log_prompt_cache_trace(
         "[CacheTrace] app={}, provider={}, endpoint={}, api_format={}, session_client_provided={}, prompt_cache_key={}, store={}, stream={}, instructions_hash={}, system_hash={}, tools_hash={}, input_hash={}, messages_hash={}, include_hash={}, cache_controls={}, body_hash={}",
         app_type.as_str(),
         provider.id,
-        endpoint,
+        // Gemini 的 endpoint 带 ?key=<API_KEY>；脱敏剥掉 query 再落盘。
+        crate::redact_url_for_log(endpoint),
         api_format.unwrap_or("native"),
         session_client_provided,
         prompt_cache_key,
@@ -3527,6 +3636,7 @@ mod tests {
         assert_eq!(code, log_fwd::SINGLE_PROVIDER_FAILED);
         assert!(message.contains("Provider PackyCode-response 请求失败"));
         assert!(message.contains("上游 HTTP 429"));
+        // 上游错误消息保留(截断)，用于诊断失败原因。
         assert!(message.contains("rate limit exceeded"));
         assert!(!message.contains("切换下一个"));
     }
@@ -3557,20 +3667,6 @@ mod tests {
         assert_eq!(code, log_fwd::ALL_PROVIDERS_FAILED);
         assert!(message.contains("已尝试 2/2 个 Provider，均失败"));
         assert!(message.contains("connection reset by peer"));
-    }
-
-    #[test]
-    fn summarize_upstream_body_prefers_json_message() {
-        let body = json!({
-            "error": {
-                "message": "invalid_request_error: unsupported field"
-            },
-            "request_id": "req_123"
-        });
-
-        let summary = summarize_upstream_body(&body.to_string());
-
-        assert_eq!(summary, "invalid_request_error: unsupported field");
     }
 
     #[test]
@@ -3898,6 +3994,16 @@ mod tests {
 
         assert!(matches!(
             err,
+            ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
+        ));
+
+        let xai_err = reject_proxy_placeholder_for_managed_account_upstream(
+            "https://api.x.ai/v1/responses",
+            &headers,
+        )
+        .expect_err("xAI placeholder should be rejected before upstream");
+        assert!(matches!(
+            xai_err,
             ProxyError::AuthError(message) if message.contains("PROXY_MANAGED")
         ));
     }
@@ -4285,6 +4391,32 @@ mod tests {
                 ErrorCategory::NonRetryable
             );
         }
+    }
+
+    #[test]
+    fn xai_oauth_token_auth_failures_are_not_retryable() {
+        let forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
+        let provider = test_provider_with_type(Some("xai_oauth"));
+
+        // 本地取 token 失败 = 账号级问题（需重新登录），failover 无济于事
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::AuthError("xAI OAuth 认证失败".to_string()),
+                &provider,
+            ),
+            ErrorCategory::NonRetryable
+        );
+        // 上游 401/403 保持 Retryable：换 provider 可能持有可用的 key
+        assert_eq!(
+            forwarder.categorize_proxy_error(
+                &ProxyError::UpstreamError {
+                    status: 401,
+                    body: None,
+                },
+                &provider,
+            ),
+            ErrorCategory::Retryable
+        );
     }
 
     #[test]

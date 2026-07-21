@@ -193,7 +193,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://apinebula.com",
@@ -209,6 +209,25 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "apinebula",
     endpointCandidates: ["https://apinebula.com"],
     icon: "apinebula",
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.1-flash-lite",
+      },
+    },
+    baseURL: "https://sudocode.us",
+    model: "gemini-3.1-flash-lite",
+    description: "SudoCode.us",
+    category: "third_party",
+    isPartner: true,
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    icon: "sudocode-us",
   },
   {
     name: "Cubence",

@@ -192,7 +192,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     settingsConfig: {
       name: "zetaapi",
       base_url: "https://api.zetaapi.ai/v1",
@@ -682,7 +682,10 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.moonshot.cn/v1",
       api_key: "",
       api_mode: "chat_completions",
-      models: [{ id: "kimi-k2.7-code", name: "Kimi K2.7 Code" }],
+      models: [
+        { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
+        { id: "kimi-k3", name: "Kimi K3", context_length: 1048576 },
+      ],
     },
     category: "cn_official",
     icon: "kimi",
@@ -1014,7 +1017,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     settingsConfig: {
       name: "apinebula",
       base_url: "https://apinebula.com/v1",
@@ -1060,7 +1063,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
-    name: "SudoCode",
+    name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
@@ -1082,6 +1085,29 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "sudocode",
     suggestedDefaults: {
       model: { default: "gpt-5.6-sol", provider: "sudocode" },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "sudocode_us",
+      base_url: "https://sudocode.us/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "sudocode_us" },
     },
   },
   {

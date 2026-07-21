@@ -56,7 +56,7 @@ export interface ClaudeDesktopProviderPreset {
   mode: "direct" | "proxy";
   apiFormat?: ClaudeDesktopApiFormat;
   modelRoutes?: ClaudeDesktopRoutePreset[];
-  providerType?: "github_copilot" | "codex_oauth";
+  providerType?: "github_copilot" | "codex_oauth" | "xai_oauth";
   requiresOAuth?: boolean;
 
   endpointCandidates?: string[];
@@ -216,7 +216,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     category: "aggregator",
     baseUrl: "https://api.zetaapi.ai",
     mode: "direct",
@@ -396,6 +396,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     requiresOAuth: true,
     modelRoutes: brandedRoutes("gpt-5.6", "gpt-5.6", "gpt-5.6-luna"),
     icon: "openai",
+    iconColor: "#000000",
+  },
+  {
+    name: "xAI (Grok)",
+    websiteUrl: "https://x.ai/grok",
+    category: "third_party",
+    baseUrl: "https://api.x.ai/v1",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    providerType: "xai_oauth",
+    requiresOAuth: true,
+    modelRoutes: brandedRoutes("grok-4.5", "grok-4.5", "grok-4.5"),
+    icon: "xai",
     iconColor: "#000000",
   },
   {
@@ -740,7 +753,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     category: "third_party",
     baseUrl: "https://apinebula.com",
     mode: "direct",
@@ -766,7 +779,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "atlascloud",
   },
   {
-    name: "SudoCode",
+    name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
@@ -779,6 +792,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "sudocode",
     icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    category: "third_party",
+    baseUrl: "https://sudocode.us",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "ClaudeAPI",

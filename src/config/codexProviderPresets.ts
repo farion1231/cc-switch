@@ -33,6 +33,10 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
+  // 托管账号预设：目前仅 xAI OAuth（Grok 订阅经本地代理注入 token 直连 api.x.ai）
+  providerType?: "xai_oauth";
+  // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
+  requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
   modelCatalog?: CodexCatalogModel[];
   // Codex Responses -> Chat Completions reasoning capability defaults
@@ -329,7 +333,7 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "ZetaAPI",
     websiteUrl: "https://zetaapi.ai",
-    apiKeyUrl: "https://zetaapi.ai/go/ccs",
+    apiKeyUrl: "https://zetaapi.ai/go/u117",
     category: "aggregator",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
@@ -584,6 +588,11 @@ requires_openai_auth = true`,
         model: "kimi-k2.7-code",
         displayName: "Kimi K2.7 Code",
         contextWindow: 262144,
+      },
+      {
+        model: "kimi-k3",
+        displayName: "Kimi K3",
+        contextWindow: 1048576,
       },
     ]),
     codexChatReasoning: {
@@ -997,6 +1006,53 @@ requires_openai_auth = true`,
     iconColor: "#000000",
   },
   {
+    name: "xAI (Grok)",
+    websiteUrl: "https://x.ai/api",
+    apiKeyUrl: "https://console.x.ai",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    endpointCandidates: ["https://api.x.ai/v1"],
+    // xAI 官方以 /v1/responses 为一等端点（docs.x.ai api-reference）：Codex 硬依赖的
+    // store:false / include=["reasoning.encrypted_content"] / reasoning effort 均支持，
+    // 原生 Responses，无需路由接管转换
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "grok-4.5",
+        displayName: "Grok 4.5",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+      },
+    ]),
+    category: "third_party",
+    icon: "xai",
+    iconColor: "#000000",
+  },
+  {
+    name: "xAI (Grok) OAuth",
+    websiteUrl: "https://x.ai/grok",
+    auth: generateThirdPartyAuth(""),
+    // 托管 OAuth：真实 token 由本地代理按请求注入，CodexAdapter 硬定向
+    // api.x.ai；这里的 base_url / 空 auth 只是配置快照，转发时不生效。
+    config: generateThirdPartyConfig("xai", "https://api.x.ai/v1", "grok-4.5"),
+    apiFormat: "openai_responses",
+    providerType: "xai_oauth",
+    requiresOAuth: true,
+    modelCatalog: modelCatalog([
+      {
+        model: "grok-4.5",
+        displayName: "Grok 4.5",
+        contextWindow: 500000,
+        supportsParallelToolCalls: true,
+        inputModalities: ["text", "image"],
+      },
+    ]),
+    category: "third_party",
+    icon: "xai",
+    iconColor: "#000000",
+  },
+  {
     name: "Nvidia",
     websiteUrl: "https://build.nvidia.com",
     apiKeyUrl: "https://build.nvidia.com/settings/api-keys",
@@ -1073,6 +1129,8 @@ requires_openai_auth = true`,
       "https://aihubmix.com/v1",
       "https://api.aihubmix.com/v1",
     ],
+    icon: "aihubmix",
+    iconColor: "#006FFB",
   },
   {
     name: "CherryIN",
@@ -1150,7 +1208,7 @@ requires_openai_auth = true`,
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: `model_provider = "custom"
@@ -1199,7 +1257,7 @@ requires_openai_auth = true`,
     icon: "atlascloud",
   },
   {
-    name: "SudoCode",
+    name: "SudoCode.chat",
     websiteUrl: "https://sudocode.chat",
     apiKeyUrl:
       "https://sudocode.chat/register?utm_source=ccswitch&utm_medium=partner",
@@ -1221,6 +1279,29 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "sudocode",
     icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "gpt-5.5"
+review_model = "gpt-5.5"
+model_reasoning_effort = "high"
+disable_response_storage = true
+model_verbosity = "high"
+
+[model_providers.custom]
+name = "sudocode"
+base_url = "https://sudocode.us/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
+    apiFormat: "openai_responses",
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "ClaudeCN",
