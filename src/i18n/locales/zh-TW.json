@@ -572,7 +572,7 @@
         "r2": "Cloudflare R2",
         "r2Hint": "Endpoint: https://<account_id>.r2.cloudflarestorage.com，Region 設為 auto",
         "oss": "阿里雲 OSS",
-        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com，Region 範例：cn-hangzhou, cn-shanghai",
+        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com，Region 範例：cn-hangzhou, cn-shanghai。使用虛擬主機風格（bucket 作為子網域）。",
         "cos": "騰訊雲 COS",
         "cosHint": "Endpoint: https://cos.<region>.myqcloud.com，Region 範例：ap-guangzhou, ap-beijing",
         "obs": "華為雲 OBS",
