@@ -133,6 +133,22 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["huoshan", "volcengine", "ark", "agentplan", "byteplus"],
     defaultColor: "#3370FF",
   },
+  kenari: {
+    name: "kenari",
+    displayName: "Kenari",
+    category: "ai-provider",
+    keywords: [
+      "kenari",
+      "kenari.id",
+      "aggregator",
+      "gateway",
+      "claude",
+      "codex",
+      "indonesia",
+      "rupiah",
+    ],
+    defaultColor: "#B5362A",
+  },
   byteplus: {
     name: "byteplus",
     displayName: "BytePlus",

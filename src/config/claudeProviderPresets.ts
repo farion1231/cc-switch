@@ -317,6 +317,23 @@ export const providerPresets: ProviderPreset[] = [
     icon: "amux",
   },
   {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://kenari.id",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "kimi-k2-7-code",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k2-7-code",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5-2",
+      },
+    },
+    category: "aggregator",
+    icon: "kenari",
+  },
+  {
     name: "Gemini Native",
     websiteUrl: "https://ai.google.dev/gemini-api",
     apiKeyUrl: "https://aistudio.google.com/app/apikey",

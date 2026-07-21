@@ -512,6 +512,40 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    settingsConfig: {
+      baseUrl: "https://kenari.id/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "glm-5-2",
+          name: "GLM 5.2",
+          contextWindow: 1048576,
+        },
+      ],
+    },
+    category: "aggregator",
+    icon: "kenari",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "kenari/glm-5-2",
+      },
+      modelCatalog: {
+        "kenari/glm-5-2": { alias: "GLM 5.2" },
+      },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",

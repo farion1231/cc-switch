@@ -372,6 +372,20 @@ export const codexProviderPresets: CodexProviderPreset[] = [
     icon: "amux",
   },
   {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "kenari",
+      "https://kenari.id/v1",
+      "gpt-5-5",
+    ),
+    endpointCandidates: ["https://kenari.id/v1"],
+    icon: "kenari",
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",

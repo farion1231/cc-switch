@@ -246,6 +246,23 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "Kenari",
+    websiteUrl: "https://kenari.id",
+    apiKeyUrl: "https://kenari.id/keys",
+    settingsConfig: {
+      name: "kenari",
+      base_url: "https://kenari.id/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "glm-5-2", name: "GLM 5.2" }],
+    },
+    category: "aggregator",
+    icon: "kenari",
+    suggestedDefaults: {
+      model: { default: "glm-5-2", provider: "kenari" },
+    },
+  },
+  {
     name: "Code0",
     websiteUrl: "https://code0.ai",
     apiKeyUrl: "https://code0.ai/agent/register/B2XHxGjGmRvqgznY",
