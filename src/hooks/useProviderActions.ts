@@ -186,6 +186,10 @@ export function useProviderActions(
           proxyRequiredReason = t("notifications.proxyReasonCopilot", {
             defaultValue: "使用 GitHub Copilot 作为 Claude 供应商",
           });
+        } else if (provider.meta?.providerType === "kiro") {
+          proxyRequiredReason = t("notifications.proxyReasonKiro", {
+            defaultValue: "使用 Kiro 协议转换",
+          });
         } else if (
           provider.meta?.apiFormat === "openai_chat" &&
           activeApp === "claude"

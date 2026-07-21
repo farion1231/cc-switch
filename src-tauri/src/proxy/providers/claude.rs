@@ -41,6 +41,9 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
         if meta.provider_type.as_deref() == Some("codex_oauth") {
             return "openai_responses";
         }
+        if meta.provider_type.as_deref() == Some("kiro") {
+            return "kiro";
+        }
     }
 
     // 1) Preferred: meta.apiFormat (SSOT, never written to Claude Code config)
@@ -91,7 +94,7 @@ pub fn get_claude_api_format(provider: &Provider) -> &'static str {
 pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
     matches!(
         api_format,
-        "openai_chat" | "openai_responses" | "gemini_native"
+        "openai_chat" | "openai_responses" | "gemini_native" | "kiro"
     )
 }
 
@@ -340,6 +343,7 @@ pub fn transform_claude_request_for_api_format(
     api_format: &str,
     session_id: Option<&str>,
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
+    profile_arn: Option<String>,
 ) -> Result<serde_json::Value, ProxyError> {
     let is_codex_oauth = provider.is_codex_oauth();
 
@@ -391,6 +395,7 @@ pub fn transform_claude_request_for_api_format(
         (None, "none")
     };
     match api_format {
+        "kiro" => super::transform_kiro::anthropic_to_kiro(body, provider, session_id, profile_arn),
         "openai_responses" => {
             log::debug!(
                 "[Cache] OpenAI Responses prompt_cache_key source={cache_key_source}, provider={}, codex_oauth={is_codex_oauth}, has_key={}",
@@ -475,6 +480,11 @@ impl ClaudeAdapter {
             return ProviderType::GitHubCopilot;
         }
 
+        // 检测 Kiro (AWS CodeWhisperer/Q)
+        if self.is_kiro(provider) {
+            return ProviderType::Kiro;
+        }
+
         // 检测 OpenRouter
         if self.is_openrouter(provider) {
             return ProviderType::OpenRouter;
@@ -495,6 +505,25 @@ impl ClaudeAdapter {
                 return true;
             }
         }
+        false
+    }
+
+    /// 检测是否为 Kiro (AWS CodeWhisperer/Q) 供应商
+    fn is_kiro(&self, provider: &Provider) -> bool {
+        // 方式1: 检查 meta.provider_type
+        if let Some(meta) = provider.meta.as_ref() {
+            if meta.provider_type.as_deref() == Some("kiro") {
+                return true;
+            }
+        }
+
+        // 方式2: 检查 base_url（兼容旧数据的 fallback）
+        if let Ok(base_url) = self.extract_base_url(provider) {
+            if base_url.contains("kiro.dev") {
+                return true;
+            }
+        }
+
         false
     }
 
@@ -735,6 +764,15 @@ impl ProviderAdapter for ClaudeAdapter {
             ));
         }
 
+        // Kiro 同样使用占位符
+        // 实际的 access_token 由 KiroAuthManager 动态提供
+        if provider_type == ProviderType::Kiro {
+            return Some(AuthInfo::new(
+                "kiro_placeholder".to_string(),
+                AuthStrategy::Kiro,
+            ));
+        }
+
         let key = self.extract_key(provider)?;
 
         match provider_type {
@@ -905,6 +943,55 @@ impl ProviderAdapter for ClaudeAdapter {
                     (HeaderName::from_static("x-agent-task-id"), hv(&request_id)?),
                 ]
             }
+            AuthStrategy::Kiro => {
+                let bearer = format!("Bearer {}", auth.api_key);
+                let ua = "aws-sdk-rust/1.3.15 ua/2.1 api/codewhispererstreaming/0.1.16551 os/macos lang/rust/1.92.0 md/appVersion-2.7.0 app/AmazonQ-For-CLI";
+                let amz_ua = "aws-sdk-rust/1.3.15 ua/2.1 api/codewhispererstreaming/0.1.16551 os/macos lang/rust/1.92.0 m/F app/AmazonQ-For-CLI";
+                // API key (ksk_) 需额外的 tokentype 头，否则运行面拒绝 Invalid token
+                let is_api_key = super::kiro_auth::is_api_key(&auth.api_key);
+                let mut headers = vec![
+                    (
+                        HeaderName::from_static("content-type"),
+                        HeaderValue::from_static("application/x-amz-json-1.0"),
+                    ),
+                    (
+                        HeaderName::from_static("accept"),
+                        HeaderValue::from_static("application/json"),
+                    ),
+                    (HeaderName::from_static("authorization"), hv(&bearer)?),
+                    (
+                        HeaderName::from_static("x-amz-target"),
+                        HeaderValue::from_static(
+                            "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+                        ),
+                    ),
+                    (
+                        HeaderName::from_static("x-amzn-codewhisperer-optout"),
+                        HeaderValue::from_static("true"),
+                    ),
+                    (
+                        HeaderName::from_static("amz-sdk-invocation-id"),
+                        hv(&uuid::Uuid::new_v4().to_string())?,
+                    ),
+                    (
+                        HeaderName::from_static("amz-sdk-request"),
+                        HeaderValue::from_static("attempt=1; max=1"),
+                    ),
+                    (
+                        HeaderName::from_static("x-amzn-kiro-agent-mode"),
+                        HeaderValue::from_static("vibe"),
+                    ),
+                    (HeaderName::from_static("x-amz-user-agent"), hv(amz_ua)?),
+                    (HeaderName::from_static("user-agent"), hv(ua)?),
+                ];
+                if is_api_key {
+                    headers.push((
+                        HeaderName::from_static("tokentype"),
+                        HeaderValue::from_static("API_KEY"),
+                    ));
+                }
+                headers
+            }
         })
     }
 
@@ -919,13 +1006,19 @@ impl ProviderAdapter for ClaudeAdapter {
             return true;
         }
 
+        // Kiro (AWS CodeWhisperer) 总是需要格式转换 (Anthropic ↔ Kiro AWS-JSON eventstream)
+        if self.is_kiro(provider) {
+            return true;
+        }
+
         // 根据 api_format 配置决定是否需要格式转换
         // - "anthropic" (默认): 直接透传，无需转换
         // - "openai_chat": 需要 Anthropic ↔ OpenAI Chat Completions 格式转换
         // - "openai_responses": 需要 Anthropic ↔ OpenAI Responses API 格式转换
+        // - "kiro": 需要 Anthropic ↔ Kiro 格式转换
         matches!(
             self.get_api_format(provider),
-            "openai_chat" | "openai_responses" | "gemini_native"
+            "openai_chat" | "openai_responses" | "gemini_native" | "kiro"
         )
     }
 
@@ -938,6 +1031,7 @@ impl ProviderAdapter for ClaudeAdapter {
             body,
             provider,
             self.get_api_format(provider),
+            None,
             None,
             None,
         )
@@ -1159,6 +1253,37 @@ mod tests {
         let auth = adapter.extract_auth(&provider).unwrap();
         assert_eq!(auth.api_key, "gemini-test-key");
         assert_eq!(auth.strategy, AuthStrategy::Google);
+    }
+
+    #[test]
+    fn test_extract_auth_kiro_returns_kiro_strategy() {
+        let adapter = ClaudeAdapter::new();
+        // meta.provider_type == "kiro"
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://runtime.us-east-1.kiro.dev"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("kiro".to_string()),
+                api_format: Some("kiro".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(adapter.provider_type(&provider), ProviderType::Kiro);
+        let auth = adapter.extract_auth(&provider).unwrap();
+        assert_eq!(auth.strategy, AuthStrategy::Kiro);
+
+        // fallback: base_url 包含 kiro.dev 但无 provider_type
+        let provider2 = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://runtime.eu-central-1.kiro.dev" }
+        }));
+        assert_eq!(adapter.provider_type(&provider2), ProviderType::Kiro);
+        assert_eq!(
+            adapter.extract_auth(&provider2).unwrap().strategy,
+            AuthStrategy::Kiro
+        );
     }
 
     #[test]
@@ -1413,6 +1538,13 @@ mod tests {
 
     #[test]
     fn test_needs_transform() {
+        // kiro 格式必须走转换（否则原始 Anthropic 请求会被 Kiro runtime 拒绝）
+        assert!(claude_api_format_needs_transform("kiro"));
+        assert!(claude_api_format_needs_transform("openai_chat"));
+        assert!(claude_api_format_needs_transform("openai_responses"));
+        assert!(claude_api_format_needs_transform("gemini_native"));
+        assert!(!claude_api_format_needs_transform("anthropic"));
+
         let adapter = ClaudeAdapter::new();
 
         // Default: no transform (anthropic format) - no meta
@@ -1436,6 +1568,19 @@ mod tests {
             },
         );
         assert!(!adapter.needs_transform(&explicit_anthropic));
+
+        // Kiro provider: 需要转换（通过 is_kiro 和 api_format="kiro" 两条路径）
+        let kiro_provider = create_provider_with_meta(
+            json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://runtime.us-east-1.kiro.dev" }
+            }),
+            ProviderMeta {
+                provider_type: Some("kiro".to_string()),
+                api_format: Some("kiro".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(adapter.needs_transform(&kiro_provider));
 
         // Legacy settings_config.api_format: openai_chat should enable transform
         let legacy_settings_api_format = create_provider(json!({
@@ -1630,6 +1775,7 @@ mod tests {
             "openai_responses",
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -1651,9 +1797,15 @@ mod tests {
             "max_tokens": 128,
             "stream": true
         });
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(transformed["stream"], true);
         assert_eq!(transformed["stream_options"]["include_usage"], true);
     }
@@ -1669,9 +1821,15 @@ mod tests {
             "messages": [{ "role": "user", "content": "hello" }],
             "max_tokens": 128
         });
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(transformed.get("stream_options").is_none());
     }
 
@@ -1700,6 +1858,7 @@ mod tests {
             &provider,
             "openai_responses",
             Some("session-123"),
+            None,
             None,
         )
         .unwrap();
@@ -1733,6 +1892,7 @@ mod tests {
             "openai_responses",
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -1764,6 +1924,7 @@ mod tests {
             "openai_responses",
             Some("claude-session-123"),
             None,
+            None,
         )
         .unwrap();
 
@@ -1793,6 +1954,7 @@ mod tests {
             body,
             &provider,
             "openai_responses",
+            None,
             None,
             None,
         )
@@ -1828,6 +1990,7 @@ mod tests {
             "openai_responses",
             Some("session-123"),
             None,
+            None,
         )
         .unwrap();
 
@@ -1858,6 +2021,7 @@ mod tests {
             body,
             &provider,
             "openai_responses",
+            None,
             None,
             None,
         )
@@ -1892,9 +2056,15 @@ mod tests {
             "max_tokens": 64
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "gemini_native", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "gemini_native",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(transformed.get("contents").is_some());
         assert_eq!(
@@ -1925,9 +2095,15 @@ mod tests {
             "max_tokens": 64
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert!(transformed.get("prompt_cache_key").is_none());
     }
@@ -1953,9 +2129,15 @@ mod tests {
             "max_tokens": 64
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(transformed["prompt_cache_key"], "claude-cache-route");
     }
@@ -1986,9 +2168,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert!(msg.get("tool_calls").is_some());
@@ -2021,9 +2209,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -2056,9 +2250,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");
@@ -2091,9 +2291,15 @@ mod tests {
             }]
         });
 
-        let transformed =
-            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
-                .unwrap();
+        let transformed = transform_claude_request_for_api_format(
+            body,
+            &provider,
+            "openai_chat",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let msg = &transformed["messages"][0];
         assert_eq!(msg["reasoning_content"], "I should call the tool.");

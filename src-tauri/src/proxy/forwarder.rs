@@ -55,6 +55,28 @@ fn validate_codex_official_authorization(headers: &http::HeaderMap) -> Result<()
     }
 }
 
+/// 将 Kiro runtime/management base_url 中的 region 段重写为目标 API region。
+///
+/// 例如 https://runtime.us-east-1.kiro.dev -> https://runtime.eu-central-1.kiro.dev。
+/// 只替换形如 `<sub>.<region>.kiro.dev` 的主机名中的 region 段，其他原样保留。
+fn rewrite_kiro_runtime_region(base_url: &str, api_region: &str) -> String {
+    // 匹配 "://<sub>.<region>.kiro.dev" 中的 region
+    if let Some(host_start) = base_url.find("://") {
+        let after = &base_url[host_start + 3..];
+        // 找到 ".kiro.dev"
+        if let Some(kiro_idx) = after.find(".kiro.dev") {
+            let host_and_before = &after[..kiro_idx]; // e.g. "runtime.us-east-1"
+            if let Some(dot) = host_and_before.find('.') {
+                let sub = &host_and_before[..dot]; // "runtime"
+                let prefix = &base_url[..host_start + 3]; // "https://"
+                let suffix = &after[kiro_idx..]; // ".kiro.dev..."
+                return format!("{prefix}{sub}.{api_region}{suffix}");
+            }
+        }
+    }
+    base_url.to_string()
+}
+
 pub struct ForwardResult {
     pub response: ProxyResponse,
     pub provider: Provider,
@@ -191,6 +213,36 @@ impl RequestForwarder {
             && !already_retried
             && super::media_sanitizer::contains_image_blocks(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
+    }
+
+    /// Kiro 部分模型（如 claude-haiku-4-5）不支持 additionalModelRequestFields
+    /// （thinking / output_config.effort），会返回 400
+    /// "additionalModelRequestFields is not supported for this model"。
+    /// 该函数判断是否应去掉该字段重试一次。
+    fn kiro_additional_fields_retry_should_trigger(
+        adapter_name: &str,
+        api_format: &str,
+        already_retried: bool,
+        provider_body: &Value,
+        error: &ProxyError,
+    ) -> bool {
+        if !matches!(adapter_name, "Claude" | "Codex") || api_format != "kiro" || already_retried {
+            return false;
+        }
+        // Claude 原始请求使用 thinking；Codex Responses 原始请求使用 reasoning，
+        // 后者会在 Responses -> Anthropic 阶段转换为 thinking。
+        let has_thinking =
+            provider_body.get("thinking").is_some() || provider_body.get("reasoning").is_some();
+        if !has_thinking {
+            return false;
+        }
+        match error {
+            ProxyError::UpstreamError {
+                status: 400,
+                body: Some(b),
+            } => b.contains("additionalModelRequestFields is not supported"),
+            _ => false,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -418,6 +470,7 @@ impl RequestForwarder {
             let mut rectifier_retried = false;
             let mut budget_rectifier_retried = false;
             let mut media_rectifier_retried = false;
+            let mut kiro_additional_fields_retried = false;
 
             // 上限检查：尊重用户在 AppProxyConfig.max_retries 上配置的「重试次数」。
             // 放在熔断器 allow 检查之前，避免在已经超限时还占用 HalfOpen 探测名额。
@@ -549,6 +602,99 @@ impl RequestForwarder {
                         ProviderType::Claude | ProviderType::ClaudeAuth
                     );
                     let mut signature_rectifier_non_retryable_client_error = false;
+
+                    // Kiro: 部分模型不支持 additionalModelRequestFields，去掉 thinking 后重试一次。
+                    if Self::kiro_additional_fields_retry_should_trigger(
+                        adapter.name(),
+                        super::providers::get_claude_api_format(provider),
+                        kiro_additional_fields_retried,
+                        &provider_body,
+                        &e,
+                    ) {
+                        kiro_additional_fields_retried = true;
+                        let _ = kiro_additional_fields_retried; // 跨 provider 持久，避免重复重试
+                        let mut retry_body = provider_body.clone();
+                        if let Some(obj) = retry_body.as_object_mut() {
+                            obj.remove("thinking");
+                            obj.remove("reasoning");
+                            obj.remove("output_config");
+                        }
+                        log::info!(
+                            "[{app_type_str}] [Kiro] 上游拒绝 additionalModelRequestFields，去掉 thinking 重试 provider={} model={}",
+                            provider.id,
+                            retry_body.get("model").and_then(Value::as_str).unwrap_or("")
+                        );
+                        match self
+                            .forward(
+                                app_type,
+                                &method,
+                                provider,
+                                endpoint,
+                                &retry_body,
+                                &headers,
+                                &extensions,
+                                adapter.as_ref(),
+                            )
+                            .await
+                        {
+                            Ok((response, claude_api_format, outbound_model)) => {
+                                log::info!(
+                                    "[{app_type_str}] [Kiro] 去掉 additionalModelRequestFields 重试成功"
+                                );
+                                self.record_success_result(
+                                    &provider.id,
+                                    app_type_str,
+                                    used_half_open_permit,
+                                )
+                                .await;
+                                {
+                                    let mut current_providers =
+                                        self.current_providers.write().await;
+                                    current_providers.insert(
+                                        app_type_str.to_string(),
+                                        (provider.id.clone(), provider.name.clone()),
+                                    );
+                                }
+                                {
+                                    let mut status = self.status.write().await;
+                                    status.success_requests += 1;
+                                    status.last_error = None;
+                                    if status.total_requests > 0 {
+                                        status.success_rate = (status.success_requests as f32
+                                            / status.total_requests as f32)
+                                            * 100.0;
+                                    }
+                                }
+                                return Ok(ForwardResult {
+                                    response,
+                                    provider: provider.clone(),
+                                    claude_api_format,
+                                    outbound_model,
+                                    connection_guard: None,
+                                });
+                            }
+                            Err(retry_err) => {
+                                log::warn!(
+                                    "[{app_type_str}] [Kiro] 去掉 additionalModelRequestFields 重试仍失败: {retry_err}"
+                                );
+                                if let Some(err) = self
+                                    .handle_rectifier_retry_failure(
+                                        retry_err,
+                                        provider,
+                                        app_type_str,
+                                        used_half_open_permit,
+                                        "kiro additionalModelRequestFields 降级",
+                                        &mut last_error,
+                                        &mut last_provider,
+                                    )
+                                    .await
+                                {
+                                    return Err(err);
+                                }
+                                continue;
+                            }
+                        }
+                    }
 
                     if self.media_retry_should_trigger(
                         adapter.name(),
@@ -1122,8 +1268,34 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let forward_started = std::time::Instant::now();
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
+
+        // Kiro：按账号 SSO region 动态解析 Kiro Q API region，统一 runtime / management 端点逻辑
+        // （Kiro Q API 仅部署在 us-east-1 / eu-central-1，其他 region 需映射；
+        //  否则会连到不存在的 runtime.<region>.kiro.dev）
+        {
+            let kiro_api_format = provider.is_kiro();
+            if kiro_api_format && base_url.contains("kiro.dev") {
+                if let Some(app_handle) = &self.app_handle {
+                    use crate::commands::KiroAuthState;
+                    let kiro_state = app_handle.state::<KiroAuthState>();
+                    let kiro_auth = kiro_state.0.read().await;
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("kiro"));
+                    let sso_region = kiro_auth
+                        .get_region_for_account(account_id.as_deref())
+                        .await;
+                    let api_region =
+                        super::providers::kiro_auth::resolve_api_region(sso_region.as_deref());
+                    drop(kiro_auth);
+                    base_url = rewrite_kiro_runtime_region(&base_url, &api_region);
+                }
+            }
+        }
 
         let is_full_url = provider
             .meta
@@ -1144,6 +1316,8 @@ impl RequestForwarder {
         // catalog matching and to the transform's own strip+beta detection).
         let codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let codex_responses_to_kiro = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && super::providers::should_convert_codex_responses_to_kiro(provider, endpoint);
         let codex_responses_to_anthropic = matches!(app_type, AppType::Codex | AppType::GrokBuild)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
@@ -1180,7 +1354,7 @@ impl RequestForwarder {
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
             self.apply_copilot_live_model_resolution(provider, &mut mapped_body)
                 .await;
-        } else if !codex_responses_to_anthropic {
+        } else if !codex_responses_to_anthropic && !codex_responses_to_kiro {
             // Skip on the Codex→Anthropic path: stripping [1m] here would break both the
             // model-catalog match (apply_codex_upstream_model) and the transform's own
             // strip+`context-1m` beta detection. The marker is stripped later, on the
@@ -1356,6 +1530,9 @@ impl RequestForwarder {
                 == Some(true);
         let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
             rewrite_codex_responses_endpoint_to_chat(endpoint)
+        } else if codex_responses_to_kiro {
+            let (_, query) = split_endpoint_and_query(endpoint);
+            ("/".to_string(), query.map(ToString::to_string))
         } else if codex_responses_to_anthropic {
             rewrite_codex_responses_endpoint_to_anthropic(endpoint)
         } else if needs_transform && adapter.name() == "Claude" {
@@ -1383,7 +1560,10 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let url = if codex_responses_to_kiro {
+            let runtime_url = format!("{}/", base_url.trim_end_matches('/'));
+            append_query_to_full_url(&runtime_url, passthrough_query.as_deref())
+        } else if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -1442,6 +1622,62 @@ impl RequestForwarder {
                     .then_some(self.session_id.as_str()),
             );
             chat_body
+        } else if codex_responses_to_kiro {
+            let mut mapped_body = mapped_body;
+            super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
+            let kiro_reasoning_effort = mapped_body
+                .pointer("/reasoning/effort")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|effort| matches!(*effort, "low" | "medium" | "high" | "xhigh" | "max"))
+                .map(str::to_string);
+            const DEFAULT_CODEX_KIRO_MAX_TOKENS: u64 = 8192;
+            let mut anthropic_body =
+                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
+                    mapped_body,
+                    DEFAULT_CODEX_KIRO_MAX_TOKENS,
+                )?;
+            if let Some(effort) = kiro_reasoning_effort {
+                anthropic_body["thinking"] = serde_json::json!({ "type": "adaptive" });
+                anthropic_body["output_config"] = serde_json::json!({ "effort": effort });
+            }
+
+            let mut profile_arn = None;
+            if let Some(app_handle) = &self.app_handle {
+                use crate::commands::KiroAuthState;
+                let kiro_state = app_handle.state::<KiroAuthState>();
+                let kiro_auth = kiro_state.0.read().await;
+                let account_id = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.managed_account_id_for("kiro"));
+                profile_arn = kiro_auth
+                    .get_profile_arn_for_account(account_id.as_deref())
+                    .await;
+                if anthropic_body.get("thinking").is_some() {
+                    let kiro_model_id = super::providers::transform_kiro::map_model_to_kiro(
+                        anthropic_body
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .unwrap_or("auto"),
+                    );
+                    if super::providers::transform_kiro::get_model_caps(&kiro_model_id).is_none() {
+                        crate::commands::prewarm_kiro_models(
+                            kiro_state.0.clone(),
+                            account_id.clone(),
+                        );
+                        log::debug!("[Codex/Kiro] 能力缓存未命中，已转为后台预热");
+                    }
+                }
+            }
+
+            super::providers::transform_kiro::anthropic_to_kiro(
+                anthropic_body,
+                provider,
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+                profile_arn,
+            )?
         } else if codex_responses_to_anthropic {
             let mut mapped_body = mapped_body;
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
@@ -1503,6 +1739,42 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+                let mut profile_arn: Option<String> = None;
+                if api_format == "kiro" {
+                    if let Some(app_handle) = &self.app_handle {
+                        use crate::commands::KiroAuthState;
+                        let kiro_state = app_handle.state::<KiroAuthState>();
+                        let kiro_auth = kiro_state.0.read().await;
+                        let account_id = provider
+                            .meta
+                            .as_ref()
+                            .and_then(|m| m.managed_account_id_for("kiro"));
+                        profile_arn = kiro_auth
+                            .get_profile_arn_for_account(account_id.as_deref())
+                            .await;
+
+                        // 能力驱动预热：请求带 thinking 但该模型能力未缓存时，
+                        // 先拉一次模型列表填充缓存（fetch_kiro_models 作为副作用写入），
+                        // 避免首个思考请求白费一次 400 重试。失败不阻断，仍由 400 重试兑底。
+                        if mapped_body.get("thinking").is_some() {
+                            let kiro_model_id = super::providers::transform_kiro::map_model_to_kiro(
+                                mapped_body
+                                    .get("model")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("auto"),
+                            );
+                            if super::providers::transform_kiro::get_model_caps(&kiro_model_id)
+                                .is_none()
+                            {
+                                crate::commands::prewarm_kiro_models(
+                                    kiro_state.0.clone(),
+                                    account_id.clone(),
+                                );
+                                log::debug!("[Kiro] 能力缓存未命中，已转为后台预热");
+                            }
+                        }
+                    }
+                }
                 super::providers::transform_claude_request_for_api_format(
                     mapped_body,
                     provider,
@@ -1510,6 +1782,7 @@ impl RequestForwarder {
                     self.session_client_provided
                         .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
+                    profile_arn,
                 )?
             } else {
                 adapter.transform_request(mapped_body, provider)?
@@ -1556,6 +1829,7 @@ impl RequestForwarder {
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
+            || codex_responses_to_kiro
             || codex_responses_to_anthropic
             || request_is_streaming;
 
@@ -1565,6 +1839,54 @@ impl RequestForwarder {
 
         // 获取认证头（提前准备，用于内联替换）
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
+            // Kiro 特殊处理：从 KiroAuthManager 获取真实 token
+            if auth.strategy == AuthStrategy::Kiro {
+                if let Some(app_handle) = &self.app_handle {
+                    use crate::commands::KiroAuthState;
+                    let kiro_state = app_handle.state::<KiroAuthState>();
+                    let kiro_auth = kiro_state.0.read().await;
+
+                    // 从 provider.meta 获取关联的 Kiro 账号 ID
+                    let account_id = provider
+                        .meta
+                        .as_ref()
+                        .and_then(|m| m.managed_account_id_for("kiro"));
+
+                    let token_result = match &account_id {
+                        Some(id) => {
+                            log::debug!("[Kiro] 使用指定账号 {id} 获取 token");
+                            kiro_auth.get_valid_token_for_account(id).await
+                        }
+                        None => {
+                            log::debug!("[Kiro] 使用默认账号获取 token");
+                            kiro_auth.get_valid_token().await
+                        }
+                    };
+
+                    match token_result {
+                        Ok(token) => {
+                            log::debug!(
+                                "[Kiro] 成功获取 token (account={})",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                            auth = AuthInfo::new(token, AuthStrategy::Kiro);
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "[Kiro] 获取 token 失败 (account={}): {e}",
+                                account_id.as_deref().unwrap_or("default")
+                            );
+                            return Err(ProxyError::AuthError(format!("Kiro 认证失败: {e}")));
+                        }
+                    }
+                } else {
+                    log::error!("[Kiro] AppHandle 不可用");
+                    return Err(ProxyError::AuthError(
+                        "Kiro 认证不可用（无 AppHandle）".to_string(),
+                    ));
+                }
+            }
+
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
                 if let Some(app_handle) = &self.app_handle {
@@ -1830,6 +2152,16 @@ impl RequestForwarder {
                 continue;
             }
 
+            // Kiro's AWS JSON protocol headers come from the managed auth
+            // adapter. Do not also forward the client's JSON media type or
+            // identity: duplicate Content-Type values can make the runtime
+            // miss X-Amz-Target dispatch and return UnknownOperationException.
+            if provider.is_kiro()
+                && matches!(key_str, "content-type" | "user-agent" | "x-amz-user-agent")
+            {
+                continue;
+            }
+
             // --- 连接 / 追踪 / CDN 类 — 无条件跳过 ---
             if matches!(
                 key_str,
@@ -1900,7 +2232,9 @@ impl RequestForwarder {
             // can defeat strict gateway fingerprint checks.
             // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
             // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            if codex_responses_to_anthropic && is_codex_client_fingerprint_header(key_str) {
+            if (codex_responses_to_anthropic || codex_responses_to_kiro)
+                && is_codex_client_fingerprint_header(key_str)
+            {
                 continue;
             }
 
@@ -1909,7 +2243,9 @@ impl RequestForwarder {
             // Anthropic client sends `application/json` (streaming is driven by
             // the body's stream:true). Strict Anthropic gateways return 406 Not
             // Acceptable for an event-stream Accept, so normalize it here.
-            if codex_responses_to_anthropic && key_str.eq_ignore_ascii_case("accept") {
+            if (codex_responses_to_anthropic || codex_responses_to_kiro)
+                && key_str.eq_ignore_ascii_case("accept")
+            {
                 if !saw_accept {
                     saw_accept = true;
                     ordered_headers.append(
@@ -1999,7 +2335,7 @@ impl RequestForwarder {
         }
 
         // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
-        if codex_responses_to_anthropic && !saw_accept {
+        if (codex_responses_to_anthropic || codex_responses_to_kiro) && !saw_accept {
             ordered_headers.append(
                 http::header::ACCEPT,
                 http::HeaderValue::from_static("application/json"),
@@ -2079,6 +2415,17 @@ impl RequestForwarder {
         let request_model = filtered_body
             .get("model")
             .and_then(|v| v.as_str())
+            // Kiro 转换后顶层无 model 字段，模型 ID 在 conversationState 内的 modelId
+            .or_else(|| {
+                if resolved_claude_api_format.as_deref() == Some("kiro") || codex_responses_to_kiro
+                {
+                    filtered_body
+                        .pointer("/conversationState/currentMessage/userInputMessage/modelId")
+                        .and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
             .unwrap_or("<none>");
         log::info!("[{tag}] >>> 请求 URL: {url} (model={request_model})");
         if log::log_enabled!(log::Level::Debug) {
@@ -2115,6 +2462,13 @@ impl RequestForwarder {
         );
 
         // 发送请求
+        let upstream_started = std::time::Instant::now();
+        if provider.is_kiro() {
+            log::info!(
+                "[Kiro/TTFT] 请求转换与鉴权完成 preflight_ms={}",
+                forward_started.elapsed().as_millis()
+            );
+        }
         let response = if is_socks_proxy || !preserve_exact_header_case {
             // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
             // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
@@ -2173,11 +2527,25 @@ impl RequestForwarder {
 
         // 检查响应状态
         let status = response.status();
+        if provider.is_kiro() {
+            log::info!(
+                "[Kiro/TTFT] 收到上游响应头 upstream_headers_ms={} total_ms={} status={}",
+                upstream_started.elapsed().as_millis(),
+                forward_started.elapsed().as_millis(),
+                status
+            );
+        }
 
         if status.is_success() {
             let mut response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
                 .await?;
+            if provider.is_kiro() && request_is_streaming {
+                log::info!(
+                    "[Kiro/TTFT] 收到上游首个传输块 total_ms={}",
+                    forward_started.elapsed().as_millis()
+                );
+            }
             // Streaming requests normally return SSE. If a compatible gateway
             // explicitly returns JSON instead, buffer and validate it inside the retry
             // loop as well so a 2xx Anthropic error envelope can still fail over. Do
@@ -3034,6 +3402,10 @@ fn rewrite_claude_transform_endpoint(
         "/chat/completions"
     } else if api_format == "openai_responses" {
         "/v1/responses"
+    } else if api_format == "kiro" {
+        // Kiro (AWS CodeWhisperer) 是单一的 AWS-JSON RPC 端点，走 runtime 根路径 "/"，
+        // 不是 /v1/chat/completions。目标动作由 X-Amz-Target 头指定。
+        "/"
     } else {
         "/v1/chat/completions"
     };
@@ -3461,6 +3833,28 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::provider::LocalProxyRequestOverrides;
+
+    #[test]
+    fn rewrite_kiro_runtime_region_maps_host() {
+        assert_eq!(
+            rewrite_kiro_runtime_region("https://runtime.us-east-1.kiro.dev", "eu-central-1"),
+            "https://runtime.eu-central-1.kiro.dev"
+        );
+        // 带路径与末尾斜杠
+        assert_eq!(
+            rewrite_kiro_runtime_region("https://runtime.us-east-1.kiro.dev/", "us-east-1"),
+            "https://runtime.us-east-1.kiro.dev/"
+        );
+        assert_eq!(
+            rewrite_kiro_runtime_region("https://management.ap-northeast-1.kiro.dev/", "us-east-1"),
+            "https://management.us-east-1.kiro.dev/"
+        );
+        // 非 kiro.dev 主机不变
+        assert_eq!(
+            rewrite_kiro_runtime_region("https://example.com/v1", "eu-central-1"),
+            "https://example.com/v1"
+        );
+    }
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
     use bytes::Bytes;
@@ -3991,6 +4385,27 @@ mod tests {
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn rewrite_claude_transform_endpoint_maps_kiro_to_root() {
+        // Kiro 走 AWS-JSON RPC 根路径 "/"，不是 /v1/chat/completions
+        let (endpoint, _passthrough_query) = rewrite_claude_transform_endpoint(
+            "/v1/messages",
+            "kiro",
+            false,
+            &json!({ "model": "claude-sonnet-4-5" }),
+        );
+        assert_eq!(endpoint, "/");
+
+        // 带 beta query 时仍只保留非-beta 参数，路径仍为 "/"
+        let (endpoint2, _q2) = rewrite_claude_transform_endpoint(
+            "/v1/messages?beta=true",
+            "kiro",
+            false,
+            &json!({ "model": "claude-sonnet-4-5" }),
+        );
+        assert!(endpoint2 == "/" || endpoint2.starts_with("/?"));
     }
 
     #[test]
@@ -4630,6 +5045,88 @@ mod tests {
                 r#"{"error":{"message":"This model does not support image input"}}"#.to_string(),
             ),
         }
+    }
+
+    #[test]
+    fn kiro_additional_fields_retry_trigger_matches_only_relevant_400() {
+        let body_with_thinking = json!({
+            "model": "claude-haiku-4-5",
+            "thinking": {"type": "enabled"}
+        });
+        let body_no_thinking = json!({"model": "claude-haiku-4-5"});
+        let codex_body_with_reasoning = json!({
+            "model": "claude-haiku-4-5",
+            "reasoning": {"effort": "high"}
+        });
+        let err_unsupported = ProxyError::UpstreamError {
+            status: 400,
+            body: Some("additionalModelRequestFields is not supported for this model".to_string()),
+        };
+        let err_other = ProxyError::UpstreamError {
+            status: 400,
+            body: Some("some other validation error".to_string()),
+        };
+
+        // 命中：Claude + kiro + 未重试 + 带 thinking + 匹配错误
+        assert!(
+            RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                false,
+                &body_with_thinking,
+                &err_unsupported
+            )
+        );
+        // Codex Responses reasoning 也会转换成 Kiro additionalModelRequestFields。
+        assert!(
+            RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Codex",
+                "kiro",
+                false,
+                &codex_body_with_reasoning,
+                &err_unsupported
+            )
+        );
+        // 已重试 → 不触发
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                true,
+                &body_with_thinking,
+                &err_unsupported
+            )
+        );
+        // 无 thinking → 不触发
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                false,
+                &body_no_thinking,
+                &err_unsupported
+            )
+        );
+        // 非 kiro 格式 → 不触发
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "openai_chat",
+                false,
+                &body_with_thinking,
+                &err_unsupported
+            )
+        );
+        // 其他 400 错误 → 不触发
+        assert!(
+            !RequestForwarder::kiro_additional_fields_retry_should_trigger(
+                "Claude",
+                "kiro",
+                false,
+                &body_with_thinking,
+                &err_other
+            )
+        );
     }
     #[test]
     fn prevention_replaces_when_all_switches_on_and_model_in_heuristic_list() {

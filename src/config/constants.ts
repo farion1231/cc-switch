@@ -2,6 +2,7 @@
 export const PROVIDER_TYPES = {
   GITHUB_COPILOT: "github_copilot",
   CODEX_OAUTH: "codex_oauth",
+  KIRO: "kiro",
 } as const;
 
 // 用量脚本模板类型常量
