@@ -2845,6 +2845,7 @@ base_url = "https://production.api/v1"
             model: "k3".to_string(),
             display_name: "Kimi K3".to_string(),
             context_window: 262_144,
+            use_responses_lite: None,
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
