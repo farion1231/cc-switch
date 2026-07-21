@@ -1174,12 +1174,8 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .and_then(|value| value.as_object_mut())
         {
             // Ensure parameters.type is "object" for strict OpenAI-compatible providers
-            if let Some(params) = obj.get("parameters") {
-                let normalized = normalize_function_parameters(Some(params));
-                if normalized != *params {
-                    obj.insert("parameters".to_string(), normalized);
-                }
-            }
+            let parameters = normalize_function_parameters(obj.get("parameters"));
+            obj.insert("parameters".to_string(), parameters);
 
             obj.insert("name".to_string(), json!(chat_name));
             if let Some(strict) = tool.get("strict").cloned() {
@@ -2052,6 +2048,140 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_to_chat_defaults_null_tool_parameters() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "codex_app__automation_update",
+                "description": "Update an automation.",
+                "parameters": null
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_defaults_nested_null_tool_parameters() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "codex_app__automation_update",
+                    "description": "Update an automation.",
+                    "parameters": null
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_defaults_nested_missing_tool_parameters() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "codex_app__automation_update",
+                    "description": "Update an automation."
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_normalizes_explicit_null_tool_parameter_type() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "parameters": {
+                    "type": null,
+                    "properties": {
+                        "query": {"type": "string"}
+                    },
+                    "required": ["query"]
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(parameters["properties"]["query"]["type"], "string");
+        assert_eq!(parameters["required"], json!(["query"]));
+    }
+
+    #[test]
+    fn responses_request_to_chat_defaults_top_level_one_of_tool_parameters_to_object() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"id": {"type": "string"}}
+                        },
+                        {
+                            "type": "object",
+                            "properties": {"slug": {"type": "string"}}
+                        }
+                    ]
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["type"], "object");
+        assert_eq!(
+            parameters["oneOf"],
+            json!([
+                {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}}
+                },
+                {
+                    "type": "object",
+                    "properties": {"slug": {"type": "string"}}
+                }
+            ])
+        );
     }
 
     #[test]
