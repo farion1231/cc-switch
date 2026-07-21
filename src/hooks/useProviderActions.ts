@@ -3,12 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
-import type {
-  Provider,
-  UsageScript,
-  OpenClawProviderConfig,
-  OpenClawDefaultModel,
-} from "@/types";
+import type { Provider, UsageScript } from "@/types";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
 import {
@@ -26,6 +21,7 @@ import {
   isCodexChatWireApi,
 } from "@/utils/providerConfigUtils";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
+import { buildOpenClawDefaultModel } from "@/utils/openClawDefaultModel";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -370,8 +366,8 @@ export function useProviderActions(
   // Set provider as default model (OpenClaw only)
   const setAsDefaultModel = useCallback(
     async (provider: Provider) => {
-      const config = provider.settingsConfig as OpenClawProviderConfig;
-      if (!config.models || config.models.length === 0) {
+      const model = buildOpenClawDefaultModel(provider);
+      if (!model) {
         toast.error(
           t("notifications.openclawNoModels", {
             defaultValue: "该供应商没有配置模型",
@@ -379,11 +375,6 @@ export function useProviderActions(
         );
         return;
       }
-
-      const model: OpenClawDefaultModel = {
-        primary: `${provider.id}/${config.models[0].id}`,
-        fallbacks: config.models.slice(1).map((m) => `${provider.id}/${m.id}`),
-      };
 
       try {
         await openclawApi.setDefaultModel(model);
