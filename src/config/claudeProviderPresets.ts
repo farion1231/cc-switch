@@ -918,7 +918,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://claudecn.top",
@@ -933,7 +933,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://runapi.co",

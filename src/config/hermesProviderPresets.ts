@@ -1137,7 +1137,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
     settingsConfig: {
       name: "claudecn",
       base_url: "https://claudecn.top",
@@ -1167,7 +1167,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     settingsConfig: {
       name: "runapi",
       base_url: "https://runapi.co",
