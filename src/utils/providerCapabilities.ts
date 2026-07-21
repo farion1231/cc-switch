@@ -8,6 +8,7 @@ import {
 } from "@/utils/providerConfigUtils";
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
+export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
 
 /** Keep the UI capability rule aligned with the Rust takeover policy. */
 export function supportsOfficialProxyTakeover(

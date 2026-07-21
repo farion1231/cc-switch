@@ -84,6 +84,7 @@ export function useProviderActions(
         addToLive?: boolean;
         ensureClaudeDesktopOfficialSeed?: boolean;
         ensureCodexOfficialSeed?: boolean;
+        ensureGrokBuildOfficialSeed?: boolean;
       },
     ) => {
       const enhanced = injectCodingPlanUsageScript(activeApp, provider);
