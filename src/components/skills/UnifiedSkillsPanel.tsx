@@ -767,9 +767,11 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
   };
 
   const handleImport = () => {
+    const byDir = new Map(skills.map((s) => [s.directory, s]));
     onImport(
       Array.from(selected).map((directory) => ({
         directory,
+        path: byDir.get(directory)?.path,
         apps: selectedApps[directory] ?? {
           claude: false,
           codex: false,
