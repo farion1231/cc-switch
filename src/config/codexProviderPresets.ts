@@ -1127,6 +1127,8 @@ requires_openai_auth = true`,
       "https://aihubmix.com/v1",
       "https://api.aihubmix.com/v1",
     ],
+    icon: "aihubmix",
+    iconColor: "#006FFB",
   },
   {
     name: "CherryIN",
