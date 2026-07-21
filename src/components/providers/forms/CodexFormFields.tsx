@@ -28,6 +28,7 @@ import {
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
 import {
+  fetchKiroModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -44,6 +45,7 @@ import type {
   ProviderCategory,
 } from "@/types";
 import type { AppId } from "@/lib/api";
+import { KiroAuthSection } from "./KiroAuthSection";
 
 interface EndpointCandidate {
   url: string;
@@ -109,6 +111,10 @@ interface CodexFormFieldsProps {
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
   onLocalProxyBodyOverrideChange: (value: string) => void;
+  isKiroPreset?: boolean;
+  isKiroAuthenticated?: boolean;
+  selectedKiroAccountId?: string | null;
+  onKiroAccountSelect?: (accountId: string | null) => void;
 }
 
 type CodexCatalogRow = CodexCatalogModel & { rowId: string };
@@ -127,6 +133,12 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     ...(seed?.inputModalities ? { inputModalities: seed.inputModalities } : {}),
     ...(seed?.baseInstructions
       ? { baseInstructions: seed.baseInstructions }
+      : {}),
+    ...(seed?.reasoningEfforts
+      ? { reasoningEfforts: seed.reasoningEfforts }
+      : {}),
+    ...(seed?.defaultReasoningEffort
+      ? { defaultReasoningEffort: seed.defaultReasoningEffort }
       : {}),
   };
 }
@@ -150,8 +162,12 @@ function catalogRowsMatchModels(
       (row.supportsParallelToolCalls ?? null) ===
         (incoming.supportsParallelToolCalls ?? null) &&
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
+      (row.defaultReasoningEffort ?? "") ===
+        (incoming.defaultReasoningEffort ?? "") &&
       JSON.stringify(row.inputModalities ?? []) ===
-        JSON.stringify(incoming.inputModalities ?? [])
+        JSON.stringify(incoming.inputModalities ?? []) &&
+      JSON.stringify(row.reasoningEfforts ?? []) ===
+        JSON.stringify(incoming.reasoningEfforts ?? [])
     );
   });
 }
@@ -199,6 +215,10 @@ export function CodexFormFields({
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
   onLocalProxyBodyOverrideChange,
+  isKiroPreset = false,
+  isKiroAuthenticated = false,
+  selectedKiroAccountId,
+  onKiroAccountSelect,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -217,6 +237,7 @@ export function CodexFormFields({
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
   const isAnthropicFormat = apiFormat === "anthropic";
+  const isKiroFormat = apiFormat === "kiro";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -307,6 +328,35 @@ export function CodexFormFields({
   );
 
   const handleFetchModels = useCallback(() => {
+    if (isKiroPreset) {
+      if (!isKiroAuthenticated) {
+        toast.error(
+          t("kiro.loginRequired", { defaultValue: "请先登录 Kiro 账号" }),
+        );
+        return;
+      }
+      const seq = ++fetchModelsSeqRef.current;
+      setIsFetchingModels(true);
+      fetchKiroModels(selectedKiroAccountId)
+        .then((models) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          setFetchedModels(models);
+          if (models.length === 0) {
+            toast.info(t("providerForm.fetchModelsEmpty"));
+          } else {
+            toast.success(
+              t("providerForm.fetchModelsSuccess", { count: models.length }),
+            );
+          }
+        })
+        .catch((err) => {
+          if (seq !== fetchModelsSeqRef.current) return;
+          console.warn("[Kiro] Failed to fetch models:", err);
+          showFetchModelsError(err, t);
+        })
+        .finally(() => setIsFetchingModels(false));
+      return;
+    }
     if (!codexBaseUrl || !codexApiKey) {
       showFetchModelsError(null, t, {
         hasApiKey: !!codexApiKey,
@@ -340,7 +390,16 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
+  }, [
+    codexBaseUrl,
+    codexApiKey,
+    isFullUrl,
+    customUserAgent,
+    isKiroPreset,
+    isKiroAuthenticated,
+    selectedKiroAccountId,
+    t,
+  ]);
 
   const handleAddCatalogRow = useCallback(() => {
     if (!onCatalogModelsChange) return;
@@ -433,26 +492,32 @@ export function CodexFormFields({
 
   return (
     <>
-      {/* Codex API Key 输入框 */}
-      <ApiKeySection
-        id="codexApiKey"
-        label="API Key"
-        value={codexApiKey}
-        onChange={onApiKeyChange}
-        category={category}
-        shouldShowLink={shouldShowApiKeyLink}
-        websiteUrl={websiteUrl}
-        isPartner={isPartner}
-        partnerPromotionKey={partnerPromotionKey}
-        placeholder={{
-          official: t("providerForm.codexOfficialNoApiKey", {
-            defaultValue: "官方供应商无需 API Key",
-          }),
-          thirdParty: t("providerForm.codexApiKeyAutoFill", {
-            defaultValue: "输入 API Key，将自动填充到配置",
-          }),
-        }}
-      />
+      {isKiroPreset ? (
+        <KiroAuthSection
+          selectedAccountId={selectedKiroAccountId}
+          onAccountSelect={onKiroAccountSelect}
+        />
+      ) : (
+        <ApiKeySection
+          id="codexApiKey"
+          label="API Key"
+          value={codexApiKey}
+          onChange={onApiKeyChange}
+          category={category}
+          shouldShowLink={shouldShowApiKeyLink}
+          websiteUrl={websiteUrl}
+          isPartner={isPartner}
+          partnerPromotionKey={partnerPromotionKey}
+          placeholder={{
+            official: t("providerForm.codexOfficialNoApiKey", {
+              defaultValue: "官方供应商无需 API Key",
+            }),
+            thirdParty: t("providerForm.codexApiKeyAutoFill", {
+              defaultValue: "输入 API Key，将自动填充到配置",
+            }),
+          }}
+        />
+      )}
 
       {/* Codex Base URL 输入框 */}
       {shouldShowSpeedTest && (
@@ -582,6 +647,7 @@ export function CodexFormFields({
                   </FormLabel>
                   <Select
                     value={apiFormat}
+                    disabled={isKiroPreset}
                     onValueChange={(value) =>
                       onApiFormatChange(value as CodexApiFormat)
                     }
@@ -608,6 +674,13 @@ export function CodexFormFields({
                           defaultValue: "Anthropic Messages（需开启路由）",
                         })}
                       </SelectItem>
+                      {isKiroFormat && (
+                        <SelectItem value="kiro">
+                          {t("providerForm.apiFormatKiro", {
+                            defaultValue: "Kiro (AWS CodeWhisperer)",
+                          })}
+                        </SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                   <p className="text-xs leading-relaxed text-muted-foreground">

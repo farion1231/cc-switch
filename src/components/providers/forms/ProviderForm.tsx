@@ -107,6 +107,7 @@ import {
   useHermesFormState,
   useCopilotAuth,
   useCodexOauth,
+  useKiroAuth,
 } from "./hooks";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useSettingsQuery } from "@/lib/query";
@@ -159,6 +160,10 @@ export const normalizeCodexCatalogModelsForSave = (
     );
 
     const baseInstructions = item.baseInstructions?.trim();
+    const reasoningEfforts = item.reasoningEfforts
+      ?.filter((effort) => typeof effort === "string" && effort.trim())
+      .map((effort) => effort.trim());
+    const defaultReasoningEffort = item.defaultReasoningEffort?.trim();
 
     normalized.push({
       model,
@@ -172,6 +177,10 @@ export const normalizeCodexCatalogModelsForSave = (
         ? { inputModalities }
         : {}),
       ...(baseInstructions ? { baseInstructions } : {}),
+      ...(reasoningEfforts && reasoningEfforts.length > 0
+        ? { reasoningEfforts }
+        : {}),
+      ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
     });
   }
 
@@ -519,6 +528,9 @@ function ProviderFormFull({
   // Codex OAuth 认证状态（ChatGPT Plus/Pro 反代）
   const { isAuthenticated: isCodexOauthAuthenticated } = useCodexOauth();
 
+  // Kiro OAuth 认证状态
+  const { isAuthenticated: isKiroAuthenticated } = useKiroAuth();
+
   // 选中的 GitHub 账号 ID（多账号支持）
   const [selectedGitHubAccountId, setSelectedGitHubAccountId] = useState<
     string | null
@@ -528,6 +540,11 @@ function ProviderFormFull({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
+
+  // 选中的 Kiro 账号 ID
+  const [selectedKiroAccountId, setSelectedKiroAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "kiro"));
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -578,15 +595,17 @@ function ProviderFormFull({
       ? "openai_chat"
       : initialData?.meta?.apiFormat === "anthropic"
         ? "anthropic"
-        : initialData?.meta?.apiFormat === "openai_responses"
-          ? "openai_responses"
-          : (codexApiFormatFromWireApi(
-              extractCodexWireApi(
-                typeof initialData?.settingsConfig?.config === "string"
-                  ? initialData.settingsConfig.config
-                  : "",
-              ),
-            ) ?? "openai_responses");
+        : initialData?.meta?.apiFormat === "kiro"
+          ? "kiro"
+          : initialData?.meta?.apiFormat === "openai_responses"
+            ? "openai_responses"
+            : (codexApiFormatFromWireApi(
+                extractCodexWireApi(
+                  typeof initialData?.settingsConfig?.config === "string"
+                    ? initialData.settingsConfig.config
+                    : "",
+                ),
+              ) ?? "openai_responses");
 
   const [localCodexApiFormat, setLocalCodexApiFormat] =
     useState<CodexApiFormat>(initialCodexApiFormat);
@@ -716,6 +735,16 @@ function ProviderFormFull({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
+
+  const selectedCodexPreset = useMemo(() => {
+    if (appId !== "codex" || selectedPresetId === "custom") return undefined;
+    return presetEntries.find((entry) => entry.id === selectedPresetId)
+      ?.preset as CodexProviderPreset | undefined;
+  }, [appId, presetEntries, selectedPresetId]);
+  const effectiveProviderType =
+    templatePreset?.providerType ??
+    selectedCodexPreset?.providerType ??
+    initialData?.meta?.providerType;
 
   const {
     useCommonConfig,
@@ -1163,6 +1192,16 @@ function ProviderFormFull({
       return;
     }
 
+    const isKiroProvider = effectiveProviderType === "kiro";
+    if (isKiroProvider && !isKiroAuthenticated) {
+      toast.error(
+        t("kiro.loginRequired", {
+          defaultValue: "请先登录 Kiro 账号",
+        }),
+      );
+      return;
+    }
+
     // OMO Other Fields JSON：B 类（格式错了保存下去数据就坏了）
     if (
       appId === "opencode" &&
@@ -1198,14 +1237,19 @@ function ProviderFormFull({
     // cloud_provider（如 Bedrock）通过模板变量处理认证，跳过通用校验
     if (category !== "official" && category !== "cloud_provider") {
       if (appId === "claude") {
-        if (!isCodexOauthProvider && !baseUrl.trim()) {
+        if (!isCodexOauthProvider && !isKiroProvider && !baseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!isCopilotProvider && !isCodexOauthProvider && !apiKey.trim()) {
+        if (
+          !isCopilotProvider &&
+          !isCodexOauthProvider &&
+          !isKiroProvider &&
+          !apiKey.trim()
+        ) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1213,14 +1257,14 @@ function ProviderFormFull({
           );
         }
       } else if (appId === "codex") {
-        if (!codexBaseUrl.trim()) {
+        if (!isKiroProvider && !codexBaseUrl.trim()) {
           issues.push(
             t("providerForm.endpointRequired", {
               defaultValue: "非官方供应商请填写 API 端点",
             }),
           );
         }
-        if (!codexApiKey.trim()) {
+        if (!isKiroProvider && !codexApiKey.trim()) {
           issues.push(
             t("providerForm.apiKeyRequired", {
               defaultValue: "非官方供应商请填写 API Key",
@@ -1278,6 +1322,7 @@ function ProviderFormFull({
     const isCodexOauthProvider =
       templatePreset?.providerType === "codex_oauth" ||
       initialData?.meta?.providerType === "codex_oauth";
+    const isKiroProvider = effectiveProviderType === "kiro";
 
     let settingsConfig: string;
 
@@ -1454,8 +1499,7 @@ function ProviderFormFull({
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
-    const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+    const providerType = effectiveProviderType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1483,7 +1527,13 @@ function ProviderFormFull({
               authProvider: "codex_oauth",
               accountId: selectedCodexAccountId ?? undefined,
             }
-          : undefined,
+          : isKiroProvider
+            ? {
+                source: "managed_account",
+                authProvider: "kiro",
+                accountId: selectedKiroAccountId ?? undefined,
+              }
+            : undefined,
       // GitHub Copilot 多账号：保存关联的账号 ID
       githubAccountId:
         isCopilotProvider && selectedGitHubAccountId
@@ -2109,13 +2159,19 @@ function ProviderFormFull({
                 templatePreset?.providerType === "codex_oauth" ||
                 initialData?.meta?.providerType === "codex_oauth"
               }
+              isKiroPreset={
+                templatePreset?.providerType === "kiro" ||
+                initialData?.meta?.providerType === "kiro"
+              }
               usesOAuth={
                 templatePreset?.requiresOAuth === true ||
                 templatePreset?.providerType === "github_copilot" ||
                 initialData?.meta?.providerType === "github_copilot" ||
                 baseUrl.includes("githubcopilot.com") ||
                 templatePreset?.providerType === "codex_oauth" ||
-                initialData?.meta?.providerType === "codex_oauth"
+                initialData?.meta?.providerType === "codex_oauth" ||
+                templatePreset?.providerType === "kiro" ||
+                initialData?.meta?.providerType === "kiro"
               }
               isCopilotAuthenticated={isCopilotAuthenticated}
               selectedGitHubAccountId={selectedGitHubAccountId}
@@ -2123,6 +2179,9 @@ function ProviderFormFull({
               isCodexOauthAuthenticated={isCodexOauthAuthenticated}
               selectedCodexAccountId={selectedCodexAccountId}
               onCodexAccountSelect={setSelectedCodexAccountId}
+              isKiroAuthenticated={isKiroAuthenticated}
+              selectedKiroAccountId={selectedKiroAccountId}
+              onKiroAccountSelect={setSelectedKiroAccountId}
               codexFastMode={codexFastMode}
               onCodexFastModeChange={setCodexFastMode}
               templateValueEntries={templateValueEntries}
@@ -2213,6 +2272,10 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              isKiroPreset={effectiveProviderType === "kiro"}
+              isKiroAuthenticated={isKiroAuthenticated}
+              selectedKiroAccountId={selectedKiroAccountId}
+              onKiroAccountSelect={setSelectedKiroAccountId}
             />
           )}
 

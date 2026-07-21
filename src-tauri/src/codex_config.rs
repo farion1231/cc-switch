@@ -482,6 +482,29 @@ fn codex_catalog_model_entry(
             spec.input_modalities.as_deref(),
         )),
     );
+    if let Some(efforts) = spec.reasoning_efforts.as_ref() {
+        let levels: Vec<Value> = efforts
+            .iter()
+            .map(|effort| {
+                json!({
+                    "effort": effort,
+                    "description": match effort.as_str() {
+                        "none" => "Disable reasoning",
+                        "low" => "Low reasoning effort",
+                        "medium" => "Medium reasoning effort",
+                        "high" => "High reasoning effort",
+                        "xhigh" => "Extra high reasoning effort",
+                        "max" => "Maximum reasoning effort",
+                        _ => "Custom reasoning effort",
+                    }
+                })
+            })
+            .collect();
+        entry_obj.insert("supported_reasoning_levels".to_string(), json!(levels));
+    }
+    if let Some(default_effort) = spec.default_reasoning_effort.as_ref() {
+        entry_obj.insert("default_reasoning_level".to_string(), json!(default_effort));
+    }
 
     if profile != CodexCatalogToolProfile::ProxyChat {
         // Native `/responses` and Anthropic gateways reject / drop Codex's freeform
@@ -538,6 +561,8 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    reasoning_efforts: Option<Vec<String>>,
+    default_reasoning_effort: Option<String>,
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -606,6 +631,27 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .map(str::to_string);
+        let reasoning_efforts = model_config
+            .get("reasoningEfforts")
+            .or_else(|| model_config.get("reasoning_efforts"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|effort| !effort.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|items| !items.is_empty());
+        let default_reasoning_effort = model_config
+            .get("defaultReasoningEffort")
+            .or_else(|| model_config.get("default_reasoning_effort"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|effort| !effort.is_empty())
+            .map(str::to_string);
 
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
@@ -614,6 +660,8 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            reasoning_efforts,
+            default_reasoning_effort,
         });
     }
 
@@ -1150,6 +1198,28 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             if !mods.is_empty() && mods != inferred {
                 obj.insert("inputModalities".to_string(), json!(mods));
             }
+        }
+        if let Some(levels) = entry
+            .get("supported_reasoning_levels")
+            .and_then(Value::as_array)
+        {
+            let efforts: Vec<String> = levels
+                .iter()
+                .filter_map(|level| level.get("effort"))
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            if !efforts.is_empty() {
+                obj.insert("reasoningEfforts".to_string(), json!(efforts));
+            }
+        }
+        if let Some(default_effort) = entry
+            .get("default_reasoning_level")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|effort| !effort.is_empty())
+        {
+            obj.insert("defaultReasoningEffort".to_string(), json!(default_effort));
         }
 
         entries.push(Value::Object(obj));
@@ -2834,6 +2904,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_efforts: None,
+                default_reasoning_effort: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek/deepseek-v4-pro".to_string(),
@@ -2842,6 +2914,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_efforts: None,
+                default_reasoning_effort: None,
             },
             CodexCatalogModelSpec {
                 model: "glm-5.2v".to_string(),
@@ -2850,6 +2924,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: None,
                 base_instructions: None,
+                reasoning_efforts: None,
+                default_reasoning_effort: None,
             },
             CodexCatalogModelSpec {
                 model: "deepseek-v4-flash".to_string(),
@@ -2858,6 +2934,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string(), "image".to_string()]),
                 base_instructions: None,
+                reasoning_efforts: None,
+                default_reasoning_effort: None,
             },
             CodexCatalogModelSpec {
                 model: "custom-text-alias".to_string(),
@@ -2866,6 +2944,8 @@ base_url = "https://production.api/v1"
                 supports_parallel_tool_calls: None,
                 input_modalities: Some(vec!["text".to_string()]),
                 base_instructions: None,
+                reasoning_efforts: None,
+                default_reasoning_effort: None,
             },
         ];
 
@@ -2926,6 +3006,33 @@ base_url = "https://production.api/v1"
     }
 
     #[test]
+    fn catalog_applies_per_model_reasoning_efforts() {
+        let settings = json!({
+            "modelCatalog": { "models": [{
+                "model": "gpt-5-6-luna",
+                "reasoningEfforts": ["none", "low", "medium", "high", "xhigh", "max"],
+                "defaultReasoningEffort": "high"
+            }] }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::Anthropic)
+                .unwrap()
+                .unwrap();
+        let entry = &catalog["models"][0];
+        let efforts: Vec<&str> = entry["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|level| level["effort"].as_str())
+            .collect();
+        assert_eq!(
+            efforts,
+            vec!["none", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(entry["default_reasoning_level"], "high");
+    }
+
+    #[test]
     fn proxy_chat_profile_still_keeps_apply_patch() {
         // Regression guard for Mode A: the proxy-chat profile must keep the
         // freeform apply_patch tool (the proxy rewrites custom<->function).
@@ -2937,6 +3044,8 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            reasoning_efforts: None,
+            default_reasoning_effort: None,
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
         // apply_patch_tool_type. (The native template lacks it, so synthesize

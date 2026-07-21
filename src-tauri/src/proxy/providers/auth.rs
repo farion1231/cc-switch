@@ -128,6 +128,13 @@ pub enum AuthStrategy {
     ///
     /// 使用动态获取的 OpenAI access_token（通过 Device Code 流程获取）
     CodexOAuth,
+
+    /// Kiro 认证方式
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    ///
+    /// 使用动态获取的 Kiro access_token（通过 AWS OIDC 流程获取）
+    Kiro,
 }
 
 #[cfg(test)]

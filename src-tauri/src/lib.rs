@@ -994,6 +994,25 @@ pub fn run() {
                 log::info!("✓ CopilotAuthManager initialized");
             }
 
+            // 初始化 KiroAuthManager
+            {
+                use crate::proxy::providers::kiro_auth::KiroAuthManager;
+                use commands::KiroAuthState;
+                use tokio::sync::RwLock;
+
+                let app_config_dir = crate::config::get_app_config_dir();
+                let kiro_auth_manager = KiroAuthManager::new(app_config_dir);
+                let restored_caps = crate::proxy::providers::transform_kiro::load_model_caps_cache(
+                    &kiro_auth_manager.model_caps_cache_path(),
+                );
+                let kiro_auth_state = Arc::new(RwLock::new(kiro_auth_manager));
+                app.manage(KiroAuthState(kiro_auth_state.clone()));
+                if !restored_caps {
+                    commands::prewarm_kiro_models(kiro_auth_state, None);
+                }
+                log::info!("✓ KiroAuthManager initialized");
+            }
+
             // 初始化 CodexOAuthManager (ChatGPT Plus/Pro 反代)
             {
                 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
@@ -1268,6 +1287,7 @@ pub fn run() {
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
             commands::get_codex_oauth_models,
+            commands::get_kiro_models,
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
@@ -1485,6 +1505,9 @@ pub fn run() {
             commands::auth_remove_account,
             commands::auth_set_default_account,
             commands::auth_logout,
+            commands::auth_kiro_social_login,
+            commands::auth_kiro_api_key_login,
+            commands::auth_kiro_import_dynamic,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_start_device_flow,
             commands::copilot_poll_for_auth,

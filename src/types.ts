@@ -199,7 +199,8 @@ export interface ProviderMeta {
     | "anthropic"
     | "openai_chat"
     | "openai_responses"
-    | "gemini_native";
+    | "gemini_native"
+    | "kiro";
   // 通用认证绑定
   authBinding?: AuthBinding;
   // Claude 认证字段名
@@ -248,13 +249,19 @@ export type ClaudeApiFormat =
   | "anthropic"
   | "openai_chat"
   | "openai_responses"
-  | "gemini_native";
+  | "gemini_native"
+  | "kiro";
 
 // Codex API 格式类型
 // - "openai_responses": OpenAI Responses API 格式，直接透传
 // - "openai_chat": OpenAI Chat Completions 格式，需要本地路由转换
 // - "anthropic": native Anthropic Messages format, needs local routing to convert to Responses
-export type CodexApiFormat = "openai_responses" | "openai_chat" | "anthropic";
+// - "kiro": Kiro AWS JSON/eventstream, converted through the Anthropic bridge
+export type CodexApiFormat =
+  | "openai_responses"
+  | "openai_chat"
+  | "anthropic"
+  | "kiro";
 
 export interface CodexCatalogModel {
   model: string;
@@ -269,6 +276,9 @@ export interface CodexCatalogModel {
   // Codex requires this field in every catalog entry; when omitted the backend
   // falls back to a neutral default. e.g. MiMo "developed by Xiaomi".
   baseInstructions?: string;
+  // Hidden catalog overrides used by managed providers such as Kiro.
+  reasoningEfforts?: string[];
+  defaultReasoningEffort?: string;
 }
 
 // Claude 认证字段类型

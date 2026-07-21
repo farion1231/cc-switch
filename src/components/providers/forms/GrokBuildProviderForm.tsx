@@ -57,7 +57,12 @@ const grokPresetEntries: Array<{
   preset: CodexProviderPreset;
 }> = codexProviderPresets
   .map((preset, index) => ({ id: `grokbuild-${index}`, preset }))
-  .filter(({ preset }) => preset.category !== "official" && !preset.isOfficial);
+  .filter(
+    ({ preset }) =>
+      preset.category !== "official" &&
+      !preset.isOfficial &&
+      preset.providerType !== "kiro",
+  );
 
 export const grokApiBackendFromApiFormat = (format: CodexApiFormat): string => {
   if (format === "openai_chat") return "chat_completions";
