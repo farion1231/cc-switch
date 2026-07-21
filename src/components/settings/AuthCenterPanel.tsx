@@ -1,7 +1,8 @@
 import { Github, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
-import { CodexIcon } from "@/components/BrandIcons";
+import { ClaudeIcon, CodexIcon } from "@/components/BrandIcons";
+import { ClaudeOfficialAuthSection } from "@/components/providers/forms/ClaudeOfficialAuthSection";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 
@@ -32,6 +33,24 @@ export function AuthCenterPanel() {
             {t("settings.authCenter.beta", { defaultValue: "Beta" })}
           </Badge>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-border/60 bg-card/60 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+            <ClaudeIcon size={20} />
+          </div>
+          <div>
+            <h4 className="font-medium">Claude Official</h4>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.authCenter.claudeOfficialDescription", {
+                defaultValue: "管理 Claude Code 官方账号快照",
+              })}
+            </p>
+          </div>
+        </div>
+
+        <ClaudeOfficialAuthSection mode="settings" />
       </section>
 
       <section className="rounded-xl border border-border/60 bg-card/60 p-6">
