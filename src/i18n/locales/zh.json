@@ -1363,7 +1363,7 @@
     "responsesLiteEnabled": "开启",
     "responsesLiteDisabled": "关闭",
     "responsesLiteHint": "自动模式按内置 Codex 官方模型能力选择；仅在上游明确支持 Responses Lite 时手动开启。",
-    "responsesLiteAnthropicUnsupported": "Anthropic Messages 转换不支持 Responses Lite，因此固定关闭。",
+    "responsesLiteConversionUnsupported": "Responses Lite 仅支持原生 Responses 上游；Chat 与 Anthropic 转换格式固定关闭。",
     "reasoningModeToggle": "支持思考模式",
     "reasoningModeHint": "上游 Chat Completions 接口支持开启或关闭 thinking 时启用。Kimi、GLM、Qwen 等通常属于这一类。",
     "reasoningEffortToggle": "支持思考等级",

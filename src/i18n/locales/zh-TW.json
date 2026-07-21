@@ -1327,7 +1327,7 @@
     "responsesLiteEnabled": "開啟",
     "responsesLiteDisabled": "關閉",
     "responsesLiteHint": "自動模式依照內建 Codex 官方模型能力選擇；僅在上游明確支援 Responses Lite 時手動開啟。",
-    "responsesLiteAnthropicUnsupported": "Anthropic Messages 轉換不支援 Responses Lite，因此固定關閉。",
+    "responsesLiteConversionUnsupported": "Responses Lite 僅支援原生 Responses 上游；Chat 與 Anthropic 轉換格式固定關閉。",
     "catalogDisplayNamePlaceholder": "例如: DeepSeek V4 Flash",
     "catalogModelPlaceholder": "例如: deepseek-v4-flash",
     "contextWindow": "上下文視窗",

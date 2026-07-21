@@ -240,6 +240,7 @@ export function CodexFormFields({
   //（填了才生成 catalog）。两者都已与「路由接管」概念解耦。
   const isChatFormat = apiFormat === "openai_chat";
   const isAnthropicFormat = apiFormat === "anthropic";
+  const supportsResponsesLite = apiFormat === "openai_responses";
   const canEditCatalog = Boolean(onCatalogModelsChange);
   const canEditReasoning = Boolean(onCodexChatReasoningChange);
   const supportsThinking =
@@ -295,18 +296,18 @@ export function CodexFormFields({
     lastSentModelsRef.current = catalogModels;
   }, [catalogModels]);
 
-  // The Anthropic adapter always emits the full Responses shape. Run this
-  // after parent-to-child synchronization so an incoming enabled override
-  // cannot replace the effective disabled state.
+  // Lite requests omit the ordinary tools array, so only a native Responses
+  // upstream can use them. Run this after parent-to-child synchronization so
+  // an incoming enabled override cannot replace the effective disabled state.
   useEffect(() => {
-    if (!isAnthropicFormat) return;
+    if (supportsResponsesLite) return;
     setCatalogRows((current) => {
       if (current.every((row) => row.useResponsesLite === false)) {
         return current;
       }
       return current.map((row) => ({ ...row, useResponsesLite: false }));
     });
-  }, [isAnthropicFormat, catalogModels]);
+  }, [supportsResponsesLite, catalogModels]);
 
   // 子 → 父：rowId 是视图层概念，不应进入持久化数据；剥离后再回传。
   // 注意：依赖数组不包含 catalogModels，避免父→子更新触发子→父回调形成循环。
@@ -1065,9 +1066,9 @@ export function CodexFormFields({
                           })}
                         />
                         <Select
-                          disabled={isAnthropicFormat}
+                          disabled={!supportsResponsesLite}
                           value={
-                            isAnthropicFormat
+                            !supportsResponsesLite
                               ? "disabled"
                               : typeof row.useResponsesLite === "boolean"
                                 ? row.useResponsesLite
@@ -1090,12 +1091,12 @@ export function CodexFormFields({
                               { defaultValue: "Responses Lite" },
                             )}
                             title={
-                              isAnthropicFormat
+                              !supportsResponsesLite
                                 ? t(
-                                    "codexConfig.responsesLiteAnthropicUnsupported",
+                                    "codexConfig.responsesLiteConversionUnsupported",
                                     {
                                       defaultValue:
-                                        "Anthropic Messages 转换不支持 Responses Lite，因此固定关闭。",
+                                        "Responses Lite 仅支持原生 Responses 上游；Chat 与 Anthropic 转换格式固定关闭。",
                                     },
                                   )
                                 : t("codexConfig.responsesLiteHint", {

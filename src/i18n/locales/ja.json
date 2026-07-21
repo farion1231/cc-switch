@@ -1363,7 +1363,7 @@
     "responsesLiteEnabled": "有効",
     "responsesLiteDisabled": "無効",
     "responsesLiteHint": "自動では内蔵の Codex 公式モデル能力に従います。上流が Responses Lite を明示的にサポートする場合のみ手動で有効にしてください。",
-    "responsesLiteAnthropicUnsupported": "Anthropic Messages 変換は Responses Lite に対応していないため、常に無効になります。",
+    "responsesLiteConversionUnsupported": "Responses Lite はネイティブ Responses 上流でのみ利用でき、Chat と Anthropic の変換形式では常に無効になります。",
     "reasoningModeToggle": "思考モードに対応",
     "reasoningModeHint": "上流の Chat Completions API が思考（thinking）のオン/オフ切り替えに対応している場合に有効化します。Kimi、GLM、Qwen などが通常このタイプに該当します。",
     "reasoningEffortToggle": "思考レベルに対応",

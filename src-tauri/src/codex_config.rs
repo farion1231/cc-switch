@@ -120,6 +120,8 @@ const CODEX_MODEL_CATALOG_TEMPLATE_SLUG: &str = "gpt-5.5";
 /// - `ProxyChat`: cc-switch's proxy takes over and converts Responses<->Chat,
 ///   so the catalog keeps Codex's default tool set (incl. the freeform
 ///   `apply_patch` custom tool, which the proxy rewrites to a function tool).
+///   Responses Lite stays disabled because that transport omits the tool array
+///   before the proxy can perform the conversion.
 /// - `NativeResponses`: Codex talks directly to a provider's native
 ///   `/responses` endpoint (no proxy). Such gateways (e.g. Xiaomi MiMo,
 ///   MiniMax) reject `type=="custom"` tools, so the catalog must suppress the
@@ -503,7 +505,8 @@ fn codex_catalog_model_entry(
 
     // Start from the exact capability profile for models Codex already knows.
     // This prevents a gpt-5.5 template from flattening GPT-5.6 reasoning levels
-    // and, critically, preserves `use_responses_lite=true` for GPT-5.6.
+    // and preserves `use_responses_lite=true` when the native Responses profile
+    // can actually use that transport. Conversion profiles disable it below.
     apply_codex_model_capability_overlay(entry_obj, &spec.model);
 
     entry_obj.insert("slug".to_string(), json!(spec.model));
@@ -532,10 +535,19 @@ fn codex_catalog_model_entry(
         )),
     );
 
-    let use_responses_lite = entry_obj
+    let declared_responses_lite = entry_obj
         .get("use_responses_lite")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    // Responses Lite requests omit the ordinary tools array. That is safe only
+    // when Codex talks directly to a compatible native Responses endpoint.
+    // ProxyChat cannot reconstruct those tools before converting to Chat, and
+    // Anthropic is not a Responses endpoint at all.
+    if profile != CodexCatalogToolProfile::NativeResponses {
+        entry_obj.insert("use_responses_lite".to_string(), json!(false));
+    }
+    let use_responses_lite =
+        profile == CodexCatalogToolProfile::NativeResponses && declared_responses_lite;
     let strip_custom_tools = profile == CodexCatalogToolProfile::Anthropic
         || (profile == CodexCatalogToolProfile::NativeResponses && !use_responses_lite);
 
@@ -572,13 +584,6 @@ fn codex_catalog_model_entry(
         if let Some(parallel) = spec.supports_parallel_tool_calls {
             entry_obj.insert("supports_parallel_tool_calls".to_string(), json!(parallel));
         }
-    }
-
-    // Anthropic is not a Responses endpoint; never advertise the proprietary
-    // Lite transport even when an official GPT id or a manual row override was
-    // carried into this profile.
-    if profile == CodexCatalogToolProfile::Anthropic && use_responses_lite {
-        entry_obj.insert("use_responses_lite".to_string(), json!(false));
     }
 
     entry
@@ -3067,6 +3072,32 @@ base_url = "https://production.api/v1"
         for entry in catalog["models"].as_array().expect("models array") {
             assert_eq!(entry["use_responses_lite"], json!(false));
             assert!(entry.get("apply_patch_tool_type").is_none());
+        }
+    }
+
+    #[test]
+    fn proxy_chat_catalog_never_advertises_responses_lite_and_keeps_tools() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol" },
+                    { "model": "custom", "useResponsesLite": true }
+                ]
+            }
+        });
+
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation should succeed")
+                .expect("models should generate a catalog");
+
+        for entry in catalog["models"].as_array().expect("models array") {
+            assert_eq!(entry["use_responses_lite"], json!(false));
+            assert_eq!(
+                entry.get("apply_patch_tool_type").and_then(Value::as_str),
+                Some("freeform"),
+                "ProxyChat must keep the tools that its Responses-to-Chat adapter converts"
+            );
         }
     }
 
