@@ -1890,7 +1890,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     settingsConfig: {
       baseUrl: "https://apinebula.com/v1",
       apiKey: "",

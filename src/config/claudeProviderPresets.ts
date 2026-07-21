@@ -801,7 +801,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "APINebula",
     websiteUrl: "https://apinebula.com",
-    apiKeyUrl: "https://apinebula.com/02rw5X",
+    apiKeyUrl: "https://apinebula.com/VjM74M",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://apinebula.com",
