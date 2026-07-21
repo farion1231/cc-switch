@@ -259,6 +259,8 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonAnthropicMessages": "使用 Anthropic Messages 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
+    "proxyReasonManagedOAuth": "使用托管 OAuth 登录（令牌由本地路由注入）",
+    "proxyReasonRoutingRequired": "需要本地路由处理请求",
     "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启路由服务才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地路由；路由会根据当前模型自动选择 Chat Completions 或 Responses。",
     "openLinkFailed": "链接打开失败",
