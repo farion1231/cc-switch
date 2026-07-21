@@ -1024,6 +1024,108 @@ mod tests {
     }
 
     #[test]
+    fn delete_universal_referenced_by_aggregate_is_rejected() {
+        with_test_home(|state, _| {
+            // 统一供应商启用 Claude 后生成 universal-claude-uni 子供应商
+            let mut universal = crate::provider::UniversalProvider::new(
+                "uni".into(),
+                "Uni".into(),
+                "custom".into(),
+                "https://api.uni.example".into(),
+                "sk-uni".into(),
+            );
+            universal.apps.claude = true;
+            state.db.save_universal_provider(&universal).unwrap();
+
+            let generated = universal.to_claude_provider().expect("claude child");
+            state.db.save_provider("claude", &generated).unwrap();
+
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                AggregateRoutes {
+                    haiku: Some(AggregateRoute {
+                        provider_id: "universal-claude-uni".into(),
+                        model: "some-model".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            state.db.save_provider("claude", &aggregate).unwrap();
+
+            let error = ProviderService::delete_universal(state, "uni")
+                .expect_err("referenced universal provider must not be deleted");
+            let message = error.to_string();
+            assert!(
+                message.contains("聚合") || message.contains("aggregate"),
+                "got {error:?}"
+            );
+            // 统一供应商与生成的子供应商都应保留
+            assert!(state.db.get_universal_provider("uni").unwrap().is_some());
+            assert!(state
+                .db
+                .get_provider_by_id("universal-claude-uni", "claude")
+                .unwrap()
+                .is_some());
+        });
+    }
+
+    #[test]
+    fn sync_universal_disabling_claude_referenced_by_aggregate_is_rejected() {
+        with_test_home(|state, _| {
+            // 初始启用 Claude 并同步出子供应商
+            let mut universal = crate::provider::UniversalProvider::new(
+                "uni2".into(),
+                "Uni2".into(),
+                "custom".into(),
+                "https://api.uni2.example".into(),
+                "sk-uni2".into(),
+            );
+            universal.apps.claude = true;
+            state.db.save_universal_provider(&universal).unwrap();
+            ProviderService::sync_universal_to_apps(state, "uni2").expect("initial sync");
+            assert!(state
+                .db
+                .get_provider_by_id("universal-claude-uni2", "claude")
+                .unwrap()
+                .is_some());
+
+            let aggregate = aggregate_provider_with_routes(
+                "aggregate",
+                AggregateRoutes {
+                    sonnet: Some(AggregateRoute {
+                        provider_id: "universal-claude-uni2".into(),
+                        model: "some-model".into(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            state.db.save_provider("claude", &aggregate).unwrap();
+
+            // 用户随后禁用 Claude 应用，同步时不应删除被引用的子供应商
+            let mut universal = state
+                .db
+                .get_universal_provider("uni2")
+                .unwrap()
+                .expect("universal provider");
+            universal.apps.claude = false;
+            state.db.save_universal_provider(&universal).unwrap();
+
+            let error = ProviderService::sync_universal_to_apps(state, "uni2")
+                .expect_err("disabling referenced claude child must be rejected");
+            let message = error.to_string();
+            assert!(
+                message.contains("聚合") || message.contains("aggregate"),
+                "got {error:?}"
+            );
+            assert!(state
+                .db
+                .get_provider_by_id("universal-claude-uni2", "claude")
+                .unwrap()
+                .is_some());
+        });
+    }
+
+    #[test]
     fn validate_aggregate_routes_rejects_official_target() {
         with_test_home(|state, _| {
             let mut official =
@@ -4401,6 +4503,26 @@ impl ProviderService {
         // 获取统一供应商（用于删除生成的子供应商）
         let provider = state.db.get_universal_provider(id)?;
 
+        // 生成的 Claude 子供应商若被聚合供应商引用，阻止删除
+        // （与 ProviderService::delete 的依赖检查保持一致）
+        if let Some(p) = provider.as_ref() {
+            if p.apps.claude {
+                let claude_id = format!("universal-claude-{id}");
+                if let Some(dependent) =
+                    Self::find_aggregate_dependent(state.db.as_ref(), &AppType::Claude, &claude_id)?
+                {
+                    return Err(AppError::localized(
+                        "provider.aggregate.target_in_use",
+                        format!("供应商正被聚合供应商 {} 引用，无法删除", dependent.name),
+                        format!(
+                            "Provider is referenced by aggregate provider '{}' and cannot be deleted",
+                            dependent.name
+                        ),
+                    ));
+                }
+            }
+        }
+
         // 删除统一供应商
         state.db.delete_universal_provider(id)?;
 
@@ -4440,8 +4562,21 @@ impl ProviderService {
             }
             state.db.save_provider("claude", &claude_provider)?;
         } else {
-            // 如果禁用了 Claude，删除对应的子供应商
+            // 如果禁用了 Claude，删除对应的子供应商；但若它被聚合供应商引用，
+            // 阻止删除（与 ProviderService::delete 的依赖检查保持一致）
             let claude_id = format!("universal-claude-{id}");
+            if let Some(dependent) =
+                Self::find_aggregate_dependent(state.db.as_ref(), &AppType::Claude, &claude_id)?
+            {
+                return Err(AppError::localized(
+                    "provider.aggregate.target_in_use",
+                    format!("供应商正被聚合供应商 {} 引用，无法删除", dependent.name),
+                    format!(
+                        "Provider is referenced by aggregate provider '{}' and cannot be deleted",
+                        dependent.name
+                    ),
+                ));
+            }
             let _ = state.db.delete_provider("claude", &claude_id);
         }
 

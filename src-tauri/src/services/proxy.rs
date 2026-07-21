@@ -2359,6 +2359,13 @@ impl ProxyService {
         app_type: &str,
         provider: &Provider,
     ) -> Result<(), String> {
+        // 聚合供应商的 settings_config 是占位空配置，不含可直写的上游端点与
+        // 凭据。若用它覆盖备份，关闭接管时会把 `{}` 恢复进 Live，导致 Claude
+        // Code 无法连接。保留上一份常规供应商的备份作为恢复来源。
+        if provider.is_aggregate() {
+            log::info!("{app_type} 目标为聚合供应商，保留现有 Live 备份（热切换）");
+            return Ok(());
+        }
         let app_type_enum =
             AppType::from_str(app_type).map_err(|_| format!("未知的应用类型: {app_type}"))?;
         let mut effective_settings =
@@ -3385,6 +3392,83 @@ mod tests {
         assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", None);
         // 接管基础字段仍生效
         assert_env_str(env, "ANTHROPIC_BASE_URL", Some("http://127.0.0.1:15721"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn hot_switch_to_aggregate_preserves_existing_live_backup() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let target = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.p1.example",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-p1"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &target)
+            .expect("save target provider");
+
+        let mut aggregate = Provider::with_id(
+            "agg".to_string(),
+            "Aggregate".to_string(),
+            // 聚合供应商的 settings_config 是占位空配置
+            json!({}),
+            None,
+        );
+        aggregate.meta = Some(ProviderMeta {
+            aggregate_routes: Some(AggregateRoutes {
+                sonnet: Some(AggregateRoute {
+                    provider_id: "p1".to_string(),
+                    model: "some-model".to_string(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        db.save_provider("claude", &aggregate)
+            .expect("save aggregate provider");
+
+        db.set_current_provider("claude", "p1")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
+            .expect("set local current provider");
+
+        // 接管开启时留下的可恢复备份（常规供应商配置）
+        let restorable_backup = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.p1.example",
+                "ANTHROPIC_AUTH_TOKEN": "sk-p1"
+            }
+        });
+        db.save_live_backup("claude", &restorable_backup.to_string())
+            .await
+            .expect("seed live backup");
+
+        service
+            .hot_switch_provider("claude", "agg")
+            .await
+            .expect("hot switch to aggregate provider");
+
+        let backup = db
+            .get_live_backup("claude")
+            .await
+            .expect("read live backup")
+            .expect("backup should still exist");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        assert_eq!(
+            backup_value, restorable_backup,
+            "aggregate hot switch must keep the previous restorable backup"
+        );
     }
 
     #[test]
