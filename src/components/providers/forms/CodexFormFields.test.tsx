@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { PropsWithChildren } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { describe, expect, it, vi } from "vitest";
@@ -10,9 +10,18 @@ function TestForm({ children }: PropsWithChildren) {
   return <FormProvider {...form}>{children}</FormProvider>;
 }
 
-function renderFields(apiFormat: CodexApiFormat) {
+function renderFields(
+  apiFormat: CodexApiFormat,
+  useResponsesLite: boolean | null = true,
+) {
   const onCatalogModelsChange = vi.fn();
-  render(
+  const catalogModels = [
+    {
+      model: "gpt-5.6-sol",
+      ...(useResponsesLite === null ? {} : { useResponsesLite }),
+    },
+  ];
+  const fields = (format: CodexApiFormat) => (
     <TestForm>
       <CodexFormFields
         appId="codex"
@@ -30,7 +39,7 @@ function renderFields(apiFormat: CodexApiFormat) {
         onEndpointModalToggle={vi.fn()}
         autoSelect={false}
         onAutoSelectChange={vi.fn()}
-        apiFormat={apiFormat}
+        apiFormat={format}
         onApiFormatChange={vi.fn()}
         anthropicAuthField="ANTHROPIC_AUTH_TOKEN"
         onAnthropicAuthFieldChange={vi.fn()}
@@ -40,7 +49,7 @@ function renderFields(apiFormat: CodexApiFormat) {
         onMaxOutputTokensChange={vi.fn()}
         promptCacheRouting="auto"
         onPromptCacheRoutingChange={vi.fn()}
-        catalogModels={[{ model: "gpt-5.6-sol", useResponsesLite: true }]}
+        catalogModels={catalogModels}
         onCatalogModelsChange={onCatalogModelsChange}
         speedTestEndpoints={[]}
         customUserAgent=""
@@ -50,16 +59,21 @@ function renderFields(apiFormat: CodexApiFormat) {
         localProxyBodyOverride=""
         onLocalProxyBodyOverrideChange={vi.fn()}
       />
-    </TestForm>,
+    </TestForm>
   );
-  return onCatalogModelsChange;
+  const view = render(fields(apiFormat));
+  return {
+    onCatalogModelsChange,
+    rerenderWithFormat: (format: CodexApiFormat) =>
+      view.rerender(fields(format)),
+  };
 }
 
 describe("CodexFormFields Responses Lite control", () => {
   it.each(["openai_chat", "anthropic"] as const)(
-    "disables and clears the override for %s providers",
-    async (apiFormat) => {
-      const onCatalogModelsChange = renderFields(apiFormat);
+    "disables the control without clearing the override for %s providers",
+    (apiFormat) => {
+      const { onCatalogModelsChange } = renderFields(apiFormat);
 
       const control = screen.getByRole("combobox", {
         name: "Responses Lite",
@@ -71,19 +85,12 @@ describe("CodexFormFields Responses Lite control", () => {
         "Responses Lite 仅支持原生 Responses 上游；Chat 与 Anthropic 转换格式固定关闭。",
       );
 
-      await waitFor(() => {
-        expect(onCatalogModelsChange).toHaveBeenCalledWith([
-          expect.objectContaining({
-            model: "gpt-5.6-sol",
-            useResponsesLite: false,
-          }),
-        ]);
-      });
+      expect(onCatalogModelsChange).not.toHaveBeenCalled();
     },
   );
 
   it("keeps the control and enabled override for native Responses", () => {
-    const onCatalogModelsChange = renderFields("openai_responses");
+    const { onCatalogModelsChange } = renderFields("openai_responses");
 
     const control = screen.getByRole("combobox", {
       name: "Responses Lite",
@@ -92,4 +99,30 @@ describe("CodexFormFields Responses Lite control", () => {
     expect(control).toHaveTextContent("开启");
     expect(onCatalogModelsChange).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["enabled", true, "开启"],
+    ["auto", null, "自动"],
+  ] as const)(
+    "restores the stored %s choice after switching back to native Responses",
+    (_label, useResponsesLite, expectedLabel) => {
+      const { onCatalogModelsChange, rerenderWithFormat } = renderFields(
+        "openai_chat",
+        useResponsesLite,
+      );
+
+      expect(
+        screen.getByRole("combobox", { name: "Responses Lite" }),
+      ).toHaveTextContent("关闭");
+
+      rerenderWithFormat("openai_responses");
+
+      const control = screen.getByRole("combobox", {
+        name: "Responses Lite",
+      });
+      expect(control).not.toBeDisabled();
+      expect(control).toHaveTextContent(expectedLabel);
+      expect(onCatalogModelsChange).not.toHaveBeenCalled();
+    },
+  );
 });

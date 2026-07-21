@@ -296,19 +296,6 @@ export function CodexFormFields({
     lastSentModelsRef.current = catalogModels;
   }, [catalogModels]);
 
-  // Lite requests omit the ordinary tools array, so only a native Responses
-  // upstream can use them. Run this after parent-to-child synchronization so
-  // an incoming enabled override cannot replace the effective disabled state.
-  useEffect(() => {
-    if (supportsResponsesLite) return;
-    setCatalogRows((current) => {
-      if (current.every((row) => row.useResponsesLite === false)) {
-        return current;
-      }
-      return current.map((row) => ({ ...row, useResponsesLite: false }));
-    });
-  }, [supportsResponsesLite, catalogModels]);
-
   // 子 → 父：rowId 是视图层概念，不应进入持久化数据；剥离后再回传。
   // 注意：依赖数组不包含 catalogModels，避免父→子更新触发子→父回调形成循环。
   useEffect(() => {
