@@ -354,7 +354,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.ai/register?aff=HEL9",
     auth: grokAuth(),
     config: grokPresetConfig("ClaudeCN", "https://claudecn.top/v1"),
     category: "third_party",
