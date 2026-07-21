@@ -284,6 +284,7 @@ export interface VisibleApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  pi: boolean;
 }
 
 // WebDAV 同步状态
@@ -403,6 +404,8 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+  // 覆盖 Pi 配置目录（可选）
+  piConfigDir?: string;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）
@@ -413,6 +416,8 @@ export interface Settings {
   currentProviderCodex?: string;
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
+  // 当前 Pi 供应商 ID（优先于数据库 is_current）
+  currentProviderPi?: string;
 
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -495,6 +500,7 @@ export interface McpApps {
   opencode: boolean;
   openclaw: boolean;
   hermes: boolean;
+  pi?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -734,4 +740,40 @@ export interface HermesMemoryLimits {
   user: number;
   memoryEnabled: boolean;
   userEnabled: boolean;
+}
+
+// ============================================================================
+// Pi Coding Agent 专属配置
+// ============================================================================
+
+// Pi 供应商配置（对应 providers 中的条目）
+export interface PiProviderConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  api?: string; // "anthropic-messages" | "openai-completions" | "openai-responses" | "google-generative-ai"
+  models?: PiModelEntry[];
+  [key: string]: unknown; // preserve unknown fields (headers, authHeader, oauth, modelOverrides, compat, etc.)
+}
+
+// Pi model 配置条目
+export interface PiModelEntry {
+  id: string;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  input?: string[];
+  [key: string]: unknown; // preserve unknown fields (cost, compat, thinkingLevelMap, etc.)
+}
+
+// Pi 写入结果
+export interface PiWriteOutcome {
+  backupPath?: string;
+}
+
+// Pi 健康检查警告
+export interface PiHealthWarning {
+  code: string;
+  message: string;
+  path?: string;
 }
