@@ -1410,7 +1410,7 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     settingsConfig: {
       baseUrl: "https://runapi.co",
       apiKey: "",

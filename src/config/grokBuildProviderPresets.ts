@@ -365,7 +365,7 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     auth: grokAuth(),
     config: grokPresetConfig("RunAPI", "https://runapi.co/v1"),
     category: "aggregator",

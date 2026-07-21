@@ -1167,7 +1167,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     settingsConfig: {
       name: "runapi",
       base_url: "https://runapi.co",

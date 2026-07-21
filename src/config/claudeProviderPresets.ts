@@ -933,7 +933,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "RunAPI",
     websiteUrl: "https://runapi.co",
-    apiKeyUrl: "https://runapi.co",
+    apiKeyUrl: "https://runapi.co/register?aff=iOKB",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://runapi.co",
