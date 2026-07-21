@@ -5573,8 +5573,14 @@ model = "gpt-5.1-codex"
         // apply_context_window_defaults injects ACW from the [1M]/[1m] suffixes
         let mut expected = provider_b.settings_config.clone();
         if let Some(env) = expected.get_mut("env").and_then(|v| v.as_object_mut()) {
-            env.insert("CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(), json!("1000000"));
-            env.insert("CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_string(), json!("1000000"));
+            env.insert(
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(),
+                json!("1000000"),
+            );
+            env.insert(
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_string(),
+                json!("1000000"),
+            );
         }
         let expected = serde_json::to_string(&expected).expect("serialize");
         assert_eq!(backup.original_config, expected);
