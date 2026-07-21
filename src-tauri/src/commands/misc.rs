@@ -36,46 +36,85 @@ fn normalize_windows_batch_newlines(content: &str) -> String {
 /// `std::fs::write` emits UTF-8. On Chinese Windows, `cmd.exe` still opens
 /// `.bat` files as GBK/ANSI by default, so UTF-8 CJK paths become mojibake and
 /// `cd /d` fails with "not recognized as an internal or external command".
+///
+/// Characters that cannot be represented in the current ACP (e.g. emoji on a
+/// GBK system) must not be silently substituted with `?` — that would make
+/// `cd` / `del` target the wrong path. Reject lossy conversions instead.
+///
+/// When the system locale beta "use Unicode UTF-8" is on (`GetACP() == 65001`),
+/// ACP is already UTF-8 and fully lossless; `WC_NO_BEST_FIT_CHARS` /
+/// `lpUsedDefaultChar` are also invalid for that code page, so they are skipped.
 #[cfg(target_os = "windows")]
 fn encode_windows_batch_bytes(content: &str) -> Result<Vec<u8>, String> {
-    use windows_sys::Win32::Globalization::{WideCharToMultiByte, CP_ACP};
+    use windows_sys::Win32::Globalization::{
+        GetACP, WideCharToMultiByte, CP_ACP, WC_NO_BEST_FIT_CHARS,
+    };
 
     let wide: Vec<u16> = content.encode_utf16().collect();
     if wide.is_empty() {
         return Ok(Vec::new());
     }
 
-    let wide_len =
-        i32::try_from(wide.len()).map_err(|_| "batch content too large".to_string())?;
+    let wide_len = i32::try_from(wide.len()).map_err(|_| "batch content too large".to_string())?;
+
+    // UTF-8 ACP (65001): conversion is lossless; used-default-char flags are invalid.
+    let acp = unsafe { GetACP() };
+    let flags = if acp == 65001 {
+        0
+    } else {
+        WC_NO_BEST_FIT_CHARS
+    };
 
     unsafe {
+        let mut used_default: i32 = 0;
+        let used_default_ptr: *mut i32 = if acp == 65001 {
+            std::ptr::null_mut()
+        } else {
+            &mut used_default
+        };
+
         let needed = WideCharToMultiByte(
             CP_ACP,
-            0,
+            flags,
             wide.as_ptr(),
             wide_len,
             std::ptr::null_mut(),
             0,
             std::ptr::null(),
-            std::ptr::null_mut(),
+            used_default_ptr,
         );
         if needed <= 0 {
             return Err("failed to measure system ANSI size for batch content".to_string());
         }
+        if used_default != 0 {
+            return Err(
+                "batch content contains characters that cannot be represented in the system ANSI code page; \
+                 rename the path or enable the Windows UTF-8 system locale"
+                    .to_string(),
+            );
+        }
 
         let mut buf = vec![0u8; needed as usize];
+        used_default = 0;
         let written = WideCharToMultiByte(
             CP_ACP,
-            0,
+            flags,
             wide.as_ptr(),
             wide_len,
             buf.as_mut_ptr(),
             needed,
             std::ptr::null(),
-            std::ptr::null_mut(),
+            used_default_ptr,
         );
         if written <= 0 {
             return Err("failed to encode batch content to system ANSI code page".to_string());
+        }
+        if used_default != 0 {
+            return Err(
+                "batch content contains characters that cannot be represented in the system ANSI code page; \
+                 rename the path or enable the Windows UTF-8 system locale"
+                    .to_string(),
+            );
         }
         buf.truncate(written as usize);
         Ok(buf)
@@ -5545,9 +5584,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let bat = temp.path().join("cjk_cd.bat");
         let target = r"D:\zhuomian\2026测试\ccswitch";
-        let content = format!(
-            "@echo off\ncd /d \"{target}\" || exit /b 1\necho CWD=%CD%\necho OK\n"
-        );
+        let content =
+            format!("@echo off\ncd /d \"{target}\" || exit /b 1\necho CWD=%CD%\necho OK\n");
 
         write_windows_batch_file(&bat, &content).expect("write batch");
 
@@ -5594,5 +5632,27 @@ mod tests {
                 "expected OK in stdout, got: {stdout}"
             );
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn encode_windows_batch_bytes_rejects_chars_outside_acp() {
+        use windows_sys::Win32::Globalization::GetACP;
+
+        // When the system ACP is already UTF-8, every Unicode scalar maps losslessly.
+        let acp = unsafe { GetACP() };
+        if acp == 65001 {
+            let ok = encode_windows_batch_bytes("cd /d \"D:\\😀\\project\"\r\n");
+            assert!(ok.is_ok(), "UTF-8 ACP must accept emoji paths: {ok:?}");
+            return;
+        }
+
+        // U+1F600 is outside GBK / CP1252 / etc. Must fail instead of writing `?`.
+        let err = encode_windows_batch_bytes("cd /d \"D:\\😀\\project\"\r\n")
+            .expect_err("unmappable emoji must be rejected when ACP is not UTF-8");
+        assert!(
+            err.contains("cannot be represented"),
+            "unexpected error text: {err}"
+        );
     }
 }
