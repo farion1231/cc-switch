@@ -171,7 +171,6 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
-
 /// Whether Claude /v1/messages passthrough should rewrite response model fields
 /// back to the client-visible request model.
 pub fn should_force_response_model_for_app(app_type: &crate::app_config::AppType) -> bool {
@@ -254,7 +253,6 @@ fn rewrite_sse_data_line_model(line: &str, client_model: &str) -> Option<String>
     let rewritten = serde_json::to_string(&json).ok()?;
     Some(format!("{prefix}{rewritten}"))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -523,7 +521,10 @@ mod tests {
                 "content": []
             }
         });
-        assert!(rewrite_anthropic_response_model(&mut json, "claude-fable-5"));
+        assert!(rewrite_anthropic_response_model(
+            &mut json,
+            "claude-fable-5"
+        ));
         assert_eq!(json["model"], "claude-fable-5");
         assert_eq!(json["message"]["model"], "claude-fable-5");
     }
@@ -531,7 +532,10 @@ mod tests {
     #[test]
     fn rewrite_response_model_noop_when_already_client_model() {
         let mut json = json!({"model": "claude-fable-5"});
-        assert!(!rewrite_anthropic_response_model(&mut json, "claude-fable-5"));
+        assert!(!rewrite_anthropic_response_model(
+            &mut json,
+            "claude-fable-5"
+        ));
     }
 
     #[test]
@@ -563,5 +567,4 @@ data: {"type":"message_start","message":{"id":"m1","type":"message","role":"assi
             &crate::app_config::AppType::Codex
         ));
     }
-
 }
