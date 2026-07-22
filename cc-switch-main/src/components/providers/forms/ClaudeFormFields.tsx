@@ -296,7 +296,6 @@ export function ClaudeFormFields({
     },
     [settingsConfig, onSettingsConfigChange],
   );
-  );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {

@@ -2733,6 +2733,7 @@ base_url = "https://a.example/v1"
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("500000")
         );
+    }
 
     #[test]
     fn grok_switch_backfill_strips_synced_mcp_servers() {
