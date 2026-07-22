@@ -193,7 +193,11 @@ fn detect_portable_config_dir() -> Option<PathBuf> {
     // 最多向上找 5 层（target/debug/ → target/ → src-tauri/ → project root）
     for _ in 0..5 {
         let candidate = dir.join(".cc-switch");
+        // 排除用户默认配置目录（~/.cc-switch），避免误判
         if candidate.join("cc-switch.db").exists() || candidate.join("config.json").exists() {
+            if candidate == get_home_dir().join(".cc-switch") {
+                return None;
+            }
             log::info!("检测到便携配置目录: {candidate:?}");
             return Some(candidate);
         }

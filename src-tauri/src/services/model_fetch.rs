@@ -248,7 +248,11 @@ pub async fn fetch_upstream_route_models(
 
     match protocol {
         "anthropic" => {
-            let url = format!("{trimmed}/v1/models");
+            let url = if ends_with_version_segment(trimmed) {
+                format!("{trimmed}/models")
+            } else {
+                format!("{trimmed}/v1/models")
+            };
             let response = client
                 .get(&url)
                 .header("x-api-key", api_key)
@@ -306,7 +310,11 @@ pub async fn fetch_upstream_route_models(
         }
         // openai 及默认
         _ => {
-            let url = format!("{trimmed}/v1/models");
+            let url = if ends_with_version_segment(trimmed) {
+                format!("{trimmed}/models")
+            } else {
+                format!("{trimmed}/v1/models")
+            };
             let response = client
                 .get(&url)
                 .header("Authorization", format!("Bearer {api_key}"))

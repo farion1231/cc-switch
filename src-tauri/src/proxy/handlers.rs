@@ -1765,7 +1765,16 @@ pub async fn handle_gemini(
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
 
-    // Gemini 的模型名称在 URI 中
+    // Gemini 的模型名在 URI 中，提前注入 body 以便路由匹配能读到
+    let gemini_model = crate::proxy::handler_context::extract_gemini_model_from_path(uri.path());
+    let mut body = body;
+    if let Some(ref model) = gemini_model {
+        if let serde_json::Value::Object(ref mut map) = body {
+            map.entry("model")
+                .or_insert_with(|| serde_json::Value::String(model.clone()));
+        }
+    }
+
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
         .await?
         .with_model_from_uri(&uri);
