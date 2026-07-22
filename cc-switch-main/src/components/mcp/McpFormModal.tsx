@@ -42,7 +42,7 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
   onClose,
   existingIds = [],
   defaultFormat = "json",
-  defaultEnabledApps = ["claude", "codex", "gemini"],
+  defaultEnabledApps = ["claude", "codex", "gemini", "grokbuild"],
 }) => {
   const { t } = useTranslation();
   const { formatTomlError, validateTomlConfig, validateJsonConfig } =
@@ -65,17 +65,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
     claude: boolean;
     codex: boolean;
     gemini: boolean;
+    grokbuild: boolean;
     opencode: boolean;
     openclaw: boolean;
     hermes: boolean;
   }>(() => {
     if (initialData?.apps) {
-      return { ...initialData.apps };
+      return {
+        ...initialData.apps,
+        grokbuild: initialData.apps.grokbuild ?? false,
+      };
     }
     return {
       claude: defaultEnabledApps.includes("claude"),
       codex: defaultEnabledApps.includes("codex"),
       gemini: defaultEnabledApps.includes("gemini"),
+      grokbuild: defaultEnabledApps.includes("grokbuild"),
       opencode: defaultEnabledApps.includes("opencode"),
       openclaw: defaultEnabledApps.includes("openclaw"),
       hermes: defaultEnabledApps.includes("hermes"),
@@ -563,6 +568,22 @@ const McpFormModal: React.FC<McpFormModalProps> = ({
                     className="text-sm text-foreground cursor-pointer select-none"
                   >
                     {t("mcp.unifiedPanel.apps.gemini")}
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-grokbuild"
+                    checked={enabledApps.grokbuild}
+                    onCheckedChange={(checked: boolean) =>
+                      setEnabledApps({ ...enabledApps, grokbuild: checked })
+                    }
+                  />
+                  <label
+                    htmlFor="enable-grokbuild"
+                    className="text-sm text-foreground cursor-pointer select-none"
+                  >
+                    {t("mcp.unifiedPanel.apps.grokbuild")}
                   </label>
                 </div>
 
