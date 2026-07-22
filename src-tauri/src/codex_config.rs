@@ -1260,6 +1260,95 @@ pub(crate) fn prepare_codex_provider_projection(
     })
 }
 
+pub(crate) fn normalize_codex_managed_provider_config(
+    provider_id: &str,
+    provider_name: &str,
+    category: Option<&str>,
+    config_text: &str,
+) -> Result<String, AppError> {
+    let mut config = if config_text.trim().is_empty() {
+        toml::Table::new()
+    } else {
+        config_text.parse::<toml::Table>().map_err(|error| {
+            AppError::Message(format!("Invalid Provider Codex config.toml: {error}"))
+        })?
+    };
+
+    let active_key = config
+        .remove("model_provider")
+        .and_then(|value| value.as_str().map(str::to_string));
+    let mut provider_tables = config
+        .remove("model_providers")
+        .and_then(|value| value.as_table().cloned())
+        .unwrap_or_default();
+
+    for key in ["base_url", "wire_api", "experimental_bearer_token"] {
+        if category == Some("official") {
+            config.remove(key);
+        }
+    }
+
+    if category != Some("official") {
+        let mut active_table = active_key
+            .as_deref()
+            .and_then(|key| provider_tables.remove(key))
+            .and_then(|value| value.as_table().cloned())
+            .unwrap_or_default();
+        for key in ["base_url", "wire_api", "experimental_bearer_token"] {
+            if let Some(value) = config.remove(key) {
+                active_table.insert(key.to_string(), value);
+            }
+        }
+        active_table.insert(
+            "name".to_string(),
+            toml::Value::String(provider_name.to_string()),
+        );
+
+        let normalized_key = codex_managed_provider_key(provider_id, provider_name);
+        let mut normalized_tables = toml::Table::new();
+        normalized_tables.insert(normalized_key.clone(), toml::Value::Table(active_table));
+        config.insert(
+            "model_provider".to_string(),
+            toml::Value::String(normalized_key),
+        );
+        config.insert(
+            "model_providers".to_string(),
+            toml::Value::Table(normalized_tables),
+        );
+    }
+
+    toml::to_string_pretty(&config).map_err(|error| {
+        AppError::Message(format!(
+            "Failed to normalize Provider Codex config: {error}"
+        ))
+    })
+}
+
+fn codex_managed_provider_key(provider_id: &str, provider_name: &str) -> String {
+    fn component(value: &str) -> String {
+        let mut output = String::new();
+        for character in value.chars() {
+            if character.is_ascii_alphanumeric() {
+                output.push(character.to_ascii_lowercase());
+            } else if !output.is_empty() && !output.ends_with('_') {
+                output.push('_');
+            }
+        }
+        output.trim_matches('_').to_string()
+    }
+
+    let name = component(provider_name);
+    let name = if name.is_empty() { "provider" } else { &name };
+    let id = provider_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .take(8)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let id = if id.is_empty() { "unknown" } else { &id };
+    format!("cc_switch_{name}_{id}")
+}
+
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
 /// cc-switch–maintained catalog file referenced by `~/.codex/config.toml` and
 /// convert it back into the simplified shape the frontend table uses:
@@ -2034,6 +2123,10 @@ pub fn project_codex_provider_config(
             .parse::<DocumentMut>()
             .map_err(|e| AppError::Message(format!("Invalid live Codex config.toml: {e}")))?
     };
+    let previous_active_provider = live
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::to_string);
     let desired = if desired_provider_config.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -2069,32 +2162,110 @@ pub fn project_codex_provider_config(
         live.as_table_mut().insert(&key, item);
     }
 
-    // Only the desired active route is Provider-owned. Preserve every other
-    // route a user may have authored directly in this Target.
-    if let Some(active_provider) = desired.get("model_provider").and_then(|item| item.as_str()) {
-        let desired_table = desired
+    // The previous active route and every cc_switch_* route are managed. An
+    // inactive user-authored route is preserved unless it resolves to the same
+    // backend as the desired route, in which case its unknown fields are
+    // merged into the normalized route before the alias is removed.
+    let desired_active_provider = desired
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::to_string);
+    let mut desired_table = desired_active_provider
+        .as_deref()
+        .and_then(|active_provider| {
+            desired
+                .get("model_providers")
+                .and_then(|item| item.as_table_like())
+                .and_then(|providers| providers.get(active_provider))
+                .cloned()
+        });
+
+    if let Some(providers) = live
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+    {
+        let desired_base_url = desired_table
+            .as_ref()
+            .and_then(codex_provider_table_base_url);
+        let stale_route_keys = providers
+            .iter()
+            .filter_map(|(key, item)| {
+                let managed = previous_active_provider.as_deref() == Some(key)
+                    || key.starts_with("cc_switch_");
+                let duplicate = desired_base_url.as_deref().is_some_and(|desired_url| {
+                    codex_provider_table_base_url(item).as_deref() == Some(desired_url)
+                });
+                (managed || duplicate).then(|| key.to_string())
+            })
+            .collect::<Vec<_>>();
+        for key in stale_route_keys {
+            if let Some(stale_table) = providers.remove(&key) {
+                if let Some(desired_table) = desired_table.as_mut() {
+                    if codex_provider_tables_share_route(desired_table, &stale_table) {
+                        merge_missing_codex_provider_fields(desired_table, &stale_table);
+                    }
+                }
+            }
+        }
+    }
+
+    if let (Some(active_provider), Some(desired_table)) =
+        (desired_active_provider.as_deref(), desired_table)
+    {
+        if live.get("model_providers").is_none() {
+            live["model_providers"] = toml_edit::table();
+        }
+        let providers = live
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_like_mut())
+            .ok_or_else(|| {
+                AppError::Message(
+                    "Invalid live Codex config.toml: model_providers must be a table".to_string(),
+                )
+            })?;
+        providers.insert(active_provider, desired_table);
+    } else {
+        let providers_empty = live
             .get("model_providers")
             .and_then(|item| item.as_table_like())
-            .and_then(|providers| providers.get(active_provider))
-            .cloned();
-        if let Some(desired_table) = desired_table {
-            if live.get("model_providers").is_none() {
-                live["model_providers"] = toml_edit::table();
-            }
-            let providers = live
-                .get_mut("model_providers")
-                .and_then(|item| item.as_table_like_mut())
-                .ok_or_else(|| {
-                    AppError::Message(
-                        "Invalid live Codex config.toml: model_providers must be a table"
-                            .to_string(),
-                    )
-                })?;
-            providers.insert(active_provider, desired_table);
+            .is_some_and(|providers| providers.is_empty());
+        if providers_empty {
+            live.as_table_mut().remove("model_providers");
         }
     }
 
     Ok(live.to_string())
+}
+
+fn codex_provider_table_base_url(item: &toml_edit::Item) -> Option<String> {
+    item.as_table_like()?
+        .get("base_url")?
+        .as_str()
+        .map(|url| url.trim_end_matches('/').to_string())
+}
+
+fn codex_provider_tables_share_route(left: &toml_edit::Item, right: &toml_edit::Item) -> bool {
+    let Some(left_url) = codex_provider_table_base_url(left) else {
+        return false;
+    };
+    codex_provider_table_base_url(right).as_deref() == Some(&left_url)
+}
+
+fn merge_missing_codex_provider_fields(
+    destination: &mut toml_edit::Item,
+    source: &toml_edit::Item,
+) {
+    let Some(source) = source.as_table_like() else {
+        return;
+    };
+    let Some(destination) = destination.as_table_like_mut() else {
+        return;
+    };
+    for (key, value) in source.iter() {
+        if !destination.contains_key(key) {
+            destination.insert(key, value.clone());
+        }
+    }
 }
 
 fn is_codex_provider_owned_root_key(key: &str) -> bool {
@@ -2288,6 +2459,65 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn managed_official_provider_uses_native_codex_route() {
+        let config = r#"model = "gpt-5.6-sol"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "OpenAI"
+base_url = "https://chatgpt.com/backend-api/codex"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let normalized = normalize_codex_managed_provider_config(
+            "codex-official",
+            "OpenAI Official",
+            Some("official"),
+            config,
+        )
+        .expect("normalize official provider");
+        let parsed = normalized.parse::<toml::Table>().expect("valid TOML");
+
+        assert_eq!(parsed["model"].as_str(), Some("gpt-5.6-sol"));
+        assert!(parsed.get("model_provider").is_none());
+        assert!(parsed.get("model_providers").is_none());
+    }
+
+    #[test]
+    fn managed_relay_provider_gets_a_unique_readable_codex_key() {
+        let config = r#"model = "gpt-5.6-sol"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+base_url = "https://api.pinaic.com"
+wire_api = "responses"
+"#;
+
+        let normalized = normalize_codex_managed_provider_config(
+            "0860d0fe-6ebb-4f42-acca-532ff94a78c9",
+            "PinAI",
+            None,
+            config,
+        )
+        .expect("normalize relay provider");
+        let parsed = normalized.parse::<toml::Table>().expect("valid TOML");
+        let key = "cc_switch_pinai_0860d0fe";
+
+        assert_eq!(parsed["model_provider"].as_str(), Some(key));
+        assert_eq!(
+            parsed["model_providers"][key]["name"].as_str(),
+            Some("PinAI")
+        );
+        assert_eq!(
+            parsed["model_providers"][key]["base_url"].as_str(),
+            Some("https://api.pinaic.com")
+        );
+        assert!(parsed["model_providers"].get("custom").is_none());
+    }
 
     #[test]
     fn target_context_resolves_all_codex_paths_from_explicit_directory() {

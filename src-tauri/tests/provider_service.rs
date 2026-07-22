@@ -377,6 +377,21 @@ fn provider_service_switch_managed_target_commits_only_that_targets_current_prov
                 None,
             ),
         );
+    let mut official = Provider::with_id(
+        "codex-official".to_string(),
+        "OpenAI Official".to_string(),
+        json!({
+            "auth": {},
+            "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nbase_url = \"https://chatgpt.com/backend-api/codex\"\nwire_api = \"responses\"\n"
+        }),
+        None,
+    );
+    official.category = Some("official".to_string());
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(official.id.clone(), official);
     let state = create_test_state_with_config(&config).expect("create test state");
 
     ProviderService::switch_managed_target(&state, "new-provider", &target)
@@ -403,6 +418,22 @@ fn provider_service_switch_managed_target_commits_only_that_targets_current_prov
     assert_eq!(
         cc_switch_lib::get_local_current_provider(&AppType::Codex).as_deref(),
         Some("legacy-provider")
+    );
+
+    ProviderService::switch_managed_target(&state, "codex-official", &target)
+        .expect("switch managed target back to official");
+    let official_config =
+        std::fs::read_to_string(target_dir.path().join("config.toml")).expect("official config");
+    let official_toml = official_config
+        .parse::<toml::Table>()
+        .expect("valid official TOML");
+    assert!(official_toml.get("model_provider").is_none());
+    assert!(
+        official_toml
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .is_none_or(|providers| { providers.keys().all(|key| !key.starts_with("cc_switch_")) }),
+        "OpenAI Official must use Codex's native route"
     );
 }
 
@@ -572,7 +603,8 @@ esac
     );
     let projected = std::fs::read_to_string(&live).expect("read WSL config");
     let parsed = projected.parse::<toml::Table>().expect("valid TOML");
-    assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+    let first_provider_key = "cc_switch_new_provider_newprovi";
+    assert_eq!(parsed["model_provider"].as_str(), Some(first_provider_key));
     assert_eq!(parsed["model"].as_str(), Some("gpt-new"));
     assert_eq!(
         parsed["model_catalog_json"].as_str(),
@@ -584,7 +616,7 @@ esac
         Some("linux-tool")
     );
     assert_eq!(
-        parsed["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+        parsed["model_providers"][first_provider_key]["experimental_bearer_token"].as_str(),
         Some("wsl-secret")
     );
     let catalog_json: serde_json::Value =
@@ -612,6 +644,16 @@ esac
         .parse::<toml::Table>()
         .expect("valid switched TOML");
     assert_eq!(switched_toml["model"].as_str(), Some("gpt-second"));
+    assert_eq!(
+        switched_toml["model_provider"].as_str(),
+        Some("cc_switch_second_provider_secondpr")
+    );
+    assert!(
+        switched_toml["model_providers"]
+            .get(first_provider_key)
+            .is_none(),
+        "the previous CC Switch managed route must be removed"
+    );
     assert!(switched_toml.get("model_catalog_json").is_none());
     assert!(
         !catalog.exists(),

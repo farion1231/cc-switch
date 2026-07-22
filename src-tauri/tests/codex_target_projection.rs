@@ -27,6 +27,12 @@ experimental_bearer_token = "old-secret"
 [model_providers.handwritten]
 name = "Keep this unrelated route"
 base_url = "http://localhost:11434/v1"
+
+[model_providers.legacy-new-alias]
+name = "Legacy alias for the next managed route"
+base_url = "https://new.example/v1"
+wire_api = "responses"
+legacy_timeout = 45
 "#;
     let desired = r#"model_provider = "new-route"
 model = "new-model"
@@ -95,6 +101,19 @@ command = "windows-only.exe"
         parsed["model_providers"]["handwritten"]["base_url"].as_str(),
         Some("http://localhost:11434/v1")
     );
+    assert!(
+        parsed["model_providers"].get("old-route").is_none(),
+        "the previously active managed route must be removed"
+    );
+    assert!(
+        parsed["model_providers"].get("legacy-new-alias").is_none(),
+        "an inactive alias of the selected route must be collapsed"
+    );
+    assert_eq!(
+        parsed["model_providers"]["new-route"]["legacy_timeout"].as_integer(),
+        Some(45),
+        "unknown fields from a collapsed alias must be preserved"
+    );
 }
 
 #[test]
@@ -123,5 +142,11 @@ name = "Old"
         assert!(parsed.get(key).is_none(), "stale {key} must be removed");
     }
     assert_eq!(parsed["approval_policy"].as_str(), Some("on-request"));
-    assert!(parsed["model_providers"].get("old").is_some());
+    assert!(
+        parsed
+            .get("model_providers")
+            .and_then(toml::Value::as_table)
+            .is_none_or(|providers| providers.get("old").is_none()),
+        "the stale active managed route must be removed"
+    );
 }

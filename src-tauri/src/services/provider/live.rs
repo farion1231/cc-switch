@@ -761,11 +761,17 @@ pub(crate) fn build_codex_target_provider_projection(
         .get("auth")
         .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
     let config_text = settings.get("config").and_then(Value::as_str).unwrap_or("");
+    let config_text = crate::codex_config::normalize_codex_managed_provider_config(
+        &effective_provider.id,
+        &effective_provider.name,
+        effective_provider.category.as_deref(),
+        config_text,
+    )?;
     let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&effective_provider);
     crate::codex_config::prepare_codex_provider_projection(
         &effective_provider.settings_config,
         auth,
-        config_text,
+        &config_text,
         profile,
     )
 }

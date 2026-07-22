@@ -28,6 +28,14 @@ _Avoid_: Provider copy, silent local patch
 A configuration value owned by a Provider and eligible for projection into a Managed Target.
 _Avoid_: Entire configuration file
 
+**Provider Key**:
+An Application-native identifier selected by a Managed Target to activate one Provider route. For Codex, CC Switch generates a readable, collision-resistant `cc_switch_<name>_<id>` key for non-official Providers; the official Provider uses Codex's native route without a custom key.
+_Avoid_: Provider display name, generic `custom` bucket
+
+**Managed Provider Table**:
+The Application-native routing table selected by a Provider Key and owned by CC Switch while it is active. Reprojection replaces stale CC Switch tables and collapses aliases of the same route while retaining their unknown fields.
+_Avoid_: Every provider table in a Target config, user-authored inactive route
+
 **Local Field**:
 A configuration value owned by an Environment and preserved across Provider changes.
 _Avoid_: Common Provider setting
@@ -56,4 +64,6 @@ capability fields, Provider endpoint/protocol fields, and the Provider-scoped
 bearer token. Paths, projects, approval/sandbox policy, MCP, response-storage
 policy, authentication files, sessions, state databases, and unknown fields are
 Target-owned. Adding or linking a Target is read-only; the first Projection
-requires explicit activation.
+requires explicit activation. Official Codex Providers project to the native
+Codex route. Non-official Providers receive a unique readable Provider Key;
+generic `custom` is not a Managed Target identity.
