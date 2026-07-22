@@ -138,4 +138,4 @@ CC Switch 3.17.0 以降にアップグレードしてください。古いバー
 - [CC Switch ユーザーマニュアル: プロキシサービス](../user-manual/ja/4-proxy/4.1-service.md)
 - [CC Switch ユーザーマニュアル: アプリケーションルーティング](../user-manual/ja/4-proxy/4.2-routing.md)
 - [CC Switch v3.17.0 リリースノート](../release-notes/v3.17.0-ja.md)
-- 逆方向のガイド: [Codex で Claude を使う](./codex-claude-routing-guide-ja.md)
+- 逆方向のガイド: [Codex で Claude モデルを使う](./codex-claude-routing-guide-ja.md)
