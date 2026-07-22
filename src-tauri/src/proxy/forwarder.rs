@@ -73,6 +73,9 @@ pub struct ForwardResult {
 pub struct ForwardError {
     pub error: ProxyError,
     pub provider: Option<Provider>,
+    /// 映射后的上游模型名（路由接管/模型映射后的真值，无映射时为 None）。
+    /// 供错误日志正确记录"实际请求了哪个上游模型"。
+    pub outbound_model: Option<String>,
 }
 
 /// 活跃连接 RAII guard
@@ -289,6 +292,7 @@ impl RequestForwarder {
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
+        outbound_model: Option<String>,
     ) -> Option<ForwardError> {
         // Provider 错误：本家上游/网络确实出问题，下一家 provider 可能可用 → 继续故障转移。
         // 客户端错误：整流后请求仍违法，下一家也修不好 → 直接返回。
@@ -334,6 +338,7 @@ impl RequestForwarder {
         Some(ForwardError {
             error: retry_err,
             provider: Some(provider.clone()),
+            outbound_model,
         })
     }
 
@@ -402,11 +407,13 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
         let mut last_error = None;
         let mut last_provider = None;
+        let mut last_outbound_model: Option<String> = None;
         let mut attempted_providers = 0usize;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）
@@ -542,7 +549,17 @@ impl RequestForwarder {
                         connection_guard: None,
                     });
                 }
-                Err(e) => {
+                Err((e, om)) => {
+                    // forward() 失败：om 携带了映射后的模型名（outbound_model），
+                    // 在模型映射计算前失败时为 None。
+                    last_outbound_model = om.or_else(|| {
+                        provider_body
+                            .get("model")
+                            .and_then(|m| m.as_str())
+                            .filter(|m| !m.is_empty())
+                            .map(|m| m.to_string())
+                    });
+
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -645,10 +662,13 @@ impl RequestForwarder {
                                         connection_guard: None,
                                     });
                                 }
-                                Err(retry_err) => {
+                                Err((retry_err, retry_outbound)) => {
                                     log::warn!(
                                         "[{app_type_str}] [Media] Unsupported-image retry still failed: {retry_err}"
                                     );
+                                    if retry_outbound.is_some() {
+                                        last_outbound_model = retry_outbound.clone();
+                                    }
                                     if let Some(err) = self
                                         .handle_rectifier_retry_failure(
                                             retry_err,
@@ -658,6 +678,7 @@ impl RequestForwarder {
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
+                                            retry_outbound,
                                         )
                                         .await
                                     {
@@ -697,6 +718,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
+                                    outbound_model: last_outbound_model.clone(),
                                 });
                             }
 
@@ -794,10 +816,13 @@ impl RequestForwarder {
                                             connection_guard: None,
                                         });
                                     }
-                                    Err(retry_err) => {
+                                    Err((retry_err, retry_outbound)) => {
                                         log::warn!(
                                             "[{app_type_str}] [RECT-003] 整流重试仍失败: {retry_err}"
                                         );
+                                        if retry_outbound.is_some() {
+                                            last_outbound_model = retry_outbound.clone();
+                                        }
                                         if let Some(err) = self
                                             .handle_rectifier_retry_failure(
                                                 retry_err,
@@ -807,6 +832,7 @@ impl RequestForwarder {
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
+                                                retry_outbound,
                                             )
                                             .await
                                         {
@@ -849,6 +875,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
+                                    outbound_model: last_outbound_model.clone(),
                                 });
                             }
 
@@ -875,6 +902,7 @@ impl RequestForwarder {
                                 return Err(ForwardError {
                                     error: e,
                                     provider: Some(provider.clone()),
+                                    outbound_model: last_outbound_model.clone(),
                                 });
                             }
 
@@ -954,10 +982,13 @@ impl RequestForwarder {
                                         connection_guard: None,
                                     });
                                 }
-                                Err(retry_err) => {
+                                Err((retry_err, retry_outbound)) => {
                                     log::warn!(
                                         "[{app_type_str}] [RECT-012] budget 整流重试仍失败: {retry_err}"
                                     );
+                                    if retry_outbound.is_some() {
+                                        last_outbound_model = retry_outbound.clone();
+                                    }
                                     if let Some(err) = self
                                         .handle_rectifier_retry_failure(
                                             retry_err,
@@ -967,6 +998,7 @@ impl RequestForwarder {
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
+                                            retry_outbound,
                                         )
                                         .await
                                     {
@@ -997,6 +1029,7 @@ impl RequestForwarder {
                         return Err(ForwardError {
                             error: e,
                             provider: Some(provider.clone()),
+                            outbound_model: last_outbound_model.clone(),
                         });
                     }
 
@@ -1060,6 +1093,7 @@ impl RequestForwarder {
                             return Err(ForwardError {
                                 error: e,
                                 provider: Some(provider.clone()),
+                                outbound_model: last_outbound_model.clone(),
                             });
                         }
                     }
@@ -1081,6 +1115,7 @@ impl RequestForwarder {
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,
+                outbound_model: None,
             });
         }
 
@@ -1104,6 +1139,7 @@ impl RequestForwarder {
         Err(ForwardError {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
+            outbound_model: last_outbound_model,
         })
     }
 
@@ -1122,9 +1158,9 @@ impl RequestForwarder {
         headers: &axum::http::HeaderMap,
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<(ProxyResponse, Option<String>, Option<String>), (ProxyError, Option<String>)> {
         // 使用适配器提取 base_url
-        let mut base_url = adapter.extract_base_url(provider)?;
+        let mut base_url = adapter.extract_base_url(provider).map_err(|e| (e, None))?;
 
         let is_full_url = provider
             .meta
@@ -1153,7 +1189,7 @@ impl RequestForwarder {
             && super::providers::is_codex_official_provider(provider);
 
         if codex_official_auth_passthrough {
-            validate_codex_official_authorization(headers)?;
+            validate_codex_official_authorization(headers).map_err(|e| (e, None))?;
         }
 
         // 应用模型映射（独立于格式转换）
@@ -1161,7 +1197,7 @@ impl RequestForwarder {
         // 映射成真实上游模型名，并且未知 route 要直接报错，不能使用默认模型兜底。
         let mapped_body = if matches!(app_type, AppType::ClaudeDesktop) {
             crate::claude_desktop_config::map_proxy_request_model(body.clone(), provider)
-                .map_err(|e| ProxyError::InvalidRequest(e.to_string()))?
+                .map_err(|e| (ProxyError::InvalidRequest(e.to_string()), None))?
         } else {
             let (mapped_body, _original_model, _mapped_model) =
                 super::model_mapper::apply_model_mapping(body.clone(), provider);
@@ -1436,7 +1472,8 @@ impl RequestForwarder {
             let mut chat_body = super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
                 mapped_body,
                 reasoning_config.as_ref(),
-            )?;
+            )
+            .map_err(|e| (e, outbound_model.clone()))?;
             super::providers::inject_codex_chat_prompt_cache_key(
                 provider,
                 &mut chat_body,
@@ -1475,7 +1512,8 @@ impl RequestForwarder {
                 super::providers::transform_codex_anthropic::responses_request_to_anthropic(
                     mapped_body,
                     DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
-                )?;
+                )
+                .map_err(|e| (e, outbound_model.clone()))?;
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
             // added. apply_codex_upstream_model may have just written back a model
@@ -1513,9 +1551,12 @@ impl RequestForwarder {
                     self.session_client_provided
                         .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
-                )?
+                )
+                .map_err(|e| (e, outbound_model.clone()))?
             } else {
-                adapter.transform_request(mapped_body, provider)?
+                adapter
+                    .transform_request(mapped_body, provider)
+                    .map_err(|e| (e, outbound_model.clone()))?
             }
         } else {
             mapped_body
@@ -1534,7 +1575,8 @@ impl RequestForwarder {
             && super::providers::provider_needs_responses_namespace_flatten(provider)
             && super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
                 &mut request_body,
-            )?
+            )
+            .map_err(|e| (e, outbound_model.clone()))?
         {
             log::debug!(
                 "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
@@ -1650,15 +1692,19 @@ impl RequestForwarder {
                                 "[Copilot] 获取 Copilot token 失败 (account={}): {e}",
                                 account_id.as_deref().unwrap_or("default")
                             );
-                            return Err(ProxyError::AuthError(format!(
-                                "GitHub Copilot 认证失败: {e}"
-                            )));
+                            return Err((
+                                ProxyError::AuthError(format!("GitHub Copilot 认证失败: {e}")),
+                                outbound_model.clone(),
+                            ));
                         }
                     }
                 } else {
                     log::error!("[Copilot] AppHandle 不可用");
-                    return Err(ProxyError::AuthError(
-                        "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
+                    return Err((
+                        ProxyError::AuthError(
+                            "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
+                        ),
+                        outbound_model.clone(),
                     ));
                 }
             }
@@ -1703,15 +1749,17 @@ impl RequestForwarder {
                         }
                         Err(e) => {
                             log::error!("[CodexOAuth] 获取 access_token 失败: {e}");
-                            return Err(ProxyError::AuthError(format!(
-                                "Codex OAuth 认证失败: {e}"
-                            )));
+                            return Err((
+                                ProxyError::AuthError(format!("Codex OAuth 认证失败: {e}")),
+                                outbound_model.clone(),
+                            ));
                         }
                     }
                 } else {
                     log::error!("[CodexOAuth] AppHandle 不可用");
-                    return Err(ProxyError::AuthError(
-                        "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
+                    return Err((
+                        ProxyError::AuthError("Codex OAuth 认证不可用（无 AppHandle）".to_string()),
+                        outbound_model.clone(),
                     ));
                 }
             }
@@ -1742,14 +1790,16 @@ impl RequestForwarder {
                         }
                         Err(error) => {
                             log::error!("[XaiOAuth] 获取 access_token 失败: {error}");
-                            return Err(ProxyError::AuthError(format!(
-                                "xAI OAuth 认证失败: {error}"
-                            )));
+                            return Err((
+                                ProxyError::AuthError(format!("xAI OAuth 认证失败: {error}")),
+                                outbound_model.clone(),
+                            ));
                         }
                     }
                 } else {
-                    return Err(ProxyError::AuthError(
-                        "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
+                    return Err((
+                        ProxyError::AuthError("xAI OAuth 认证不可用（无 AppHandle）".to_string()),
+                        outbound_model.clone(),
                     ));
                 }
             }
@@ -1760,7 +1810,9 @@ impl RequestForwarder {
                 }
             }
 
-            adapter.get_auth_headers(&auth)?
+            adapter
+                .get_auth_headers(&auth)
+                .map_err(|e| (e, outbound_model.clone()))?
         } else {
             Vec::new()
         };
@@ -2142,7 +2194,10 @@ impl RequestForwarder {
             Vec::new()
         } else {
             serde_json::to_vec(&filtered_body).map_err(|e| {
-                ProxyError::Internal(format!("Failed to serialize request body: {e}"))
+                (
+                    ProxyError::Internal(format!("Failed to serialize request body: {e}")),
+                    outbound_model.clone(),
+                )
             })?
         };
 
@@ -2163,7 +2218,8 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
+        reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)
+            .map_err(|e| (e, outbound_model.clone()))?;
 
         // 日志目标 URL 的脱敏分两种情形：
         // - 有已知密钥(log_secrets 非空)：记录脱敏后的完整 URL，剥 userinfo/query
@@ -2241,23 +2297,34 @@ impl RequestForwarder {
                 tokio::time::timeout(header_timeout, send)
                     .await
                     .map_err(|_| {
-                        ProxyError::Timeout(format!(
-                            "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
-                        ))
+                        (
+                            ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_timeout.as_secs()
+                            )),
+                            outbound_model.clone(),
+                        )
                     })?
             } else {
                 send.await
             };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
+            let reqwest_resp = match send_result {
+                Ok(resp) => resp,
+                Err(e) => return Err((map_reqwest_send_error(e), outbound_model.clone())),
+            };
             ProxyResponse::Reqwest(reqwest_resp)
         } else {
             // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
             // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
             let uri: http::Uri = url.parse().map_err(|e| {
-                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
+                (
+                    ProxyError::ForwardFailed(format!(
+                        "Invalid upstream URL ({target_for_log}): {e}"
+                    )),
+                    outbound_model.clone(),
+                )
             })?;
-            super::hyper_client::send_request(
+            match super::hyper_client::send_request(
                 uri,
                 &target_for_log,
                 method.clone(),
@@ -2267,7 +2334,11 @@ impl RequestForwarder {
                 timeout,
                 upstream_proxy_url.as_deref(),
             )
-            .await?
+            .await
+            {
+                Ok(resp) => resp,
+                Err(e) => return Err((e, outbound_model.clone())),
+            }
         };
 
         // 检查响应状态
@@ -2276,7 +2347,8 @@ impl RequestForwarder {
         if status.is_success() {
             let mut response = self
                 .prepare_success_response_for_failover(response, request_is_streaming)
-                .await?;
+                .await
+                .map_err(|e| (e, outbound_model.clone()))?;
             // Streaming requests normally return SSE. If a compatible gateway
             // explicitly returns JSON instead, buffer and validate it inside the retry
             // loop as well so a 2xx Anthropic error envelope can still fail over. Do
@@ -2284,7 +2356,8 @@ impl RequestForwarder {
             if codex_responses_to_anthropic && (!request_is_streaming || response.is_json()) {
                 response = self
                     .validate_codex_anthropic_success_response(response)
-                    .await?;
+                    .await
+                    .map_err(|e| (e, outbound_model.clone()))?;
             } else if matches!(
                 resolved_claude_api_format.as_deref(),
                 Some("openai_responses")
@@ -2293,12 +2366,18 @@ impl RequestForwarder {
                     // Claude→Responses gateways can also return a semantic failure in an
                     // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
                     // retry loop so an early failure can still select another provider.
-                    response = self.validate_responses_success_response(response).await?;
+                    response = self
+                        .validate_responses_success_response(response)
+                        .await
+                        .map_err(|e| (e, outbound_model.clone()))?;
                 } else {
                     // Delay committing the downstream stream until the upstream emits
                     // either productive output or a valid non-failure terminal event.
                     // A response.failed/error before output remains failover-safe.
-                    response = self.validate_responses_stream_start(response).await?;
+                    response = self
+                        .validate_responses_stream_start(response)
+                        .await
+                        .map_err(|e| (e, outbound_model.clone()))?;
                 }
             }
             Ok((response, resolved_claude_api_format, outbound_model))
@@ -2308,7 +2387,10 @@ impl RequestForwarder {
             // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
             // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
             let encoding = get_content_encoding(response.headers());
-            let raw = response.bytes().await?;
+            let raw = response
+                .bytes()
+                .await
+                .map_err(|e| (e, outbound_model.clone()))?;
             let decoded = match encoding {
                 Some(encoding) => match decompress_body(&encoding, &raw) {
                     Ok(Some(decompressed)) => decompressed,
@@ -2319,10 +2401,13 @@ impl RequestForwarder {
             };
             let body_text = String::from_utf8(decoded).ok();
 
-            Err(ProxyError::UpstreamError {
-                status: status_code,
-                body: body_text,
-            })
+            Err((
+                ProxyError::UpstreamError {
+                    status: status_code,
+                    body: body_text,
+                },
+                outbound_model,
+            ))
         }
     }
 
@@ -4897,5 +4982,283 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    /// 当上游返回错误（如 402）且配置了模型映射时，ForwardError.outbound_model
+    /// 应为映射后的上游模型名，而非客户端请求的模型别名。
+    #[tokio::test]
+    async fn forward_error_carries_mapped_outbound_model() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // 启动一个返回 402 的 TCP mock 服务器
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = b"HTTP/1.1 402 Payment Required\r\n\
+                             content-type: application/json\r\n\
+                             content-length: 52\r\n\
+                             \r\n\
+                             {\"error\":{\"code\":\"402\",\"message\":\"Insufficient balance\"}}";
+                let _ = stream.write_all(resp).await;
+            }
+        });
+
+        // 创建带模型映射的 Provider
+        let provider = Provider {
+            id: "test-provider".to_string(),
+            name: "Test Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://127.0.0.1:{}", addr.port()),
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "mimo-v2.5",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "mimo-v2.5",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "mimo-v2.5",
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("upstream 402 should produce an error"),
+            Err(e) => e,
+        };
+
+        // 关键断言：outbound_model 应为映射后的模型名
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("mimo-v2.5"),
+            "outbound_model 应为映射后的上游模型 mimo-v2.5，而非客户端别名 claude-opus-4-8"
+        );
+    }
+
+    /// 无模型映射时，ForwardError.outbound_model 应为客户端请求的模型名。
+    #[tokio::test]
+    async fn forward_error_outbound_model_without_mapping() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+                let resp = b"HTTP/1.1 404 Not Found\r\n\
+                             content-type: text/html\r\n\
+                             content-length: 35\r\n\
+                             \r\n\
+                             <html><body>404 Not Found</body></html>";
+                let _ = stream.write_all(resp).await;
+            }
+        });
+
+        // 无模型映射的 Provider
+        let provider = Provider {
+            id: "no-map-provider".to_string(),
+            name: "No Map Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": format!("http://127.0.0.1:{}", addr.port()),
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("upstream 404 should produce an error"),
+            Err(e) => e,
+        };
+
+        // 无映射时，outbound_model 应为请求中的原始模型名
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("claude-opus-4-8"),
+            "无映射时 outbound_model 应为客户端请求模型"
+        );
+    }
+
+    /// reqwest 连接失败（如连接拒绝）时，outbound_model 应被正确携带。
+    /// 覆盖 cfaddd0a 修复的 reqwest send error 路径。
+    #[tokio::test]
+    async fn reqwest_connection_error_carries_outbound_model() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let provider = Provider {
+            id: "reqwest-err-provider".to_string(),
+            name: "Reqwest Error Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    // 连接到不存在的端口，触发连接拒绝
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-r1",
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("connection refused should produce an error"),
+            Err(e) => e,
+        };
+
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("deepseek-r1"),
+            "reqwest 连接失败时 outbound_model 应为映射后的模型 deepseek-r1"
+        );
+    }
+
+    /// hyper 路径连接失败时，outbound_model 应被正确携带。
+    /// 覆盖 2bfb5839 修复的 hyper send error 路径。
+    #[tokio::test]
+    async fn hyper_connection_error_carries_outbound_model() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // Copilot provider → 走 hyper 路径
+        let provider = Provider {
+            id: "hyper-err-provider".to_string(),
+            name: "Hyper Error Provider".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:1",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-r1",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-r1",
+                }
+            }),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: Some(crate::provider::ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "claude-opus-4-8",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+
+        let err = match result {
+            Ok(_) => panic!("hyper connection refused should produce an error"),
+            Err(e) => e,
+        };
+
+        assert_eq!(
+            err.outbound_model.as_deref(),
+            Some("deepseek-r1"),
+            "hyper 连接失败时 outbound_model 应为映射后的模型 deepseek-r1"
+        );
     }
 }

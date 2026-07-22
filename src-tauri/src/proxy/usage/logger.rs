@@ -65,8 +65,8 @@ pub struct RequestLog {
     pub request_id: String,
     pub provider_id: String,
     pub app_type: String,
-    pub model: String,
-    pub request_model: String,
+    pub model: String,         // 实际上游模型（路由接管/映射后的值）
+    pub request_model: String, // 客户端请求模型（映射前的别名）
     /// 写入时实际用于计价的模型名（pricing_model_source 解析后的结果）。
     /// 落库供回填使用：缺价行补价后必须按写入时的基准重算，而不是
     /// 用 model/request_model 猜——路由接管下三者可能各不相同。
@@ -293,14 +293,18 @@ impl<'a> UsageLogger<'a> {
 
     /// 记录失败的请求（带更多上下文信息）
     ///
-    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文
+    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文。
+    /// - `outbound_model`：实际上游模型（路由接管/映射后的值）。
+    ///   `None` 表示错误发生在映射之前或映射值不可用，此时使用 `request_model` 作为`outbound_model`。
+    /// - `request_model`：客户端请求模型（映射前的别名）。
     #[allow(clippy::too_many_arguments)]
     pub fn log_error_with_context(
         &self,
         request_id: String,
         provider_id: String,
         app_type: String,
-        model: String,
+        outbound_model: Option<String>,
+        request_model: String,
         status_code: u16,
         error_message: String,
         latency_ms: u64,
@@ -308,12 +312,17 @@ impl<'a> UsageLogger<'a> {
         session_id: Option<String>,
         provider_type: Option<String>,
     ) -> Result<(), AppError> {
-        let request_model = model.clone();
+        // outbound_model 为 None 或空字符串时回退到 request_model：
+        // 错误发生在映射前、或映射值不可用，此时两者一致
+        let outbound_model = outbound_model
+            .filter(|m| !m.is_empty())
+            .unwrap_or_else(|| request_model.clone());
+
         let log = RequestLog {
             request_id,
             provider_id,
             app_type,
-            model,
+            model: outbound_model,
             request_model,
             // 错误行未经过计价，留空（回填的 has_usage 闸门也不会碰全 0 行）
             pricing_model: String::new(),
@@ -713,6 +722,130 @@ mod tests {
             .unwrap();
         assert_eq!(status, 500);
         assert_eq!(error, Some("Internal Server Error".to_string()));
+        Ok(())
+    }
+
+    /// 有模型映射时：outbound_model = Some(mapped)，落库 model 应为映射后模型，
+    /// request_model 应为客户端原始请求模型。
+    #[test]
+    fn test_log_error_with_context_has_mapping() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+
+        logger.log_error_with_context(
+            "req-mapped".to_string(),
+            "provider-1".to_string(),
+            "claude".to_string(),
+            Some("glm-5.1".to_string()),
+            "claude-opus-4-8".to_string(),
+            429,
+            "Too Many Requests".to_string(),
+            200,
+            false,
+            Some("sess-001".to_string()),
+            None,
+        )?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (model, request_model, status, error): (String, String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT model, request_model, status_code, error_message
+                 FROM proxy_request_logs WHERE request_id = 'req-mapped'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(model, "glm-5.1", "model 应为映射后的上游模型");
+        assert_eq!(
+            request_model, "claude-opus-4-8",
+            "request_model 应为客户端请求模型"
+        );
+        assert_eq!(status, 429);
+        assert_eq!(error, Some("Too Many Requests".to_string()));
+        // 错误行未计价，pricing_model 应为空字符串
+        let pricing_model: String = conn
+            .query_row(
+                "SELECT pricing_model FROM proxy_request_logs WHERE request_id = 'req-mapped'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pricing_model, "", "错误行 pricing_model 应为空");
+        Ok(())
+    }
+
+    /// 无模型映射时：outbound_model = None，model 应回退到 request_model。
+    #[test]
+    fn test_log_error_with_context_no_mapping() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+
+        logger.log_error_with_context(
+            "req-no-map".to_string(),
+            "provider-2".to_string(),
+            "codex".to_string(),
+            None,
+            "gpt-4o".to_string(),
+            500,
+            "Internal Server Error".to_string(),
+            300,
+            true,
+            None,
+            None,
+        )?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (model, request_model, is_streaming): (String, String, i64) = conn
+            .query_row(
+                "SELECT model, request_model, is_streaming
+                 FROM proxy_request_logs WHERE request_id = 'req-no-map'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(model, "gpt-4o", "无映射时 model 应回退到 request_model");
+        assert_eq!(request_model, "gpt-4o");
+        assert_eq!(is_streaming, 1, "is_streaming 应为 true");
+        Ok(())
+    }
+
+    /// outbound_model 为空字符串时，行为等同于 None，应回退到 request_model。
+    #[test]
+    fn test_log_error_with_context_empty_outbound_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+
+        logger.log_error_with_context(
+            "req-empty".to_string(),
+            "provider-3".to_string(),
+            "claude".to_string(),
+            Some("".to_string()),
+            "claude-sonnet-4-5".to_string(),
+            502,
+            "Bad Gateway".to_string(),
+            150,
+            false,
+            None,
+            None,
+        )?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (model, request_model): (String, String) = conn
+            .query_row(
+                "SELECT model, request_model
+                 FROM proxy_request_logs WHERE request_id = 'req-empty'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(
+            model, "claude-sonnet-4-5",
+            "空 outbound_model 应回退到 request_model"
+        );
+        assert_eq!(request_model, "claude-sonnet-4-5");
         Ok(())
     }
 
