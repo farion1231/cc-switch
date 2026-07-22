@@ -36,6 +36,20 @@ fn is_aws_endpoint(endpoint: &str) -> bool {
     endpoint.is_empty() || endpoint.contains("amazonaws.com")
 }
 
+/// Returns `true` if the endpoint already embeds the bucket name as the leading
+/// host label (virtual-hosted style), e.g. `mybucket.oss-cn-hangzhou.aliyuncs.com`.
+///
+/// Users frequently paste the bucket URL from the provider console (which is
+/// `{bucket}.{endpoint}`) into the endpoint field. Detecting this prevents the
+/// bucket name from being appended a second time in the path.
+fn endpoint_embeds_bucket(endpoint: &str, bucket: &str) -> bool {
+    let host = match split_scheme_host(endpoint) {
+        (_, h) => h,
+    };
+    let label = format!("{bucket}.");
+    host.starts_with(&label)
+}
+
 /// Split an endpoint into its scheme and host-with-port parts.
 ///
 /// Preserves the original scheme when one is provided, defaulting to `"https"`
@@ -61,6 +75,8 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
 ///
 /// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
 /// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
+///   (but when the endpoint already embeds the bucket in its host, the bucket
+///   is not appended again — virtual-hosted style for OSS/R2/Backblaze, etc.)
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
     let key = key.trim_start_matches('/');
     if is_aws_endpoint(&creds.endpoint) {
@@ -70,7 +86,11 @@ fn build_object_url(creds: &S3Credentials, key: &str) -> String {
         )
     } else {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+        if endpoint_embeds_bucket(&creds.endpoint, &creds.bucket) {
+            format!("{}://{}/{}", scheme, host, key)
+        } else {
+            format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+        }
     }
 }
 
@@ -83,7 +103,11 @@ fn build_bucket_url(creds: &S3Credentials) -> String {
         )
     } else {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/", scheme, host, creds.bucket)
+        if endpoint_embeds_bucket(&creds.endpoint, &creds.bucket) {
+            format!("{}://{}/", scheme, host)
+        } else {
+            format!("{}://{}/{}/", scheme, host, creds.bucket)
+        }
     }
 }
 
@@ -613,6 +637,55 @@ mod tests {
             build_bucket_url(&creds),
             "https://storage.example.com/data/"
         );
+    }
+
+    // ── Endpoint that already embeds the bucket (OSS virtual-hosted style) ──
+
+    #[test]
+    fn build_object_url_oss_endpoint_embeds_bucket() {
+        // User pasted the bucket URL from the OSS console into the endpoint field.
+        let creds = test_creds(
+            "https://mybucket.oss-cn-zhongwei.aliyuncs.com",
+            "cn-zhongwei",
+            "mybucket",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/v2/db-v6/default/manifest.json"),
+            "https://mybucket.oss-cn-zhongwei.aliyuncs.com/cc-switch-sync/v2/db-v6/default/manifest.json"
+        );
+    }
+
+    #[test]
+    fn build_bucket_url_oss_endpoint_embeds_bucket() {
+        let creds = test_creds(
+            "https://mybucket.oss-cn-zhongwei.aliyuncs.com",
+            "cn-zhongwei",
+            "mybucket",
+        );
+        // Must NOT append a second bucket path segment.
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://mybucket.oss-cn-zhongwei.aliyuncs.com/"
+        );
+    }
+
+    #[test]
+    fn endpoint_embeds_bucket_detection() {
+        assert!(endpoint_embeds_bucket(
+            "https://mybucket.oss-cn-hangzhou.aliyuncs.com",
+            "mybucket"
+        ));
+        assert!(endpoint_embeds_bucket(
+            "mybucket.oss-cn-hangzhou.aliyuncs.com",
+            "mybucket"
+        ));
+        // Different bucket → not embedded.
+        assert!(!endpoint_embeds_bucket(
+            "https://other.oss-cn-hangzhou.aliyuncs.com",
+            "mybucket"
+        ));
+        // Plain endpoint (MinIO) → bucket not in host.
+        assert!(!endpoint_embeds_bucket("minio.local:9000", "mybucket"));
     }
 
     #[test]
