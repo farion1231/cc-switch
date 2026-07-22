@@ -126,9 +126,10 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
-    /// 聚合路由合成的 provider id 集合：这些 provider 命中时不触发"当前供应商"切换，
-    /// 避免不同档位的请求把当前供应商在各路由目标之间来回切换
-    routed_provider_ids: std::collections::HashSet<String>,
+    /// 聚合路由合成的 provider id → 来源聚合供应商 (id, name)：
+    /// 同一聚合的各档目标之间不切换"当前供应商"，
+    /// 但故障转移首次命中聚合时同步到该聚合供应商
+    routed_provider_sources: std::collections::HashMap<String, (String, String)>,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
@@ -208,7 +209,7 @@ impl RequestForwarder {
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<tauri::AppHandle>,
         current_provider_id_at_start: String,
-        routed_provider_ids: std::collections::HashSet<String>,
+        routed_provider_sources: std::collections::HashMap<String, (String, String)>,
         session_id: String,
         session_client_provided: bool,
         streaming_first_byte_timeout: u64,
@@ -230,7 +231,7 @@ impl RequestForwarder {
             failover_manager,
             app_handle,
             current_provider_id_at_start,
-            routed_provider_ids,
+            routed_provider_sources,
             session_id,
             session_client_provided,
             rectifier_config,
@@ -244,13 +245,24 @@ impl RequestForwarder {
         }
     }
 
-    /// 成功后是否需要把"当前供应商"同步为实际使用的 provider。
+    /// 成功后需要同步的"当前供应商"目标 `(id, name)`；不需要同步时返回 `None`。
     ///
-    /// 聚合路由合成的 provider（`routed_provider_ids`）不触发同步：否则不同档位的
-    /// 请求会把当前供应商在各路由目标之间来回切换，UI/托盘随之抖动。
-    fn should_sync_current_provider(&self, provider_id: &str) -> bool {
-        self.current_provider_id_at_start.as_str() != provider_id
-            && !self.routed_provider_ids.contains(provider_id)
+    /// 聚合路由合成的 provider（`routed_provider_sources` 的键）不在各档目标之间切换，
+    /// 避免 UI/托盘随档位抖动；但故障转移首次命中聚合时，同步到来源聚合供应商，
+    /// 否则请求成功而 UI/持久化的当前供应商仍停留在已故障的 provider 上。
+    fn failover_switch_target(&self, provider: &Provider) -> Option<(String, String)> {
+        if let Some((aggregate_id, aggregate_name)) =
+            self.routed_provider_sources.get(&provider.id)
+        {
+            if self.current_provider_id_at_start != *aggregate_id {
+                return Some((aggregate_id.clone(), aggregate_name.clone()));
+            }
+            return None;
+        }
+        if self.current_provider_id_at_start != provider.id {
+            return Some((provider.id.clone(), provider.name.clone()));
+        }
+        None
     }
 
     async fn record_success_result(
@@ -524,15 +536,13 @@ impl RequestForwarder {
                         let mut status = self.status.write().await;
                         status.success_requests += 1;
                         status.last_error = None;
-                        let should_switch = self.should_sync_current_provider(&provider.id);
-                        if should_switch {
+                        let switch_target = self.failover_switch_target(provider);
+                        if let Some((pid, pname)) = switch_target {
                             status.failover_count += 1;
 
                             // 异步触发供应商切换，更新 UI/托盘，并把“当前供应商”同步为实际使用的 provider
                             let fm = self.failover_manager.clone();
                             let ah = self.app_handle.clone();
-                            let pid = provider.id.clone();
-                            let pname = provider.name.clone();
                             let at = app_type_str.to_string();
 
                             tokio::spawn(async move {
@@ -626,14 +636,12 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.should_sync_current_provider(&provider.id);
-                                        if should_switch {
+                                        let switch_target =
+                                            self.failover_switch_target(provider);
+                                        if let Some((pid, pname)) = switch_target {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
                                             let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
                                             let at = app_type_str.to_string();
 
                                             tokio::spawn(async move {
@@ -771,16 +779,14 @@ impl RequestForwarder {
                                             let mut status = self.status.write().await;
                                             status.success_requests += 1;
                                             status.last_error = None;
-                                            let should_switch =
-                                                self.should_sync_current_provider(&provider.id);
-                                            if should_switch {
+                                            let switch_target =
+                                                self.failover_switch_target(provider);
+                                            if let Some((pid, pname)) = switch_target {
                                                 status.failover_count += 1;
 
                                                 // 异步触发供应商切换，更新 UI/托盘
                                                 let fm = self.failover_manager.clone();
                                                 let ah = self.app_handle.clone();
-                                                let pid = provider.id.clone();
-                                                let pname = provider.name.clone();
                                                 let at = app_type_str.to_string();
 
                                                 tokio::spawn(async move {
@@ -934,14 +940,12 @@ impl RequestForwarder {
                                         let mut status = self.status.write().await;
                                         status.success_requests += 1;
                                         status.last_error = None;
-                                        let should_switch =
-                                            self.should_sync_current_provider(&provider.id);
-                                        if should_switch {
+                                        let switch_target =
+                                            self.failover_switch_target(provider);
+                                        if let Some((pid, pname)) = switch_target {
                                             status.failover_count += 1;
                                             let fm = self.failover_manager.clone();
                                             let ah = self.app_handle.clone();
-                                            let pid = provider.id.clone();
-                                            let pname = provider.name.clone();
                                             let at = app_type_str.to_string();
                                             tokio::spawn(async move {
                                                 let _ = fm
@@ -3623,7 +3627,7 @@ mod tests {
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
             current_provider_id_at_start: String::new(),
-            routed_provider_ids: std::collections::HashSet::new(),
+            routed_provider_sources: std::collections::HashMap::new(),
             session_id: String::new(),
             session_client_provided: false,
             rectifier_config: RectifierConfig::default(),
@@ -3636,17 +3640,45 @@ mod tests {
     }
 
     #[test]
-    fn should_sync_current_provider_skips_routed_providers() {
+    fn failover_switch_target_handles_aggregate_routed_providers() {
         let mut forwarder = test_forwarder(Duration::from_secs(0), Duration::from_secs(0));
         forwarder.current_provider_id_at_start = "agg".to_string();
-        forwarder.routed_provider_ids.insert("kimi".to_string());
+        forwarder
+            .routed_provider_sources
+            .insert("kimi".to_string(), ("agg".to_string(), "Agg".to_string()));
 
-        // 聚合路由合成的 provider：不触发"当前供应商"同步，避免随档位来回跳动
-        assert!(!forwarder.should_sync_current_provider("kimi"));
+        let kimi = Provider::with_id("kimi".to_string(), "Kimi".to_string(), json!({}), None);
+        let other = Provider::with_id("other".to_string(), "Other".to_string(), json!({}), None);
+        let agg = Provider::with_id("agg".to_string(), "Agg".to_string(), json!({}), None);
+
+        // 当前已是聚合供应商：命中其分档目标不切换，避免随档位来回抖动
+        assert_eq!(forwarder.failover_switch_target(&kimi), None);
         // 普通故障转移目标：保持原有同步行为
-        assert!(forwarder.should_sync_current_provider("other"));
+        assert_eq!(
+            forwarder.failover_switch_target(&other),
+            Some(("other".to_string(), "Other".to_string()))
+        );
         // 当前供应商自身：不同步
-        assert!(!forwarder.should_sync_current_provider("agg"));
+        assert_eq!(forwarder.failover_switch_target(&agg), None);
+    }
+
+    #[test]
+    fn failover_switch_target_switches_to_source_aggregate_after_failover() {
+        let mut forwarder = test_forwarder(Duration::from_secs(0), Duration::from_secs(0));
+        // 请求开始时当前供应商是已故障的普通 provider
+        forwarder.current_provider_id_at_start = "failed".to_string();
+        forwarder
+            .routed_provider_sources
+            .insert("kimi".to_string(), ("agg".to_string(), "Agg".to_string()));
+
+        let kimi = Provider::with_id("kimi".to_string(), "Kimi".to_string(), json!({}), None);
+
+        // 故障转移经聚合供应商成功：逻辑"当前供应商"应同步到聚合供应商本身，
+        // 而不是分档目标，也不停留在已故障的 provider 上
+        assert_eq!(
+            forwarder.failover_switch_target(&kimi),
+            Some(("agg".to_string(), "Agg".to_string()))
+        );
     }
 
     #[test]

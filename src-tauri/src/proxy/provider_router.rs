@@ -25,8 +25,10 @@ pub struct ProviderRouter {
 pub struct AggregateExpansion {
     /// 展开后的 provider 链（聚合供应商按档位替换为目标 provider）
     pub providers: Vec<Provider>,
-    /// 由聚合路由合成的 provider id 集合（用于抑制"当前供应商"切换同步）
-    pub routed_provider_ids: HashSet<String>,
+    /// 由聚合路由合成的 provider id → 来源聚合供应商 (id, name)。
+    /// 供 forwarder 决定“当前供应商”切换目标：同一聚合的各档目标之间不切换，
+    /// 但故障转移首次命中聚合时，把当前供应商同步到该聚合供应商。
+    pub routed_provider_sources: HashMap<String, (String, String)>,
 }
 
 impl ProviderRouter {
@@ -126,8 +128,9 @@ impl ProviderRouter {
     ///   由链上后续 provider 自动回退。
     ///
     /// 命中路由时克隆目标 provider 并改写其模型 env（见
-    /// [`Self::synthesize_routed_provider`]），目标 id 记入返回的 `routed_provider_ids`，
-    /// 供 forwarder 抑制"当前供应商"切换同步。同一 id 只保留首次出现（去重）。
+    /// [`Self::synthesize_routed_provider`]），目标 id → 来源聚合供应商记入返回的
+    /// `routed_provider_sources`，供 forwarder 决定"当前供应商"切换目标。
+    /// 同一 id 只保留首次出现（去重）。
     pub async fn expand_aggregate_routes(
         &self,
         providers: Vec<Provider>,
@@ -137,7 +140,7 @@ impl ProviderRouter {
     ) -> AggregateExpansion {
         let mut result: Vec<Provider> = Vec::with_capacity(providers.len());
         let mut seen_ids: HashSet<String> = HashSet::new();
-        let mut routed_ids: HashSet<String> = HashSet::new();
+        let mut routed_sources: HashMap<String, (String, String)> = HashMap::new();
 
         for provider in providers {
             let Some(routes) = provider.aggregate_routes() else {
@@ -225,14 +228,17 @@ impl ProviderRouter {
             );
             let routed = Self::synthesize_routed_provider(&target, target_model);
             if seen_ids.insert(routed.id.clone()) {
-                routed_ids.insert(routed.id.clone());
+                routed_sources.insert(
+                    routed.id.clone(),
+                    (provider.id.clone(), provider.name.clone()),
+                );
                 result.push(routed);
             }
         }
 
         AggregateExpansion {
             providers: result,
-            routed_provider_ids: routed_ids,
+            routed_provider_sources: routed_sources,
         }
     }
 
@@ -744,7 +750,11 @@ mod tests {
         assert_eq!(expansion.providers.len(), 1);
         let routed = &expansion.providers[0];
         assert_eq!(routed.id, "kimi");
-        assert!(expansion.routed_provider_ids.contains("kimi"));
+        assert_eq!(
+            expansion.routed_provider_sources.get("kimi"),
+            Some(&("agg".to_string(), "Aggregate agg".to_string())),
+            "routed target should record its source aggregate provider"
+        );
 
         let env = routed.settings_config.get("env").unwrap();
         assert_eq!(env.get("ANTHROPIC_MODEL").unwrap(), "k3");
@@ -786,7 +796,7 @@ mod tests {
             .await;
 
         assert!(expansion.providers.is_empty());
-        assert!(expansion.routed_provider_ids.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
     }
 
     #[tokio::test]
@@ -822,7 +832,7 @@ mod tests {
             .await;
 
         assert!(expansion.providers.is_empty());
-        assert!(expansion.routed_provider_ids.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
     }
 
     #[tokio::test]
@@ -843,7 +853,7 @@ mod tests {
             .await;
 
         assert!(expansion.providers.is_empty());
-        assert!(expansion.routed_provider_ids.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
     }
 
     #[tokio::test]
@@ -871,8 +881,8 @@ mod tests {
 
         let ids: Vec<&str> = expansion.providers.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, ["plain", "kimi"]);
-        assert!(expansion.routed_provider_ids.contains("kimi"));
-        assert!(!expansion.routed_provider_ids.contains("plain"));
+        assert!(expansion.routed_provider_sources.contains_key("kimi"));
+        assert!(!expansion.routed_provider_sources.contains_key("plain"));
     }
 
     #[tokio::test]

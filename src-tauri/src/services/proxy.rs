@@ -923,6 +923,26 @@ impl ProxyService {
             return Ok(()); // 未接管，幂等返回
         }
 
+        // 聚合供应商没有可直写的上游端点与凭据，只能在接管持有 Live 时作为
+        // 逻辑路由目标。若在它仍为当前供应商时关闭接管，备份恢复后 Live 是旧
+        // 供应商的配置，而 current 仍指向聚合供应商，UI/路由口径不一致。
+        // 要求先热切换到常规供应商，再关闭接管。
+        if matches!(app, AppType::Claude) {
+            if let Ok(Some(current_id)) =
+                crate::settings::get_effective_current_provider(&self.db, &app)
+            {
+                if let Ok(Some(provider)) = self.db.get_provider_by_id(&current_id, app_type_str)
+                {
+                    if provider.is_aggregate() {
+                        return Err(
+                            "当前供应商为聚合供应商，请先切换到常规供应商后再关闭代理接管 (An aggregate provider is current; switch to a regular provider before disabling proxy takeover)"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+
         // 1) 恢复 Live 配置
         //
         // 必须走 with_fallback 版本：备份 → SSOT → 清理占位符 的三层兜底。
@@ -3500,6 +3520,80 @@ mod tests {
             backup_value, restorable_backup,
             "aggregate hot switch must keep the previous restorable backup"
         );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn disable_takeover_with_aggregate_current_is_rejected() {
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let service = ProxyService::new(db.clone());
+
+        let target = Provider::with_id(
+            "p1".to_string(),
+            "P1".to_string(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "sk-p1"}}),
+            None,
+        );
+        db.save_provider("claude", &target)
+            .expect("save target provider");
+
+        let mut aggregate = Provider::with_id(
+            "agg".to_string(),
+            "Aggregate".to_string(),
+            json!({}),
+            None,
+        );
+        aggregate.meta = Some(ProviderMeta {
+            aggregate_routes: Some(AggregateRoutes {
+                sonnet: Some(AggregateRoute {
+                    provider_id: "p1".to_string(),
+                    model: "some-model".to_string(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        db.save_provider("claude", &aggregate)
+            .expect("save aggregate provider");
+
+        db.set_current_provider("claude", "agg")
+            .expect("set db current provider");
+        crate::settings::set_current_provider(&AppType::Claude, Some("agg"))
+            .expect("set local current provider");
+
+        // 接管开启 + 备份存在
+        let mut app_config = db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read app proxy config");
+        app_config.enabled = true;
+        db.update_proxy_config_for_app(app_config)
+            .await
+            .expect("enable takeover");
+        db.save_live_backup("claude", r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-p1"}}"#)
+            .await
+            .expect("seed live backup");
+
+        let err = service
+            .set_takeover_for_app("claude", false)
+            .await
+            .expect_err("disabling takeover with aggregate current must be rejected");
+        assert!(err.contains("聚合"), "got {err}");
+
+        // 接管状态与备份保持不变
+        assert!(db
+            .get_proxy_config_for_app("claude")
+            .await
+            .expect("read app proxy config")
+            .enabled);
+        assert!(db
+            .get_live_backup("claude")
+            .await
+            .expect("read backup")
+            .is_some());
     }
 
     #[test]
