@@ -48,6 +48,8 @@ pub fn sync_codefree_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             imported: 0,
             skipped: 0,
             files_scanned: 0,
+            suspected_duplicates: 0,
+            deferred_files: 0,
             errors: vec![],
         });
     }
@@ -70,6 +72,8 @@ pub fn sync_codefree_usage(db: &Database) -> Result<SessionSyncResult, AppError>
             imported: 0,
             skipped: 0,
             files_scanned: 1,
+            suspected_duplicates: 0,
+            deferred_files: 0,
             errors: vec![],
         });
     }
@@ -82,6 +86,8 @@ pub fn sync_codefree_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         imported: 0,
         skipped: 0,
         files_scanned: 1,
+        suspected_duplicates: 0,
+        deferred_files: 0,
         errors: vec![],
     };
     let mut has_sync_errors = false;
