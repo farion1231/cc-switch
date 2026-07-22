@@ -196,8 +196,25 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 /// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let updater = app
-        .updater_builder()
+    let mut builder = app.updater_builder();
+
+    // 将 GlobalProxy 配置传递给 updater，使其在代理环境下也能正常访问 GitHub
+    // 注意：tauri-plugin-updater 的 reqwest 未启用 socks feature，仅支持 http/https 代理
+    if let Some(proxy_url) = crate::proxy::http_client::get_current_proxy_url() {
+        if let Ok(parsed) = url::Url::parse(&proxy_url) {
+            match parsed.scheme() {
+                "http" | "https" => {
+                    builder = builder.proxy(parsed);
+                    log::info!("[Updater] Using global proxy: {}", crate::proxy::http_client::mask_url(&proxy_url));
+                }
+                scheme => {
+                    log::warn!("[Updater] Unsupported proxy scheme '{}', falling back to direct connection", scheme);
+                }
+            }
+        }
+    }
+
+    let updater = builder
         .build()
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
 
