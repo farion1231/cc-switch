@@ -1,5 +1,7 @@
 use std::ffi::OsString;
 use std::io::Write;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -121,7 +123,7 @@ impl WslTargetAdapter {
     }
 
     pub fn discover(&self) -> Result<Vec<WslTargetDiscovery>, AppError> {
-        let output = Command::new(&self.executable)
+        let output = new_wsl_command(&self.executable)
             .args(["--list", "--quiet"])
             .output()
             .map_err(|source| AppError::IoContext {
@@ -437,7 +439,7 @@ impl WslTargetAdapter {
         args: &[&str],
         input: &[u8],
     ) -> Result<Output, AppError> {
-        let mut command = Command::new(&self.executable);
+        let mut command = new_wsl_command(&self.executable);
         command
             .arg("-d")
             .arg(distro)
@@ -479,7 +481,7 @@ impl WslTargetAdapter {
         user: Option<&str>,
         args: &[&str],
     ) -> Result<Output, AppError> {
-        let mut command = Command::new(&self.executable);
+        let mut command = new_wsl_command(&self.executable);
         command.arg("-d").arg(distro);
         if let Some(user) = user {
             command.arg("-u").arg(user);
@@ -743,4 +745,28 @@ fn count_jsonl_files(root: &Path) -> usize {
             }
         })
         .sum()
+}
+
+fn new_wsl_command(executable: &OsString) -> Command {
+    let command = Command::new(executable);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        command.creation_flags(wsl_process_creation_flags());
+        command
+    };
+    command
+}
+
+#[cfg(any(windows, test))]
+fn wsl_process_creation_flags() -> u32 {
+    0x0800_0000
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wsl_processes_are_configured_without_a_console_window() {
+        assert_eq!(super::wsl_process_creation_flags(), 0x0800_0000);
+    }
 }
