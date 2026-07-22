@@ -69,13 +69,28 @@ pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-use std::{fmt, sync::Arc};
+use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::RunEvent;
 use tauri::{Emitter, Manager};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+
+/// macOS 用户退出时已执行过异步清理的标志。
+///
+/// macOS 上 `std::process::exit(0)` 会跳过 Cocoa 的正常退出流程，
+/// 导致 SystemUIServer 无法正确记录 NSStatusItem 的菜单栏位置，
+/// 下次启动时图标位置丢失。
+///
+/// 解法：macOS 上采用两阶段退出——
+///   1. 第一次 ExitRequested：prevent_exit → 异步清理 → 设标志 → app.exit(0)
+///   2. 第二次 ExitRequested（标志已设置）：不 prevent，交由 Tauri 走正常
+///      Cocoa NSApp terminate 流程，SystemUIServer 正确记录图标位置。
+#[cfg(target_os = "macos")]
+static USER_EXIT_CLEANUP_DONE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
 fn set_windows_app_user_model_id(app: &tauri::AppHandle) {
@@ -1669,7 +1684,14 @@ pub fn run() {
                 }
                 // 其它 Some(_)：用户主动调用 app.exit() 退出（如托盘菜单"退出"），
                 // 此时执行清理后退出。
-                ExitRequestAction::CleanupAndExit => {}
+                ExitRequestAction::CleanupAndExit => {
+                    // macOS 两阶段退出：第二阶段（清理已完成）交由 Tauri 正常退出。
+                    #[cfg(target_os = "macos")]
+                    if USER_EXIT_CLEANUP_DONE.load(Ordering::Acquire) {
+                        log::info!("清理已完成，交由 Tauri 正常退出（保留托盘图标位置）");
+                        return;
+                    }
+                }
             }
 
             log::info!("收到用户主动退出请求 (code={code:?})，开始清理...");
@@ -1683,14 +1705,27 @@ pub fn run() {
                 // 进程直接退出时 Tauri 运行时不走正常 Drop 流程，
                 // 不会向 Windows Shell 发送 NIM_DELETE，导致已退出的进程
                 // 注册的图标仍残留在系统托盘（鼠标悬停 Shell 才会重绘发现进程已死）。
+                // macOS 上 SystemUIServer 会自动清理，且显式隐藏会导致
+                // 下次启动时图标位置丢失。
+                #[cfg(not(target_os = "macos"))]
                 remove_tray_icon_before_exit(&app_handle);
                 log::info!("清理完成，退出应用");
 
                 // 短暂等待确保所有 I/O 操作（如数据库写入）刷新到磁盘
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-                // 使用 std::process::exit 避免再次触发 ExitRequested
-                std::process::exit(0);
+                // macOS 上走两阶段退出：设置标志后再次触发 exit，
+                // 让 Tauri 走正常 Cocoa NSApp terminate 流程保留图标位置。
+                #[cfg(target_os = "macos")]
+                {
+                    USER_EXIT_CLEANUP_DONE.store(true, Ordering::Release);
+                    app_handle.exit(0);
+                }
+                // 非 macOS 平台直接用 std::process::exit 避免重复触发 ExitRequested
+                #[cfg(not(target_os = "macos"))]
+                {
+                    std::process::exit(0);
+                }
             });
             return;
         }
