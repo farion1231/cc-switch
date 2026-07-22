@@ -534,6 +534,168 @@ experimental_bearer_token = "sk-rightcode"
 }
 
 #[test]
+fn test_build_codex_provider_preserves_safe_common_config() {
+    use super::provider::build_provider_from_request;
+
+    let config_toml = r#"model_provider = "old"
+model = "old-model"
+model_catalog_json = "/tmp/stale-catalog.json"
+experimental_bearer_token = "sk-stale-top-level"
+web_search = "live"
+profile = "work"
+
+[features]
+standalone_web_search = true
+
+[tools.web_search]
+context_size = "high"
+
+[profiles.work]
+model_provider = "old"
+model = "old-profile-model"
+base_url = "https://profile-old.example/v1"
+wire_api = "chat"
+experimental_bearer_token = "sk-stale-profile"
+model_catalog_json = "/tmp/stale-profile-catalog.json"
+model_reasoning_effort = "medium"
+
+[profiles.later]
+model_provider = "old"
+model = "later-old-model"
+model_verbosity = "low"
+
+[model_providers.old]
+name = "Old"
+base_url = "https://old.example/v1"
+wire_api = "chat"
+experimental_bearer_token = "sk-stale-provider"
+
+[mcp_servers.stale]
+command = "should-not-survive"
+"#;
+    let config_json = serde_json::json!({
+        "auth": {"OPENAI_API_KEY": "sk-stale-auth"},
+        "config": config_toml,
+    })
+    .to_string();
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("Imported Provider".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("sk-url-wins".to_string()),
+        model: Some("gpt-url-wins".to_string()),
+        config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+
+    let merged = parse_and_merge_config(&request).unwrap();
+    let provider = build_provider_from_request(&AppType::Codex, &merged).unwrap();
+    assert_eq!(
+        provider.settings_config["auth"]["OPENAI_API_KEY"],
+        "sk-url-wins"
+    );
+
+    let config = provider.settings_config["config"].as_str().unwrap();
+    let parsed = toml::from_str::<toml::Value>(config).expect("persisted config must be TOML");
+    assert_eq!(parsed["web_search"].as_str(), Some("live"));
+    assert_eq!(
+        parsed["features"]["standalone_web_search"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        parsed["tools"]["web_search"]["context_size"].as_str(),
+        Some("high")
+    );
+    assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+    assert_eq!(parsed["model"].as_str(), Some("gpt-url-wins"));
+    assert_eq!(parsed["profile"].as_str(), Some("work"));
+    for profile_name in ["work", "later"] {
+        let profile = parsed["profiles"][profile_name]
+            .as_table()
+            .expect("profile settings must be preserved");
+        for field in [
+            "model_provider",
+            "model",
+            "base_url",
+            "wire_api",
+            "experimental_bearer_token",
+            "model_catalog_json",
+        ] {
+            assert!(
+                !profile.contains_key(field),
+                "profile {profile_name} must not retain {field}"
+            );
+        }
+    }
+    assert_eq!(
+        parsed["profiles"]["work"]["model_reasoning_effort"].as_str(),
+        Some("medium")
+    );
+    assert_eq!(
+        parsed["profiles"]["later"]["model_verbosity"].as_str(),
+        Some("low")
+    );
+    assert_eq!(
+        parsed["model_providers"]["custom"]["name"].as_str(),
+        Some("Imported Provider")
+    );
+    assert_eq!(
+        parsed["model_providers"]["custom"]["base_url"].as_str(),
+        Some("https://api.example.com/v1")
+    );
+    assert_eq!(
+        parsed["model_providers"]["custom"]["wire_api"].as_str(),
+        Some("responses")
+    );
+    assert!(parsed.get("model_catalog_json").is_none());
+    assert!(parsed.get("experimental_bearer_token").is_none());
+    assert!(parsed.get("mcp_servers").is_none());
+    assert!(parsed["model_providers"]
+        .as_table()
+        .is_some_and(|providers| providers.len() == 1));
+    assert!(!config.contains("sk-stale"));
+}
+
+#[test]
+fn test_build_codex_provider_without_config_unchanged() {
+    use super::provider::build_provider_from_request;
+
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("Plain".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com/v1".to_string()),
+        api_key: Some("sk-test".to_string()),
+        model: Some("gpt-test".to_string()),
+        ..Default::default()
+    };
+
+    let provider = build_provider_from_request(&AppType::Codex, &request).unwrap();
+    assert_eq!(
+        provider.settings_config["config"].as_str(),
+        Some(
+            r#"model_provider = "custom"
+model = "gpt-test"
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "Plain"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        )
+    );
+}
+
+#[test]
 fn test_parse_and_merge_config_grokbuild() {
     let config_toml = r#"[models]
 default = "grok-profile"
