@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
+use crate::opencode_config::get_opencode_db_path;
+use crate::session_manager::sqlite_readonly;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
 use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
@@ -11,14 +13,27 @@ const PROVIDER_ID: &str = "opencode";
 
 /// Return the OpenCode base directory (`$XDG_DATA_HOME/opencode`).
 ///
-/// Respects `XDG_DATA_HOME` on all platforms; falls back to
-/// `~/.local/share/opencode/`.
+/// 优先级：
+/// 1. `settings.opencode_config_dir` 派生（从配置目录派生数据目录）
+/// 2. `XDG_DATA_HOME` 环境变量
+/// 3. `~/.local/share/opencode/`（默认）
 pub(crate) fn get_opencode_base_dir() -> PathBuf {
+    // 1. 从 settings.opencode_config_dir 派生数据目录
+    if let Some(config_dir) = crate::settings::get_opencode_override_dir() {
+        if let Some(data_dir) = crate::opencode_config::derive_data_dir_from_config_dir(&config_dir)
+        {
+            return data_dir;
+        }
+    }
+
+    // 2. XDG_DATA_HOME
     if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
         if !xdg.is_empty() {
             return PathBuf::from(xdg).join("opencode");
         }
     }
+
+    // 3. ~/.local/share/opencode
     dirs::home_dir()
         .map(|h| h.join(".local/share/opencode"))
         .unwrap_or_else(|| PathBuf::from(".local/share/opencode"))
@@ -27,10 +42,6 @@ pub(crate) fn get_opencode_base_dir() -> PathBuf {
 /// Return the OpenCode JSON storage directory (legacy flat-file layout).
 pub(crate) fn get_opencode_data_dir() -> PathBuf {
     get_opencode_base_dir().join("storage")
-}
-
-fn get_opencode_db_path() -> PathBuf {
-    get_opencode_base_dir().join("opencode.db")
 }
 
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
@@ -99,19 +110,25 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         return Vec::new();
     }
 
-    let conn = match Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
+    let conn = match sqlite_readonly::open_readonly(&db_path) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            log::warn!("OpenCode SQLite 打开失败 ({}): {e}", db_path.display());
+            return Vec::new();
+        }
     };
 
     let mut stmt = match conn.prepare(
         "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC",
     ) {
         Ok(s) => s,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            log::warn!(
+                "OpenCode SQLite prepare 失败 ({}): {e}",
+                db_path.display()
+            );
+            return Vec::new();
+        }
     };
 
     let db_display = db_path.display().to_string();
@@ -125,7 +142,10 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
         Ok((session_id, title, directory, created, updated))
     }) {
         Ok(rows) => rows,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            log::warn!("OpenCode SQLite query 失败 ({}): {e}", db_path.display());
+            return Vec::new();
+        }
     };
 
     let mut sessions = Vec::new();
@@ -230,11 +250,8 @@ pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String>
     let (db_path, session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
 
-    let conn = Connection::open_with_flags(
-        &db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
+    let conn = sqlite_readonly::open_readonly(&db_path)
+        .map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
 
     let mut msg_stmt = conn
         .prepare(
@@ -382,6 +399,16 @@ pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<b
 pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, String> {
     let (db_path, ref_session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
+
+    // WSL/网络共享 UNC 路径不支持写操作（immutable 模式只读，SQLite 文件锁也不可用）。
+    // 提前给出明确错误，避免在 canonicalize/open 阶段得到模糊的 "database is locked"。
+    if sqlite_readonly::is_unc_path(&db_path) {
+        return Err(format!(
+            "WSL/网络共享路径不支持删除会话（SQLite 写锁不可用）: {}",
+            db_path.display()
+        ));
+    }
+
     let db_path = db_path
         .canonicalize()
         .map_err(|e| format!("Failed to canonicalize SQLite database path: {e}"))?;

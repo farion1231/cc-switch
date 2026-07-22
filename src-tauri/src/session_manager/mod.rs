@@ -1,4 +1,5 @@
 pub mod providers;
+pub(crate) mod sqlite_readonly;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
