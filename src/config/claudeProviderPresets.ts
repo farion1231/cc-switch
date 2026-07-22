@@ -1431,4 +1431,18 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "DaoXE",
+    websiteUrl: "https://daoxe.com",
+    apiKeyUrl: "https://daoxe.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://daoxe.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    icon: "daoxe",
+  },
+
 ];

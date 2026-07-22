@@ -1602,4 +1602,31 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "DaoXE",
+    websiteUrl: "https://daoxe.com",
+    apiKeyUrl: "https://daoxe.com",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "daoxe",
+      "https://daoxe.com/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://daoxe.com/v1"],
+    // Live /api/pricing advertises gpt-5.5 as Chat Completions (`openai` →
+    // POST /v1/chat/completions). Route Codex Responses through the local
+    // openai_chat converter so the preset matches the public catalog.
+    // openai-response /v1/responses is catalogued separately (e.g. o3-pro-c).
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "gpt-5.5",
+        displayName: "GPT-5.5",
+        contextWindow: 1050000,
+      },
+    ]),
+    icon: "daoxe",
+  },
+
 ];
