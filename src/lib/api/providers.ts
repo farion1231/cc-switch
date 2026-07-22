@@ -43,7 +43,6 @@ export interface ClaudeDesktopStatus {
 export interface ClaudeDesktopDefaultRoute {
   routeId: string;
   envKey: string;
-  displayName: string;
   supports1m: boolean;
 }
 
@@ -98,6 +97,18 @@ export const providersApi = {
 
   async importClaudeDesktopFromClaude(): Promise<number> {
     return await invoke("import_claude_desktop_providers_from_claude");
+  },
+
+  async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_claude_desktop_official_provider");
+  },
+
+  async ensureCodexOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_codex_official_provider");
+  },
+
+  async ensureGrokBuildOfficialProvider(): Promise<boolean> {
+    return await invoke("ensure_grokbuild_official_provider");
   },
 
   async getClaudeDesktopStatus(): Promise<ClaudeDesktopStatus> {

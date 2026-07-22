@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import { useTranslation } from "react-i18next";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
   createUniversalProviderFromPreset,
   type UniversalProviderPreset,
 } from "@/config/universalProviderPresets";
+import { deepClone } from "@/utils/deepClone";
 
 interface UniversalProviderFormModalProps {
   isOpen: boolean;
@@ -33,6 +35,7 @@ export function UniversalProviderFormModal({
   editingProvider,
   initialPreset,
 }: UniversalProviderFormModalProps) {
+  const isDarkMode = useDarkMode();
   const { t } = useTranslation();
   const isEditMode = !!editingProvider;
 
@@ -90,7 +93,7 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
-      setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
+      setModels(deepClone(defaultPreset.defaultModels));
     }
   }, [editingProvider, initialPreset, isOpen]);
 
@@ -103,7 +106,7 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
-        setModels(JSON.parse(JSON.stringify(preset.defaultModels)));
+        setModels(deepClone(preset.defaultModels));
       }
     },
     [isEditMode],
@@ -145,18 +148,18 @@ export function UniversalProviderFormModal({
   // 计算 Codex 配置 JSON 预览
   const codexConfigJson = useMemo(() => {
     if (!codexEnabled) return null;
-    const model = models.codex?.model || "gpt-5.4";
+    const model = models.codex?.model || "gpt-5.5";
     const reasoningEffort = models.codex?.reasoningEffort || "high";
     // 确保 base_url 以 /v1 结尾（Codex 使用 OpenAI 兼容 API）
     const codexBaseUrl = baseUrl.endsWith("/v1")
       ? baseUrl
       : `${baseUrl.replace(/\/+$/, "")}/v1`;
-    const configToml = `model_provider = "newapi"
+    const configToml = `model_provider = "custom"
 model = "${model}"
 model_reasoning_effort = "${reasoningEffort}"
 disable_response_storage = true
 
-[model_providers.newapi]
+[model_providers.custom]
 name = "NewAPI"
 base_url = "${codexBaseUrl}"
 wire_api = "responses"
@@ -591,7 +594,7 @@ requires_openai_auth = true`;
                     onChange={(e) =>
                       updateModel("codex", "model", e.target.value)
                     }
-                    placeholder="gpt-5.4"
+                    placeholder="gpt-5.5"
                   />
                 </div>
                 <div className="space-y-1">
@@ -657,6 +660,7 @@ requires_openai_auth = true`;
                   value={JSON.stringify(claudeConfigJson, null, 2)}
                   onChange={() => {}}
                   height={180}
+                  darkMode={isDarkMode}
                 />
               </div>
             )}
@@ -672,6 +676,7 @@ requires_openai_auth = true`;
                   value={JSON.stringify(codexConfigJson, null, 2)}
                   onChange={() => {}}
                   height={280}
+                  darkMode={isDarkMode}
                 />
               </div>
             )}
@@ -687,6 +692,7 @@ requires_openai_auth = true`;
                   value={JSON.stringify(geminiConfigJson, null, 2)}
                   onChange={() => {}}
                   height={140}
+                  darkMode={isDarkMode}
                 />
               </div>
             )}

@@ -90,8 +90,9 @@ const UnifiedSkillsPanel = React.forwardRef<
   const toggleAppMutation = useToggleSkillApp();
   const uninstallMutation = useUninstallSkill();
   const restoreBackupMutation = useRestoreSkillBackup();
+  // enabled: true —— 进入 Skill 页面时自动静默扫描一次（绿点提示来源）
   const { data: unmanagedSkills, refetch: scanUnmanaged } =
-    useScanUnmanagedSkills();
+    useScanUnmanagedSkills({ enabled: true });
   const importMutation = useImportSkillsFromApps();
   const installFromZipMutation = useInstallSkillsFromZip();
   const {
@@ -118,6 +119,7 @@ const UnifiedSkillsPanel = React.forwardRef<
       "claude-desktop": 0,
       codex: 0,
       gemini: 0,
+      grokbuild: 0,
       opencode: 0,
       openclaw: 0,
       hermes: 0,
@@ -745,6 +747,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           claude: skill.foundIn.includes("claude"),
           codex: skill.foundIn.includes("codex"),
           gemini: skill.foundIn.includes("gemini"),
+          grokbuild: skill.foundIn.includes("grokbuild"),
           opencode: skill.foundIn.includes("opencode"),
           openclaw: false,
           hermes: skill.foundIn.includes("hermes"),
@@ -771,6 +774,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
           claude: false,
           codex: false,
           gemini: false,
+          grokbuild: false,
           opencode: false,
           openclaw: false,
           hermes: false,
@@ -814,6 +818,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                           claude: false,
                           codex: false,
                           gemini: false,
+                          grokbuild: false,
                           opencode: false,
                           openclaw: false,
                           hermes: false,
@@ -827,6 +832,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
                               claude: false,
                               codex: false,
                               gemini: false,
+                              grokbuild: false,
                               opencode: false,
                               openclaw: false,
                               hermes: false,

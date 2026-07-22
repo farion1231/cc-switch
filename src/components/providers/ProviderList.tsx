@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
@@ -45,8 +46,7 @@ import {
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { settingsApi } from "@/lib/api/settings";
+import { isTextEditableTarget } from "@/utils/domUtils";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -192,9 +192,6 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [showStreamCheckConfirm, setShowStreamCheckConfirm] = useState(false);
-  const [pendingTestProvider, setPendingTestProvider] =
-    useState<Provider | null>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -202,40 +199,13 @@ export function ProviderList({
     refetchInterval: appId === "claude-desktop" ? 5000 : false,
   });
 
-  // Query settings for streamCheckConfirmed flag
-  const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => settingsApi.get(),
-  });
-
+  // 连通性检查不发真实请求、无封号/计费风险，直接执行（无需确认弹窗）。
   const handleTest = useCallback(
     (provider: Provider) => {
-      if (!settings?.streamCheckConfirmed) {
-        setPendingTestProvider(provider);
-        setShowStreamCheckConfirm(true);
-      } else {
-        checkProvider(provider.id, provider.name);
-      }
+      checkProvider(provider.id, provider.name);
     },
-    [checkProvider, settings?.streamCheckConfirmed],
+    [checkProvider],
   );
-
-  const handleStreamCheckConfirm = async () => {
-    setShowStreamCheckConfirm(false);
-    try {
-      if (settings) {
-        const { webdavSync: _, ...rest } = settings;
-        await settingsApi.save({ ...rest, streamCheckConfirmed: true });
-        await queryClient.invalidateQueries({ queryKey: ["settings"] });
-      }
-    } catch (error) {
-      console.error("Failed to save stream check confirmed:", error);
-    }
-    if (pendingTestProvider) {
-      checkProvider(pendingTestProvider.id, pendingTestProvider.name);
-      setPendingTestProvider(null);
-    }
-  };
 
   // Import current live config as default provider
   const queryClient = useQueryClient();
@@ -270,15 +240,25 @@ export function ProviderList({
         toast.info(t("provider.noProviders"));
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message);
+    onError: (error: unknown) => {
+      // Tauri invoke 的 reject 值是后端序列化出的纯字符串而非 Error 对象，
+      // 取 .message 只会得到 undefined（空 toast）。
+      toast.error(extractErrorMessage(error) || t("settings.importFailed"));
+      // 导入失败前也可能已产生需要上屏的副作用：GrokBuild 官方登录态下点
+      // 导入，命令层会先补种官方条目、随后才因 live 不可导入而报错。
+      queryClient.invalidateQueries({ queryKey: ["providers", appId] });
     },
   });
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "f") {
+        // 正在输入框/可编辑区域中时不抢占 Ctrl+F（例如添加供应商表单里
+        // ProviderPresetSelector 的搜索框），避免与其同名快捷键冲突。
+        if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
         setIsSearchOpen(true);
         return;
@@ -289,8 +269,8 @@ export function ProviderList({
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    globalThis.addEventListener("keydown", handleKeyDown);
+    return () => globalThis.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   useEffect(() => {
@@ -558,19 +538,6 @@ export function ProviderList({
       ) : (
         renderProviderList()
       )}
-
-      <ConfirmDialog
-        isOpen={showStreamCheckConfirm}
-        variant="info"
-        title={t("confirm.streamCheck.title")}
-        message={t("confirm.streamCheck.message")}
-        confirmText={t("confirm.streamCheck.confirm")}
-        onConfirm={() => void handleStreamCheckConfirm()}
-        onCancel={() => {
-          setShowStreamCheckConfirm(false);
-          setPendingTestProvider(null);
-        }}
-      />
     </div>
   );
 }

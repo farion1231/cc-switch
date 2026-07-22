@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   UsageSummary,
+  UsageSummaryByApp,
   DailyStats,
   ProviderStats,
   ModelStats,
@@ -51,32 +52,78 @@ export const usageApi = {
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<UsageSummary> => {
-    return invoke("get_usage_summary", { startDate, endDate, appType });
+    return invoke("get_usage_summary", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
+  },
+
+  getUsageSummaryByApp: async (
+    startDate?: number,
+    endDate?: number,
+    providerName?: string,
+    model?: string,
+  ): Promise<UsageSummaryByApp[]> => {
+    return invoke("get_usage_summary_by_app", {
+      startDate,
+      endDate,
+      providerName,
+      model,
+    });
   },
 
   getUsageTrends: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<DailyStats[]> => {
-    return invoke("get_usage_trends", { startDate, endDate, appType });
+    return invoke("get_usage_trends", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getProviderStats: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<ProviderStats[]> => {
-    return invoke("get_provider_stats", { startDate, endDate, appType });
+    return invoke("get_provider_stats", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getModelStats: async (
     startDate?: number,
     endDate?: number,
     appType?: string,
+    providerName?: string,
+    model?: string,
   ): Promise<ModelStats[]> => {
-    return invoke("get_model_stats", { startDate, endDate, appType });
+    return invoke("get_model_stats", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
   },
 
   getRequestLogs: async (
@@ -131,6 +178,10 @@ export const usageApi = {
   // Session usage sync
   syncSessionUsage: async (): Promise<SessionSyncResult> => {
     return invoke("sync_session_usage");
+  },
+
+  rebuildCodexUsage: async (): Promise<SessionSyncResult> => {
+    return invoke("rebuild_codex_usage");
   },
 
   getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {

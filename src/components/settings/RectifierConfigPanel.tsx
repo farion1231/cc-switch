@@ -15,12 +15,13 @@ export function RectifierConfigPanel() {
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
+    requestMediaFallback: true,
+    requestMediaHeuristic: true,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
     enabled: false,
     thinkingOptimizer: true,
     cacheInjection: true,
-    cacheTtl: "1h",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -111,6 +112,36 @@ export function RectifierConfigPanel() {
             }
           />
         </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.mediaFallback")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.mediaFallbackDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestMediaFallback}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestMediaFallback: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-8">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.mediaHeuristic")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.mediaHeuristicDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestMediaHeuristic}
+            disabled={!config.enabled || !config.requestMediaFallback}
+            onCheckedChange={(checked) =>
+              handleChange({ requestMediaHeuristic: checked })
+            }
+          />
+        </div>
       </div>
 
       <div className="border-t pt-6 mt-6">
@@ -172,31 +203,6 @@ export function RectifierConfigPanel() {
                 }
               />
             </div>
-
-            {optimizerConfig.cacheInjection && (
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>{t("settings.advanced.optimizer.cacheTtl")}</Label>
-                </div>
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                  value={optimizerConfig.cacheTtl}
-                  disabled={
-                    !optimizerConfig.enabled || !optimizerConfig.cacheInjection
-                  }
-                  onChange={(e) =>
-                    handleOptimizerChange({ cacheTtl: e.target.value })
-                  }
-                >
-                  <option value="5m">
-                    {t("settings.advanced.optimizer.cacheTtl5m")}
-                  </option>
-                  <option value="1h">
-                    {t("settings.advanced.optimizer.cacheTtl1h")}
-                  </option>
-                </select>
-              </div>
-            )}
           </div>
         </div>
       </div>

@@ -9,14 +9,18 @@
 //! a direct (non-proxied) CLI request.
 
 use super::{
-    failover_switch::FailoverSwitchManager, handlers, log_codes::srv as log_srv,
-    provider_router::ProviderRouter, providers::gemini_shadow::GeminiShadowStore, types::*,
+    failover_switch::FailoverSwitchManager,
+    handlers,
+    log_codes::srv as log_srv,
+    provider_router::ProviderRouter,
+    providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    types::*,
     ProxyError,
 };
 use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{get, post},
+    routing::{any, get, post},
     Router,
 };
 use hyper_util::rt::TokioIo;
@@ -38,6 +42,8 @@ pub struct ProxyState {
     pub provider_router: Arc<ProviderRouter>,
     /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
     pub gemini_shadow: Arc<GeminiShadowStore>,
+    /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
+    pub codex_chat_history: Arc<CodexChatHistoryStore>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -72,6 +78,7 @@ impl ProxyServer {
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle,
             failover_manager,
         };
@@ -105,11 +112,15 @@ impl ProxyServer {
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|e| ProxyError::BindFailed(e.to_string()))?;
+        let actual_port = local_addr.port();
 
-        log::info!("[{}] 代理服务器启动于 {addr}", log_srv::STARTED);
+        log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
         // 更新全局代理端口，用于系统代理检测
-        crate::proxy::http_client::set_proxy_port(self.config.listen_port);
+        crate::proxy::http_client::set_proxy_port(actual_port);
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -118,7 +129,7 @@ impl ProxyServer {
         let mut status = self.state.status.write().await;
         status.running = true;
         status.address = self.config.listen_address.clone();
-        status.port = self.config.listen_port;
+        status.port = actual_port;
         drop(status);
 
         // 记录启动时间
@@ -206,7 +217,7 @@ impl ProxyServer {
 
         Ok(ProxyServerInfo {
             address: self.config.listen_address.clone(),
-            port: self.config.listen_port,
+            port: actual_port,
             started_at: chrono::Utc::now().to_rfc3339(),
         })
     }
@@ -308,11 +319,20 @@ impl ProxyServer {
                 "/codex/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
+            // OpenAI Models API (Codex CLI reachability check)
+            .route("/models", get(handlers::handle_models))
+            .route("/v1/models", get(handlers::handle_models))
             // OpenAI Responses API (Codex CLI，支持带前缀和不带前缀)
             .route("/responses", post(handlers::handle_responses))
             .route("/v1/responses", post(handlers::handle_responses))
             .route("/v1/v1/responses", post(handlers::handle_responses))
             .route("/codex/v1/responses", post(handlers::handle_responses))
+            // Grok Build uses the Responses protocol but has an independent
+            // provider namespace and failover queue.
+            .route(
+                "/grokbuild/v1/responses",
+                post(handlers::handle_grokbuild_responses),
+            )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",
@@ -330,9 +350,20 @@ impl ProxyServer {
                 "/codex/v1/responses/compact",
                 post(handlers::handle_responses_compact),
             )
+            .route(
+                "/grokbuild/v1/responses/compact",
+                post(handlers::handle_grokbuild_responses_compact),
+            )
             // Gemini API (支持带前缀和不带前缀)
-            .route("/v1beta/*path", post(handlers::handle_gemini))
-            .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
+            //
+            // 用 `any(..)` 覆盖所有 HTTP 方法：除了 POST `:generateContent` /
+            // `:streamGenerateContent` / `:countTokens` 之外，Gemini SDK / CLI 还会发
+            // GET `/models`、GET `/models/<id>` 等只读端点。如果只挂 POST，这些 GET
+            // 请求会在路由层 404，绕过本地代理的统计、整流和故障转移。
+            .route("/v1beta/*path", any(handlers::handle_gemini))
+            .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
+            // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
+            .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .with_state(self.state.clone())
@@ -351,6 +382,17 @@ impl ProxyServer {
         config: super::circuit_breaker::CircuitBreakerConfig,
     ) {
         self.state.provider_router.update_all_configs(config).await;
+    }
+
+    pub async fn update_circuit_breaker_config_for_app(
+        &self,
+        app_type: &str,
+        config: super::circuit_breaker::CircuitBreakerConfig,
+    ) {
+        self.state
+            .provider_router
+            .update_app_configs(app_type, config)
+            .await;
     }
 
     /// 重置指定 Provider 的熔断器

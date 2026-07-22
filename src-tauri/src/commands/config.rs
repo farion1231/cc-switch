@@ -82,7 +82,8 @@ pub async fn get_config_status(
         }
         AppType::Codex => {
             let auth_path = codex_config::get_codex_auth_path();
-            let exists = auth_path.exists();
+            let config_text = codex_config::read_codex_config_text().unwrap_or_default();
+            let exists = auth_path.exists() || !config_text.trim().is_empty();
             let path = codex_config::get_codex_config_dir()
                 .to_string_lossy()
                 .to_string();
@@ -93,6 +94,15 @@ pub async fn get_config_status(
             let env_path = crate::gemini_config::get_gemini_env_path();
             let exists = env_path.exists();
             let path = crate::gemini_config::get_gemini_dir()
+                .to_string_lossy()
+                .to_string();
+
+            Ok(ConfigStatus { exists, path })
+        }
+        AppType::GrokBuild => {
+            let config_path = crate::grok_config::get_grok_config_path();
+            let exists = config_path.exists();
+            let path = crate::grok_config::get_grok_config_dir()
                 .to_string_lossy()
                 .to_string();
 
@@ -142,6 +152,7 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
         }
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
@@ -159,6 +170,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         }
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
+        AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
@@ -272,6 +284,23 @@ pub async fn get_common_config_snippet(
         .db
         .get_config_snippet(&app_type)
         .map_err(|e| e.to_string())
+}
+
+/// 对前端编辑器里的 config.toml 文本做通用配置片段的合并/剥离。
+/// 放后端是为了走 toml_edit（保注释、保键序）；前端 smol-toml 的
+/// 整文档重序列化会破坏用户手写格式。
+#[tauri::command]
+pub async fn update_toml_common_config_snippet(
+    config_toml: String,
+    snippet_toml: String,
+    enabled: bool,
+) -> Result<String, String> {
+    crate::services::provider::update_toml_common_config_snippet(
+        &config_toml,
+        &snippet_toml,
+        enabled,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

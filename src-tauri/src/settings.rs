@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
 
@@ -40,6 +39,8 @@ pub struct VisibleApps {
     #[serde(default = "default_true")]
     pub gemini: bool,
     #[serde(default = "default_true")]
+    pub grokbuild: bool,
+    #[serde(default = "default_true")]
     pub opencode: bool,
     #[serde(default = "default_true")]
     pub openclaw: bool,
@@ -54,6 +55,7 @@ impl Default for VisibleApps {
             claude_desktop: true,
             codex: true,
             gemini: true,
+            grokbuild: true,
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
@@ -69,6 +71,7 @@ impl VisibleApps {
             AppType::ClaudeDesktop => self.claude_desktop,
             AppType::Codex => self.codex,
             AppType::Gemini => self.gemini,
+            AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
@@ -176,6 +179,161 @@ impl WebDavSyncSettings {
     }
 }
 
+/// S3 同步设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3SyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub access_key_id: String,
+    #[serde(default)]
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+impl Default for S3SyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: false,
+            region: String::new(),
+            bucket: String::new(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            endpoint: String::new(),
+            remote_root: default_remote_root(),
+            profile: default_profile(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl S3SyncSettings {
+    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+        if self.bucket.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.bucket.required",
+                "S3 存储桶不能为空",
+                "S3 bucket is required.",
+            ));
+        }
+        if self.region.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.region.required",
+                "S3 区域不能为空",
+                "S3 region is required.",
+            ));
+        }
+        if self.access_key_id.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.access_key_id.required",
+                "S3 Access Key ID 不能为空",
+                "S3 Access Key ID is required.",
+            ));
+        }
+        if self.secret_access_key.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.secret_access_key.required",
+                "S3 Secret Access Key 不能为空",
+                "S3 Secret Access Key is required.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        self.region = self.region.trim().to_string();
+        self.bucket = self.bucket.trim().to_string();
+        self.access_key_id = self.access_key_id.trim().to_string();
+        self.endpoint = self.endpoint.trim().to_string();
+        self.remote_root = self.remote_root.trim().to_string();
+        self.profile = self.profile.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_remote_root();
+        }
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+    }
+
+    /// Returns true if all credential fields are blank (no config to persist).
+    fn is_empty(&self) -> bool {
+        self.bucket.is_empty()
+            && self.region.is_empty()
+            && self.access_key_id.is_empty()
+            && self.secret_access_key.is_empty()
+    }
+}
+
+/// 本机自动迁移状态。
+///
+/// 这里记录的是本机启动时执行过的一次性迁移；标记不随数据库同步。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMigrations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_third_party_history_provider_bucket_v1:
+        Option<CodexThirdPartyHistoryProviderBucketMigration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_provider_template_v1: Option<CodexProviderTemplateMigration>,
+    /// 统一会话开关的官方历史迁移标记。开关关闭时会被清除，
+    /// 这样重新开启能把"关闭期间"落入 openai 桶的官方会话补迁进来。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_official_history_unify_v1: Option<CodexOfficialHistoryUnifyMigration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexThirdPartyHistoryProviderBucketMigration {
+    pub completed_at: String,
+    pub target_provider_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_provider_ids: Vec<String>,
+    #[serde(default)]
+    pub migrated_jsonl_files: usize,
+    #[serde(default)]
+    pub migrated_state_rows: usize,
+    #[serde(default)]
+    pub scanned_history_files: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexProviderTemplateMigration {
+    pub completed_at: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub migrated_provider_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexOfficialHistoryUnifyMigration {
+    pub completed_at: String,
+    pub target_provider_id: String,
+    #[serde(default)]
+    pub migrated_jsonl_files: usize,
+    #[serde(default)]
+    pub migrated_state_rows: usize,
+    /// 迁移时的规范化 Codex 目录。标记只对同一目录生效：
+    /// 切换 codex_config_dir 后旧标记不会挡住新目录的迁移。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_config_dir: Option<String>,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -211,12 +369,28 @@ pub struct AppSettings {
     /// User has confirmed the usage query first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_confirmed: Option<bool>,
-    /// User has confirmed the stream check first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stream_check_confirmed: Option<bool>,
+    pub usage_dashboard_refresh_interval_ms: Option<u32>,
     /// Whether to show the failover toggle independently on the main page
     #[serde(default)]
     pub enable_failover_toggle: bool,
+    /// Whether to show the project profile switcher on the main page header
+    #[serde(default = "default_show_profile_switcher")]
+    pub show_profile_switcher: bool,
+    /// Keep Codex ChatGPT login material in auth.json when switching to third-party providers.
+    /// Opt-in: defaults to false so third-party switches cleanly overwrite auth.json.
+    #[serde(default)]
+    pub preserve_codex_official_auth_on_switch: bool,
+    /// Run official Codex providers under the shared "custom" model_provider id
+    /// so official sessions share one resume-history bucket with third-party
+    /// providers. Opt-in: defaults to false.
+    #[serde(default)]
+    pub unify_codex_session_history: bool,
+    /// User opted in (via the enable dialog checkbox) to migrate existing
+    /// official sessions ("openai" bucket) into the shared bucket. Persisted so
+    /// a failed migration retries at startup; cleared when the toggle turns off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unify_codex_migrate_existing: Option<bool>,
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
@@ -241,6 +415,8 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gemini_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grok_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openclaw_config_dir: Option<String>,
@@ -260,6 +436,9 @@ pub struct AppSettings {
     /// 当前 Gemini 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_gemini: Option<String>,
+    /// 当前 Grok Build 供应商 ID（本地存储，优先于数据库 is_current）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_grokbuild: Option<String>,
     /// 当前 OpenCode 供应商 ID（本地存储，对 OpenCode 可能无意义，但保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_opencode: Option<String>,
@@ -282,6 +461,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_sync: Option<WebDavSyncSettings>,
 
+    // ===== S3 同步设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_sync: Option<S3SyncSettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -301,6 +484,10 @@ pub struct AppSettings {
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
+
+    // ===== 本机自动迁移状态 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_migrations: Option<LocalMigrations>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -308,6 +495,10 @@ fn default_show_in_tray() -> bool {
 }
 
 fn default_minimize_to_tray_on_close() -> bool {
+    true
+}
+
+fn default_show_profile_switcher() -> bool {
     true
 }
 
@@ -324,8 +515,12 @@ impl Default for AppSettings {
             enable_local_proxy: false,
             proxy_confirmed: None,
             usage_confirmed: None,
-            stream_check_confirmed: None,
+            usage_dashboard_refresh_interval_ms: None,
             enable_failover_toggle: false,
+            show_profile_switcher: true,
+            preserve_codex_official_auth_on_switch: false,
+            unify_codex_session_history: false,
+            unify_codex_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
             common_config_confirmed: None,
@@ -334,6 +529,7 @@ impl Default for AppSettings {
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
+            grok_config_dir: None,
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
@@ -341,16 +537,19 @@ impl Default for AppSettings {
             current_provider_claude_desktop: None,
             current_provider_codex: None,
             current_provider_gemini: None,
+            current_provider_grokbuild: None,
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
+            s3_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            local_migrations: None,
         }
     }
 }
@@ -387,6 +586,13 @@ impl AppSettings {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
+        self.grok_config_dir = self
+            .grok_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
         self.opencode_config_dir = self
             .opencode_config_dir
             .as_ref()
@@ -412,13 +618,20 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "ja"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();
             if sync.is_empty() {
                 self.webdav_sync = None;
+            }
+        }
+
+        if let Some(s3) = &mut self.s3_sync {
+            s3.normalize();
+            if s3.is_empty() {
+                self.s3_sync = None;
             }
         }
     }
@@ -464,6 +677,7 @@ fn save_settings_file(settings: &AppSettings) -> Result<(), AppError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
 
         let mut file = OpenOptions::new()
@@ -524,6 +738,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
     if let Some(sync) = &mut settings.webdav_sync {
         sync.password.clear();
     }
+    if let Some(s3) = &mut settings.s3_sync {
+        s3.secret_access_key.clear();
+    }
     settings.webdav_backup = None;
     settings
 }
@@ -554,6 +771,98 @@ where
     save_settings_file(&next)?;
     *guard = next;
     Ok(())
+}
+
+pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| {
+            migrations
+                .codex_third_party_history_provider_bucket_v1
+                .as_ref()
+        })
+        .is_some_and(|m| m.scanned_history_files)
+}
+
+pub fn mark_codex_third_party_history_provider_bucket_migrated(
+    migration: CodexThirdPartyHistoryProviderBucketMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.codex_third_party_history_provider_bucket_v1 = Some(migration);
+    })
+}
+
+pub fn is_codex_provider_template_migrated() -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
+        .is_some()
+}
+
+pub fn mark_codex_provider_template_migrated(
+    migration: CodexProviderTemplateMigration,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        let migrations = settings
+            .local_migrations
+            .get_or_insert_with(Default::default);
+        migrations.codex_provider_template_v1 = Some(migration);
+    })
+}
+
+/// 统一会话迁移标记是否覆盖指定目录。标记里没记目录（不应出现的旧格式）
+/// 视为不匹配——重跑迁移是幂等的，宁可重迁也不漏迁。
+pub fn is_codex_official_history_unify_migrated_for_dir(codex_dir: &str) -> bool {
+    get_settings()
+        .local_migrations
+        .as_ref()
+        .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
+        .is_some_and(|migration| migration.codex_config_dir.as_deref() == Some(codex_dir))
+}
+
+/// 条件写入迁移完成标记：仅当此刻开关仍开启且迁移意愿仍在时才写。
+/// 检查与写入在 settings 写锁内原子完成，与关闭开关路径
+/// （`update_settings` / 清标记）串行，消除"迁移线程复查开关后、写标记前
+/// 用户恰好关闭开关"的竞态窗口。返回是否实际写入。
+pub fn mark_codex_official_history_unify_migrated_if_enabled(
+    migration: CodexOfficialHistoryUnifyMigration,
+) -> Result<bool, AppError> {
+    let mut written = false;
+    mutate_settings(|settings| {
+        if settings.unify_codex_session_history
+            && settings.unify_codex_migrate_existing.unwrap_or(false)
+        {
+            settings
+                .local_migrations
+                .get_or_insert_with(Default::default)
+                .codex_official_history_unify_v1 = Some(migration);
+            written = true;
+        }
+    })?;
+    Ok(written)
+}
+
+pub fn clear_codex_official_history_unify_migration() -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        if let Some(migrations) = settings.local_migrations.as_mut() {
+            migrations.codex_official_history_unify_v1 = None;
+        }
+    })
+}
+
+pub fn unify_codex_migrate_existing_requested() -> bool {
+    get_settings().unify_codex_migrate_existing.unwrap_or(false)
+}
+
+pub fn clear_codex_unify_migrate_existing() -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings.unify_codex_migrate_existing = None;
+    })
 }
 
 /// 从文件重新加载设置到内存缓存
@@ -592,6 +901,14 @@ pub fn get_gemini_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_grok_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .grok_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 pub fn get_opencode_override_dir() -> Option<PathBuf> {
     let settings = settings_store().read().ok()?;
     settings
@@ -616,6 +933,26 @@ pub fn get_hermes_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn preserve_codex_official_auth_on_switch() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .preserve_codex_official_auth_on_switch
+}
+
+pub fn unify_codex_session_history() -> bool {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .unify_codex_session_history
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -629,6 +966,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop.clone(),
         AppType::Codex => settings.current_provider_codex.clone(),
         AppType::Gemini => settings.current_provider_gemini.clone(),
+        AppType::GrokBuild => settings.current_provider_grokbuild.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
@@ -646,6 +984,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop = id_owned.clone(),
         AppType::Codex => settings.current_provider_codex = id_owned.clone(),
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
+        AppType::GrokBuild => settings.current_provider_grokbuild = id_owned.clone(),
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
@@ -780,6 +1119,26 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
     mutate_settings(|current| {
         if let Some(sync) = current.webdav_sync.as_mut() {
             sync.status = status;
+        }
+    })
+}
+
+// ===== S3 同步设置管理函数 =====
+
+pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
+    settings_store().read().ok()?.s3_sync.clone()
+}
+
+pub fn set_s3_sync_settings(settings: Option<S3SyncSettings>) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.s3_sync = settings;
+    })
+}
+
+pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(s3) = current.s3_sync.as_mut() {
+            s3.status = status;
         }
     })
 }

@@ -31,8 +31,10 @@ pub fn reset_test_fs() {
         ".codex",
         ".cc-switch",
         ".gemini",
+        ".grok",
         ".config",
         ".openclaw",
+        "profiles",
     ] {
         let path = home.join(sub);
         if path.exists() {
@@ -48,6 +50,15 @@ pub fn reset_test_fs() {
 
     // 重置内存中的设置缓存，确保测试环境不受上一次调用影响
     let _ = update_settings(AppSettings::default());
+}
+
+#[allow(dead_code)]
+pub fn enable_codex_official_auth_preservation() {
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        ..Default::default()
+    })
+    .expect("enable Codex official auth preservation");
 }
 
 /// 全局互斥锁，避免多测试并发写入相同的 HOME 目录。

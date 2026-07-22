@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::usage_stats::{
-    effective_usage_log_filter, should_skip_session_insert, DedupKey,
+    effective_usage_log_filter, find_model_pricing, should_skip_session_insert, DedupKey,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -22,16 +22,78 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 /// 同步结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSyncResult {
     pub imported: u32,
     pub skipped: u32,
     pub files_scanned: u32,
+    pub suspected_duplicates: u32,
+    pub deferred_files: u32,
     pub errors: Vec<String>,
+}
+
+impl SessionSyncResult {
+    pub fn merge(&mut self, other: SessionSyncResult) {
+        self.imported = self.imported.saturating_add(other.imported);
+        self.skipped = self.skipped.saturating_add(other.skipped);
+        self.files_scanned = self.files_scanned.saturating_add(other.files_scanned);
+        self.suspected_duplicates = self
+            .suspected_duplicates
+            .saturating_add(other.suspected_duplicates);
+        self.deferred_files = self.deferred_files.saturating_add(other.deferred_files);
+        self.errors.extend(other.errors);
+    }
+}
+
+pub fn session_sync_mutex() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn merge_sync_step(
+    aggregate: &mut SessionSyncResult,
+    name: &str,
+    step: Result<SessionSyncResult, AppError>,
+) {
+    match step {
+        Ok(result) => aggregate.merge(result),
+        Err(error) => aggregate.errors.push(format!("{name} 同步失败: {error}")),
+    }
+}
+
+/// 调用方必须持有 [`session_sync_mutex`]。此函数是同步内核，供后台任务、
+/// 手动同步和 Codex 重建共享，避免 tokio Mutex 重入。
+pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
+    let mut result = SessionSyncResult::default();
+    merge_sync_step(&mut result, "Claude", sync_claude_session_logs(db));
+    merge_sync_step(
+        &mut result,
+        "Codex",
+        crate::services::session_usage_codex::sync_codex_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "Gemini",
+        crate::services::session_usage_gemini::sync_gemini_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "OpenCode",
+        crate::services::session_usage_opencode::sync_opencode_usage(db),
+    );
+    notify_sync_result(&result);
+    result
+}
+
+pub(crate) fn notify_sync_result(result: &SessionSyncResult) {
+    if result.imported > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
 }
 
 /// 数据来源分布
@@ -65,6 +127,8 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
             imported: 0,
             skipped: 0,
             files_scanned: 0,
+            suspected_duplicates: 0,
+            deferred_files: 0,
             errors: vec![],
         });
     }
@@ -73,6 +137,8 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
         imported: 0,
         skipped: 0,
         files_scanned: 0,
+        suspected_duplicates: 0,
+        deferred_files: 0,
         errors: vec![],
     };
 
@@ -107,7 +173,17 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
     Ok(result)
 }
 
-/// 收集目录下所有 .jsonl 文件
+/// 收集目录下所有 .jsonl 文件（含子 agent 文件）
+///
+/// 扫描固定深度，不使用递归，避免死循环：
+///   projects_dir/项目目录/*.jsonl                                      (主会话)
+///   projects_dir/项目目录/SESSION_ID/subagents/*.jsonl                  (Task/Agent 子 agent)
+///   projects_dir/项目目录/SESSION_ID/subagents/workflows/wf_*/*.jsonl   (Workflow 子 agent)
+///
+/// 最后一层是 Claude Code Workflow 功能产生的子 agent transcript，比普通子
+/// agent 多嵌套一层 `workflows/wf_<ID>/`。漏掉这一层会让 Workflow 的 token
+/// 用量完全不计入统计；`journal.jsonl` 不含 `type=="assistant"` 行，解析时
+/// 会被 `sync_single_file` 天然跳过，因此这里无需按文件名过滤。
 fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
 
@@ -126,13 +202,46 @@ fn collect_jsonl_files(projects_dir: &Path) -> Vec<PathBuf> {
             for sub_entry in sub_entries.flatten() {
                 let sub_path = sub_entry.path();
                 if sub_path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                    // 主会话 JSONL 文件
                     files.push(sub_path);
+                } else if sub_path.is_dir() {
+                    // 扫描子 agent 目录: 项目/SESSION_ID/subagents/*.jsonl
+                    let subagents_dir = sub_path.join("subagents");
+                    if subagents_dir.is_dir() {
+                        push_jsonl_children(&subagents_dir, &mut files);
+
+                        // 额外下探 Workflow 子 agent:
+                        // 项目/SESSION_ID/subagents/workflows/wf_<ID>/*.jsonl
+                        let workflows_dir = subagents_dir.join("workflows");
+                        if workflows_dir.is_dir() {
+                            if let Ok(wf_entries) = fs::read_dir(&workflows_dir) {
+                                for wf_entry in wf_entries.flatten() {
+                                    let wf_path = wf_entry.path();
+                                    if wf_path.is_dir() {
+                                        push_jsonl_children(&wf_path, &mut files);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
     files
+}
+
+/// 将 `dir` 下直接子层的所有 `.jsonl` 文件追加到 `files`（不递归）。
+fn push_jsonl_children(dir: &Path, files: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                files.push(path);
+            }
+        }
+    }
 }
 
 /// 同步单个 JSONL 文件，返回 (imported, skipped)
@@ -142,12 +251,7 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     // 获取文件元数据
     let metadata = fs::metadata(file_path)
         .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
-    let file_modified = metadata
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let file_modified = metadata_modified_nanos(&metadata);
 
     // 检查同步状态
     let (last_modified, last_offset) = get_sync_state(db, &file_path_str)?;
@@ -276,8 +380,23 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
     let mut skipped: u32 = 0;
 
     for msg in messages.values() {
-        // 只导入有 stop_reason 的最终条目（完整的 API 调用）
-        if msg.stop_reason.is_none() {
+        // 只要产生了真实计费 token 就导入，不再强制要求 stop_reason 或 output>0。
+        //
+        // Anthropic 在受理请求时即对 input + cache_read + cache_creation 计费
+        // （这些在请求开始就确定），output 按实际生成量计。Workflow / 子 agent 的
+        // 并行短命请求经常只写了 message_start 快照（output=1、stop_reason=None）
+        // 却没有写最终块，但其 cache/input 成本已被真实计费。旧逻辑用 stop_reason
+        // 非空 + output>0 双重过滤，会把这类请求整条丢弃，实测系统性低估约 4.1%，
+        // 且 92% 集中在 workflow/subagent。这里改为「任一计费维度 > 0 即导入」。
+        //
+        // 去重选择逻辑（上方按 message.id 取 stop_reason 优先 / output 最大者）保持
+        // 不变：它选出的代表行的 input/cache 本就准确；request_id = session:msg_id
+        // 主键 + INSERT OR IGNORE 保证一个 message 仍只落库一次，放宽 gate 不会双算。
+        let has_billable_tokens = msg.input_tokens > 0
+            || msg.output_tokens > 0
+            || msg.cache_read_tokens > 0
+            || msg.cache_creation_tokens > 0;
+        if !has_billable_tokens {
             continue;
         }
 
@@ -286,11 +405,6 @@ fn sync_single_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppEr
             crate::proxy::usage::parser::SESSION_REQUEST_ID_PREFIX,
             msg.message_id
         );
-
-        // 跳过 output_tokens 为 0 的无意义条目
-        if msg.output_tokens == 0 {
-            continue;
-        }
 
         match insert_session_log_entry(db, &request_id, msg) {
             Ok(true) => imported += 1,
@@ -319,6 +433,19 @@ pub(crate) fn get_sync_state(db: &Database, file_path: &str) -> Result<(i64, i64
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
     );
     Ok(result.unwrap_or((0, 0)))
+}
+
+/// 返回文件 mtime 的纳秒时间戳。
+///
+/// `session_log_sync.last_modified` 旧数据是秒级时间戳；新写入纳秒值不需要
+/// schema 迁移，旧值会自然触发一次增量重扫，并继续依赖行 offset 避免重复导入。
+pub(crate) fn metadata_modified_nanos(metadata: &fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
 }
 
 /// 更新 session_log_sync 表中某条目的同步进度。
@@ -414,44 +541,45 @@ fn insert_session_log_entry(
         ),
     };
 
-    conn.execute(
-        "INSERT OR IGNORE INTO proxy_request_logs (
+    let inserted_rows = conn
+        .execute(
+            "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
-        rusqlite::params![
-            request_id,
-            "_session",         // provider_id: 标记为会话来源
-            "claude",           // app_type
-            msg.model,
-            msg.model,          // request_model = model
-            msg.input_tokens,
-            msg.output_tokens,
-            msg.cache_read_tokens,
-            msg.cache_creation_tokens,
-            input_cost,
-            output_cost,
-            cache_read_cost,
-            cache_creation_cost,
-            total_cost,
-            0i64,               // latency_ms: 会话日志无此数据
-            Option::<i64>::None, // first_token_ms
-            200i64,             // status_code: 有 stop_reason 说明请求成功
-            Option::<String>::None, // error_message
-            msg.session_id,
-            Some("session_log"), // provider_type
-            1i64,               // is_streaming: Claude Code 通常使用流式
-            "1.0",              // cost_multiplier
-            created_at,
-            "session_log",      // data_source
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
+            rusqlite::params![
+                request_id,
+                "_session",         // provider_id: 标记为会话来源
+                "claude",           // app_type
+                msg.model,
+                msg.model,          // request_model = model
+                msg.input_tokens,
+                msg.output_tokens,
+                msg.cache_read_tokens,
+                msg.cache_creation_tokens,
+                input_cost,
+                output_cost,
+                cache_read_cost,
+                cache_creation_cost,
+                total_cost,
+                0i64,               // latency_ms: 会话日志无此数据
+                Option::<i64>::None, // first_token_ms
+                200i64,             // status_code: 会话日志中的请求只要产生计费 token 即视为成功
+                Option::<String>::None, // error_message
+                msg.session_id,
+                Some("session_log"), // provider_type
+                1i64,               // is_streaming: Claude Code 通常使用流式
+                "1.0",              // cost_multiplier
+                created_at,
+                "session_log",      // data_source
+            ],
+        )
+        .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
 
-    Ok(true)
+    Ok(inserted_rows > 0)
 }
 
 /// 从 model_pricing 表查找模型定价（支持模糊匹配）
@@ -459,77 +587,7 @@ fn find_model_pricing_for_session(
     conn: &rusqlite::Connection,
     model_id: &str,
 ) -> Option<ModelPricing> {
-    // 精确匹配
-    if let Ok(Some(pricing)) = try_find_pricing(conn, model_id) {
-        return Some(pricing);
-    }
-
-    // 模糊匹配：去掉日期后缀
-    // 例如 "claude-opus-4-6-20260206" -> "claude-opus-4-6"
-    let parts: Vec<&str> = model_id.rsplitn(2, '-').collect();
-    if parts.len() == 2 {
-        if let Some(suffix) = parts.first() {
-            if suffix.len() == 8 && suffix.chars().all(|c| c.is_ascii_digit()) {
-                if let Ok(Some(pricing)) = try_find_pricing(conn, parts[1]) {
-                    return Some(pricing);
-                }
-            }
-        }
-    }
-
-    // 尝试 LIKE 匹配
-    let pattern = format!("{model_id}%");
-    let result = conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id LIKE ?1 LIMIT 1",
-        rusqlite::params![pattern],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    );
-
-    match result {
-        Ok((input, output, cache_read, cache_creation)) => {
-            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation).ok()
-        }
-        Err(_) => None,
-    }
-}
-
-fn try_find_pricing(
-    conn: &rusqlite::Connection,
-    model_id: &str,
-) -> Result<Option<ModelPricing>, AppError> {
-    let result = conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id = ?1",
-        rusqlite::params![model_id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    );
-
-    match result {
-        Ok((input, output, cache_read, cache_creation)) => {
-            ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
-                .map(Some)
-                .map_err(|e| AppError::Database(format!("解析定价失败: {e}")))
-        }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(AppError::Database(format!("查询定价失败: {e}"))),
-    }
+    find_model_pricing(conn, model_id)
 }
 
 /// 查询数据来源分布统计
@@ -567,6 +625,26 @@ pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_result_notification_is_coalesced_to_one_call() {
+        crate::usage_events::take_test_notify_count();
+        notify_sync_result(&SessionSyncResult::default());
+        let result = SessionSyncResult {
+            imported: 25,
+            ..SessionSyncResult::default()
+        };
+        notify_sync_result(&result);
+        assert_eq!(crate::usage_events::take_test_notify_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn session_sync_mutex_serializes_callers() {
+        let first = session_sync_mutex().lock().await;
+        assert!(session_sync_mutex().try_lock().is_err());
+        drop(first);
+        assert!(session_sync_mutex().try_lock().is_ok());
+    }
 
     #[test]
     fn test_parse_usage_from_jsonl_line() {
@@ -697,6 +775,105 @@ mod tests {
         })?;
         assert_eq!(count, 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_collect_jsonl_files_includes_subagents() {
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project = tmp.join("project");
+        let session_dir = project.join("test-session");
+        let subagents_dir = session_dir.join("subagents");
+        fs::create_dir_all(&subagents_dir).unwrap();
+
+        fs::write(project.join("main.jsonl"), "{}").unwrap();
+        fs::write(subagents_dir.join("agent-abc.jsonl"), "{}").unwrap();
+
+        let files = collect_jsonl_files(&tmp);
+        assert_eq!(files.len(), 2);
+        let paths: Vec<String> = files
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        assert!(paths.iter().any(|p| p.contains("main.jsonl")));
+        assert!(paths.iter().any(|p| p.contains("agent-abc.jsonl")));
+
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_collect_jsonl_files_includes_workflow_subagents() {
+        // Claude Code Workflow 把子 agent transcript 嵌在
+        // 项目/SESSION_ID/subagents/workflows/wf_<ID>/ 下，比普通子 agent 深一层。
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        let project = tmp.join("project");
+        let session_dir = project.join("test-session");
+        let subagents_dir = session_dir.join("subagents");
+        let wf_dir = subagents_dir.join("workflows").join("wf_test123");
+        fs::create_dir_all(&wf_dir).unwrap();
+
+        fs::write(project.join("main.jsonl"), "{}").unwrap();
+        fs::write(subagents_dir.join("agent-plain.jsonl"), "{}").unwrap();
+        fs::write(wf_dir.join("agent-wf.jsonl"), "{}").unwrap();
+        // journal.jsonl 也会被收集，但解析时因无 assistant 行而产出 0 条
+        fs::write(wf_dir.join("journal.jsonl"), "{}").unwrap();
+
+        let files = collect_jsonl_files(&tmp);
+        let paths: Vec<String> = files
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+
+        // 主会话 + 普通子 agent + Workflow 子 agent(agent-wf + journal) = 4
+        assert_eq!(files.len(), 4);
+        assert!(paths.iter().any(|p| p.contains("main.jsonl")));
+        assert!(paths.iter().any(|p| p.contains("agent-plain.jsonl")));
+        assert!(
+            paths.iter().any(|p| p.contains("agent-wf.jsonl")),
+            "Workflow 子 agent transcript 必须被收集"
+        );
+
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_sync_imports_billable_message_without_stop_reason() -> Result<(), AppError> {
+        // 回归：stop_reason 缺失但有真实 cache/input 成本的 message（Workflow /
+        // 子 agent 常见的「只有 message_start 快照、没写最终块」形态）必须被计入，
+        // 不能因缺 stop_reason 或 output==0 而整条丢弃；全 0 token 的占位行仍应跳过。
+        let db = Database::memory()?;
+        let tmp = std::env::temp_dir().join(format!("cc-switch-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let file = tmp.join("agent-wf.jsonl");
+
+        // 第一行：无 stop_reason、output=1，但 cache_read/cache_creation 很大 → 应导入
+        // 第二行：全部 token 为 0 → 应跳过（无计费意义）
+        let billable = r#"{"type":"assistant","message":{"id":"msg_nostop","model":"claude-opus-4-8","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":48719,"cache_creation_input_tokens":2061}},"timestamp":"2026-06-07T13:01:23Z","sessionId":"session-wf"}"#;
+        let empty = r#"{"type":"assistant","message":{"id":"msg_empty","model":"claude-opus-4-8","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-06-07T13:01:24Z","sessionId":"session-wf"}"#;
+        fs::write(&file, format!("{billable}\n{empty}\n")).unwrap();
+
+        let (imported, _skipped) = sync_single_file(&db, &file)?;
+        assert_eq!(
+            imported, 1,
+            "有 cache 成本但无 stop_reason 的 message 必须被导入"
+        );
+
+        let conn = lock_conn!(db.conn);
+        let cache_read: i64 = conn.query_row(
+            "SELECT cache_read_tokens FROM proxy_request_logs WHERE request_id = 'session:msg_nostop'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(cache_read, 48719, "cache_read 必须被完整记录");
+        let empty_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = 'session:msg_empty')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!empty_exists, "全 0 token 的 message 应被跳过");
+        drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
         Ok(())
     }
 }

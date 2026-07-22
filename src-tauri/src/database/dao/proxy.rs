@@ -2,11 +2,55 @@
 //!
 //! 处理代理配置、Provider健康状态和使用统计的数据库操作
 
+use std::str::FromStr;
+
 use crate::error::AppError;
 use crate::proxy::types::*;
 use rust_decimal::Decimal;
 
 use super::super::{lock_conn, Database};
+
+pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
+pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
+
+pub(crate) fn validate_cost_multiplier(value: &str) -> Result<Decimal, AppError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::localized(
+            "error.multiplierEmpty",
+            "倍率不能为空",
+            "Multiplier cannot be empty",
+        ));
+    }
+    let parsed = Decimal::from_str(trimmed).map_err(|e| {
+        AppError::localized(
+            "error.invalidMultiplier",
+            format!("无效倍率: {value} - {e}"),
+            format!("Invalid multiplier: {value} - {e}"),
+        )
+    })?;
+    if parsed < Decimal::ZERO {
+        return Err(AppError::localized(
+            "error.invalidMultiplier",
+            format!("无效倍率: {value} - 倍率不能为负数"),
+            format!("Invalid multiplier: {value} - multiplier cannot be negative"),
+        ));
+    }
+    Ok(parsed)
+}
+
+pub(crate) fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
+    let trimmed = value.trim();
+    if trimmed == PRICING_SOURCE_RESPONSE || trimmed == PRICING_SOURCE_REQUEST {
+        Ok(trimmed)
+    } else {
+        Err(AppError::localized(
+            "error.invalidPricingMode",
+            format!("无效计费模式: {value}"),
+            format!("Invalid pricing mode: {value}"),
+        ))
+    }
+}
 
 impl Database {
     // ==================== Global Proxy Config ====================
@@ -103,21 +147,8 @@ impl Database {
         app_type: &str,
         value: &str,
     ) -> Result<(), AppError> {
+        validate_cost_multiplier(value)?;
         let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return Err(AppError::localized(
-                "error.multiplierEmpty",
-                "倍率不能为空",
-                "Multiplier cannot be empty",
-            ));
-        }
-        trimmed.parse::<Decimal>().map_err(|e| {
-            AppError::localized(
-                "error.invalidMultiplier",
-                format!("无效倍率: {value} - {e}"),
-                format!("Invalid multiplier: {value} - {e}"),
-            )
-        })?;
 
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
@@ -150,7 +181,7 @@ impl Database {
             Ok(value) => Ok(value),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 self.init_proxy_config_rows().await?;
-                Ok("response".to_string())
+                Ok(PRICING_SOURCE_RESPONSE.to_string())
             }
             Err(e) => Err(AppError::Database(e.to_string())),
         }
@@ -162,14 +193,7 @@ impl Database {
         app_type: &str,
         value: &str,
     ) -> Result<(), AppError> {
-        let trimmed = value.trim();
-        if !matches!(trimmed, "response" | "request") {
-            return Err(AppError::localized(
-                "error.invalidPricingMode",
-                format!("无效计费模式: {value}"),
-                format!("Invalid pricing mode: {value}"),
-            ));
-        }
+        let trimmed = validate_pricing_source(value)?;
 
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
@@ -304,6 +328,7 @@ impl Database {
                 "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
                 "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
+                "grokbuild" => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 _ => (3, 60, 120, 4, 2, 60, 0.6, 10), // 默认值
             };
 
@@ -370,6 +395,18 @@ impl Database {
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
                 circuit_error_rate_threshold, circuit_min_requests
             ) VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // grokbuild: Responses protocol, same timeout defaults as Codex.
+        conn.execute(
+            "INSERT OR IGNORE INTO proxy_config (
+                app_type, max_retries,
+                streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
+                circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
+                circuit_error_rate_threshold, circuit_min_requests
+            ) VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -468,6 +505,23 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(count > 0)
+    }
+
+    /// 同步版本：检查是否有任一 app 的 enabled = true
+    ///
+    /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
+    pub fn is_live_takeover_active_sync(&self) -> bool {
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        conn.query_row(
+            "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 0
     }
 
     // ==================== Provider Health ====================
@@ -907,6 +961,18 @@ mod tests {
             err,
             AppError::Localized {
                 key: "error.invalidPricingMode",
+                ..
+            }
+        ));
+
+        let err = db
+            .set_default_cost_multiplier("claude", "-0.5")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Localized {
+                key: "error.invalidMultiplier",
                 ..
             }
         ));

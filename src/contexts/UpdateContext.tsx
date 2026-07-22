@@ -6,14 +6,13 @@ import React, {
   useCallback,
   useRef,
 } from "react";
-import type { UpdateInfo, UpdateHandle } from "../lib/updater";
+import type { UpdateInfo } from "../lib/updater";
 import { checkForUpdate } from "../lib/updater";
 
 interface UpdateContextValue {
   // 更新状态
   hasUpdate: boolean;
   updateInfo: UpdateInfo | null;
-  updateHandle: UpdateHandle | null;
   isChecking: boolean;
   error: string | null;
 
@@ -34,7 +33,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
 
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [updateHandle, setUpdateHandle] = useState<UpdateHandle | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
@@ -72,7 +70,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       if (result.status === "available") {
         setHasUpdate(true);
         setUpdateInfo(result.info);
-        setUpdateHandle(result.update);
 
         // 检查是否已经关闭过这个版本的提醒
         let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
@@ -89,7 +86,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       } else {
         setHasUpdate(false);
         setUpdateInfo(null);
-        setUpdateHandle(null);
         setIsDismissed(false);
         return false; // 已是最新
       }
@@ -132,7 +128,6 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const value: UpdateContextValue = {
     hasUpdate,
     updateInfo,
-    updateHandle,
     isChecking,
     error,
     isDismissed,
