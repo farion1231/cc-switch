@@ -616,6 +616,14 @@ pub struct ClaudeModelConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "opusModel")]
     pub opus_model: Option<String>,
+    /// Fable 默认模型
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "fableModel")]
+    pub fable_model: Option<String>,
+    /// Subagent 默认模型
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "subagentModel")]
+    pub subagent_model: Option<String>,
 }
 
 /// Codex 模型配置
@@ -744,16 +752,29 @@ impl UniversalProvider {
             .and_then(|m| m.opus_model.clone())
             .unwrap_or_else(|| model.clone());
 
-        let settings_config = serde_json::json!({
-            "env": {
-                "ANTHROPIC_BASE_URL": self.base_url,
-                "ANTHROPIC_AUTH_TOKEN": self.api_key,
-                "ANTHROPIC_MODEL": model,
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku,
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet,
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": opus,
-            }
+        let mut env = serde_json::json!({
+            "ANTHROPIC_BASE_URL": self.base_url,
+            "ANTHROPIC_AUTH_TOKEN": self.api_key,
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": opus,
         });
+
+        if let Some(fable) = models
+            .and_then(|m| m.fable_model.as_ref())
+            .filter(|value| !value.trim().is_empty())
+        {
+            env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = serde_json::json!(fable);
+        }
+        if let Some(subagent) = models
+            .and_then(|m| m.subagent_model.as_ref())
+            .filter(|value| !value.trim().is_empty())
+        {
+            env["CLAUDE_CODE_SUBAGENT_MODEL"] = serde_json::json!(subagent);
+        }
+
+        let settings_config = serde_json::json!({ "env": env });
 
         Some(Provider {
             id: format!("universal-claude-{}", self.id),
@@ -1158,6 +1179,8 @@ mod tests {
             haiku_model: Some("claude-haiku".to_string()),
             sonnet_model: Some("claude-sonnet".to_string()),
             opus_model: Some("claude-opus".to_string()),
+            fable_model: Some("claude-fable".to_string()),
+            subagent_model: Some("claude-subagent".to_string()),
         });
 
         let provider = universal.to_claude_provider().expect("claude provider");
@@ -1193,6 +1216,53 @@ mod tests {
                 .and_then(|item| item.as_str()),
             Some("claude-opus")
         );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-fable")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/env/CLAUDE_CODE_SUBAGENT_MODEL")
+                .and_then(|item| item.as_str()),
+            Some("claude-subagent")
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_claude_provider_omits_missing_or_blank_optional_models() {
+        for (fable_model, subagent_model) in [
+            (None, None),
+            (Some("".to_string()), Some("   ".to_string())),
+        ] {
+            let mut universal = UniversalProvider::new(
+                "u1".to_string(),
+                "Universal".to_string(),
+                "newapi".to_string(),
+                "https://api.example.com".to_string(),
+                "api-key".to_string(),
+            );
+            universal.apps.claude = true;
+            universal.models.claude = Some(ClaudeModelConfig {
+                fable_model,
+                subagent_model,
+                ..Default::default()
+            });
+
+            let provider = universal.to_claude_provider().expect("claude provider");
+
+            assert!(provider
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .is_none());
+            assert!(provider
+                .settings_config
+                .pointer("/env/CLAUDE_CODE_SUBAGENT_MODEL")
+                .is_none());
+        }
     }
 
     #[test]
