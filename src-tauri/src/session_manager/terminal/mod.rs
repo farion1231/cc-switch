@@ -80,7 +80,33 @@ end tell"#
 }
 
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let args = build_ghostty_args(command, cwd);
+
+    let status = Command::new("open")
+        .args(args.iter().map(String::as_str))
+        .status()
+        .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch Ghostty. Make sure it is installed.".to_string())
+    }
+}
+
+/// Build the `open -na Ghostty --args ...` argument list for a session resume.
+///
+/// Ghostty always wraps its spawned shell through `/usr/bin/login` on macOS
+/// (see Ghostty's `execCommand`), which passes multi-word `-e <shell> -l -c
+/// <command>` argv arrays straight to `login` via `execvp`. `login` does not
+/// re-run shell word-splitting, so the resume command's arguments end up
+/// mis-split across argv boundaries and Ghostty fails to launch it (#5557).
+///
+/// `--input=raw:<text>` instead feeds the resume command to the new surface
+/// as literal startup keystrokes, sidestepping the `-e`/login argv path
+/// entirely. This mirrors the fix from #1506.
+fn build_ghostty_args(command: &str, cwd: Option<&str>) -> Vec<String> {
+    let input = ghostty_raw_input(command);
 
     let mut args = vec![
         "-na".to_string(),
@@ -95,22 +121,25 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
         }
     }
 
-    args.push("-e".to_string());
-    args.push(shell);
-    args.push("-l".to_string());
-    args.push("-c".to_string());
-    args.push(command.to_string());
+    args.push(format!("--input={input}"));
+    args
+}
 
-    let status = Command::new("open")
-        .args(&args)
-        .status()
-        .map_err(|e| format!("Failed to launch Ghostty: {e}"))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err("Failed to launch Ghostty. Make sure it is installed.".to_string())
+/// Encode `command` as a Ghostty `raw:` input value, escaping backslashes
+/// and newlines per Ghostty's Zig-string-literal input syntax, then append
+/// a trailing `\n` so the command runs as soon as the shell is ready.
+fn ghostty_raw_input(command: &str) -> String {
+    let mut escaped = String::from("raw:");
+    for ch in command.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            _ => escaped.push(ch),
+        }
     }
+    escaped.push_str("\\n");
+    escaped
 }
 
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
@@ -333,6 +362,47 @@ mod tests {
         assert_eq!(
             build_shell_command("claude --resume abc-123", None),
             "claude --resume abc-123"
+        );
+    }
+
+    #[test]
+    fn ghostty_uses_raw_input_for_resume_commands() {
+        let args = build_ghostty_args("claude --resume abc-123", Some("/tmp/project dir"));
+
+        assert_eq!(
+            args,
+            vec![
+                "-na",
+                "Ghostty",
+                "--args",
+                "--quit-after-last-window-closed=true",
+                "--working-directory=/tmp/project dir",
+                "--input=raw:claude --resume abc-123\\n",
+            ]
+        );
+    }
+
+    #[test]
+    fn ghostty_keeps_command_without_cwd_prefix_when_not_provided() {
+        let args = build_ghostty_args("claude --resume abc-123", None);
+
+        assert_eq!(
+            args,
+            vec![
+                "-na",
+                "Ghostty",
+                "--args",
+                "--quit-after-last-window-closed=true",
+                "--input=raw:claude --resume abc-123\\n",
+            ]
+        );
+    }
+
+    #[test]
+    fn ghostty_escapes_newlines_and_backslashes_in_input() {
+        assert_eq!(
+            ghostty_raw_input("echo foo\\bar\npwd"),
+            "raw:echo foo\\\\bar\\npwd\\n"
         );
     }
 
