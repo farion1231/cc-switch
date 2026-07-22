@@ -22,6 +22,7 @@ pub mod skill;
 pub mod speedtest;
 pub mod sql_helpers;
 pub mod stream_check;
+pub mod sub2api;
 pub mod subscription;
 pub mod sync_protocol;
 pub mod usage_cache;
@@ -29,6 +30,9 @@ pub mod usage_stats;
 pub mod webdav;
 pub mod webdav_auto_sync;
 pub mod webdav_sync;
+
+#[cfg(test)]
+mod sub2api_tests;
 
 pub use config::ConfigService;
 pub use mcp::McpService;

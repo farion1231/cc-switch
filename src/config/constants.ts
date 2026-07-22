@@ -29,6 +29,7 @@ export const TEMPLATE_TYPES = {
   GITHUB_COPILOT: "github_copilot",
   TOKEN_PLAN: "token_plan",
   BALANCE: "balance",
+  SUB2API: "sub2api",
   OFFICIAL_SUBSCRIPTION: "official_subscription",
 } as const;
 

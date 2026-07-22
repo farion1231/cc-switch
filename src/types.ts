@@ -69,6 +69,8 @@ export interface UsageScript {
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
+  accountEmail?: string; // Sub2API account email
+  accountPassword?: string; // Sub2API account password
   request?: {
     // 请求配置
     url?: string; // 请求 URL

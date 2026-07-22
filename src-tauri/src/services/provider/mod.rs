@@ -274,6 +274,8 @@ mod tests {
             timeout: Some(10),
             api_key: api_key.map(str::to_string),
             base_url: base_url.map(str::to_string),
+            account_email: None,
+            account_password: None,
             access_token: None,
             user_id: None,
             template_type: template_type.map(str::to_string),
@@ -683,6 +685,39 @@ mod tests {
             );
             assert_eq!(script.access_key_id.as_deref(), Some("ak-test"));
             assert_eq!(script.secret_access_key.as_deref(), Some("sk-test"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn add_does_not_clear_sub2api_console_url() {
+        with_test_home(|state, _| {
+            let provider = codex_provider_with_usage(
+                "codex-sub2api",
+                "https://console.sub2api.example",
+                "sk-provider",
+                None,
+                Some("https://console.sub2api.example"),
+                Some("sub2api"),
+            );
+
+            ProviderService::add(state, AppType::Codex, provider, false).expect("add provider");
+
+            let saved = state
+                .db
+                .get_provider_by_id("codex-sub2api", AppType::Codex.as_str())
+                .expect("query saved provider")
+                .expect("saved provider should exist");
+            let script = saved
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.usage_script.as_ref())
+                .expect("usage script should remain");
+
+            assert_eq!(
+                script.base_url.as_deref(),
+                Some("https://console.sub2api.example")
+            );
         });
     }
 
@@ -2005,7 +2040,10 @@ impl ProviderService {
             return;
         };
 
-        if usage_script.template_type.as_deref() == Some("token_plan") {
+        if matches!(
+            usage_script.template_type.as_deref(),
+            Some("token_plan" | "sub2api")
+        ) {
             return;
         }
 
