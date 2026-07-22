@@ -5587,7 +5587,39 @@ mod tests {
         let content =
             format!("@echo off\ncd /d \"{target}\" || exit /b 1\necho CWD=%CD%\necho OK\n");
 
-        write_windows_batch_file(&bat, &content).expect("write batch");
+        // GitHub Actions windows-latest is usually ACP 1252, which cannot encode CJK.
+        // There the write must reject lossy conversion; still verify CRLF/ACP for ASCII.
+        // On Chinese/Japanese Windows (or UTF-8 system locale), full CJK coverage applies.
+        match write_windows_batch_file(&bat, &content) {
+            Err(err) => {
+                assert!(
+                    err.contains("cannot be represented"),
+                    "when ACP cannot encode CJK, write must reject lossy conversion, got: {err}"
+                );
+
+                let ascii_bat = temp.path().join("ascii_cd.bat");
+                let ascii_content =
+                    "@echo off\ncd /d \"D:\\project\" || exit /b 1\necho CWD=%CD%\necho OK\n";
+                write_windows_batch_file(&ascii_bat, ascii_content).expect("write ascii batch");
+
+                let bytes = std::fs::read(&ascii_bat).expect("read ascii batch");
+                for i in 0..bytes.len() {
+                    if bytes[i] == b'\n' {
+                        assert_eq!(
+                            bytes.get(i.wrapping_sub(1)),
+                            Some(&b'\r'),
+                            "found bare LF at index {i}"
+                        );
+                    }
+                }
+                assert!(
+                    bytes.windows(b"cd /d".len()).any(|w| w == b"cd /d"),
+                    "ascii batch must contain cd /d command"
+                );
+                return;
+            }
+            Ok(()) => {}
+        }
 
         let bytes = std::fs::read(&bat).expect("read batch");
         for i in 0..bytes.len() {
