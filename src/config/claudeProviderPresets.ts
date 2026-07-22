@@ -1329,6 +1329,18 @@ export const providerPresets: ProviderPreset[] = [
     icon: "pipellm",
   },
   {
+    name: "Byesu",
+    websiteUrl: "https://byesu.com",
+    apiKeyUrl: "https://byesu.com/console/token",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://byesu.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+  },
+  {
     name: "Xiaomi MiMo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
