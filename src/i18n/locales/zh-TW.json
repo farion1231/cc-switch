@@ -765,8 +765,8 @@
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
     "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
-    "piConfigDir": "Pi 設定目錄",
-    "piConfigDirDescription": "覆寫 Pi 設定目錄 (models.json / settings.json)。",
+    "piConfigDir": "Pi / Oh-my-pi 設定目錄",
+    "piConfigDirDescription": "覆寫 Pi 設定根目錄。設為 ~/.omp 可相容 Oh-my-pi（models.yml + config.yml）；預設 ~/.pi（models.json + settings.json）。",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -774,7 +774,7 @@
     "browsePlaceholderOpencode": "例如：/home/<您的帳號>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<您的帳號>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<您的帳號>/.hermes",
-    "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi",
+    "browsePlaceholderPi": "例如：~/.omp 或 ~/.pi",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -2142,6 +2142,7 @@
       "api": "API 協定",
       "models": "模型列表",
       "modelsEmpty": "尚無模型。請新增或從 API 拉取。",
+      "modelsRequired": "請至少新增一個帶 ID 的模型",
       "modelId": "模型 ID",
       "modelName": "顯示名稱",
       "advanced": "進階選項",
@@ -2151,9 +2152,12 @@
     },
     "health": {
       "title": "偵測到 Pi 設定警告",
-      "duplicateProvider": "models.json 中存在重複的供應商名稱。",
       "missingBaseUrl": "供應商缺少 baseUrl。",
-      "missingApi": "供應商缺少 api 欄位。"
+      "missingBaseUrlNamed": "供應商「{{name}}」缺少 baseUrl。",
+      "missingApi": "供應商缺少 api 欄位。",
+      "missingApiNamed": "供應商「{{name}}」缺少 api 欄位。",
+      "missingModels": "供應商未設定模型。",
+      "missingModelsNamed": "供應商「{{name}}」未設定模型。"
     }
   },
   "env": {

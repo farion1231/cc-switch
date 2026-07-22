@@ -775,5 +775,6 @@ export interface PiWriteOutcome {
 export interface PiHealthWarning {
   code: string;
   message: string;
+  provider?: string;
   path?: string;
 }

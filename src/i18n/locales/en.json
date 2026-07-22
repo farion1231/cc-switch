@@ -765,8 +765,8 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
-    "piConfigDir": "Pi Configuration Directory",
-    "piConfigDirDescription": "Override Pi configuration directory (models.json / settings.json).",
+    "piConfigDir": "Pi / Oh-my-pi Configuration Directory",
+    "piConfigDirDescription": "Override the Pi config root. Set to ~/.omp for Oh-my-pi (models.yml + config.yml). Default is ~/.pi (models.json + settings.json).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -774,7 +774,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
-    "browsePlaceholderPi": "e.g., /home/<your-username>/.pi",
+    "browsePlaceholderPi": "e.g., ~/.omp or ~/.pi",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -2170,6 +2170,7 @@
       "api": "API Protocol",
       "models": "Models",
       "modelsEmpty": "No models yet. Add or fetch models.",
+      "modelsRequired": "Please add at least one model with an ID",
       "modelId": "Model ID",
       "modelName": "Display name",
       "advanced": "Advanced",
@@ -2179,9 +2180,12 @@
     },
     "health": {
       "title": "Pi config warnings detected",
-      "duplicateProvider": "Provider name is duplicated in models.json. Pi may not load the intended configuration.",
       "missingBaseUrl": "Provider is missing 'baseUrl'. Pi requires a base URL to connect to the API.",
-      "missingApi": "Provider is missing 'api' field. Pi requires an API type (openai-completions, anthropic-messages, etc.)."
+      "missingBaseUrlNamed": "Provider '{{name}}' is missing 'baseUrl'.",
+      "missingApi": "Provider is missing 'api' field. Pi requires an API type (openai-completions, anthropic-messages, etc.).",
+      "missingApiNamed": "Provider '{{name}}' is missing 'api'.",
+      "missingModels": "Provider has no models configured.",
+      "missingModelsNamed": "Provider '{{name}}' has no models configured."
     }
   },
   "env": {

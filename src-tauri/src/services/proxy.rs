@@ -709,7 +709,7 @@ impl ProxyService {
             .await
             .map(|c| c.enabled)
             .unwrap_or(false);
-        // OpenCode and OpenClaw don't support proxy features, always return false
+        // OpenCode / OpenClaw / Hermes / Pi don't support proxy features
         let opencode_enabled = false;
         let openclaw_enabled = false;
 
@@ -731,6 +731,16 @@ impl ProxyService {
         let app = AppType::from_str(app_type).map_err(|e| format!("无效的应用类型: {e}"))?;
         let app_type_str = app.as_str();
         let _guard = self.switch_locks.lock_for_app(app_type_str).await;
+
+        // OpenCode / OpenClaw / Hermes / Pi 不支持代理接管
+        if enabled
+            && matches!(
+                app,
+                AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::Pi
+            )
+        {
+            return Err("该应用不支持代理功能".to_string());
+        }
 
         if enabled {
             // 1) 代理服务未运行则自动启动

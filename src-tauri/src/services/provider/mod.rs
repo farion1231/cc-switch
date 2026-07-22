@@ -3563,6 +3563,25 @@ impl ProviderService {
                         "Pi configuration must be a JSON object",
                     ));
                 }
+
+                let has_model = provider
+                    .settings_config
+                    .get("models")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|models| {
+                        models.iter().any(|m| {
+                            m.get("id")
+                                .and_then(|id| id.as_str())
+                                .is_some_and(|id| !id.trim().is_empty())
+                        })
+                    });
+                if !has_model {
+                    return Err(AppError::localized(
+                        "provider.pi.models.required",
+                        "Pi 供应商至少需要配置一个带 id 的模型",
+                        "Pi provider requires at least one model with an id",
+                    ));
+                }
             }
         }
 

@@ -1208,6 +1208,16 @@ function ProviderFormFull({
         toast.error(t("pi.form.providerKeyDuplicate"));
         return;
       }
+      const hasValidPiModel = piForm.piModels.some(
+        (model) => typeof model.id === "string" && model.id.trim() !== "",
+      );
+      if (!hasValidPiModel) {
+        issues.push(
+          t("pi.form.modelsRequired", {
+            defaultValue: "Please add at least one model with an ID",
+          }),
+        );
+      }
     }
 
     // OAuth 未登录：B 类（token 根本不存在，保存了也没法建立）

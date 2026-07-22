@@ -225,23 +225,6 @@ function App() {
     }
   }, [visibleApps, activeApp]);
 
-  // Fallback from sessions view when switching to an app without session support
-  useEffect(() => {
-    if (
-      currentView === "sessions" &&
-      sharedFeatureApp !== "claude" &&
-      sharedFeatureApp !== "codex" &&
-      sharedFeatureApp !== "grokbuild" &&
-      sharedFeatureApp !== "opencode" &&
-      sharedFeatureApp !== "openclaw" &&
-      sharedFeatureApp !== "gemini" &&
-      sharedFeatureApp !== "hermes" &&
-      sharedFeatureApp !== "pi"
-    ) {
-      setCurrentView("providers");
-    }
-  }, [sharedFeatureApp, currentView]);
-
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -311,6 +294,25 @@ function App() {
     sharedFeatureApp === "hermes";
   const hasMcpSupport =
     sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
+
+  // Leave unsupported feature views when switching apps (e.g. Sessions → Pi).
+  useEffect(() => {
+    if (currentView === "sessions" && !hasSessionSupport) {
+      setCurrentView("providers");
+    }
+  }, [currentView, hasSessionSupport]);
+
+  useEffect(() => {
+    if (currentView === "skills" && !hasSkillsSupport) {
+      setCurrentView("providers");
+    }
+  }, [currentView, hasSkillsSupport]);
+
+  useEffect(() => {
+    if (currentView === "mcp" && !hasMcpSupport) {
+      setCurrentView("providers");
+    }
+  }, [currentView, hasMcpSupport]);
 
   const {
     addProvider,
@@ -1534,8 +1536,6 @@ function App() {
                                 <History className="w-4 h-4" />
                               </Button>
                             </>
-                          ) : activeApp === "pi" ? (
-                            null
                           ) : (
                             <>
                               <Button

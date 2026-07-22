@@ -426,6 +426,8 @@ pub struct AppSettings {
     pub openclaw_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
+    /// Pi / Oh-my-pi 配置根目录覆盖。
+    /// 例如 `"~/.omp"` 可兼容 Oh-my-pi（读写 `agent/models.yml` + `agent/config.yml`）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi_config_dir: Option<String>,
 

@@ -176,7 +176,7 @@ export function DirectorySettings({
 
         <DirectoryInput
           label={t("settings.piConfigDir")}
-          description={undefined}
+          description={t("settings.piConfigDirDescription")}
           value={piDir}
           resolvedValue={resolvedDirs.pi}
           placeholder={t("settings.browsePlaceholderPi")}

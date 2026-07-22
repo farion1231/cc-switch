@@ -765,8 +765,8 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
-    "piConfigDir": "Pi 設定ディレクトリ",
-    "piConfigDirDescription": "Pi の設定ディレクトリ（models.json / settings.json）を上書きします。",
+    "piConfigDir": "Pi / Oh-my-pi 設定ディレクトリ",
+    "piConfigDirDescription": "Pi 設定ルートを上書きします。Oh-my-pi 互換なら ~/.omp（models.yml + config.yml）。既定は ~/.pi（models.json + settings.json）。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -774,7 +774,7 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
-    "browsePlaceholderPi": "例: /home/<your-username>/.pi",
+    "browsePlaceholderPi": "例: ~/.omp または ~/.pi",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -2170,6 +2170,7 @@
       "api": "API プロトコル",
       "models": "モデル一覧",
       "modelsEmpty": "モデルがありません。追加するか API から取得してください。",
+      "modelsRequired": "ID 付きのモデルを少なくとも 1 つ追加してください",
       "modelId": "モデル ID",
       "modelName": "表示名",
       "advanced": "詳細設定",
@@ -2179,9 +2180,12 @@
     },
     "health": {
       "title": "Pi 設定の警告を検出しました",
-      "duplicateProvider": "models.json に重複したプロバイダー名があります。",
       "missingBaseUrl": "プロバイダーに baseUrl がありません。",
-      "missingApi": "プロバイダーに api フィールドがありません。"
+      "missingBaseUrlNamed": "プロバイダー「{{name}}」に baseUrl がありません。",
+      "missingApi": "プロバイダーに api フィールドがありません。",
+      "missingApiNamed": "プロバイダー「{{name}}」に api フィールドがありません。",
+      "missingModels": "プロバイダーにモデルが設定されていません。",
+      "missingModelsNamed": "プロバイダー「{{name}}」にモデルが設定されていません。"
     }
   },
   "env": {
