@@ -43,6 +43,13 @@ const VOLCENGINE_KEY_CONSOLE_URL =
 // 智谱团队套餐用量页（组织 ID / 项目 ID 在此页 URL 或管理后台可见）
 const ZHIPU_TEAM_USAGE_URL = "https://bigmodel.cn/coding-plan/team/usage-stats";
 
+/**
+ * 阿里云 RAM 访问密钥管理页。
+ * 中国大陆地区的用量查询同样依赖账号级密钥，因此提供直达链接。
+ */
+const ALIBABA_CLOUD_KEY_CONSOLE_URL =
+  "https://ram.console.aliyun.com/manage/ak";
+
 interface UsageScriptModalProps {
   provider: Provider;
   appId: AppId;
@@ -151,12 +158,18 @@ const BALANCE_PROVIDERS = [
   },
   { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
   { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
+  {
+    id: "aliyun",
+    label: "阿里云-中国大陆地区 (Alibaba Cloud mainland China)",
+    pattern: /dashscope\.aliyuncs\.com/i,
+  },
 ] as const;
 
 /** 根据 Base URL 自动检测余额查询供应商 */
-function detectBalanceProvider(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
+function detectBalanceProvider(baseUrl: string | undefined): string | null {
+  if (!baseUrl) return null;
+  const provider = BALANCE_PROVIDERS.find((bp) => bp.pattern.test(baseUrl));
+  return provider?.id ?? null;
 }
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
@@ -213,6 +226,8 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   // 生成带国际化的预设模板
   const PRESET_TEMPLATES = generatePresetTemplates(t);
+  const formatCompactNumber = (value: number) =>
+    Number.isInteger(value) ? value.toString() : value.toFixed(2);
 
   // 从 provider 的 settingsConfig 中提取 API Key 和 Base URL
   const getProviderCredentials = (): {
@@ -305,6 +320,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
+  const detectedBalanceProvider = detectBalanceProvider(
+    providerCredentials.baseUrl,
+  );
+  const isAliyunBalance = detectedBalanceProvider === "aliyun";
   const isOfficialSubscription = isOfficialSubscriptionProvider(
     provider,
     appId,
@@ -330,6 +349,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           codingPlanProvider:
             detectCodingPlanProvider(providerCredentials.baseUrl) || "kimi",
         };
+      }
+      if (
+        normalizedScript.templateType === TEMPLATE_TYPES.TOKEN_PLAN &&
+        normalizedScript.codingPlanProvider === "bailian"
+      ) {
+        return createUsageScript({
+          ...normalizedScript,
+          templateType: TEMPLATE_TYPES.BALANCE,
+          accessKeyId: normalizedScript.accessKeyId ?? normalizedScript.apiKey,
+          apiKey: undefined,
+          baseUrl: undefined,
+          codingPlanProvider: undefined,
+        });
       }
       return normalizedScript;
     }
@@ -422,6 +454,12 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         (!isOfficialSubscription ||
           existingScript.templateType === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION)
       ) {
+        if (
+          existingScript.templateType === TEMPLATE_TYPES.TOKEN_PLAN &&
+          existingScript.codingPlanProvider === "bailian"
+        ) {
+          return TEMPLATE_TYPES.BALANCE;
+        }
         return existingScript.templateType as string;
       }
       // 官方 CLI/OAuth 供应商默认使用官方订阅额度模板，但开关默认关闭
@@ -531,19 +569,33 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // 官方余额查询模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
-        const baseUrl = providerCredentials.baseUrl ?? "";
-        const apiKey = providerCredentials.apiKey ?? "";
+        const baseUrl = isAliyunBalance
+          ? "https://business.aliyuncs.com"
+          : script.baseUrl?.trim() || providerCredentials.baseUrl || "";
+        const accessKeyId = isAliyunBalance
+          ? script.accessKeyId?.trim() || script.apiKey?.trim() || ""
+          : script.apiKey?.trim() || providerCredentials.apiKey || "";
+        const secretAccessKey = script.secretAccessKey?.trim() || undefined;
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const result = await subscriptionApi.getBalance(baseUrl, apiKey);
+        const result = await subscriptionApi.getBalance(
+          baseUrl,
+          accessKeyId,
+          secretAccessKey,
+        );
         if (result.success && result.data && result.data.length > 0) {
           const summary = result.data
-            .map((d) =>
-              formatUsageDataSummary(d, {
+            .map((d) => {
+              if (d.planName === "Alibaba Cloud") {
+                const cashAmount = d.remaining ?? 0;
+                return `${t("usage.availableCashAmount")} ${formatCompactNumber(cashAmount)}`;
+              }
+
+              return formatUsageDataSummary(d, {
                 invalid: t("usage.invalid"),
                 remaining: t("usage.remaining"),
                 used: t("usage.used"),
-              }),
-            )
+              });
+            })
             .join(", ");
           toast.success(`${t("usageScript.testSuccess")}${summary}`, {
             duration: 3000,
@@ -787,9 +839,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ...script,
           code: "",
           apiKey: undefined,
+          accessKeyId: isAliyunBalance ? script.accessKeyId : undefined,
           baseUrl: undefined,
           accessToken: undefined,
           userId: undefined,
+          secretAccessKey: isAliyunBalance ? script.secretAccessKey : undefined,
         });
       } else if (presetName === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         // 官方订阅额度查询不需要脚本，使用 CLI/OAuth 凭据
@@ -809,6 +863,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const shouldShowCredentialsConfig =
     selectedTemplate === TEMPLATE_TYPES.GENERAL ||
     selectedTemplate === TEMPLATE_TYPES.NEW_API ||
+    (selectedTemplate === TEMPLATE_TYPES.BALANCE && isAliyunBalance) ||
     (selectedTemplate === TEMPLATE_TYPES.TOKEN_PLAN &&
       script.codingPlanProvider === "zenmux");
 
@@ -1019,6 +1074,33 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                     </span>
                   ))}
                 </div>
+                {isAliyunBalance && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+                    <p className="text-sm text-amber-700 dark:text-amber-200">
+                      {t("usageScript.bailianAkSkHint", {
+                        defaultValue:
+                          "阿里云中国大陆地区的使用数据查询需要账号级 AccessKey ID / Secret（与推理 API 密钥不同）。可在阿里云控制台通过右上角账号菜单 →「AccessKey 管理」创建。",
+                      })}
+                    </p>
+                    <p className="mt-2 text-sm text-amber-700 dark:text-amber-200">
+                      {t("usageScript.bailianKeyConsoleLink", {
+                        defaultValue: "密钥创建地址：",
+                      })}{" "}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          settingsApi.openExternal(
+                            ALIBABA_CLOUD_KEY_CONSOLE_URL,
+                          )
+                        }
+                        className="inline-flex items-center gap-1 text-blue-400 dark:text-blue-500 hover:text-blue-500 dark:hover:text-blue-400 transition-colors break-all align-baseline underline-offset-2 hover:underline"
+                      >
+                        {ALIBABA_CLOUD_KEY_CONSOLE_URL}
+                        <ExternalLink size={12} className="shrink-0" />
+                      </button>
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1265,6 +1347,82 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                               className="border-white/10"
                             />
                             {script.apiKey && (
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
+                                aria-label={
+                                  showApiKey
+                                    ? t("apiKeyInput.hide")
+                                    : t("apiKeyInput.show")
+                                }
+                              >
+                                {showApiKey ? (
+                                  <EyeOff size={16} />
+                                ) : (
+                                  <Eye size={16} />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                  {selectedTemplate === TEMPLATE_TYPES.BALANCE &&
+                    isAliyunBalance && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-aliyun-balance-ak">
+                            {t("usageScript.accessKeyId", {
+                              defaultValue: "AccessKey ID",
+                            })}
+                          </Label>
+                          <Input
+                            id="usage-aliyun-balance-ak"
+                            type="text"
+                            value={script.accessKeyId || script.apiKey || ""}
+                            onChange={(e) =>
+                              setScript({
+                                ...script,
+                                accessKeyId: e.target.value,
+                                apiKey: undefined,
+                              })
+                            }
+                            placeholder="LTAI..."
+                            autoComplete="off"
+                            className="border-white/10"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="usage-aliyun-balance-sk">
+                            {t("usageScript.accessKeySecret", {
+                              defaultValue: "AccessKey Secret",
+                            })}
+                          </Label>
+                          <div className="relative">
+                            <Input
+                              id="usage-aliyun-balance-sk"
+                              type={showApiKey ? "text" : "password"}
+                              value={script.secretAccessKey || ""}
+                              onChange={(e) =>
+                                setScript({
+                                  ...script,
+                                  secretAccessKey: e.target.value,
+                                })
+                              }
+                              placeholder={t(
+                                "usageScript.accessKeySecretPlaceholder",
+                                {
+                                  defaultValue:
+                                    "Leave empty to keep the existing secret",
+                                },
+                              )}
+                              autoComplete="off"
+                              className="border-white/10"
+                            />
+                            {script.secretAccessKey && (
                               <button
                                 type="button"
                                 onClick={() => setShowApiKey(!showApiKey)}

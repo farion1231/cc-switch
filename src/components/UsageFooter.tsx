@@ -17,6 +17,16 @@ interface UsageFooterProps {
   inline?: boolean; // 是否内联显示（在按钮左侧）
 }
 
+const ALIYUN_BALANCE_PLAN_NAME = "Alibaba Cloud";
+
+function isAliyunBalanceUsage(data: UsageData): boolean {
+  return data.planName === ALIYUN_BALANCE_PLAN_NAME;
+}
+
+function formatCompactNumber(value: number): string {
+  return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+}
+
 /** UsageData → QuotaTier 转换（Token Plan 使用） */
 function toQuotaTier(data: UsageData): QuotaTier {
   const extra = data.extra;
@@ -139,6 +149,72 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
   // 无数据时不显示
   if (usageDataList.length === 0) return null;
+
+  const isAliyunBalance = usageDataList.some(isAliyunBalanceUsage);
+
+  if (isAliyunBalance) {
+    const aliyunUsage =
+      usageDataList.find(isAliyunBalanceUsage) ?? usageDataList[0];
+    const cashAmount = aliyunUsage.remaining ?? 0;
+
+    return (
+      <div
+        className={
+          inline
+            ? "flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0"
+            : "mt-3 rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm"
+        }
+      >
+        <div
+          className={
+            inline
+              ? "flex items-center gap-2 justify-end"
+              : "flex items-center justify-between mb-2"
+          }
+        >
+          <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+            {inline && <Clock size={10} />}
+            {lastQueriedAt
+              ? formatRelativeTime(lastQueriedAt, now, t)
+              : t("usage.never", { defaultValue: "从未更新" })}
+          </span>
+          <button
+            onClick={(e) => {
+              if (inline) e.stopPropagation();
+              refetch();
+            }}
+            disabled={loading}
+            className={
+              inline
+                ? "p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
+                : "p-1 rounded hover:bg-muted transition-colors disabled:opacity-50"
+            }
+            title={t("usage.refreshUsage")}
+          >
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
+
+        <div
+          className={
+            inline ? "flex items-center gap-2" : "flex items-center gap-2"
+          }
+        >
+          <span className="text-gray-500 dark:text-gray-400">
+            {t("usage.availableCashAmount")}
+          </span>
+          <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
+            {formatCompactNumber(cashAmount)}
+          </span>
+          {aliyunUsage.unit && (
+            <span className="text-gray-500 dark:text-gray-400">
+              {aliyunUsage.unit}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // ── Token Plan：订阅风格内联渲染（百分比徽章 + 倒计时） ──
   if (isTokenPlan && inline) {

@@ -29,6 +29,7 @@ export const subscriptionApi = {
   getBalance: (
     baseUrl: string,
     apiKey: string,
+    secretAccessKey?: string,
   ): Promise<import("@/types").UsageResult> =>
-    invoke("get_balance", { baseUrl, apiKey }),
+    invoke("get_balance", { baseUrl, apiKey, secretAccessKey }),
 };
