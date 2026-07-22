@@ -1903,6 +1903,40 @@ fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
     std::fs::canonicalize(preferred).ok()
 }
 
+/// npm on Windows emits multiple sibling launchers (`tool`, `tool.cmd`, `tool.exe`) for one
+/// global install. `canonicalize` dedup cannot merge them because they are distinct files.
+fn dedupe_same_directory_shell_siblings(installs: Vec<ToolInstallation>) -> Vec<ToolInstallation> {
+    use std::collections::HashMap;
+
+    let mut groups: HashMap<(std::path::PathBuf, std::ffi::OsString), ToolInstallation> =
+        HashMap::new();
+    for inst in installs {
+        let path = std::path::Path::new(&inst.path);
+        let key = (
+            path.parent()
+                .unwrap_or(std::path::Path::new(""))
+                .to_path_buf(),
+            path.file_stem().unwrap_or_default().to_os_string(),
+        );
+
+        match groups.get_mut(&key) {
+            None => {
+                groups.insert(key, inst);
+            }
+            Some(picked) => {
+                if (!picked.runnable && inst.runnable)
+                    || (picked.runnable == inst.runnable
+                        && !picked.is_path_default
+                        && inst.is_path_default)
+                {
+                    *picked = inst;
+                }
+            }
+        }
+    }
+    groups.into_values().collect()
+}
+
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
@@ -1983,6 +2017,8 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
             });
         }
     }
+
+    installs = dedupe_same_directory_shell_siblings(installs);
 
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
     installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
@@ -5434,6 +5470,68 @@ mod tests {
         let preferred = windows_runnable_sibling_for_extensionless_tool(&extensionless);
 
         assert_eq!(preferred.as_deref(), Some(cmd.as_path()));
+    }
+
+    #[test]
+    fn dedupe_same_directory_shell_siblings_prefers_runnable_entry() {
+        let dir = PathBuf::from("D:\\nvm\\nodejs");
+        let sh_script = ToolInstallation {
+            path: dir.join("claude").display().to_string(),
+            version: None,
+            runnable: false,
+            error: Some("not runnable".to_string()),
+            source: "system".to_string(),
+            is_path_default: false,
+            real: dir.join("claude"),
+        };
+        let cmd = ToolInstallation {
+            path: dir.join("claude.cmd").display().to_string(),
+            version: Some("2.1.190".to_string()),
+            runnable: true,
+            error: None,
+            source: "system".to_string(),
+            is_path_default: true,
+            real: dir.join("claude.cmd"),
+        };
+        let exe = ToolInstallation {
+            path: dir.join("claude.exe").display().to_string(),
+            version: Some("2.1.190".to_string()),
+            runnable: true,
+            error: None,
+            source: "system".to_string(),
+            is_path_default: false,
+            real: dir.join("claude.exe"),
+        };
+
+        let result = dedupe_same_directory_shell_siblings(vec![sh_script, cmd, exe]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            Path::new(&result[0].path)
+                .file_name()
+                .and_then(|n| n.to_str()),
+            Some("claude.cmd")
+        );
+        assert!(result[0].runnable);
+        assert!(result[0].is_path_default);
+    }
+
+    #[test]
+    fn dedupe_same_directory_shell_siblings_keeps_distinct_directories() {
+        let make = |dir: &str| ToolInstallation {
+            path: format!("{dir}\\claude.cmd"),
+            version: Some("1.0.0".to_string()),
+            runnable: true,
+            error: None,
+            source: "system".to_string(),
+            is_path_default: false,
+            real: PathBuf::from(format!("{dir}\\claude.cmd")),
+        };
+
+        let result = dedupe_same_directory_shell_siblings(vec![
+            make("D:\\nvm\\nodejs"),
+            make("C:\\Program Files\\nodejs"),
+        ]);
+        assert_eq!(result.len(), 2);
     }
 
     #[test]
