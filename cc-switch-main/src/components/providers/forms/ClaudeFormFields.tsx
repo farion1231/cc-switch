@@ -319,7 +319,6 @@ export function ClaudeFormFields({
   const [xaiOauthModels, setXaiOauthModels] = useState<FetchedModel[]>([]);
   const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
   const xaiOauthModelsRequestRef = useRef(0);
-  const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
 
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
