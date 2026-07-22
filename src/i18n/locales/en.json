@@ -1501,6 +1501,7 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
+      "grokbuild": "Grok Build",
       "opencode": "OpenCode"
     },
     "rawInputLabel": "Raw",
@@ -1511,7 +1512,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
       "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session"
+      "opencode_session": "OpenCode Session",
+      "grok_session": "Grok Build Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",

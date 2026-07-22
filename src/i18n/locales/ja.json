@@ -1501,7 +1501,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1511,7 +1512,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション"
+      "opencode_session": "OpenCode セッション",
+      "grok_session": "Grok Build セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
