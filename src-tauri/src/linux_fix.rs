@@ -16,7 +16,10 @@
 //! deeplink 唤起、single_instance 回调、托盘 show_main、lightweight
 //! 退出）都应在现有 `set_focus()` 之后追加一次调用。
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 use tauri::{PhysicalSize, WebviewWindow};
 
@@ -36,6 +39,80 @@ const RESIZE_GAP: Duration = Duration::from_millis(100);
 /// resize 消息队列。
 const RECONCILE_WAIT: Duration = Duration::from_millis(500);
 
+/// Resize events arrive in bursts while dragging a border or moving between
+/// monitors. Only repaint once after the burst settles.
+const RESIZE_REPAINT_WAIT: Duration = Duration::from_millis(180);
+
+static RESIZE_REPAINT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+const RESIZE_REPAINT_SCRIPT: &str = r#"
+(() => {
+  const body = document.body;
+  if (!body) return;
+
+  const previousTransform = body.style.transform;
+  const previousBackfaceVisibility = body.style.backfaceVisibility;
+
+  body.style.transform = previousTransform
+    ? `${previousTransform} translateZ(0)`
+    : "translateZ(0)";
+  body.style.backfaceVisibility = "hidden";
+  void body.offsetHeight;
+
+  window.dispatchEvent(new Event("resize"));
+
+  requestAnimationFrame(() => {
+    body.style.transform = previousTransform;
+    body.style.backfaceVisibility = previousBackfaceVisibility;
+    void body.offsetHeight;
+  });
+})();
+"#;
+
+fn queue_webview_repaint(window: &WebviewWindow) {
+    let _ = window.with_webview(|webview| {
+        use gtk::prelude::WidgetExt;
+
+        webview.inner().queue_draw();
+    });
+
+    if let Err(err) = window.eval(RESIZE_REPAINT_SCRIPT) {
+        log::debug!("Linux repaint: 前端重绘脚本执行失败: {err}");
+    }
+}
+
+fn active_gdk_backend_is_wayland_on_current_thread() -> Option<bool> {
+    use gtk::gdk::prelude::DisplayExtManual;
+
+    gtk::gdk::Display::default().map(|display| display.backend().is_wayland())
+}
+
+async fn active_gdk_backend_is_wayland(window: &WebviewWindow) -> Option<bool> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+
+    if let Err(err) = window.run_on_main_thread(move || {
+        let _ = sender.send(active_gdk_backend_is_wayland_on_current_thread());
+    }) {
+        log::debug!("Linux nudge: 无法在主线程查询 GDK backend: {err}");
+        return None;
+    }
+
+    match receiver.await {
+        Ok(value) => value,
+        Err(err) => {
+            log::debug!("Linux nudge: 主线程 GDK backend 查询被取消: {err}");
+            None
+        }
+    }
+}
+
+fn should_skip_pseudo_resize_for_backend(
+    active_gdk_is_wayland: Option<bool>,
+    has_wayland_display: bool,
+) -> bool {
+    active_gdk_is_wayland.unwrap_or(has_wayland_display)
+}
+
 /// 对主窗口执行 Linux 专用的「focus + surface 重激活」序列。
 ///
 /// 调用是 fire-and-forget：内部 spawn 一个异步任务在 ~250ms 后完成。
@@ -51,6 +128,19 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
         // 第二次 set_focus：此时 webview realize 已完成，在绝大多数
         // 发行版上这一次会真的生效，消除失效模式 A。
         let _ = window.set_focus();
+        queue_webview_repaint(&window);
+
+        let is_wayland = should_skip_pseudo_resize_for_backend(
+            active_gdk_backend_is_wayland(&window).await,
+            std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        );
+        let skip_pseudo_resize = is_wayland
+            || matches!(window.is_maximized(), Ok(true))
+            || matches!(window.is_fullscreen(), Ok(true));
+        if skip_pseudo_resize {
+            log::info!("Linux: 已对主窗口执行 focus + repaint，跳过 Wayland/最大化/全屏伪 resize");
+            return;
+        }
 
         // 伪 resize：读取当前 inner_size，先加 1px 再还原。这会触发
         // GTK 的 size-allocate → WebKitWebViewBase::size_allocate →
@@ -118,4 +208,48 @@ pub(crate) fn nudge_main_window(window: WebviewWindow) {
             }
         }
     });
+}
+
+/// Linux WebKitGTK can keep a stale/black backing surface after manual resize,
+/// monitor moves, or scale-factor changes. This is a lighter repaint than
+/// `nudge_main_window`: it does not call `set_size`, so it is safe to trigger
+/// from resize events without creating a resize loop.
+pub(crate) fn repaint_main_window_after_resize(window: WebviewWindow) {
+    let generation = RESIZE_REPAINT_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(RESIZE_REPAINT_WAIT).await;
+        if RESIZE_REPAINT_GENERATION.load(Ordering::Acquire) != generation {
+            return;
+        }
+
+        if matches!(window.is_visible(), Ok(false)) {
+            return;
+        }
+
+        let _ = window.set_focus();
+        queue_webview_repaint(&window);
+        log::debug!("Linux: 已请求 resize 后 WebView 重绘");
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_pseudo_resize_for_backend;
+
+    #[test]
+    fn active_gdk_x11_keeps_pseudo_resize_even_in_wayland_session() {
+        assert!(!should_skip_pseudo_resize_for_backend(Some(false), true));
+    }
+
+    #[test]
+    fn active_gdk_wayland_skips_pseudo_resize() {
+        assert!(should_skip_pseudo_resize_for_backend(Some(true), false));
+    }
+
+    #[test]
+    fn wayland_display_is_used_when_gdk_display_is_unavailable() {
+        assert!(should_skip_pseudo_resize_for_backend(None, true));
+        assert!(!should_skip_pseudo_resize_for_backend(None, false));
+    }
 }
