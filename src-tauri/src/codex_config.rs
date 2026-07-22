@@ -482,6 +482,7 @@ fn codex_catalog_model_entry(
     entry_obj.insert("service_tiers".to_string(), json!([]));
     entry_obj.insert("availability_nux".to_string(), Value::Null);
     entry_obj.insert("upgrade".to_string(), Value::Null);
+    normalize_codex_supported_reasoning_levels(entry_obj);
 
     // Image support is a model capability, not a tool-profile capability.
     // Trust hidden preset metadata first, then the confirmed text-only registry;
@@ -530,6 +531,44 @@ fn codex_catalog_model_entry(
     }
 
     entry
+}
+
+fn normalize_codex_supported_reasoning_levels(entry_obj: &mut serde_json::Map<String, Value>) {
+    let Some(levels) = entry_obj
+        .get("supported_reasoning_levels")
+        .and_then(|value| value.as_array())
+    else {
+        return;
+    };
+
+    let normalized: Vec<Value> = levels
+        .iter()
+        .filter_map(|level| {
+            if let Some(effort) = level
+                .as_str()
+                .map(str::trim)
+                .filter(|effort| !effort.is_empty())
+            {
+                Some(json!({
+                    "effort": effort,
+                    "description": format!("{effort} reasoning effort"),
+                }))
+            } else if level
+                .get("effort")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .is_some_and(|effort| !effort.is_empty())
+            {
+                Some(level.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !normalized.is_empty() {
+        entry_obj.insert("supported_reasoning_levels".to_string(), json!(normalized));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2801,6 +2840,7 @@ base_url = "https://production.api/v1"
             "slug": "gpt-5.5",
             "display_name": "GPT-5.5",
             "description": "Frontier model",
+            "supported_reasoning_levels": ["low", "medium", "high"],
             "base_instructions": "gpt-5.5 base instructions",
             "model_messages": {
                 "instructions_template": "gpt-5.5 instructions template",
@@ -2886,6 +2926,15 @@ base_url = "https://production.api/v1"
             models[0].get("additional_speed_tiers"),
             Some(&json!([])),
             "generated third-party entries should not inherit OpenAI speed tiers"
+        );
+        assert_eq!(
+            models[0].get("supported_reasoning_levels"),
+            Some(&json!([
+                { "effort": "low", "description": "low reasoning effort" },
+                { "effort": "medium", "description": "medium reasoning effort" },
+                { "effort": "high", "description": "high reasoning effort" }
+            ])),
+            "generated third-party entries should use Codex's object reasoning level schema"
         );
         assert!(
             models[0]
