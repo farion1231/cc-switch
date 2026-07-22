@@ -7,8 +7,51 @@ use std::str::FromStr;
 use crate::error::AppError;
 use crate::proxy::types::*;
 use rust_decimal::Decimal;
+use serde_json::Value;
 
 use super::super::{lock_conn, Database};
+
+/// 脱敏 Provider 配置中的敏感字段 (API Key / Token)
+/// 替换为仅保留前缀的占位符，防止 proxy_live_backup 泄露完整密钥 (CWE-312)
+fn redact_sensitive_fields(config_json: &str) -> String {
+    let sensitive_keys = [
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+    ];
+
+    let mut config: Value = match serde_json::from_str(config_json) {
+        Ok(v) => v,
+        Err(_) => return config_json.to_string(),
+    };
+
+    // 脱敏 env 块中的 Key
+    if let Some(env) = config.get_mut("env").and_then(|e| e.as_object_mut()) {
+        for key in &sensitive_keys {
+            if let Some(val) = env.get(*key).and_then(|v| v.as_str()) {
+                if val.len() > 12 {
+                    env[*key] =
+                        Value::String(format!("REDACTED_{}", &val[..8]));
+                }
+            }
+        }
+    }
+
+    // 脱敏 auth 块中的 Key
+    if let Some(auth) = config.get_mut("auth").and_then(|a| a.as_object_mut()) {
+        for key in &sensitive_keys {
+            if let Some(val) = auth.get(*key).and_then(|v| v.as_str()) {
+                if val.len() > 12 {
+                    auth[*key] =
+                        Value::String(format!("REDACTED_{}", &val[..8]));
+                }
+            }
+        }
+    }
+
+    serde_json::to_string(&config).unwrap_or_else(|_| config_json.to_string())
+}
 
 pub(crate) const PRICING_SOURCE_RESPONSE: &str = "response";
 pub(crate) const PRICING_SOURCE_REQUEST: &str = "request";
@@ -775,7 +818,7 @@ impl Database {
 
     // ==================== Live Backup ====================
 
-    /// 保存 Live 配置备份
+    /// 保存 Live 配置备份（敏感字段已脱敏）
     pub async fn save_live_backup(
         &self,
         app_type: &str,
@@ -784,14 +827,17 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let now = chrono::Utc::now().to_rfc3339();
 
+        // 脱敏 API Key 后再存入备份 (CWE-312)
+        let redacted_config = redact_sensitive_fields(config_json);
+
         conn.execute(
             "INSERT OR REPLACE INTO proxy_live_backup (app_type, original_config, backed_up_at)
              VALUES (?1, ?2, ?3)",
-            rusqlite::params![app_type, config_json, now],
+            rusqlite::params![app_type, redacted_config, now],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
-        log::info!("已备份 {app_type} Live 配置");
+        log::info!("已备份 {app_type} Live 配置 (Key 已脱敏)");
         Ok(())
     }
 

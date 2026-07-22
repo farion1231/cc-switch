@@ -11,6 +11,10 @@ use rusqlite::types::ValueRef;
 use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::fs::Permissions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use tempfile::NamedTempFile;
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
@@ -328,6 +332,10 @@ impl Database {
                 .step(-1)
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
+
+        // 设置备份文件权限为 600，防止 API Key 通过备份文件被非 owner 读取 (CWE-732)
+        #[cfg(unix)]
+        let _ = std::fs::set_permissions(&backup_path, Permissions::from_mode(0o600));
 
         Self::cleanup_db_backups(&backup_dir)?;
         Ok(Some(backup_path))
