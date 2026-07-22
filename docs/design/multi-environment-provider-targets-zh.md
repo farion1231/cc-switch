@@ -1,6 +1,6 @@
 # 多环境 Provider 管理设计
 
-状态：已确认设计，尚未实施
+状态：首个可用竖切已实现；后续阶段仍按本文演进
 
 首个交付范围：Windows 版 CC Switch 管理 Windows Codex 与一个或多个 WSL2 Codex 环境
 
@@ -21,12 +21,11 @@
 
 ### 2.1 第一版目标
 
-- Windows 版 CC Switch 自动发现并管理 Windows 与多个 WSL2 用户环境。
-- Provider 定义共享，但每个 Managed Target 独立记录当前 Provider 和 Target Override。
-- 用户可以只切换一个环境，也可以显式多选环境进行事务式联动切换。
+- Windows 版 CC Switch 自动发现并管理 Windows 与 WSL2 发行版的默认用户环境。
+- Provider 定义共享，但每个 Managed Target 独立记录当前 Provider。
+- 用户每次只切换明确选中的一个环境。
 - Provider 切换只投影 Managed Fields，Local Fields 原样保留。
 - Windows 与 WSL 的官方认证、路径和会话历史互相隔离。
-- CC Switch 会话管理器只读聚合所有环境的会话，并依据 Session Provenance 辅助恢复。
 - 现有单目录用户无损迁移为一个 Managed Target，升级过程不重写 live 配置。
 
 ### 2.2 第一版非目标
@@ -35,6 +34,8 @@
 - 不承诺跨 Provider 无损续聊；`encrypted_content` 可能只能由原后端解密。
 - 不同步 Windows/WSL 的完整配置目录。
 - 不对多环境同步 MCP、Skills 或 Prompts。
+- 不实现多 Target 一次联动切换、Target Override 编辑或 Drift 处理。
+- 不实现跨环境会话聚合 UI、Session Provenance 或辅助恢复。
 - 不支持 WSL 代理接管、热切换或自动故障转移。
 - 不实现 SSH、Dev Container 或远程主机，但接口必须允许后续增加 Adapter。
 - 不由 WSL/Linux 版 CC Switch 反向管理 Windows。
