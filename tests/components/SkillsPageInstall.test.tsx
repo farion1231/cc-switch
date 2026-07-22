@@ -336,4 +336,22 @@ describe("SkillsPage - skills.sh install (regression)", () => {
       getSkillsPageHeaderActions("skillssh").map((action) => action.key),
     ).toEqual(["manage-repos"]);
   });
+
+  it("renders large cached repository results in batches", async () => {
+    skillReposMock = [makeSkillRepo()];
+    discoverableSkillsMock = Array.from({ length: 60 }, (_, index) =>
+      makeDiscoverableSkill({
+        key: `skill-${index}:owner-a:repo-a`,
+        name: `Skill ${index}`,
+        directory: `skill-${index}`,
+      }),
+    );
+
+    render(<SkillsPage initialApp="claude" />);
+
+    expect(screen.getAllByText(/^Skill \d+$/)).toHaveLength(48);
+    await waitFor(() =>
+      expect(screen.getAllByText(/^Skill \d+$/)).toHaveLength(60),
+    );
+  });
 });

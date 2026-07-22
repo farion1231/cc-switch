@@ -4,6 +4,7 @@ import {
   useQueryClient,
   keepPreviousData,
 } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   skillsApi,
   type SkillBackupEntry,
@@ -54,9 +55,43 @@ export function useDeleteSkillBackup() {
  * 实现首次进入使用缓存，只有刷新时才重新获取
  */
 export function useDiscoverableSkills() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let cancelled = false;
+    skillsApi
+      .loadCachedDiscoverable()
+      .then((skills) => {
+        if (
+          !cancelled &&
+          skills.length > 0 &&
+          !queryClient.getQueryData(["skills", "discoverable"])
+        ) {
+          queryClient.setQueryData(["skills", "discoverable"], skills);
+        }
+      })
+      .catch((error) =>
+        console.warn("Failed to load cached discoverable skills", error),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient]);
+
   return useQuery({
     queryKey: ["skills", "discoverable"],
-    queryFn: () => skillsApi.discoverAvailable(),
+    queryFn: async () => {
+      const skills = await skillsApi.discoverAvailable();
+      const repos = await skillsApi.getRepos();
+      const enabledRepos = new Set(
+        repos
+          .filter((repo) => repo.enabled)
+          .map((repo) => `${repo.owner}/${repo.name}`.toLowerCase()),
+      );
+      return skills.filter((skill) =>
+        enabledRepos.has(`${skill.repoOwner}/${skill.repoName}`.toLowerCase()),
+      );
+    },
     staleTime: Infinity,
     placeholderData: keepPreviousData,
   });
