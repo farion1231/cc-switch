@@ -196,8 +196,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       ) {
         toast.error(
           t("notifications.providerRevisionConflict", {
-            defaultValue:
-              "供应商已被其他操作更新，请重新加载列表后再保存",
+            defaultValue: "供应商已被其他操作更新，请重新加载列表后再保存",
           }),
         );
         return;

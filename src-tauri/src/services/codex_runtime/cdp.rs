@@ -96,9 +96,8 @@ pub async fn inject_script(cdp_port: u16, script: &str) -> Result<(), AppError> 
 /// Err when CDP/target is unavailable.
 pub async fn probe_csp_marker(cdp_port: u16) -> Result<bool, AppError> {
     let targets = list_targets(cdp_port).await?;
-    let target = pick_codex_target(&targets).ok_or_else(|| {
-        AppError::Config("未找到可探测的 Codex page target".into())
-    })?;
+    let target = pick_codex_target(&targets)
+        .ok_or_else(|| AppError::Config("未找到可探测的 Codex page target".into()))?;
     let ws_url = target
         .web_socket_debugger_url
         .clone()
@@ -274,8 +273,6 @@ async fn inject_via_websocket(ws_url: &str, script: &str) -> Result<(), AppError
     }
 }
 
-
-
 /// True when a CDP Runtime.evaluate-style response is usable (no protocol error
 /// and no JS exceptionDetails). Used so we never stamp the CSP marker after a
 /// failed product script.
@@ -290,10 +287,12 @@ fn cdp_eval_response_ok(v: &Value) -> Result<(), String> {
 }
 
 async fn wait_for_cdp_id(
-    ws: &mut (
-        impl StreamExt<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
-            + Unpin
-    ),
+    ws: &mut (impl StreamExt<
+        Item = Result<
+            tokio_tungstenite::tungstenite::Message,
+            tokio_tungstenite::tungstenite::Error,
+        >,
+    > + Unpin),
     expect_id: i64,
     secs: u64,
 ) -> Result<(), AppError> {
@@ -307,9 +306,7 @@ async fn wait_for_cdp_id(
                     .map_err(|e| AppError::Config(format!("cdp json: {e}")))?;
                 if v.get("id").and_then(|x| x.as_i64()) == Some(expect_id) {
                     if let Err(msg) = cdp_eval_response_ok(&v) {
-                        return Err(AppError::Config(format!(
-                            "cdp id {expect_id}: {msg}"
-                        )));
+                        return Err(AppError::Config(format!("cdp id {expect_id}: {msg}")));
                     }
                     return Ok(());
                 }
@@ -324,10 +321,12 @@ async fn wait_for_cdp_id(
 }
 
 async fn wait_for_cdp_string(
-    ws: &mut (
-        impl StreamExt<Item = Result<tokio_tungstenite::tungstenite::Message, tokio_tungstenite::tungstenite::Error>>
-            + Unpin
-    ),
+    ws: &mut (impl StreamExt<
+        Item = Result<
+            tokio_tungstenite::tungstenite::Message,
+            tokio_tungstenite::tungstenite::Error,
+        >,
+    > + Unpin),
     expect_id: i64,
     secs: u64,
 ) -> Result<String, AppError> {
@@ -418,7 +417,8 @@ mod tests {
 
     #[test]
     fn cdp_eval_accepts_clean_result() {
-        let v = serde_json::json!({"id": 10, "result": {"result": {"type": "string", "value": "ok"}}});
+        let v =
+            serde_json::json!({"id": 10, "result": {"result": {"type": "string", "value": "ok"}}});
         assert!(cdp_eval_response_ok(&v).is_ok());
     }
 

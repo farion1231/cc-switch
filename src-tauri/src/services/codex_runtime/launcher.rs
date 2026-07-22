@@ -191,9 +191,7 @@ pub async fn launch_enhanced_codex(
         if let Some(proc) = running.first() {
             // Prefer CDP port parsed from process cmdline (Store Codex uses 9229);
             // fall back to scanning DEFAULT_CDP_PORT..+20.
-            if let Some(port) =
-                discovery::resolve_cdp_port(&running, DEFAULT_CDP_PORT, 20).await
-            {
+            if let Some(port) = discovery::resolve_cdp_port(&running, DEFAULT_CDP_PORT, 20).await {
                 let pid = running
                     .iter()
                     .find(|p| p.has_cdp)
@@ -379,8 +377,6 @@ pub async fn reinject_enhancements(
     attach_and_inject(handle, snap.pid, cdp_port).await
 }
 
-
-
 /// Pure decision for one nav-watcher poll tick.
 /// Returns whether to attempt script-only reinject, plus next counters.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -457,9 +453,7 @@ fn start_nav_watcher(handle: &CodexRuntimeHandle, cdp_port: u16) {
             }
             let Some(bundle) = bundle else { continue };
 
-            let probe = cdp::probe_csp_marker(cdp_port)
-                .await
-                .map_err(|_| ());
+            let probe = cdp::probe_csp_marker(cdp_port).await.map_err(|_| ());
             // Decision without side effects first; only inject when tick.reinject.
             // On inject failure keep previous counters so the next poll can retry.
             let tentative = nav_watcher_tick(consecutive_missing, cooldown, probe);
@@ -673,7 +667,10 @@ mod tests {
         let marked = cdp::probe_csp_marker(cdp_port)
             .await
             .unwrap_or_else(|e| panic!("probe_csp_marker failed: {e}"));
-        assert!(marked, "CSP marker should be true after launch_enhanced_codex");
+        assert!(
+            marked,
+            "CSP marker should be true after launch_enhanced_codex"
+        );
 
         // Cleanup bridge + nav watcher so the test process exits cleanly.
         let (bridge, stop) = {

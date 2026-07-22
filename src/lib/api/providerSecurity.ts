@@ -30,10 +30,7 @@ export const providerSecurityApi = {
     });
   },
 
-  async recover(
-    appId: AppId,
-    mode: RecoveryMode,
-  ): Promise<RecoveryResult> {
+  async recover(appId: AppId, mode: RecoveryMode): Promise<RecoveryResult> {
     return await invoke("recover_app_configuration", {
       app: appId,
       mode,

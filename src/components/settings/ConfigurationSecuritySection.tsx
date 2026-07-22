@@ -66,7 +66,8 @@ export function ConfigurationSecuritySection() {
         <div className="space-y-1">
           <h3 className="text-sm font-medium">配置安全与恢复</h3>
           <p className="text-xs text-muted-foreground">
-            当 Live 投影失败或凭据来源不一致时，可按应用维度执行恢复。恢复不会自动合并字段；请选择单向来源。
+            当 Live
+            投影失败或凭据来源不一致时，可按应用维度执行恢复。恢复不会自动合并字段；请选择单向来源。
           </p>
         </div>
       </div>

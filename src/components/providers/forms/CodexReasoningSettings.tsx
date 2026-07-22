@@ -92,10 +92,7 @@ export function CodexReasoningSettings({
 
           <div className="flex items-center justify-between gap-3">
             <div>
-              <Label
-                htmlFor="codex-correct-model-identity"
-                className="text-sm"
-              >
+              <Label htmlFor="codex-correct-model-identity" className="text-sm">
                 {t("codexConfig.correctModelIdentity", {
                   defaultValue: "纠正模型身份表述",
                 })}

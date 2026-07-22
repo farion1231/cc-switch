@@ -1,7 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useCodexRadarQuery, useRefreshCodexRadar } from "@/lib/query/codexWorkbench";
+import {
+  useCodexRadarQuery,
+  useRefreshCodexRadar,
+} from "@/lib/query/codexWorkbench";
 
 export function RadarTab() {
   const { t } = useTranslation();
@@ -91,11 +94,11 @@ export function RadarTab() {
       {models.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {models.map((m) => (
-            <div
-              key={m.model}
-              className="rounded-md border p-3 space-y-1"
-            >
-              <div className="text-sm font-medium truncate" title={m.label || m.model}>
+            <div key={m.model} className="rounded-md border p-3 space-y-1">
+              <div
+                className="text-sm font-medium truncate"
+                title={m.label || m.model}
+              >
                 {m.label || m.model}
               </div>
               <div className="text-2xl font-semibold tabular-nums">

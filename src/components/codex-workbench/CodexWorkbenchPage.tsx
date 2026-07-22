@@ -107,12 +107,11 @@ export function CodexWorkbenchPage() {
         </div>
       )}
 
-      <Tabs
-        defaultValue="overview"
-        className="flex min-h-0 flex-1 flex-col"
-      >
+      <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
         <TabsList className="w-fit">
-          <TabsTrigger value="overview">{t("codexWorkbench.tabs.overview", { defaultValue: "总览" })}</TabsTrigger>
+          <TabsTrigger value="overview">
+            {t("codexWorkbench.tabs.overview", { defaultValue: "总览" })}
+          </TabsTrigger>
           <TabsTrigger value="enhancements">
             {t("codexWorkbench.tabs.enhancements", {
               defaultValue: "增强",

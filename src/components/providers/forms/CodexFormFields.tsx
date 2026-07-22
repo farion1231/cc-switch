@@ -1011,20 +1011,19 @@ export function CodexFormFields({
                   onHeadersJsonChange={onLocalProxyHeadersOverrideChange}
                   onBodyJsonChange={onLocalProxyBodyOverrideChange}
                 />
-              
 
-          {onCodexSystemPromptChange &&
-            onCodexReasoningContinuationChange &&
-            codexSystemPrompt &&
-            codexReasoningContinuation && (
-              <CodexReasoningSettings
-                systemPrompt={codexSystemPrompt}
-                onSystemPromptChange={onCodexSystemPromptChange}
-                continuation={codexReasoningContinuation}
-                onContinuationChange={onCodexReasoningContinuationChange}
-              />
-            )}
-</div>
+                {onCodexSystemPromptChange &&
+                  onCodexReasoningContinuationChange &&
+                  codexSystemPrompt &&
+                  codexReasoningContinuation && (
+                    <CodexReasoningSettings
+                      systemPrompt={codexSystemPrompt}
+                      onSystemPromptChange={onCodexSystemPromptChange}
+                      continuation={codexReasoningContinuation}
+                      onContinuationChange={onCodexReasoningContinuationChange}
+                    />
+                  )}
+              </div>
             </div>
           </CollapsibleContent>
         </Collapsible>

@@ -71,18 +71,41 @@ export function ScriptsTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => void refreshMarket.mutate()} disabled={refreshMarket.isPending}>
-          {t("codexWorkbench.scripts.refreshMarket", { defaultValue: "刷新市场" })}
+        <Button
+          size="sm"
+          onClick={() => void refreshMarket.mutate()}
+          disabled={refreshMarket.isPending}
+        >
+          {t("codexWorkbench.scripts.refreshMarket", {
+            defaultValue: "刷新市场",
+          })}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void onImport()} disabled={importScript.isPending}>
-          {t("codexWorkbench.scripts.importLocal", { defaultValue: "导入本地脚本" })}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void onImport()}
+          disabled={importScript.isPending}
+        >
+          {t("codexWorkbench.scripts.importLocal", {
+            defaultValue: "导入本地脚本",
+          })}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void onOpenFolder()} disabled={openScriptsDir.isPending}>
-          {t("codexWorkbench.scripts.openFolder", { defaultValue: "打开脚本目录" })}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void onOpenFolder()}
+          disabled={openScriptsDir.isPending}
+        >
+          {t("codexWorkbench.scripts.openFolder", {
+            defaultValue: "打开脚本目录",
+          })}
         </Button>
       </div>
 
-      {(scriptsQ.error || marketQ.error || refreshMarket.error || installMarket.error) && (
+      {(scriptsQ.error ||
+        marketQ.error ||
+        refreshMarket.error ||
+        installMarket.error) && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {String(
             (scriptsQ.error as Error)?.message ||
@@ -96,11 +119,15 @@ export function ScriptsTab() {
 
       <section className="space-y-2">
         <h3 className="text-sm font-medium">
-          {t("codexWorkbench.scripts.installed", { defaultValue: "已安装脚本" })}
+          {t("codexWorkbench.scripts.installed", {
+            defaultValue: "已安装脚本",
+          })}
         </h3>
         {scripts.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {t("codexWorkbench.scripts.empty", { defaultValue: "暂无本地脚本" })}
+            {t("codexWorkbench.scripts.empty", {
+              defaultValue: "暂无本地脚本",
+            })}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -114,10 +141,16 @@ export function ScriptsTab() {
                     <span className="font-medium">{s.name}</span>
                     <Badge variant="outline">{s.source}</Badge>
                     {stateBadge(s.enabled ? s.runtimeState : "disabled")}
-                    {s.version && <span className="text-xs text-muted-foreground">v{s.version}</span>}
+                    {s.version && (
+                      <span className="text-xs text-muted-foreground">
+                        v{s.version}
+                      </span>
+                    )}
                   </div>
                   {s.runtimeError && (
-                    <p className="mt-1 text-xs text-destructive">{s.runtimeError}</p>
+                    <p className="mt-1 text-xs text-destructive">
+                      {s.runtimeError}
+                    </p>
                   )}
                 </div>
                 <Button
@@ -125,12 +158,19 @@ export function ScriptsTab() {
                   variant="outline"
                   disabled={setEnabled.isPending}
                   onClick={() =>
-                    void setEnabled.mutateAsync({ key: s.key, enabled: !s.enabled })
+                    void setEnabled.mutateAsync({
+                      key: s.key,
+                      enabled: !s.enabled,
+                    })
                   }
                 >
                   {s.enabled
-                    ? t("codexWorkbench.scripts.disable", { defaultValue: "禁用" })
-                    : t("codexWorkbench.scripts.enable", { defaultValue: "启用" })}
+                    ? t("codexWorkbench.scripts.disable", {
+                        defaultValue: "禁用",
+                      })
+                    : t("codexWorkbench.scripts.enable", {
+                        defaultValue: "启用",
+                      })}
                 </Button>
                 <Button
                   size="sm"
@@ -168,11 +208,17 @@ export function ScriptsTab() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">{m.name}</span>
-                      <span className="text-xs text-muted-foreground">v{m.version}</span>
-                      {installed && <Badge variant="secondary">installed</Badge>}
+                      <span className="text-xs text-muted-foreground">
+                        v{m.version}
+                      </span>
+                      {installed && (
+                        <Badge variant="secondary">installed</Badge>
+                      )}
                     </div>
                     {m.description && (
-                      <p className="mt-1 text-xs text-muted-foreground">{m.description}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {m.description}
+                      </p>
                     )}
                   </div>
                   <Button
@@ -186,8 +232,12 @@ export function ScriptsTab() {
                     }
                   >
                     {installed
-                      ? t("codexWorkbench.scripts.update", { defaultValue: "更新" })
-                      : t("codexWorkbench.scripts.install", { defaultValue: "安装" })}
+                      ? t("codexWorkbench.scripts.update", {
+                          defaultValue: "更新",
+                        })
+                      : t("codexWorkbench.scripts.install", {
+                          defaultValue: "安装",
+                        })}
                   </Button>
                 </li>
               );

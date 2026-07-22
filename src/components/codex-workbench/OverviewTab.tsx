@@ -92,7 +92,9 @@ export function OverviewTab() {
         </div>
         <p className="text-sm">
           <span className="text-muted-foreground">
-            {t("codexWorkbench.overview.provider", { defaultValue: "Provider" })}
+            {t("codexWorkbench.overview.provider", {
+              defaultValue: "Provider",
+            })}
             :{" "}
           </span>
           <span className="font-medium font-mono">{providerName}</span>
@@ -123,7 +125,9 @@ export function OverviewTab() {
           {enhancements?.reasoningToken != null && (
             <li>
               reasoning token:{" "}
-              <Badge variant={enhancements.reasoningToken ? "default" : "outline"}>
+              <Badge
+                variant={enhancements.reasoningToken ? "default" : "outline"}
+              >
                 {enhancements.reasoningToken ? "on" : "off"}
               </Badge>
             </li>

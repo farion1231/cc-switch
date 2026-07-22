@@ -45,10 +45,7 @@ pub fn discover_codex_executable() -> Result<PathBuf, AppError> {
             return Ok(path);
         }
         // Last resort: running process path (if Codex is already open)
-        if let Some(path) = find_running_codex()
-            .into_iter()
-            .find_map(|p| p.exe_path)
-        {
+        if let Some(path) = find_running_codex().into_iter().find_map(|p| p.exe_path) {
             return Ok(path);
         }
         Err(AppError::Config(
@@ -194,10 +191,7 @@ pub fn parse_cdp_port_from_cmdline(cmdline: &str) -> Option<u16> {
     } else {
         return None;
     };
-    let num: String = digits
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let num: String = digits.chars().take_while(|c| c.is_ascii_digit()).collect();
     num.parse::<u16>().ok().filter(|p| *p > 0)
 }
 
@@ -333,7 +327,11 @@ pub async fn discover_open_cdp_port(start: u16, count: u16) -> Option<u16> {
 }
 
 /// Prefer process-reported CDP port when present; else scan the default range.
-pub async fn resolve_cdp_port(procs: &[CodexProcessInfo], scan_start: u16, scan_count: u16) -> Option<u16> {
+pub async fn resolve_cdp_port(
+    procs: &[CodexProcessInfo],
+    scan_start: u16,
+    scan_count: u16,
+) -> Option<u16> {
     if let Some(port) = procs.iter().find_map(|p| p.cdp_port) {
         if probe_cdp_port(port).await {
             return Some(port);

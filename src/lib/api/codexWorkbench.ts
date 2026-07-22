@@ -31,8 +31,7 @@ export const codexWorkbenchApi = {
   launchEnhanced: () =>
     invoke<LaunchEnhancedCodexResult>("launch_enhanced_codex"),
 
-  reinject: () =>
-    invoke<CodexWorkbenchStatus>("reinject_codex_enhancements"),
+  reinject: () => invoke<CodexWorkbenchStatus>("reinject_codex_enhancements"),
 
   listScripts: () => invoke<UserScriptInfo[]>("list_codex_user_scripts"),
 
@@ -50,8 +49,7 @@ export const codexWorkbenchApi = {
 
   openScriptsDir: () => invoke<void>("open_codex_scripts_dir"),
 
-  refreshMarket: () =>
-    invoke<MarketIndex>("refresh_codex_script_market"),
+  refreshMarket: () => invoke<MarketIndex>("refresh_codex_script_market"),
 
   getMarketCache: () =>
     invoke<MarketIndex | null>("get_codex_script_market_cache"),
@@ -70,8 +68,7 @@ export const codexWorkbenchApi = {
   initializePluginMarketplace: () =>
     invoke<MarketplaceResult>("initialize_codex_plugin_marketplace"),
 
-  listPluginCaches: () =>
-    invoke<PluginCacheInfo[]>("list_codex_plugin_caches"),
+  listPluginCaches: () => invoke<PluginCacheInfo[]>("list_codex_plugin_caches"),
 
   refreshPluginCache: (pluginId: string) =>
     invoke<PluginCacheInfo>("refresh_codex_plugin_cache", { pluginId }),

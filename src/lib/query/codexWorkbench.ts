@@ -137,13 +137,8 @@ export function useDeleteCodexUserScript() {
 export function useImportCodexUserScript() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      sourcePath,
-      key,
-    }: {
-      sourcePath: string;
-      key?: string;
-    }) => codexWorkbenchApi.importScript(sourcePath, key),
+    mutationFn: ({ sourcePath, key }: { sourcePath: string; key?: string }) =>
+      codexWorkbenchApi.importScript(sourcePath, key),
     onSuccess: async () => {
       await afterScriptMutation(qc);
     },
@@ -185,8 +180,12 @@ export function useInitializeCodexPluginMarketplace() {
   return useMutation({
     mutationFn: () => codexWorkbenchApi.initializePluginMarketplace(),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginMarket() });
-      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginCaches() });
+      await qc.invalidateQueries({
+        queryKey: codexWorkbenchKeys.pluginMarket(),
+      });
+      await qc.invalidateQueries({
+        queryKey: codexWorkbenchKeys.pluginCaches(),
+      });
       await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginHome() });
     },
   });
@@ -198,7 +197,9 @@ export function useRefreshCodexPluginCache() {
     mutationFn: (pluginId: string) =>
       codexWorkbenchApi.refreshPluginCache(pluginId),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: codexWorkbenchKeys.pluginCaches() });
+      await qc.invalidateQueries({
+        queryKey: codexWorkbenchKeys.pluginCaches(),
+      });
     },
   });
 }
@@ -221,4 +222,3 @@ export function useRefreshCodexRadar() {
     },
   });
 }
-

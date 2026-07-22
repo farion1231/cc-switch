@@ -129,4 +129,3 @@ export interface RadarResult {
   fromCache: boolean;
   error?: string | null;
 }
-

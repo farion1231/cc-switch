@@ -84,11 +84,11 @@ pub async fn start_bridge(instance_id: &str) -> Result<BridgeHandle, AppError> {
                         // CORS preflight for page fetch from app:// Codex.
                         if first.starts_with("OPTIONS ") {
                             let resp = "HTTP/1.1 204 No Content\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Access-Control-Allow-Headers: Authorization, Content-Type\r\n\
-Access-Control-Allow-Methods: GET, OPTIONS\r\n\
-Content-Length: 0\r\n\
-Connection: close\r\n\r\n";
+            Access-Control-Allow-Origin: *\r\n\
+            Access-Control-Allow-Headers: Authorization, Content-Type\r\n\
+            Access-Control-Allow-Methods: GET, OPTIONS\r\n\
+            Content-Length: 0\r\n\
+            Connection: close\r\n\r\n";
                             let _ = socket.write_all(resp.as_bytes()).await;
                             return;
                         }

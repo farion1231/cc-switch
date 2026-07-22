@@ -187,9 +187,7 @@ export function RequestDetailPanel({
                 <dt className="text-muted-foreground">
                   {t("usage.reasoning", "推理")}
                 </dt>
-                <dd className="font-mono">
-                  {formatReasoning(request)}
-                </dd>
+                <dd className="font-mono">{formatReasoning(request)}</dd>
               </div>
               {(request.reasoningSource ||
                 request.continuationStatus ||
@@ -199,7 +197,9 @@ export function RequestDetailPanel({
                   {request.reasoningSource && (
                     <div>
                       {t("usage.reasoningSource", "推理来源")}:{" "}
-                      <span className="font-mono">{request.reasoningSource}</span>
+                      <span className="font-mono">
+                        {request.reasoningSource}
+                      </span>
                     </div>
                   )}
                   {request.continuationStatus &&
@@ -227,7 +227,8 @@ export function RequestDetailPanel({
                   )}
                   {request.turnId && (
                     <div>
-                      turn_id: <span className="font-mono">{request.turnId}</span>
+                      turn_id:{" "}
+                      <span className="font-mono">{request.turnId}</span>
                     </div>
                   )}
                   {request.promptReplaced && (
@@ -239,7 +240,9 @@ export function RequestDetailPanel({
                   {request.promptFingerprint && (
                     <div>
                       fingerprint:{" "}
-                      <span className="font-mono">{request.promptFingerprint}</span>
+                      <span className="font-mono">
+                        {request.promptFingerprint}
+                      </span>
                     </div>
                   )}
                 </div>
