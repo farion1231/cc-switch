@@ -6,6 +6,17 @@ use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode};
 
+use crate::codex_config::CodexTargetContext;
+
+/// Read-only access to sessions belonging to an explicit managed environment.
+pub struct SessionCatalog;
+
+impl SessionCatalog {
+    pub fn scan_target(target: &CodexTargetContext) -> Vec<SessionMeta> {
+        codex::scan_sessions_for_target(target)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {

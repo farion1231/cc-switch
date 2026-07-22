@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
@@ -334,6 +335,100 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub codex_config_dir: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TargetKind {
+    LocalWindows,
+    Wsl { distro: String, user: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigLocation {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetOverride {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ManagementState {
+    Managed,
+    Unmanaged,
+    Offline,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedTarget {
+    pub id: String,
+    pub app: AppType,
+    pub name: String,
+    pub kind: TargetKind,
+    pub config_location: ConfigLocation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_id: Option<String>,
+    pub management_state: ManagementState,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provider_overrides: BTreeMap<String, TargetOverride>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_viewed_at: Option<i64>,
+}
+
+impl ManagedTarget {
+    fn config_identity(&self) -> String {
+        let mut path = self.config_location.path.trim().replace('\\', "/");
+        while path.len() > 1 && path.ends_with('/') {
+            path.pop();
+        }
+
+        match &self.kind {
+            TargetKind::LocalWindows => format!("windows:{}", path.to_ascii_lowercase()),
+            TargetKind::Wsl { distro, .. } => {
+                format!("wsl:{}:{path}", distro.trim().to_ascii_lowercase())
+            }
+        }
+    }
+}
+
+fn legacy_codex_target_kind_name_and_path(path: &str) -> (TargetKind, String, String) {
+    let normalized = path.trim().replace('\\', "/");
+    let wsl_path = normalized
+        .strip_prefix("//wsl$/")
+        .or_else(|| normalized.strip_prefix("//wsl.localhost/"));
+
+    if let Some(wsl_path) = wsl_path {
+        let mut parts = wsl_path.split('/').filter(|part| !part.is_empty());
+        if let Some(distro) = parts.next() {
+            let remainder = parts.collect::<Vec<_>>();
+            let user = match remainder.as_slice() {
+                ["home", user, ..] => (*user).to_string(),
+                ["root", ..] => "root".to_string(),
+                _ => "unknown".to_string(),
+            };
+            return (
+                TargetKind::Wsl {
+                    distro: distro.to_string(),
+                    user: user.clone(),
+                },
+                format!("{distro} · {user}"),
+                format!("/{}", remainder.join("/")),
+            );
+        }
+    }
+
+    (
+        TargetKind::LocalWindows,
+        "Windows Codex".to_string(),
+        path.to_string(),
+    )
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -422,6 +517,10 @@ pub struct AppSettings {
     pub openclaw_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
+
+    // ===== 设备本地 Managed Targets（不参与数据库云同步）=====
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub managed_targets: Vec<ManagedTarget>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -533,6 +632,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
+            managed_targets: Vec::new(),
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -555,6 +655,89 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    pub fn add_managed_target(&mut self, target: ManagedTarget) -> Result<(), AppError> {
+        if self
+            .managed_targets
+            .iter()
+            .any(|existing| existing.id == target.id)
+        {
+            return Err(AppError::Config(format!(
+                "Target ID '{}' is already managed",
+                target.id
+            )));
+        }
+
+        let identity = target.config_identity();
+        if self
+            .managed_targets
+            .iter()
+            .any(|existing| existing.config_identity() == identity)
+        {
+            return Err(AppError::Config(
+                "Target config location is already managed".to_string(),
+            ));
+        }
+
+        self.managed_targets.push(target);
+        Ok(())
+    }
+
+    pub fn ensure_legacy_codex_target(
+        &mut self,
+        default_config_dir: &std::path::Path,
+    ) -> Result<bool, AppError> {
+        let config_path = self
+            .codex_config_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| default_config_dir.display().to_string());
+        let (kind, name, config_path) = legacy_codex_target_kind_name_and_path(&config_path);
+        let target = ManagedTarget {
+            id: format!("codex-target-{}", uuid::Uuid::new_v4()),
+            app: AppType::Codex,
+            name,
+            kind,
+            config_location: ConfigLocation { path: config_path },
+            current_provider_id: self.current_provider_codex.clone(),
+            management_state: ManagementState::Managed,
+            provider_overrides: BTreeMap::new(),
+            last_viewed_at: None,
+        };
+        let identity = target.config_identity();
+
+        if self.managed_targets.iter().any(|existing| {
+            existing.app == AppType::Codex && existing.config_identity() == identity
+        }) {
+            return Ok(false);
+        }
+
+        self.add_managed_target(target)?;
+        Ok(true)
+    }
+
+    pub fn target_current_provider(&self, target_id: &str) -> Option<&str> {
+        self.managed_targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .and_then(|target| target.current_provider_id.as_deref())
+    }
+
+    pub fn set_target_current_provider(
+        &mut self,
+        target_id: &str,
+        provider_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let target = self
+            .managed_targets
+            .iter_mut()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| AppError::Config(format!("Managed Target '{target_id}' not found")))?;
+        target.current_provider_id = provider_id.map(str::to_string);
+        Ok(())
+    }
+
     fn settings_path() -> Option<PathBuf> {
         // settings.json 保留用于旧版本迁移和无数据库场景
         Some(
@@ -733,6 +916,106 @@ pub fn get_settings() -> AppSettings {
         .clone()
 }
 
+pub fn get_managed_targets() -> Vec<ManagedTarget> {
+    get_settings().managed_targets
+}
+
+/// Persist a device-local Managed Target atomically. This mutates only
+/// CC Switch settings; inspecting or writing the Target's live files is outside
+/// this registry interface.
+pub fn register_managed_target(target: ManagedTarget) -> Result<ManagedTarget, AppError> {
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    next.add_managed_target(target.clone())?;
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(target)
+}
+
+/// Associate a shared Provider definition with a Target without taking over
+/// the Target or writing any live files. Management state is preserved.
+pub fn set_managed_target_provider_link(
+    target_id: &str,
+    provider_id: Option<&str>,
+) -> Result<ManagedTarget, AppError> {
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    let target = next
+        .managed_targets
+        .iter_mut()
+        .find(|target| target.id == target_id)
+        .ok_or_else(|| AppError::Config(format!("Managed Target '{target_id}' not found")))?;
+    if target.management_state != ManagementState::Unmanaged {
+        return Err(AppError::Config(format!(
+            "Managed Target '{target_id}' must be Unmanaged to change its Provider link"
+        )));
+    }
+    target.current_provider_id = provider_id.map(str::to_string);
+    let linked = target.clone();
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(linked)
+}
+
+pub fn set_managed_target_current_provider(
+    target_id: &str,
+    provider_id: Option<&str>,
+) -> Result<(), AppError> {
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    next.set_target_current_provider(target_id, provider_id)?;
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(())
+}
+
+/// Commit the first successful live projection for a Target. The Provider must
+/// already be linked while the Target is Unmanaged; callers perform the live
+/// write first and use this as the transaction's local-state commit point.
+pub fn activate_managed_target(
+    target_id: &str,
+    provider_id: &str,
+) -> Result<ManagedTarget, AppError> {
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    let target = next
+        .managed_targets
+        .iter_mut()
+        .find(|target| target.id == target_id)
+        .ok_or_else(|| AppError::Config(format!("Managed Target '{target_id}' not found")))?;
+    if target.management_state != ManagementState::Unmanaged {
+        return Err(AppError::Config(format!(
+            "Managed Target '{target_id}' must be Unmanaged before first activation"
+        )));
+    }
+    if target.current_provider_id.as_deref() != Some(provider_id) {
+        return Err(AppError::Config(format!(
+            "Managed Target '{target_id}' is not linked to Provider '{provider_id}'"
+        )));
+    }
+    target.management_state = ManagementState::Managed;
+    let activated = target.clone();
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(activated)
+}
+
 pub fn get_settings_for_frontend() -> AppSettings {
     let mut settings = get_settings();
     if let Some(sync) = &mut settings.webdav_sync {
@@ -755,6 +1038,27 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     });
     *guard = new_settings;
     Ok(())
+}
+
+/// Migrate the legacy single Codex directory into device-local Managed Target
+/// state. This writes only `settings.json`; it never inspects or rewrites Codex
+/// live files.
+#[cfg(target_os = "windows")]
+pub fn migrate_legacy_codex_target_if_needed() -> Result<bool, AppError> {
+    let mut guard = settings_store().write().unwrap_or_else(|e| {
+        log::warn!("设置锁已毒化，使用恢复值: {e}");
+        e.into_inner()
+    });
+    let mut next = guard.clone();
+    let default_config_dir = crate::config::get_home_dir().join(".codex");
+    if !next.ensure_legacy_codex_target(&default_config_dir)? {
+        return Ok(false);
+    }
+
+    next.normalize_paths();
+    save_settings_file(&next)?;
+    *guard = next;
+    Ok(true)
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
@@ -1177,5 +1481,164 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn managed_targets_reject_duplicate_normalized_windows_config_locations() {
+        let mut settings = AppSettings::default();
+        let first = ManagedTarget {
+            id: "windows-codex".to_string(),
+            app: AppType::Codex,
+            name: "Windows Codex".to_string(),
+            kind: TargetKind::LocalWindows,
+            config_location: ConfigLocation {
+                path: r"C:\Users\M1kasa\.codex".to_string(),
+            },
+            current_provider_id: None,
+            management_state: ManagementState::Managed,
+            provider_overrides: Default::default(),
+            last_viewed_at: None,
+        };
+        let duplicate = ManagedTarget {
+            id: "duplicate".to_string(),
+            config_location: ConfigLocation {
+                path: "c:/users/m1kasa/.codex/".to_string(),
+            },
+            ..first.clone()
+        };
+
+        settings
+            .add_managed_target(first)
+            .expect("add first target");
+        let error = settings
+            .add_managed_target(duplicate)
+            .expect_err("duplicate normalized location must be rejected");
+
+        assert!(error.to_string().contains("already managed"));
+        assert_eq!(settings.managed_targets.len(), 1);
+    }
+
+    #[test]
+    fn legacy_codex_directory_migration_is_idempotent_and_does_not_write_live_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("config.toml");
+        let auth_path = temp.path().join("auth.json");
+        let session_path = temp.path().join("sessions/session.jsonl");
+        let state_db_path = temp.path().join("state_5.sqlite");
+        std::fs::create_dir_all(session_path.parent().unwrap()).expect("sessions dir");
+        std::fs::write(&config_path, b"model = \"existing\"\n").expect("config");
+        std::fs::write(&auth_path, b"existing-auth").expect("auth");
+        std::fs::write(&session_path, b"existing-session").expect("session");
+        std::fs::write(&state_db_path, b"existing-state-db").expect("state DB");
+        let before = [
+            std::fs::read(&config_path).unwrap(),
+            std::fs::read(&auth_path).unwrap(),
+            std::fs::read(&session_path).unwrap(),
+            std::fs::read(&state_db_path).unwrap(),
+        ];
+
+        let mut settings = AppSettings {
+            codex_config_dir: Some(temp.path().display().to_string()),
+            current_provider_codex: Some("existing-provider".to_string()),
+            ..AppSettings::default()
+        };
+
+        assert!(settings
+            .ensure_legacy_codex_target(std::path::Path::new("unused-default"))
+            .expect("first migration"));
+        let target_id = settings.managed_targets[0].id.clone();
+        assert!(!settings
+            .ensure_legacy_codex_target(std::path::Path::new("unused-default"))
+            .expect("second migration"));
+
+        assert_eq!(settings.managed_targets.len(), 1);
+        assert_eq!(settings.managed_targets[0].id, target_id);
+        assert_eq!(
+            settings.managed_targets[0].current_provider_id.as_deref(),
+            Some("existing-provider")
+        );
+        assert_eq!(
+            before,
+            [
+                std::fs::read(&config_path).unwrap(),
+                std::fs::read(&auth_path).unwrap(),
+                std::fs::read(&session_path).unwrap(),
+                std::fs::read(&state_db_path).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_wsl_unc_directory_migration_stores_an_usable_linux_path() {
+        let mut settings = AppSettings {
+            codex_config_dir: Some(r"\\wsl.localhost\Ubuntu-24.04\home\m1kasa\.codex".to_string()),
+            ..AppSettings::default()
+        };
+
+        assert!(settings
+            .ensure_legacy_codex_target(std::path::Path::new("unused-default"))
+            .expect("migrate legacy WSL UNC directory"));
+
+        let target = &settings.managed_targets[0];
+        assert_eq!(target.config_location.path, "/home/m1kasa/.codex");
+        assert_eq!(
+            target.kind,
+            TargetKind::Wsl {
+                distro: "Ubuntu-24.04".to_string(),
+                user: "m1kasa".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn target_current_provider_is_isolated_from_other_targets_and_legacy_state() {
+        let windows = ManagedTarget {
+            id: "windows".to_string(),
+            app: AppType::Codex,
+            name: "Windows".to_string(),
+            kind: TargetKind::LocalWindows,
+            config_location: ConfigLocation {
+                path: r"C:\Users\M1kasa\.codex".to_string(),
+            },
+            current_provider_id: Some("windows-provider".to_string()),
+            management_state: ManagementState::Managed,
+            provider_overrides: Default::default(),
+            last_viewed_at: None,
+        };
+        let wsl = ManagedTarget {
+            id: "ubuntu".to_string(),
+            name: "Ubuntu".to_string(),
+            kind: TargetKind::Wsl {
+                distro: "Ubuntu".to_string(),
+                user: "m1kasa".to_string(),
+            },
+            config_location: ConfigLocation {
+                path: "/home/m1kasa/.codex".to_string(),
+            },
+            current_provider_id: Some("wsl-provider".to_string()),
+            ..windows.clone()
+        };
+        let mut settings = AppSettings {
+            current_provider_codex: Some("legacy-provider".to_string()),
+            managed_targets: vec![windows, wsl],
+            ..AppSettings::default()
+        };
+
+        settings
+            .set_target_current_provider("ubuntu", Some("new-wsl-provider"))
+            .expect("set target current provider");
+
+        assert_eq!(
+            settings.target_current_provider("windows"),
+            Some("windows-provider")
+        );
+        assert_eq!(
+            settings.target_current_provider("ubuntu"),
+            Some("new-wsl-provider")
+        );
+        assert_eq!(
+            settings.current_provider_codex.as_deref(),
+            Some("legacy-provider")
+        );
     }
 }

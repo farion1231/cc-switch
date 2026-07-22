@@ -1,8 +1,10 @@
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_settings_path, read_json_file, write_codex_live_atomic, AppError, AppType, McpApps,
-    McpServer, MultiAppConfig, Provider, ProviderMeta, ProviderService,
+    get_claude_settings_path, get_managed_targets, read_json_file, update_settings,
+    write_codex_live_atomic, AppError, AppSettings, AppType, CodexTargetContext, ConfigLocation,
+    ManagedTarget, ManagementState, McpApps, McpServer, MultiAppConfig, Provider, ProviderMeta,
+    ProviderService, TargetKind, WslTargetAdapter,
 };
 
 #[path = "support.rs"]
@@ -243,6 +245,516 @@ command = "say"
     assert_eq!(
         legacy_auth_value, "legacy-key",
         "previous provider should be backfilled with live auth"
+    );
+}
+
+#[test]
+fn provider_service_switch_target_changes_only_that_codex_target_live_files() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    enable_codex_official_auth_preservation();
+    let home = ensure_test_home();
+    let target_dir = tempfile::tempdir().expect("create target directory");
+    let context = CodexTargetContext::new(target_dir.path());
+
+    let original_auth = br#"{"tokens":{"access_token":"official-login"}}"#;
+    std::fs::write(context.auth_path(), original_auth).expect("seed target auth");
+    std::fs::write(context.config_path(), "model = \"old-model\"\n").expect("seed target config");
+
+    let active_dir = target_dir.path().join("sessions/2026/07/21");
+    let archived_dir = target_dir.path().join("archived_sessions");
+    std::fs::create_dir_all(&active_dir).expect("create active sessions");
+    std::fs::create_dir_all(&archived_dir).expect("create archived sessions");
+    let active_session = active_dir.join("active.jsonl");
+    let archived_session = archived_dir.join("archived.jsonl");
+    std::fs::write(&active_session, b"active-session-bytes").expect("seed active session");
+    std::fs::write(&archived_session, b"archived-session-bytes").expect("seed archived session");
+    let state_db = target_dir.path().join("state_5.sqlite");
+    std::fs::write(&state_db, b"codex-state-db-bytes").expect("seed Codex state DB");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(
+            "target-provider".to_string(),
+            Provider::with_id(
+                "target-provider".to_string(),
+                "Target Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "target-api-key"},
+                    "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"Target Provider\"\nbase_url = \"https://target.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    ProviderService::switch_target(&state, AppType::Codex, "target-provider", &context)
+        .expect("switch explicit target");
+
+    let target_config = std::fs::read_to_string(context.config_path()).expect("read target config");
+    assert!(target_config.contains("https://target.example/v1"));
+    assert!(target_config.contains("experimental_bearer_token = \"target-api-key\""));
+    assert_eq!(std::fs::read(context.auth_path()).unwrap(), original_auth);
+    assert_eq!(
+        std::fs::read(&active_session).unwrap(),
+        b"active-session-bytes"
+    );
+    assert_eq!(
+        std::fs::read(&archived_session).unwrap(),
+        b"archived-session-bytes"
+    );
+    assert_eq!(std::fs::read(&state_db).unwrap(), b"codex-state-db-bytes");
+    assert!(
+        !home.join(".codex/config.toml").exists(),
+        "explicit target switch must not write the process-global Codex directory"
+    );
+}
+
+#[test]
+fn provider_service_switch_managed_target_commits_only_that_targets_current_provider() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let target_dir = tempfile::tempdir().expect("create target directory");
+    let target = ManagedTarget {
+        id: "windows-codex".to_string(),
+        app: AppType::Codex,
+        name: "Windows Codex".to_string(),
+        kind: TargetKind::LocalWindows,
+        config_location: ConfigLocation {
+            path: target_dir.path().display().to_string(),
+        },
+        current_provider_id: Some("old-provider".to_string()),
+        management_state: ManagementState::Managed,
+        provider_overrides: Default::default(),
+        last_viewed_at: None,
+    };
+    let other_target = ManagedTarget {
+        id: "ubuntu-codex".to_string(),
+        name: "Ubuntu Codex".to_string(),
+        kind: TargetKind::Wsl {
+            distro: "Ubuntu".to_string(),
+            user: "m1kasa".to_string(),
+        },
+        config_location: ConfigLocation {
+            path: "/home/m1kasa/.codex".to_string(),
+        },
+        current_provider_id: Some("wsl-provider".to_string()),
+        ..target.clone()
+    };
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        current_provider_codex: Some("legacy-provider".to_string()),
+        managed_targets: vec![target.clone(), other_target],
+        ..AppSettings::default()
+    })
+    .expect("seed target settings");
+
+    std::fs::write(target_dir.path().join("auth.json"), b"{}\n").expect("seed auth");
+    std::fs::write(
+        target_dir.path().join("config.toml"),
+        b"model = \"old-model\"\n",
+    )
+    .expect("seed config");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "new-key"},
+                    "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"New Provider\"\nbase_url = \"https://new.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    ProviderService::switch_managed_target(&state, "new-provider", &target)
+        .expect("switch managed target");
+
+    let target_config =
+        std::fs::read_to_string(target_dir.path().join("config.toml")).expect("target config");
+    assert!(target_config.contains("https://new.example/v1"));
+    let targets = get_managed_targets();
+    assert_eq!(
+        targets
+            .iter()
+            .find(|item| item.id == "windows-codex")
+            .and_then(|item| item.current_provider_id.as_deref()),
+        Some("new-provider")
+    );
+    assert_eq!(
+        targets
+            .iter()
+            .find(|item| item.id == "ubuntu-codex")
+            .and_then(|item| item.current_provider_id.as_deref()),
+        Some("wsl-provider")
+    );
+    assert_eq!(
+        cc_switch_lib::get_local_current_provider(&AppType::Codex).as_deref(),
+        Some("legacy-provider")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn first_wsl_activation_projects_live_then_marks_only_that_target_managed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let fake = tempfile::tempdir().expect("fake WSL files");
+    let executable = fake.path().join("wsl.exe");
+    let live = fake.path().join("config.toml");
+    let pending = fake.path().join("pending.toml");
+    let catalog = fake.path().join("cc-switch-model-catalog.json");
+    let pending_catalog = fake.path().join("pending-catalog.json");
+    std::fs::write(
+        &live,
+        "approval_policy = \"on-request\"\nsqlite_home = \"/home/mikasa/state\"\nmodel_provider = \"old\"\n\n[mcp_servers.local]\ncommand = \"linux-tool\"\n",
+    )
+    .expect("seed WSL config");
+    let script = format!(
+        r#"#!/bin/sh
+while [ "$1" != "--" ]; do shift; done
+shift
+command="$1"
+shift
+case "$command" in
+  test)
+    case "$2" in
+      *cc-switch-model-catalog.json) [ -f '{}' ] ;;
+      *) [ -f '{}' ] ;;
+    esac
+    ;;
+  cat)
+    case "$2" in
+      *cc-switch-model-catalog.json) cat '{}' ;;
+      *) cat '{}' ;;
+    esac
+    ;;
+  tee)
+    case "$2" in
+      *cc-switch-model-catalog.json*) cat > '{}' ;;
+      *) cat > '{}' ;;
+    esac
+    ;;
+  stat)
+    echo 640
+    ;;
+  chmod)
+    case "$3" in
+      *cc-switch-model-catalog.json*) chmod "$2" '{}' ;;
+      *) chmod "$2" '{}' ;;
+    esac
+    ;;
+  mv)
+    case "$4" in
+      *cc-switch-model-catalog.json) mv '{}' '{}' ;;
+      *) mv '{}' '{}' ;;
+    esac
+    ;;
+  rm)
+    for target in "$@"; do :; done
+    case "$target" in
+      *cc-switch-model-catalog.json) rm -f '{}' '{}' ;;
+      *) rm -f '{}' '{}' ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+"#,
+        catalog.display(),
+        live.display(),
+        catalog.display(),
+        live.display(),
+        pending_catalog.display(),
+        pending.display(),
+        pending_catalog.display(),
+        pending.display(),
+        pending_catalog.display(),
+        catalog.display(),
+        pending.display(),
+        live.display(),
+        pending_catalog.display(),
+        catalog.display(),
+        pending.display(),
+        live.display(),
+    );
+    std::fs::write(&executable, script).expect("write fake wsl executable");
+    let mut permissions = std::fs::metadata(&executable)
+        .expect("fake executable metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions).expect("make fake wsl executable");
+
+    let target = ManagedTarget {
+        id: "ubuntu-codex".to_string(),
+        app: AppType::Codex,
+        name: "Ubuntu Codex".to_string(),
+        kind: TargetKind::Wsl {
+            distro: "Ubuntu".to_string(),
+            user: "mikasa".to_string(),
+        },
+        config_location: ConfigLocation {
+            path: "/home/mikasa/.codex".to_string(),
+        },
+        current_provider_id: Some("new-provider".to_string()),
+        management_state: ManagementState::Unmanaged,
+        provider_overrides: Default::default(),
+        last_viewed_at: None,
+    };
+    update_settings(AppSettings {
+        current_provider_codex: Some("windows-provider".to_string()),
+        managed_targets: vec![target],
+        ..Default::default()
+    })
+    .expect("seed target registry");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "wsl-secret"},
+                    "config": "model_provider = \"custom\"\nmodel = \"gpt-new\"\nsqlite_home = \"C:/Users/Mikasa/.codex\"\n\n[model_providers.custom]\nbase_url = \"https://new.example/v1\"\nwire_api = \"responses\"\n",
+                    "modelCatalog": {"models": [{"model": "gpt-new", "contextWindow": 262144}]}
+                }),
+                None,
+            ),
+        );
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(
+            "second-provider".to_string(),
+            Provider::with_id(
+                "second-provider".to_string(),
+                "Second Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "second-secret"},
+                    "config": "model_provider = \"custom\"\nmodel = \"gpt-second\"\n\n[model_providers.custom]\nbase_url = \"https://second.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let activated = ProviderService::activate_wsl_managed_target_with_adapter(
+        &state,
+        "ubuntu-codex",
+        &WslTargetAdapter::with_executable(&executable),
+    )
+    .expect("activate WSL target");
+
+    assert_eq!(activated.management_state, ManagementState::Managed);
+    assert_eq!(
+        cc_switch_lib::get_local_current_provider(&AppType::Codex).as_deref(),
+        Some("windows-provider")
+    );
+    let projected = std::fs::read_to_string(&live).expect("read WSL config");
+    let parsed = projected.parse::<toml::Table>().expect("valid TOML");
+    assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+    assert_eq!(parsed["model"].as_str(), Some("gpt-new"));
+    assert_eq!(
+        parsed["model_catalog_json"].as_str(),
+        Some("cc-switch-model-catalog.json")
+    );
+    assert_eq!(parsed["sqlite_home"].as_str(), Some("/home/mikasa/state"));
+    assert_eq!(
+        parsed["mcp_servers"]["local"]["command"].as_str(),
+        Some("linux-tool")
+    );
+    assert_eq!(
+        parsed["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+        Some("wsl-secret")
+    );
+    let catalog_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&catalog).expect("read projected model catalog"))
+            .expect("valid projected model catalog");
+    assert_eq!(catalog_json["models"][0]["slug"].as_str(), Some("gpt-new"));
+
+    let switched = ProviderService::switch_wsl_managed_target_with_adapter(
+        &state,
+        "second-provider",
+        "ubuntu-codex",
+        &WslTargetAdapter::with_executable(&executable),
+    )
+    .expect("switch only the WSL target");
+    assert_eq!(
+        switched.current_provider_id.as_deref(),
+        Some("second-provider")
+    );
+    assert_eq!(
+        cc_switch_lib::get_local_current_provider(&AppType::Codex).as_deref(),
+        Some("windows-provider")
+    );
+    let switched_config = std::fs::read_to_string(&live).expect("read switched WSL config");
+    let switched_toml = switched_config
+        .parse::<toml::Table>()
+        .expect("valid switched TOML");
+    assert_eq!(switched_toml["model"].as_str(), Some("gpt-second"));
+    assert!(switched_toml.get("model_catalog_json").is_none());
+    assert!(
+        !catalog.exists(),
+        "switching to a Provider without a catalog removes the CC Switch-owned file"
+    );
+    assert_eq!(
+        switched_toml["sqlite_home"].as_str(),
+        Some("/home/mikasa/state")
+    );
+    assert_eq!(
+        switched_toml["mcp_servers"]["local"]["command"].as_str(),
+        Some("linux-tool")
+    );
+    assert_eq!(
+        std::fs::metadata(&live)
+            .expect("WSL config metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
+    );
+}
+
+#[test]
+fn provider_service_rejects_stale_managed_target_without_changing_live() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let target_dir = tempfile::tempdir().expect("create target directory");
+    let target = ManagedTarget {
+        id: "removed-target".to_string(),
+        app: AppType::Codex,
+        name: "Removed Target".to_string(),
+        kind: TargetKind::LocalWindows,
+        config_location: ConfigLocation {
+            path: target_dir.path().display().to_string(),
+        },
+        current_provider_id: Some("old-provider".to_string()),
+        management_state: ManagementState::Managed,
+        provider_overrides: Default::default(),
+        last_viewed_at: None,
+    };
+    update_settings(AppSettings::default()).expect("seed settings without target");
+
+    let auth_path = target_dir.path().join("auth.json");
+    let config_path = target_dir.path().join("config.toml");
+    let original_auth = b"{\"OPENAI_API_KEY\":\"old-key\"}\n";
+    let original_config = b"model = \"old-model\"\n";
+    std::fs::write(&auth_path, original_auth).expect("seed auth");
+    std::fs::write(&config_path, original_config).expect("seed config");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "new-key"},
+                    "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"New Provider\"\nbase_url = \"https://new.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    let error = ProviderService::switch_managed_target(&state, "new-provider", &target)
+        .expect_err("removed target must be rejected");
+
+    assert!(error.to_string().contains("not registered"));
+    assert_eq!(std::fs::read(&auth_path).unwrap(), original_auth);
+    assert_eq!(std::fs::read(&config_path).unwrap(), original_config);
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_service_rolls_back_live_when_target_state_commit_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+    let target_dir = tempfile::tempdir().expect("create target directory");
+    let target = ManagedTarget {
+        id: "windows-codex".to_string(),
+        app: AppType::Codex,
+        name: "Windows Codex".to_string(),
+        kind: TargetKind::LocalWindows,
+        config_location: ConfigLocation {
+            path: target_dir.path().display().to_string(),
+        },
+        current_provider_id: Some("old-provider".to_string()),
+        management_state: ManagementState::Managed,
+        provider_overrides: Default::default(),
+        last_viewed_at: None,
+    };
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        managed_targets: vec![target.clone()],
+        ..AppSettings::default()
+    })
+    .expect("seed target settings");
+
+    let config_path = target_dir.path().join("config.toml");
+    let original_config = b"model = \"old-model\"\n";
+    std::fs::write(&config_path, original_config).expect("seed config");
+    std::fs::write(target_dir.path().join("auth.json"), b"{}\n").expect("seed auth");
+
+    let mut config = MultiAppConfig::default();
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(
+            "new-provider".to_string(),
+            Provider::with_id(
+                "new-provider".to_string(),
+                "New Provider".to_string(),
+                json!({
+                    "auth": {"OPENAI_API_KEY": "new-key"},
+                    "config": "model_provider = \"custom\"\n[model_providers.custom]\nname = \"New Provider\"\nbase_url = \"https://new.example/v1\"\nwire_api = \"responses\"\n"
+                }),
+                None,
+            ),
+        );
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let settings_path = home.join(".cc-switch/settings.json");
+    std::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o400))
+        .expect("make settings read-only");
+
+    let result = ProviderService::switch_managed_target(&state, "new-provider", &target);
+
+    std::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o600))
+        .expect("restore settings permissions");
+    assert!(result.is_err(), "state commit should fail");
+    assert_eq!(std::fs::read(&config_path).unwrap(), original_config);
+    assert_eq!(
+        get_managed_targets()[0].current_provider_id.as_deref(),
+        Some("old-provider")
     );
 }
 
@@ -2890,6 +3402,60 @@ fn provider_service_delete_current_provider_returns_error() {
         ),
         other => panic!("expected Config/Message error, got {other:?}"),
     }
+}
+
+#[test]
+fn provider_service_delete_provider_used_by_managed_target_returns_error() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let mut config = MultiAppConfig::default();
+    let manager = config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager");
+    manager.providers.insert(
+        "target-provider".to_string(),
+        Provider::with_id(
+            "target-provider".to_string(),
+            "Target Provider".to_string(),
+            json!({"auth": {"OPENAI_API_KEY": "target-key"}, "config": ""}),
+            None,
+        ),
+    );
+
+    update_settings(AppSettings {
+        managed_targets: vec![ManagedTarget {
+            id: "ubuntu-codex".to_string(),
+            app: AppType::Codex,
+            name: "Ubuntu Codex".to_string(),
+            kind: TargetKind::Wsl {
+                distro: "Ubuntu".to_string(),
+                user: "m1kasa".to_string(),
+            },
+            config_location: ConfigLocation {
+                path: "/home/m1kasa/.codex".to_string(),
+            },
+            current_provider_id: Some("target-provider".to_string()),
+            management_state: ManagementState::Managed,
+            provider_overrides: Default::default(),
+            last_viewed_at: None,
+        }],
+        ..AppSettings::default()
+    })
+    .expect("seed managed target");
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    let error = ProviderService::delete(&state, AppType::Codex, "target-provider")
+        .expect_err("provider referenced by a managed target must not be deleted");
+
+    assert!(error.to_string().contains("managed target"));
+    assert!(home.join(".cc-switch/settings.json").is_file());
+    assert!(state
+        .db
+        .get_provider_by_id("target-provider", AppType::Codex.as_str())
+        .expect("read provider")
+        .is_some());
 }
 
 #[test]

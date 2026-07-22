@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::codex_config::{get_codex_config_dir, read_codex_config_text};
+use crate::codex_config::CodexTargetContext;
 use crate::codex_state_db::codex_state_db_paths;
 use crate::session_manager::{SessionMessage, SessionMeta};
 
@@ -36,18 +36,20 @@ struct SessionIndexEntry {
 }
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let roots = session_roots();
-    scan_sessions_in_roots(&roots)
+    crate::session_manager::SessionCatalog::scan_target(&CodexTargetContext::current())
+}
+
+pub(crate) fn scan_sessions_for_target(target: &CodexTargetContext) -> Vec<SessionMeta> {
+    let roots = target.session_roots();
+    let thread_titles = load_thread_titles_for_target(target);
+    scan_sessions_in_roots_with_titles(&roots, &thread_titles)
 }
 
 pub fn session_roots() -> Vec<PathBuf> {
-    let config_dir = get_codex_config_dir();
-    vec![
-        config_dir.join("sessions"),
-        config_dir.join("archived_sessions"),
-    ]
+    CodexTargetContext::current().session_roots()
 }
 
+#[cfg(test)]
 fn scan_sessions_in_roots(roots: &[PathBuf]) -> Vec<SessionMeta> {
     let thread_titles = load_thread_titles();
     scan_sessions_in_roots_with_titles(roots, &thread_titles)
@@ -72,9 +74,14 @@ fn scan_sessions_in_roots_with_titles(
     sessions
 }
 
+#[cfg(test)]
 fn load_thread_titles() -> HashMap<String, String> {
-    let config_dir = get_codex_config_dir();
-    let config_text = read_codex_config_text().unwrap_or_default();
+    load_thread_titles_for_target(&CodexTargetContext::current())
+}
+
+fn load_thread_titles_for_target(target: &CodexTargetContext) -> HashMap<String, String> {
+    let config_dir = target.config_dir();
+    let config_text = std::fs::read_to_string(target.config_path()).unwrap_or_default();
     let db_paths = codex_state_db_paths(&config_dir, &config_text);
     load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
 }
@@ -561,6 +568,32 @@ mod tests {
 
         assert!(ids.contains(&"active-id".to_string()));
         assert!(ids.contains(&"archived-id".to_string()));
+    }
+
+    #[test]
+    fn session_catalog_scans_only_the_explicit_codex_target_without_writing_it() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_dir = temp.path().join("sessions");
+        std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+        let session_path = sessions_dir.join("target-session.jsonl");
+        write_codex_session(&session_path, "target-session-id", "Target session");
+        let original_session = std::fs::read(&session_path).expect("read original session");
+        let context = crate::codex_config::CodexTargetContext::new(temp.path());
+
+        let sessions = crate::session_manager::SessionCatalog::scan_target(&context);
+
+        assert_eq!(
+            sessions
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect::<Vec<_>>(),
+            vec!["target-session-id"]
+        );
+        assert_eq!(
+            std::fs::read(&session_path).expect("read session after scan"),
+            original_session
+        );
+        assert!(!temp.path().join("archived_sessions").exists());
     }
 
     #[test]

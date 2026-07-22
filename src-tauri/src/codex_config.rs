@@ -136,6 +136,14 @@ pub enum CodexCatalogToolProfile {
     Anthropic,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexProviderProjection {
+    pub config_text: String,
+    /// Serialized contents for CC Switch's owned model-catalog file. `None`
+    /// means the owned file must be absent after the transaction.
+    pub model_catalog: Option<Vec<u8>>,
+}
+
 impl CodexCatalogToolProfile {
     /// Pick the catalog tool profile from a provider's `apiFormat` meta value.
     ///
@@ -166,27 +174,110 @@ const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "ollama-chat",
 ];
 
-/// 获取 Codex 配置目录路径
-pub fn get_codex_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_codex_override_dir() {
-        return custom;
+/// Paths belonging to one managed Codex environment.
+///
+/// The directory is explicit so callers can operate on a Windows or WSL target
+/// without changing the process-wide Codex directory setting.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexTargetContext {
+    config_dir: PathBuf,
+}
+
+impl CodexTargetContext {
+    pub fn new(config_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            config_dir: config_dir.into(),
+        }
     }
 
-    get_home_dir().join(".codex")
+    pub fn current() -> Self {
+        let config_dir = crate::settings::get_codex_override_dir()
+            .unwrap_or_else(|| get_home_dir().join(".codex"));
+        Self::new(config_dir)
+    }
+
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
+    pub fn auth_path(&self) -> PathBuf {
+        self.config_dir.join("auth.json")
+    }
+
+    pub fn config_path(&self) -> PathBuf {
+        self.config_dir.join("config.toml")
+    }
+
+    pub fn model_catalog_path(&self) -> PathBuf {
+        self.config_dir.join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+    }
+
+    pub fn session_roots(&self) -> Vec<PathBuf> {
+        vec![
+            self.config_dir.join("sessions"),
+            self.config_dir.join("archived_sessions"),
+        ]
+    }
+}
+
+pub(crate) struct CodexTargetLiveSnapshot {
+    files: Vec<(PathBuf, Option<Vec<u8>>)>,
+}
+
+impl CodexTargetLiveSnapshot {
+    pub(crate) fn capture(target: &CodexTargetContext) -> Result<Self, AppError> {
+        let mut files = Vec::new();
+        for path in [
+            target.auth_path(),
+            target.config_path(),
+            target.model_catalog_path(),
+        ] {
+            let contents = if path.exists() {
+                Some(fs::read(&path).map_err(|error| AppError::io(&path, error))?)
+            } else {
+                None
+            };
+            files.push((path, contents));
+        }
+        Ok(Self { files })
+    }
+
+    pub(crate) fn restore(&self) -> Result<(), AppError> {
+        let mut first_error = None;
+        for (path, contents) in &self.files {
+            let result = match contents {
+                Some(bytes) => atomic_write(path, bytes),
+                None if path.exists() => delete_file(path),
+                None => Ok(()),
+            };
+            if first_error.is_none() {
+                first_error = result.err();
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+/// 获取 Codex 配置目录路径
+pub fn get_codex_config_dir() -> PathBuf {
+    CodexTargetContext::current().config_dir
 }
 
 /// 获取 Codex auth.json 路径
 pub fn get_codex_auth_path() -> PathBuf {
-    get_codex_config_dir().join("auth.json")
+    CodexTargetContext::current().auth_path()
 }
 
 /// 获取 Codex config.toml 路径
 pub fn get_codex_config_path() -> PathBuf {
-    get_codex_config_dir().join("config.toml")
+    CodexTargetContext::current().config_path()
 }
 
 pub fn get_codex_model_catalog_path() -> PathBuf {
-    get_codex_config_dir().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+    CodexTargetContext::current().model_catalog_path()
 }
 
 /// 获取 Codex 供应商配置文件路径
@@ -224,8 +315,16 @@ pub fn write_codex_live_atomic(
     auth: &Value,
     config_text_opt: Option<&str>,
 ) -> Result<(), AppError> {
-    let auth_path = get_codex_auth_path();
-    let config_path = get_codex_config_path();
+    write_codex_live_atomic_for_target(&CodexTargetContext::current(), auth, config_text_opt)
+}
+
+pub fn write_codex_live_atomic_for_target(
+    target: &CodexTargetContext,
+    auth: &Value,
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    let auth_path = target.auth_path();
+    let config_path = target.config_path();
 
     if let Some(parent) = auth_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
@@ -318,7 +417,14 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
 /// and provider-scoped bearer tokens live in `config.toml`. Provider switches
 /// should not overwrite the user's ChatGPT login cache.
 pub fn write_codex_live_config_atomic(config_text_opt: Option<&str>) -> Result<(), AppError> {
-    let config_path = get_codex_config_path();
+    write_codex_live_config_atomic_for_target(&CodexTargetContext::current(), config_text_opt)
+}
+
+pub fn write_codex_live_config_atomic_for_target(
+    target: &CodexTargetContext,
+    config_text_opt: Option<&str>,
+) -> Result<(), AppError> {
+    let config_path = target.config_path();
     let cfg_text = match config_text_opt {
         Some(config_text) => config_text.to_string(),
         None => String::new(),
@@ -1075,10 +1181,37 @@ pub fn prepare_codex_config_text_with_model_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<String, AppError> {
-    let catalog_path = get_codex_model_catalog_path();
+    prepare_codex_config_text_with_model_catalog_for_target(
+        &CodexTargetContext::current(),
+        settings,
+        config_text,
+        profile,
+    )
+}
 
+pub fn prepare_codex_config_text_with_model_catalog_for_target(
+    target: &CodexTargetContext,
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<String, AppError> {
+    let catalog_path = target.model_catalog_path();
+    let (config_text, catalog) =
+        prepare_codex_config_text_and_catalog(settings, config_text, profile)?;
+    if let Some(catalog) = catalog {
+        write_json_file(&catalog_path, &catalog)?;
+    }
+    Ok(config_text)
+}
+
+fn prepare_codex_config_text_and_catalog(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<(String, Option<Value>), AppError> {
     if let Some(catalog) = codex_model_catalog_from_settings(settings, config_text, profile)? {
-        let config_text = set_codex_model_catalog_json_field(config_text, Some(&catalog_path))?;
+        let config_text =
+            set_codex_model_catalog_json_field(config_text, Some(Path::new("catalog")))?;
         // Disable web_search only for native gateways on the reject blacklist
         // (MiMo/LongCat/MiniMax by host or model brand; Qwen3-Coder by model).
         // Everything else — relays, DouBao, web-search-capable Qwen models,
@@ -1093,16 +1226,38 @@ pub fn prepare_codex_config_text_with_model_catalog(
             CodexCatalogToolProfile::ProxyChat => false,
         };
         let config_text = set_codex_native_web_search_field(&config_text, disable_web_search)?;
-        write_json_file(&catalog_path, &catalog)?;
-        Ok(config_text)
+        Ok((config_text, Some(catalog)))
     } else {
         let config_text = set_codex_model_catalog_json_field(config_text, None)?;
         // Even without a generated catalog, the Responses→Anthropic transform drops the
         // Codex web_search hosted tool, so keep the invariant that an Anthropic provider
         // never presents it as a dead tool.
         let disable_web_search = profile == CodexCatalogToolProfile::Anthropic;
-        set_codex_native_web_search_field(&config_text, disable_web_search)
+        Ok((
+            set_codex_native_web_search_field(&config_text, disable_web_search)?,
+            None,
+        ))
     }
+}
+
+pub(crate) fn prepare_codex_provider_projection(
+    settings: &Value,
+    auth: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<CodexProviderProjection, AppError> {
+    let config_text = prepare_codex_provider_live_config(auth, config_text)?;
+    let (config_text, catalog) =
+        prepare_codex_config_text_and_catalog(settings, &config_text, profile)?;
+    let model_catalog = catalog
+        .map(|catalog| {
+            serde_json::to_vec_pretty(&catalog).map_err(|source| AppError::JsonSerialize { source })
+        })
+        .transpose()?;
+    Ok(CodexProviderProjection {
+        config_text,
+        model_catalog,
+    })
 }
 
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
@@ -1296,6 +1451,23 @@ pub fn write_codex_provider_live_with_catalog(
         .transpose()?;
 
     write_codex_live_for_provider(category, auth, prepared_config.as_deref())
+}
+
+pub fn write_codex_provider_live_with_catalog_for_target(
+    target: &CodexTargetContext,
+    settings: &Value,
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+    profile: CodexCatalogToolProfile,
+) -> Result<(), AppError> {
+    let prepared_config = config_text
+        .map(|text| {
+            prepare_codex_config_text_with_model_catalog_for_target(target, settings, text, profile)
+        })
+        .transpose()?;
+
+    write_codex_live_for_provider_at_target(target, category, auth, prepared_config.as_deref())
 }
 
 /// Extract a provider-scoped `experimental_bearer_token` from Codex `config.toml`.
@@ -1788,6 +1960,20 @@ pub fn write_codex_live_for_provider(
     auth: &Value,
     config_text: Option<&str>,
 ) -> Result<(), AppError> {
+    write_codex_live_for_provider_at_target(
+        &CodexTargetContext::current(),
+        category,
+        auth,
+        config_text,
+    )
+}
+
+pub fn write_codex_live_for_provider_at_target(
+    target: &CodexTargetContext,
+    category: Option<&str>,
+    auth: &Value,
+    config_text: Option<&str>,
+) -> Result<(), AppError> {
     let unified_official_config =
         if category == Some("official") && crate::settings::unify_codex_session_history() {
             Some(inject_codex_unified_session_bucket(
@@ -1803,10 +1989,10 @@ pub fn write_codex_live_for_provider(
             && !crate::settings::preserve_codex_official_auth_on_switch());
 
     if should_write_auth {
-        write_codex_live_atomic(auth, config_text)
+        write_codex_live_atomic_for_target(target, auth, config_text)
     } else {
         let live_config = prepare_codex_provider_live_config(auth, config_text.unwrap_or(""))?;
-        write_codex_live_config_atomic(Some(&live_config))
+        write_codex_live_config_atomic_for_target(target, Some(&live_config))
     }
 }
 
@@ -1827,6 +2013,107 @@ pub fn prepare_codex_provider_live_config(
         Some(token) => set_codex_experimental_bearer_token(config_text, &token)?,
         None => config_text.to_string(),
     })
+}
+
+/// Project the Provider-owned portion of a desired Codex configuration onto a
+/// Target's existing `config.toml`.
+///
+/// A Target owns machine-local policy and state such as paths, projects,
+/// sandbox/approval settings, MCP servers and unknown future fields. A Provider
+/// owns request routing, credentials embedded in its active provider table and
+/// model-selection/capability fields. Keeping that boundary here prevents a
+/// Windows Provider switch from copying Windows-only values into WSL.
+pub fn project_codex_provider_config(
+    live_config: &str,
+    desired_provider_config: &str,
+) -> Result<String, AppError> {
+    let mut live = if live_config.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        live_config
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid live Codex config.toml: {e}")))?
+    };
+    let desired = if desired_provider_config.trim().is_empty() {
+        DocumentMut::new()
+    } else {
+        desired_provider_config
+            .parse::<DocumentMut>()
+            .map_err(|e| AppError::Message(format!("Invalid Provider Codex config.toml: {e}")))?
+    };
+
+    let stale_keys = live
+        .as_table()
+        .iter()
+        .map(|(key, _)| key.to_string())
+        .filter(|key| is_codex_provider_owned_root_key(key))
+        .collect::<Vec<_>>();
+    for key in stale_keys {
+        live.as_table_mut().remove(&key);
+    }
+
+    let desired_items = desired
+        .as_table()
+        .iter()
+        .filter(|(key, _)| is_codex_provider_owned_root_key(key))
+        .map(|(key, item)| (key.to_string(), item.clone()))
+        .collect::<Vec<_>>();
+    for (key, item) in desired_items {
+        let item = if key == "model_reasoning_effort" {
+            item.as_str()
+                .map(|effort| toml_edit::value(effort.trim().to_ascii_lowercase()))
+                .unwrap_or(item)
+        } else {
+            item
+        };
+        live.as_table_mut().insert(&key, item);
+    }
+
+    // Only the desired active route is Provider-owned. Preserve every other
+    // route a user may have authored directly in this Target.
+    if let Some(active_provider) = desired.get("model_provider").and_then(|item| item.as_str()) {
+        let desired_table = desired
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(active_provider))
+            .cloned();
+        if let Some(desired_table) = desired_table {
+            if live.get("model_providers").is_none() {
+                live["model_providers"] = toml_edit::table();
+            }
+            let providers = live
+                .get_mut("model_providers")
+                .and_then(|item| item.as_table_like_mut())
+                .ok_or_else(|| {
+                    AppError::Message(
+                        "Invalid live Codex config.toml: model_providers must be a table"
+                            .to_string(),
+                    )
+                })?;
+            providers.insert(active_provider, desired_table);
+        }
+    }
+
+    Ok(live.to_string())
+}
+
+fn is_codex_provider_owned_root_key(key: &str) -> bool {
+    matches!(
+        key,
+        "model"
+            | "model_provider"
+            | "review_model"
+            | "model_reasoning_effort"
+            | "model_reasoning_summary"
+            | "model_verbosity"
+            | "model_context_window"
+            | "model_auto_compact_token_limit"
+            | "model_catalog_json"
+            | "web_search"
+            | "base_url"
+            | "wire_api"
+            | "experimental_bearer_token"
+    )
 }
 
 /// During DB backfill, lift a live `experimental_bearer_token` back into
@@ -2001,6 +2288,27 @@ pub fn remove_codex_toml_base_url_if(toml_str: &str, predicate: impl Fn(&str) ->
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn target_context_resolves_all_codex_paths_from_explicit_directory() {
+        let temp = tempfile::tempdir().expect("create temp Codex directory");
+        let context = CodexTargetContext::new(temp.path());
+
+        assert_eq!(context.config_dir(), temp.path());
+        assert_eq!(context.auth_path(), temp.path().join("auth.json"));
+        assert_eq!(context.config_path(), temp.path().join("config.toml"));
+        assert_eq!(
+            context.model_catalog_path(),
+            temp.path().join(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        assert_eq!(
+            context.session_roots(),
+            vec![
+                temp.path().join("sessions"),
+                temp.path().join("archived_sessions")
+            ]
+        );
+    }
 
     #[test]
     fn catalog_tool_profile_from_api_format() {
