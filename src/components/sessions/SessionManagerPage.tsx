@@ -613,7 +613,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     };
   };
 
-  const toggleSessionChecked = (session: SessionMeta, checked: boolean) => {
+  const toggleSessionChecked = useCallback((session: SessionMeta, checked: boolean) => {
     if (!session.sourcePath) return;
     const key = getSessionKey(session);
     setSelectedSessionKeys((current) => {
@@ -625,7 +625,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
       }
       return next;
     });
-  };
+  }, []);
 
   const toggleSessionGroupChecked = (
     groupSessions: SessionMeta[],
@@ -693,7 +693,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         isChecked={selectedSessionKeys.has(sessionKey)}
         isCheckDisabled={!session.sourcePath}
         onSelect={setSelectedKey}
-        onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
+        onToggleChecked={toggleSessionChecked}
       />
     );
   };
