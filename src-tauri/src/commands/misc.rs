@@ -214,9 +214,20 @@ fn run_tool_lifecycle_silently(command_line: &str, _label: &str) -> Result<(), S
     use std::process::Command;
     // command_line 是 bash 风格脚本（含 `set -e` 与多行命令）；强制用 bash 执行，
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
+
+    // GUI App 启动的进程 PATH 由 launchd 提供，macOS 上通常仅含
+    // /usr/bin:/bin:/usr/sbin:/sbin，缺少 Homebrew / nvm / mise 等用户级 bin 目录。
+    // npm / codex / node 等 CLI 的 #!/usr/bin/env node shebang 依赖 PATH 定位 node，
+    // 因此在 bash -c 之前注入常见用户 bin 路径，确保 env 可找到 node。
+    let path = std::env::var("PATH").unwrap_or_default();
+    let enhanced_path = format!(
+        "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{}",
+        path
+    );
     let output = Command::new("bash")
         .arg("-c")
         .arg(command_line)
+        .env("PATH", &enhanced_path)
         .output()
         .map_err(|e| format!("启动安装进程失败: {e}"))?;
     finish_lifecycle_output(&output)
