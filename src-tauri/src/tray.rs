@@ -866,6 +866,10 @@ pub fn create_tray_menu(
         .lock()
         .unwrap_or_else(|p| p.into_inner()) = section_handles;
 
+    // 登记 HMENU 供第三方托盘的 WM_CONTEXTMENU 兼容层弹出（Windows 专用，
+    // 其它平台空实现）。在 build 之后、返回之前抽取，保证句柄指向当前活跃菜单。
+    crate::tray_compat::set_current_tray_menu(&menu);
+
     Ok(menu)
 }
 
