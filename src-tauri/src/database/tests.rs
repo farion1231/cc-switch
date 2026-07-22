@@ -153,14 +153,14 @@ fn normalize_default(default: &Option<String>) -> Option<String> {
 }
 
 #[test]
-fn v13_to_v14_adds_security_and_reasoning_schema() -> Result<(), AppError> {
+fn v16_to_v17_adds_security_and_reasoning_schema() -> Result<(), AppError> {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn)?;
-    Database::set_user_version(&conn, 13)?;
+    Database::set_user_version(&conn, 16)?;
 
     Database::apply_schema_migrations_on_conn(&conn)?;
 
-    assert_eq!(Database::get_user_version(&conn)?, 14);
+    assert_eq!(Database::get_user_version(&conn)?, 17);
     assert!(Database::has_column(&conn, "providers", "revision")?);
     for column in [
         "reasoning_tokens",
@@ -175,7 +175,7 @@ fn v13_to_v14_adds_security_and_reasoning_schema() -> Result<(), AppError> {
     ] {
         assert!(
             Database::has_column(&conn, "proxy_request_logs", column)?,
-            "proxy_request_logs.{column} should exist after v14 migration"
+            "proxy_request_logs.{column} should exist after v17 migration"
         );
     }
     for table in [
@@ -186,7 +186,7 @@ fn v13_to_v14_adds_security_and_reasoning_schema() -> Result<(), AppError> {
     ] {
         assert!(
             Database::table_exists(&conn, table)?,
-            "{table} should exist after v14 migration"
+            "{table} should exist after v17 migration"
         );
     }
     Ok(())
@@ -202,6 +202,38 @@ fn normalized_base_url_equates_default_port_and_trailing_slash() {
         normalize_base_url("http://EXAMPLE.com:80/").expect("normalize http URL"),
         "http://example.com"
     );
+}
+
+#[test]
+fn deleted_default_skill_repo_is_not_restored() {
+    let db = Database::memory().expect("create memory db");
+
+    assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 4);
+    for repo in db.get_skill_repos().expect("get initialized repos") {
+        db.delete_skill_repo(&repo.owner, &repo.name)
+            .expect("delete repo");
+    }
+    assert!(db.get_skill_repos().expect("get deleted repos").is_empty());
+
+    assert_eq!(
+        db.init_default_skill_repos().expect("reinitialize repos"),
+        0
+    );
+    assert!(db.get_skill_repos().expect("get repos").is_empty());
+}
+
+#[test]
+fn existing_skill_repo_selection_is_not_supplemented() {
+    let db = Database::memory().expect("create memory db");
+    let default_store = crate::services::skill::SkillStore::default();
+    db.save_skill_repo(&default_store.repos[0])
+        .expect("save existing repo");
+
+    assert_eq!(db.init_default_skill_repos().expect("initialize repos"), 0);
+    assert_eq!(db.get_skill_repos().expect("get repos").len(), 1);
+    assert!(db
+        .get_bool_flag("default_skill_repos_initialized")
+        .expect("get initialized flag"));
 }
 
 #[test]
@@ -570,7 +602,7 @@ fn schema_create_tables_repairs_legacy_proxy_config_singleton_to_per_app() {
     let count: i32 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count rows");
-    assert_eq!(count, 3, "per-app proxy_config should have 3 rows");
+    assert_eq!(count, 4, "per-app proxy_config should have 4 rows");
 
     // 新结构下应能按 app_type 查询
     let _: i32 = conn
@@ -710,7 +742,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
     let proxy_rows: i64 = conn
         .query_row("SELECT COUNT(*) FROM proxy_config", [], |r| r.get(0))
         .expect("count proxy_config rows");
-    assert_eq!(proxy_rows, 3);
+    assert_eq!(proxy_rows, 4);
 
     // model_pricing 应具备默认数据（迁移时会 seed）
     let pricing_rows: i64 = conn

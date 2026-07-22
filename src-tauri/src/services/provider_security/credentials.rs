@@ -21,6 +21,7 @@ pub fn extract_provider_credentials(provider: &Provider, app_type: &AppType) -> 
         | AppType::ClaudeDesktop
         | AppType::Codex
         | AppType::Gemini
+        | AppType::GrokBuild
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes => provider.resolve_usage_credentials(app_type),
@@ -255,6 +256,29 @@ fn apply_selected_credentials_inner(
                     base_url.as_deref().unwrap_or_default(),
                 )
                 .map_err(AppError::InvalidInput)?;
+                settings.insert("config".to_string(), Value::String(updated));
+            }
+        }
+        AppType::GrokBuild => {
+            let config = settings
+                .get("config")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let mut updated = config;
+            if selected_fields.contains("apiKey") {
+                updated = crate::grok_config::update_api_key(
+                    &updated,
+                    api_key.as_deref().unwrap_or_default(),
+                )?;
+            }
+            if selected_fields.contains("baseUrl") {
+                updated = crate::grok_config::update_base_url(
+                    &updated,
+                    base_url.as_deref().unwrap_or_default(),
+                )?;
+            }
+            if selected_fields.contains("apiKey") || selected_fields.contains("baseUrl") {
                 settings.insert("config".to_string(), Value::String(updated));
             }
         }
