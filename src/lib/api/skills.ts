@@ -24,6 +24,8 @@ export interface SkillApps {
   openclaw: boolean;
   hermes: boolean;
   pi: boolean;
+  /** ZCode uses its own plugin system; never set by skill sync. */
+  zcode?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
