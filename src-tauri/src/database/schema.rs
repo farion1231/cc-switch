@@ -67,7 +67,8 @@ impl Database {
             enabled_claude BOOLEAN NOT NULL DEFAULT 0, enabled_codex BOOLEAN NOT NULL DEFAULT 0,
             enabled_gemini BOOLEAN NOT NULL DEFAULT 0, enabled_grokbuild BOOLEAN NOT NULL DEFAULT 0,
             enabled_opencode BOOLEAN NOT NULL DEFAULT 0,
-            enabled_hermes BOOLEAN NOT NULL DEFAULT 0
+            enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -1539,6 +1540,12 @@ impl Database {
                 conn,
                 "mcp_servers",
                 "enabled_grokbuild",
+                "BOOLEAN NOT NULL DEFAULT 0",
+            )?;
+            Self::add_column_if_missing(
+                conn,
+                "mcp_servers",
+                "enabled_zcode",
                 "BOOLEAN NOT NULL DEFAULT 0",
             )?;
         }

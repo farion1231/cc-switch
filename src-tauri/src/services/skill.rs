@@ -608,6 +608,9 @@ impl SkillService {
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
+            AppType::ZCode => {
+                // ZCode uses a separate plugin-marketplace system (v1), no CC Switch skill sync
+            }
         }
 
         // 默认路径：回退到用户主目录下的标准位置。
@@ -625,6 +628,8 @@ impl SkillService {
             AppType::OpenClaw => home.join(".openclaw").join("skills"),
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
+            // ZCode uses a separate plugin-marketplace system (v1); this path is unused
+            AppType::ZCode => crate::zcode_config::get_zcode_dir().join("skills"),
         })
     }
 
