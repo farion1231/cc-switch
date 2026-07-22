@@ -5,7 +5,7 @@
 //! responses for Claude-compatible clients.
 
 use super::gemini_schema::build_gemini_function_declaration;
-use super::gemini_shadow::{GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
+use super::gemini_shadow::{propagate_parallel_thought_signatures, GeminiAssistantTurn, GeminiShadowStore, GeminiToolCallMeta};
 use crate::proxy::error::ProxyError;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -665,17 +665,13 @@ fn convert_message_content_to_parts(
                     function_call["id"] = json!(id);
                 }
 
-                // Re-attach the thought_signature that Gemini originally
-                // associated with this functionCall.  The Anthropic format
-                // strips it from the tool_use block, but Gemini requires it
-                // on every functionCall in a multi-turn tool-use exchange.
-                // Without replaying the stored signature the upstream may
-                // reject with "missing a `thought_signature`".
+                let mut part = json!({ "functionCall": function_call });
                 if let Some(sig) = thought_signature_by_id.get(id) {
-                    function_call["thoughtSignature"] = json!(sig);
+                    part["thought_signature"] = json!(sig);
+                    part["thoughtSignature"] = json!(sig);
                 }
 
-                parts.push(json!({ "functionCall": function_call }));
+                parts.push(part);
             }
             "tool_result" => {
                 let tool_use_id = block
@@ -757,6 +753,12 @@ fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
     // synthetic value as `functionCall.id` upstream would leak an internal
     // identifier.
     for part in &mut parts {
+        if let Some(sig) = part.get("thoughtSignature").or_else(|| part.get("thought_signature")).cloned() {
+            if let Some(part_obj) = part.as_object_mut() {
+                part_obj.insert("thought_signature".to_string(), sig.clone());
+                part_obj.insert("thoughtSignature".to_string(), sig);
+            }
+        }
         let Some(function_call) = part.get_mut("functionCall").and_then(|v| v.as_object_mut())
         else {
             continue;
@@ -1012,7 +1014,7 @@ fn merge_tool_names_from_parts(parts: &[Value], tool_name_by_id: &mut HashMap<St
 }
 
 fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
-    parts
+    let mut calls: Vec<GeminiToolCallMeta> = parts
         .iter()
         .filter_map(|part| {
             let function_call = part.get("functionCall")?;
@@ -1041,7 +1043,9 @@ fn extract_tool_call_meta(parts: &[Value]) -> Vec<GeminiToolCallMeta> {
                     .and_then(|value| value.as_str()),
             ))
         })
-        .collect()
+        .collect();
+    propagate_parallel_thought_signatures(&mut calls);
+    calls
 }
 
 fn map_tool_choice(tool_choice: Option<&Value>) -> Result<Option<Value>, ProxyError> {
