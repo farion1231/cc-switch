@@ -7,7 +7,7 @@ import type { ModelPricing } from "@/types/usage";
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: string | { defaultValue?: string }) =>
-      typeof options === "string" ? options : options?.defaultValue ?? key,
+      typeof options === "string" ? options : (options?.defaultValue ?? key),
   }),
 }));
 
@@ -61,9 +61,12 @@ describe("PricingEditModal", () => {
     render(<PricingEditModal open model={model} onClose={() => {}} />);
 
     for (const { id } of PRICE_FIELDS) {
-      const input = screen.getByLabelText(/每百万 tokens/ as unknown as string, {
-        selector: `#${id}`,
-      }) as HTMLInputElement;
+      const input = screen.getByLabelText(
+        /每百万 tokens/ as unknown as string,
+        {
+          selector: `#${id}`,
+        },
+      ) as HTMLInputElement;
       expect(input).toHaveAttribute("step", "0.0001");
     }
   });
@@ -79,9 +82,7 @@ describe("PricingEditModal", () => {
   });
 
   it("allows user to input sub-cent prices via change event", () => {
-    render(
-      <PricingEditModal open model={model} onClose={() => {}} isNew />,
-    );
+    render(<PricingEditModal open model={model} onClose={() => {}} isNew />);
 
     const cacheReadInput = document.getElementById(
       "cacheReadCost",

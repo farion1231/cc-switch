@@ -40,9 +40,7 @@ describe("Xiaomi MiMo Token Plan presets", () => {
     );
 
     expect(rebased.model?.primary).toBe("my-mimo-plan/mimo-v2.5-pro");
-    expect(rebased.modelCatalog).toHaveProperty(
-      "my-mimo-plan/mimo-v2.5-pro",
-    );
+    expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.5-pro");
     expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.5");
     expect(rebased.modelCatalog).not.toHaveProperty(
       "xiaomi-mimo-token-plan/mimo-v2.5-pro",

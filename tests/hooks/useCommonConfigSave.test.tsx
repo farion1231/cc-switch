@@ -35,7 +35,7 @@ describe("common config snippet saving", () => {
     const onConfigChange = vi.fn();
     const { result } = renderHook(() =>
       useCodexCommonConfig({
-        codexConfig: "model = \"gpt-5\"",
+        codexConfig: 'model = "gpt-5"',
         onConfigChange,
       }),
     );

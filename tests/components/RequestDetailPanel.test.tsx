@@ -81,9 +81,7 @@ describe("RequestDetailPanel reasoning contract", () => {
       isLoading: false,
     });
 
-    render(
-      <RequestDetailPanel requestId="req-1" onClose={() => undefined} />,
-    );
+    render(<RequestDetailPanel requestId="req-1" onClose={() => undefined} />);
 
     expect(screen.getByText("proxy_response")).toBeInTheDocument();
     expect(screen.getByText("2 个续接轮次")).toBeInTheDocument();
