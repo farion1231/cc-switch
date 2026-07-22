@@ -1,3 +1,5 @@
+import type { AppId } from "./lib/api/types";
+
 export type ProviderCategory =
   | "official" // 官方
   | "cn_official" // 开源官方（原"国产官方"）
@@ -340,6 +342,45 @@ export interface RemoteSnapshotInfo {
 
 // 应用设置类型（用于设置对话框与 Tauri API）
 // 存储在本地 ~/.cc-switch/settings.json，不随数据库同步
+export type ManagedTargetKind =
+  | { type: "localWindows" }
+  | { type: "wsl"; distro: string; user: string };
+
+export type ManagementState = "managed" | "unmanaged" | "offline";
+
+export interface ManagedTarget {
+  id: string;
+  app: AppId;
+  name: string;
+  kind: ManagedTargetKind;
+  configLocation: { path: string };
+  currentProviderId?: string;
+  managementState: ManagementState;
+  providerOverrides?: Record<string, { fields?: Record<string, unknown> }>;
+  lastViewedAt?: number;
+}
+
+export type TargetArtifactState = "missing" | "valid" | "invalid";
+
+export interface TargetInspection {
+  targetId: string;
+  reachable: boolean;
+  config: TargetArtifactState;
+  auth: TargetArtifactState;
+  activeSessionCount: number;
+  archivedSessionCount: number;
+  stateDbPresent: boolean;
+}
+
+export interface WslTargetDiscovery {
+  distro: string;
+  user?: string;
+  homeDir?: string;
+  configPath?: string;
+  reachable: boolean;
+  codexConfigPresent: boolean;
+}
+
 export interface Settings {
   // ===== 设备级 UI 设置 =====
   // 是否在系统托盘（macOS 菜单栏）显示图标
