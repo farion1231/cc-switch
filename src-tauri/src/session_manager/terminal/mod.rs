@@ -195,9 +195,10 @@ fn build_wezterm_compatible_args_with_shell(
         args.push(dir.to_string());
     }
 
-    // Invoke shell to run the command string (to handle pipes, etc)
+    // Invoke login shell so PATH (e.g. Homebrew /opt/homebrew via ~/.zprofile) is loaded
     args.push("--".to_string());
     args.push(shell.to_string());
+    args.push("-l".to_string());
     args.push("-c".to_string());
     args.push(full_command);
     args
@@ -246,24 +247,12 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
 }
 
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
-    // Alacritty: open -na Alacritty --args --working-directory ... -e shell -c command
-    let full_command = build_shell_command(command, None);
+    // Alacritty: open -na Alacritty --args --working-directory ... -e shell -l -c command
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-
-    let mut args = vec!["-na", "Alacritty", "--args"];
-
-    if let Some(dir) = cwd {
-        args.push("--working-directory");
-        args.push(dir);
-    }
-
-    args.push("-e");
-    args.push(&shell);
-    args.push("-c");
-    args.push(&full_command);
+    let args = build_alacritty_args(command, cwd, &shell);
 
     let status = Command::new("open")
-        .args(&args)
+        .args(args.iter().map(String::as_str))
         .status()
         .map_err(|e| format!("Failed to launch Alacritty: {e}"))?;
 
@@ -272,6 +261,28 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     } else {
         Err("Failed to launch Alacritty.".to_string())
     }
+}
+
+fn build_alacritty_args(command: &str, cwd: Option<&str>, shell: &str) -> Vec<String> {
+    let full_command = build_shell_command(command, None);
+    let mut args = vec![
+        "-na".to_string(),
+        "Alacritty".to_string(),
+        "--args".to_string(),
+    ];
+
+    if let Some(dir) = cwd {
+        args.push("--working-directory".to_string());
+        args.push(dir.to_string());
+    }
+
+    // Login shell (-l) so Apple Silicon Homebrew (/opt/homebrew) from ~/.zprofile is available
+    args.push("-e".to_string());
+    args.push(shell.to_string());
+    args.push("-l".to_string());
+    args.push("-c".to_string());
+    args.push(full_command);
+    args
 }
 
 fn launch_custom(
@@ -337,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn wezterm_compatible_terminals_use_start_and_cwd_arguments() {
+    fn wezterm_compatible_terminals_use_login_shell_and_cwd_arguments() {
         let args = build_wezterm_compatible_args_with_shell(
             "Kaku",
             "claude --resume abc-123",
@@ -356,10 +367,63 @@ mod tests {
                 "/tmp/project dir".to_string(),
                 "--".to_string(),
                 "/bin/zsh".to_string(),
+                "-l".to_string(),
                 "-c".to_string(),
                 "claude --resume abc-123".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn alacritty_uses_login_shell_and_working_directory() {
+        let args = build_alacritty_args(
+            "claude --resume abc-123",
+            Some("/tmp/project dir"),
+            "/bin/zsh",
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "-na".to_string(),
+                "Alacritty".to_string(),
+                "--args".to_string(),
+                "--working-directory".to_string(),
+                "/tmp/project dir".to_string(),
+                "-e".to_string(),
+                "/bin/zsh".to_string(),
+                "-l".to_string(),
+                "-c".to_string(),
+                "claude --resume abc-123".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn wezterm_and_alacritty_invoke_shell_with_login_flag_like_kitty_ghostty() {
+        // Apple Silicon Homebrew lives in /opt/homebrew and is typically exported
+        // from ~/.zprofile (login shells only). Resume must use -l -c.
+        let wezterm = build_wezterm_compatible_args_with_shell(
+            "WezTerm",
+            "codex resume",
+            None,
+            "/bin/zsh",
+        );
+        let alacritty = build_alacritty_args("codex resume", None, "/bin/zsh");
+
+        let wez_shell = wezterm
+            .iter()
+            .position(|a| a == "/bin/zsh")
+            .expect("shell path present");
+        assert_eq!(wezterm[wez_shell + 1], "-l");
+        assert_eq!(wezterm[wez_shell + 2], "-c");
+
+        let ala_shell = alacritty
+            .iter()
+            .position(|a| a == "/bin/zsh")
+            .expect("shell path present");
+        assert_eq!(alacritty[ala_shell + 1], "-l");
+        assert_eq!(alacritty[ala_shell + 2], "-c");
     }
 
     #[test]
