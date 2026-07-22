@@ -259,6 +259,8 @@
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
     "proxyReasonAnthropicMessages": "使用 Anthropic Messages 接口格式",
     "proxyReasonFullUrl": "开启了完整 URL 连接模式",
+    "proxyReasonManagedOAuth": "使用托管 OAuth 登录（令牌由本地路由注入）",
+    "proxyReasonRoutingRequired": "需要本地路由处理请求",
     "openAIFormatHint": "此供应商使用 OpenAI 兼容格式，需要开启路由服务才能正常使用",
     "copilotProxyHint": "GitHub Copilot 作为 Claude 供应商时始终需要本地路由；路由会根据当前模型自动选择 Chat Completions 或 Responses。",
     "openLinkFailed": "链接打开失败",
@@ -326,7 +328,8 @@
       "description": "在 Claude Code 中使用您的其他订阅，请注意合规风险。",
       "beta": "Beta",
       "copilotDescription": "管理 GitHub Copilot 账号",
-      "codexOauthDescription": "管理 ChatGPT 账号"
+      "codexOauthDescription": "管理 ChatGPT 账号",
+      "xaiOauthDescription": "管理 xAI / Grok 账号"
     },
     "advanced": {
       "configDir": {
@@ -397,10 +400,10 @@
         "cacheInjectionDescription": "自动在请求关键位置注入标准 5 分钟 Cache 断点，减少重复 token 计费"
       },
       "logConfig": {
-        "title": "日志管理",
-        "description": "控制日志输出级别",
-        "enabled": "启用日志",
-        "enabledDescription": "总开关，关闭后所有日志将被禁用",
+        "title": "应用诊断日志",
+        "description": "控制应用诊断日志的输出级别",
+        "enabled": "启用应用诊断日志",
+        "enabledDescription": "控制 cc-switch.log；不影响请求用量记录和 crash.log",
         "level": "日志级别",
         "levelDescription": "设置输出的最低日志级别",
         "levels": {
@@ -1014,6 +1017,7 @@
     "customApiKeyHint": "💡 自定义配置需手动填写所有必要字段",
     "omoHint": "💡 OMO 配置管理 Agent 模型分配，兼容 oh-my-openagent.jsonc / oh-my-opencode.jsonc",
     "officialHint": "💡 官方供应商使用浏览器登录，无需配置 API Key",
+    "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
     "getApiKey": "获取 API Key",
     "partnerPromotion": {
       "sudocode": "SudoCode 让 Claude Code 与 Claude Desktop 接入 Claude Opus 4.8，Codex 接入 GPT-5.6，一个 Key 统一使用。CC Switch 用户注册并加入 QQ 群 726213516，联系群主领取 ¥10 试用额度。",
@@ -1221,6 +1225,31 @@
     "copyCode": "复制代码",
     "fastMode": "FAST 模式",
     "fastModeDescription": "发送 service_tier=\"priority\" 换取更低延迟。默认关闭——开启后会按更高速率消耗 ChatGPT 配额。"
+  },
+  "xaiOauth": {
+    "authStatus": "xAI OAuth 认证",
+    "accountCount": "{{count}} 个可用账号",
+    "reauthRequired": "需要重新登录",
+    "notAuthenticated": "未认证",
+    "selectAccount": "选择账号",
+    "selectAccountPlaceholder": "选择 xAI 账号",
+    "useDefaultAccount": "使用默认账号",
+    "accounts": "xAI 账号",
+    "defaultAccount": "默认",
+    "expired": "凭据已失效",
+    "setAsDefault": "设为默认",
+    "removeAccount": "移除账号",
+    "addOrReauth": "添加账号或重新登录",
+    "login": "使用 xAI 登录",
+    "waitingForAuth": "等待 xAI 授权中…",
+    "enterCode": "若浏览器未自动填入，请输入：",
+    "retry": "重试",
+    "logoutAll": "移除所有 xAI 账号",
+    "loginRequired": "请先登录 xAI 账号"
+  },
+  "managedAuth": {
+    "selectedAccountNeedsReauth": "已绑定账号不存在或需要重新登录",
+    "selectedAccountUnavailable": "已绑定账号不存在或需要重新登录，请重新选择账号"
   },
   "endpointTest": {
     "title": "请求地址管理",
@@ -1492,6 +1521,17 @@
       "upToDate": "会话日志已是最新",
       "failed": "会话同步失败"
     },
+    "rebuildCodex": {
+      "title": "Codex 用量维护",
+      "description": "从本地 rollout 日志重新构建 Codex 会话用量",
+      "warning": "重建前会自动备份数据库。若源 JSONL 已删除，对应历史将无法重新导入。",
+      "action": "重建 Codex 用量",
+      "confirmTitle": "确认重建 Codex 用量",
+      "confirmMessage": "此操作会清除现有 Codex 会话明细与汇总，再从本地 Codex 日志重新导入。\n\n已删除日志对应的历史将丢失；缺少父 rollout 的 fork 会暂缓导入。",
+      "confirmAction": "备份并重建",
+      "completed": "重建完成：导入 {{imported}} 条，错误 {{errors}}，疑似重复 {{suspected}}，暂缓文件 {{deferred}}",
+      "failed": "Codex 用量重建失败：{{error}}"
+    },
     "totalRecords": "共 {{total}} 条记录",
     "goToPage": "跳转",
     "pageInputPlaceholder": "页码",
@@ -1701,7 +1741,10 @@
   "errors": {
     "usage_query_failed": "用量查询失败",
     "configLoadFailedTitle": "配置加载失败",
-    "configLoadFailedMessage": "无法读取配置文件：\n{{path}}\n\n错误详情：\n{{detail}}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。"
+    "configLoadFailedMessage": "无法读取配置文件：\n{{path}}\n\n错误详情：\n{{detail}}\n\n请手动检查 JSON 是否有效，或从同目录的备份文件（如 config.json.bak）恢复。\n\n应用将退出以便您进行修复。",
+    "frontendCrashTitle": "界面遇到了问题",
+    "frontendCrashMessage": "已尝试将错误信息写入应用诊断日志。请重新加载界面；如果问题持续，请在提交 Issue 时附上日志。",
+    "reloadInterface": "重新加载界面"
   },
   "presetSelector": {
     "title": "选择配置类型",
@@ -2533,8 +2576,8 @@
           "description": "单个请求的最大等待时间（0 表示不限制，或设置 10 ~ 600 秒）"
         },
         "enableLogging": {
-          "label": "启用日志记录",
-          "description": "记录所有路由请求，便于排查问题"
+          "label": "记录请求用量",
+          "description": "将路由请求的用量与状态写入本地统计数据库"
         },
         "streamingFirstByteTimeout": {
           "label": "流式首字超时（秒）",

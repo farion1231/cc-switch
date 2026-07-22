@@ -2,13 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "enables the default permissions",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "opener:default",
     "updater:default",
+    "log:default",
     "core:window:allow-set-skip-taskbar",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",

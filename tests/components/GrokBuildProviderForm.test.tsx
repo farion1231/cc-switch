@@ -2,7 +2,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it, vi } from "vitest";
-import { GrokBuildProviderForm } from "@/components/providers/forms/GrokBuildProviderForm";
+import {
+  GrokBuildProviderForm,
+  grokApiBackendFromApiFormat,
+} from "@/components/providers/forms/GrokBuildProviderForm";
 
 vi.mock("@/components/JsonEditor", () => ({
   default: ({
@@ -21,7 +24,7 @@ vi.mock("@/components/JsonEditor", () => ({
 }));
 
 describe("GrokBuildProviderForm", () => {
-  it("offers Codex-compatible provider presets and applies one", async () => {
+  it("offers curated Grok Build presets and applies one", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <GrokBuildProviderForm
@@ -30,6 +33,10 @@ describe("GrokBuildProviderForm", () => {
         onCancel={() => {}}
       />,
     );
+
+    // 国产官方直连（cn_official）不在 Grok Build 预设列表里
+    expect(screen.queryByRole("button", { name: /BytePlus/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Kimi/ })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /PatewayAI/ }));
 
@@ -85,7 +92,14 @@ describe("GrokBuildProviderForm", () => {
     });
   });
 
-  it("maps Chat Completions presets into Grok api_backend", async () => {
+  it("maps preset API formats into Grok api_backend", async () => {
+    // 预设列表已不含 Chat Completions 条目（国产官方直连被移除），
+    // chat/messages 映射分支由纯函数覆盖
+    expect(grokApiBackendFromApiFormat("openai_chat")).toBe("chat_completions");
+    expect(grokApiBackendFromApiFormat("anthropic")).toBe("messages");
+    expect(grokApiBackendFromApiFormat("openai_responses")).toBe("responses");
+
+    // 组件级接线用带显式 apiFormat 的 Responses 预设验证
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(
@@ -96,7 +110,7 @@ describe("GrokBuildProviderForm", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /BytePlus/ }));
+    await user.click(screen.getByRole("button", { name: /APIKEY\.FUN/ }));
     await user.type(screen.getByLabelText("API Key"), "secret-key");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -104,10 +118,11 @@ describe("GrokBuildProviderForm", () => {
     const submitted = onSubmit.mock.calls[0][0];
     const settings = JSON.parse(submitted.settingsConfig);
     const config = parseToml(settings.config) as any;
-    expect(submitted.meta.apiFormat).toBe("openai_chat");
-    expect(config.model[config.models.default].api_backend).toBe(
-      "chat_completions",
-    );
+    expect(submitted.meta.apiFormat).toBe("openai_responses");
+    const selected = config.model[config.models.default];
+    expect(selected.api_backend).toBe("responses");
+    expect(selected.model).toBe("grok-4.5");
+    expect(selected.base_url).toBe("https://api.apikey.fun/v1");
   });
 
   it("renders localized validation feedback for malformed TOML", async () => {

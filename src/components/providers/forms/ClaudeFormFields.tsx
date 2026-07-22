@@ -36,6 +36,7 @@ import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import { CodexOAuthSection } from "./CodexOAuthSection";
+import { XaiOAuthSection } from "./XaiOAuthSection";
 import {
   copilotGetModels,
   copilotGetModelsForAccount,
@@ -43,6 +44,7 @@ import {
 import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
+  fetchXaiOauthModels,
   fetchModelsForConfig,
   showFetchModelsError,
   type FetchedModel,
@@ -97,6 +99,12 @@ interface ClaudeFormFieldsProps {
   onCodexAccountSelect?: (accountId: string | null) => void;
   codexFastMode?: boolean;
   onCodexFastModeChange?: (enabled: boolean) => void;
+
+  // xAI OAuth
+  isXaiOauthPreset?: boolean;
+  isXaiOauthAuthenticated?: boolean;
+  selectedXaiAccountId?: string | null;
+  onXaiAccountSelect?: (accountId: string | null) => void;
 
   // Template Values
   templateValueEntries: Array<[string, TemplateValueConfig]>;
@@ -174,6 +182,10 @@ export function ClaudeFormFields({
   onCodexAccountSelect,
   codexFastMode,
   onCodexFastModeChange,
+  isXaiOauthPreset,
+  isXaiOauthAuthenticated,
+  selectedXaiAccountId,
+  onXaiAccountSelect,
   templateValueEntries,
   templateValues,
   templatePresetName,
@@ -224,19 +236,23 @@ export function ClaudeFormFields({
     defaultOpusModel ||
     defaultFableModel ||
     subagentModel ||
-    apiFormat !== "anthropic" ||
+    (!isXaiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     customUserAgent ||
     hasRequestOverrides
   );
-  const [advancedExpanded, setAdvancedExpanded] = useState(hasAnyAdvancedValue);
+  const [advancedExpanded, setAdvancedExpanded] = useState(
+    isXaiOauthPreset ? false : hasAnyAdvancedValue,
+  );
 
   // 预设填充高级值后自动展开（仅从折叠→展开，不会自动折叠）
   useEffect(() => {
-    if (hasAnyAdvancedValue) {
+    if (isXaiOauthPreset) {
+      setAdvancedExpanded(false);
+    } else if (hasAnyAdvancedValue) {
       setAdvancedExpanded(true);
     }
-  }, [hasAnyAdvancedValue]);
+  }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
@@ -247,6 +263,10 @@ export function ClaudeFormFields({
   const [codexOauthModels, setCodexOauthModels] = useState<FetchedModel[]>([]);
   const [codexOauthModelsLoading, setCodexOauthModelsLoading] = useState(false);
   const codexOauthModelsRequestRef = useRef(0);
+
+  const [xaiOauthModels, setXaiOauthModels] = useState<FetchedModel[]>([]);
+  const [xaiOauthModelsLoading, setXaiOauthModelsLoading] = useState(false);
+  const xaiOauthModelsRequestRef = useRef(0);
   const fallbackUsesOneM = hasClaudeOneMMarker(claudeModel);
 
   // 通用模型获取（非 Copilot 供应商）
@@ -373,6 +393,37 @@ export function ClaudeFormFields({
     t,
   ]);
 
+  const handleFetchXaiOauthModels = useCallback(() => {
+    if (!isXaiOauthAuthenticated) {
+      toast.error(
+        t("xaiOauth.loginRequired", {
+          defaultValue: "请先登录 xAI 账号",
+        }),
+      );
+      return;
+    }
+
+    const requestId = xaiOauthModelsRequestRef.current + 1;
+    xaiOauthModelsRequestRef.current = requestId;
+    setXaiOauthModelsLoading(true);
+    fetchXaiOauthModels(selectedXaiAccountId)
+      .then((models) => {
+        if (xaiOauthModelsRequestRef.current !== requestId) return;
+        setXaiOauthModels(models);
+        showModelFetchResult(models.length);
+      })
+      .catch((err) => {
+        if (xaiOauthModelsRequestRef.current !== requestId) return;
+        console.warn("[XaiOAuth] Failed to fetch models:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (xaiOauthModelsRequestRef.current === requestId) {
+          setXaiOauthModelsLoading(false);
+        }
+      });
+  }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
+
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels([]);
@@ -385,16 +436,26 @@ export function ClaudeFormFields({
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
+  useEffect(() => {
+    xaiOauthModelsRequestRef.current += 1;
+    setXaiOauthModels([]);
+    setXaiOauthModelsLoading(false);
+  }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
+
   const modelFetchLoading = isCopilotPreset
     ? modelsLoading
     : isCodexOauthPreset
       ? codexOauthModelsLoading
-      : isFetchingModels;
+      : isXaiOauthPreset
+        ? xaiOauthModelsLoading
+        : isFetchingModels;
   const handleModelFetchClick = isCopilotPreset
     ? handleFetchCopilotModels
     : isCodexOauthPreset
       ? handleFetchCodexOauthModels
-      : handleFetchModels;
+      : isXaiOauthPreset
+        ? handleFetchXaiOauthModels
+        : handleFetchModels;
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -416,6 +477,19 @@ export function ClaudeFormFields({
           placeholder={placeholder}
           fetchedModels={codexOauthModels}
           isLoading={codexOauthModelsLoading}
+        />
+      );
+    }
+
+    if (isXaiOauthPreset) {
+      return (
+        <ModelInputWithFetch
+          id={id}
+          value={value}
+          onChange={updateValue}
+          placeholder={placeholder}
+          fetchedModels={xaiOauthModels}
+          isLoading={xaiOauthModelsLoading}
         />
       );
     }
@@ -619,6 +693,13 @@ export function ClaudeFormFields({
         />
       )}
 
+      {isXaiOauthPreset && (
+        <XaiOAuthSection
+          selectedAccountId={selectedXaiAccountId}
+          onAccountSelect={onXaiAccountSelect}
+        />
+      )}
+
       {/* API Key 输入框（非 OAuth 预设时显示） */}
       {shouldShowApiKey && !usesOAuth && (
         <ApiKeySection
@@ -693,7 +774,7 @@ export function ClaudeFormFields({
           onManageClick={
             showEndpointTools ? () => onEndpointModalToggle(true) : undefined
           }
-          showFullUrlToggle={showEndpointTools}
+          showFullUrlToggle={showEndpointTools && !isXaiOauthPreset}
           isFullUrl={isFullUrl}
           onFullUrlChange={onFullUrlChange}
         />
@@ -739,7 +820,7 @@ export function ClaudeFormFields({
           )}
           <CollapsibleContent className="space-y-4 pt-2">
             {/* API 格式选择（仅非云服务商显示） */}
-            {category !== "cloud_provider" && (
+            {category !== "cloud_provider" && !isXaiOauthPreset && (
               <div className="space-y-2">
                 <FormLabel htmlFor="apiFormat">
                   {t("providerForm.apiFormat", { defaultValue: "API 格式" })}
