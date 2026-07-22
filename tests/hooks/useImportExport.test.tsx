@@ -74,17 +74,64 @@ describe("useImportExport Hook", () => {
     expect(result.current.status).toBe("idle");
   });
 
-  it("should show error and return early when no file is selected for import", async () => {
-    const { result } = renderHook(() =>
-      useImportExport({ onImportSuccess: vi.fn() }),
-    );
+  it("should open file dialog and import selected file in one action", async () => {
+    openFileDialogMock.mockResolvedValue("/config.sql");
+    importConfigMock.mockResolvedValue({
+      success: true,
+      backupId: "backup-123",
+    });
+    const onImportSuccess = vi.fn();
+    const { result } = renderHook(() => useImportExport({ onImportSuccess }));
 
     await act(async () => {
       await result.current.importConfig();
     });
 
-    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(openFileDialogMock).toHaveBeenCalledTimes(1);
+    expect(importConfigMock).toHaveBeenCalledWith("/config.sql");
+    expect(result.current.selectedFile).toBe("/config.sql");
+    expect(result.current.status).toBe("success");
+    expect(result.current.backupId).toBe("backup-123");
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+    expect(onImportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("should only open one file dialog while import selection is in flight", async () => {
+    let resolveFileDialog: (filePath: string | null) => void;
+    openFileDialogMock.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveFileDialog = resolve;
+        }),
+    );
+    importConfigMock.mockResolvedValue({ success: true });
+    const { result } = renderHook(() => useImportExport());
+
+    const firstImport = result.current.importConfig();
+    const secondImport = result.current.importConfig();
+
+    expect(openFileDialogMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFileDialog!("/config.sql");
+      await Promise.all([firstImport, secondImport]);
+    });
+
+    expect(importConfigMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("should keep idle state when user cancels import file selection", async () => {
+    openFileDialogMock.mockResolvedValue(null);
+    const { result } = renderHook(() => useImportExport());
+
+    await act(async () => {
+      await result.current.importConfig();
+    });
+
+    expect(openFileDialogMock).toHaveBeenCalledTimes(1);
     expect(importConfigMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(result.current.selectedFile).toBe("");
     expect(result.current.status).toBe("idle");
   });
 
