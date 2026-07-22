@@ -137,6 +137,11 @@ interface ClaudeFormFieldsProps {
   subagentModel: string;
   onModelChange: (field: ClaudeModelEnvField, value: string) => void;
 
+  // Classifier Model (Auto Mode hijacking)
+  classifierModel: string;
+  classifierDisableThinking: boolean;
+  onClassifierDisableThinkingChange: (enabled: boolean) => void;
+
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
 
@@ -211,6 +216,9 @@ export function ClaudeFormFields({
   defaultFableModelName,
   subagentModel,
   onModelChange,
+  classifierModel,
+  classifierDisableThinking,
+  onClassifierDisableThinkingChange,
   speedTestEndpoints,
   apiFormat,
   onApiFormatChange,
@@ -235,6 +243,7 @@ export function ClaudeFormFields({
     defaultSonnetModel ||
     defaultOpusModel ||
     defaultFableModel ||
+    classifierModel ||
     subagentModel ||
     (!isXaiOauthPreset && apiFormat !== "anthropic") ||
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
@@ -1059,6 +1068,43 @@ export function ClaudeFormFields({
                   </div>
                 );
               })}
+            </div>
+
+            <div className="space-y-2 border-t pt-4">
+              <FormLabel htmlFor="classifierModel">
+                {t("providerForm.classifierModelLabel", {
+                  defaultValue: "分类器专用模型",
+                })}
+              </FormLabel>
+              {renderModelInput(
+                "classifierModel",
+                classifierModel,
+                "ANTHROPIC_CLASSIFIER_MODEL",
+                t("providerForm.modelPlaceholder", { defaultValue: "" }),
+              )}
+              <p className="text-xs text-muted-foreground">
+                {t("providerForm.classifierModelHint", {
+                  defaultValue:
+                    "可选。Auto Mode 分类器请求将被路由到此模型（基于 max_tokens ≤ 256 判定）。留空则不启用分类器劫持。",
+                })}
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <Checkbox
+                  id="classifierDisableThinking"
+                  checked={classifierDisableThinking}
+                  onCheckedChange={(checked) =>
+                    onClassifierDisableThinkingChange(checked === true)
+                  }
+                />
+                <label
+                  htmlFor="classifierDisableThinking"
+                  className="text-sm cursor-pointer"
+                >
+                  {t("providerForm.classifierDisableThinkingLabel", {
+                    defaultValue: "关闭分类器模型的思考模式",
+                  })}
+                </label>
+              </div>
             </div>
 
             <div className="space-y-2 border-t pt-4">
