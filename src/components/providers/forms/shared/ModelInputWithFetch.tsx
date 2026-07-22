@@ -1,16 +1,9 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ChevronDown, Download, Loader2 } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import type { FetchedModel } from "@/lib/api/model-fetch";
+import { ModelDropdown } from "./ModelDropdown";
 
 interface ModelInputWithFetchProps {
   id: string;
@@ -34,16 +27,8 @@ export function ModelInputWithFetch({
 }: ModelInputWithFetchProps) {
   const { t } = useTranslation();
 
-  // 有模型数据: Input + DropdownMenu
+  // 有模型数据: Input + searchable model picker
   if (fetchedModels.length > 0) {
-    const grouped: Record<string, FetchedModel[]> = {};
-    for (const model of fetchedModels) {
-      const vendor = model.ownedBy || "Other";
-      if (!grouped[vendor]) grouped[vendor] = [];
-      grouped[vendor].push(model);
-    }
-    const vendors = Object.keys(grouped).sort();
-
     return (
       <div className="flex gap-1">
         <Input
@@ -55,32 +40,7 @@ export function ModelInputWithFetch({
           autoComplete="off"
           className="flex-1"
         />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" className="shrink-0">
-              <ChevronDown className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="max-h-64 overflow-y-auto z-[200]"
-          >
-            {vendors.map((vendor, vi) => (
-              <div key={vendor}>
-                {vi > 0 && <DropdownMenuSeparator />}
-                <DropdownMenuLabel>{vendor}</DropdownMenuLabel>
-                {grouped[vendor].map((model) => (
-                  <DropdownMenuItem
-                    key={model.id}
-                    onSelect={() => onChange(model.id)}
-                  >
-                    {model.id}
-                  </DropdownMenuItem>
-                ))}
-              </div>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ModelDropdown models={fetchedModels} onSelect={onChange} />
       </div>
     );
   }

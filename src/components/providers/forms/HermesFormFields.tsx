@@ -31,15 +31,7 @@ import {
   ChevronRight,
   Loader2,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ApiKeySection } from "./shared";
+import { ApiKeySection, ModelDropdown } from "./shared";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -191,24 +183,6 @@ export function HermesFormFields({
     modelKeysRef.current.length = models.length;
   }
   const modelKeys = modelKeysRef.current;
-
-  // Group fetched models by vendor once — Radix DropdownMenuContent doesn't
-  // lazy-mount, so computing this in JSX would re-run per model row per render.
-  const groupedFetchedModels = useMemo(
-    () =>
-      Object.entries(
-        fetchedModels.reduce(
-          (acc, m) => {
-            const v = m.ownedBy || "Other";
-            if (!acc[v]) acc[v] = [];
-            acc[v].push(m);
-            return acc;
-          },
-          {} as Record<string, FetchedModel[]>,
-        ),
-      ).sort(([a], [b]) => a.localeCompare(b)),
-    [fetchedModels],
-  );
 
   const toggleModelAdvanced = (index: number) => {
     setExpandedModels((prev) => ({ ...prev, [index]: !prev[index] }));
@@ -422,42 +396,10 @@ export function HermesFormFields({
                         className="flex-1"
                       />
                       {fetchedModels.length > 0 && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="shrink-0"
-                            >
-                              <ChevronDown className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="max-h-64 overflow-y-auto z-[200]"
-                          >
-                            {groupedFetchedModels.map(
-                              ([vendor, vModels], vi) => (
-                                <div key={vendor}>
-                                  {vi > 0 && <DropdownMenuSeparator />}
-                                  <DropdownMenuLabel>
-                                    {vendor}
-                                  </DropdownMenuLabel>
-                                  {vModels.map((m) => (
-                                    <DropdownMenuItem
-                                      key={m.id}
-                                      onSelect={() =>
-                                        handleModelChange(index, "id", m.id)
-                                      }
-                                    >
-                                      {m.id}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </div>
-                              ),
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        <ModelDropdown
+                          models={fetchedModels}
+                          onSelect={(id) => handleModelChange(index, "id", id)}
+                        />
                       )}
                     </div>
                   </div>
