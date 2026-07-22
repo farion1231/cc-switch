@@ -49,9 +49,12 @@ impl Database {
         Self::dump_sql(&snapshot, &[])
     }
 
-    /// Export SQL for sync (WebDAV), skipping local-only tables' data
+    /// Export SQL for sync (WebDAV), skipping local-only tables' data.
+    /// Provider settings are decrypted in the snapshot so remote devices can import
+    /// without the local machine key (caller must have credentials-risk ack).
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
+        crate::secrets::decrypt_provider_settings_in_conn(&snapshot)?;
         Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
     }
 
@@ -82,13 +85,22 @@ impl Database {
 
     /// 从 SQL 字符串导入，返回生成的备份 ID（若无备份则为空字符串）
     pub fn import_sql_string(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, &[])
+        let backup_id = self.import_sql_string_inner(sql_raw, &[])?;
+        let conn = lock_conn!(self.conn);
+        if let Err(e) = crate::secrets::encrypt_provider_settings_in_conn(&conn) {
+            log::warn!("Failed to encrypt provider settings after SQL import: {e}");
+        }
+        Ok(backup_id)
     }
 
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current device snapshot before replacing the main database.
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
-        self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
+        let backup_id = self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)?;
+        // Sync payloads carry plaintext settings; encrypt at rest on this device.
+        let conn = lock_conn!(self.conn);
+        let _ = crate::secrets::encrypt_provider_settings_in_conn(&conn)?;
+        Ok(backup_id)
     }
 
     fn import_sql_string_inner(

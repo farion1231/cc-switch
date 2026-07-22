@@ -1923,7 +1923,7 @@ function ProviderFormFull({
       const preset = entry.preset as PiProviderPreset;
       const config = preset.settingsConfig;
 
-      piForm.resetPiState(config);
+      piForm.resetPiState(config, preset.providerKey);
 
       form.reset({
         name: preset.nameKey ? t(preset.nameKey) : preset.name,

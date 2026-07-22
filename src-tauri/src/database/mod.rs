@@ -122,6 +122,12 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+        {
+            let conn = lock_conn!(db.conn);
+            if let Err(e) = crate::secrets::encrypt_provider_settings_in_conn(&conn) {
+                log::warn!("Failed to encrypt provider settings at rest: {e}");
+            }
+        }
 
         // Pre-migration backup: only when upgrading from an existing database
         {
@@ -193,6 +199,12 @@ impl Database {
             conn: Mutex::new(conn),
         };
         db.create_tables()?;
+        {
+            let conn = lock_conn!(db.conn);
+            if let Err(e) = crate::secrets::encrypt_provider_settings_in_conn(&conn) {
+                log::warn!("Failed to encrypt provider settings at rest: {e}");
+            }
+        }
         db.ensure_model_pricing_seeded()?;
 
         Ok(db)

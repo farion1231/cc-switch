@@ -685,6 +685,7 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] accessToken: Option<String>,
     #[allow(non_snake_case)] userId: Option<String>,
     #[allow(non_snake_case)] templateType: Option<String>,
+    #[allow(non_snake_case)] allowPrivateNetwork: Option<bool>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::test_usage_script(
@@ -698,6 +699,7 @@ pub async fn testUsageScript(
         accessToken.as_deref(),
         userId.as_deref(),
         templateType.as_deref(),
+        allowPrivateNetwork.unwrap_or(false),
     )
     .await
     .map_err(|e| e.to_string())
@@ -1097,6 +1099,7 @@ mod native_query_credentials_tests {
             secret_access_key: None,
             team_organization_id: None,
             team_project_id: None,
+            allow_private_network: None,
         }
     }
 

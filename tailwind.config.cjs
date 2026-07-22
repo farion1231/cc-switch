@@ -70,15 +70,18 @@ module.exports = {
         },
       },
       boxShadow: {
-        sm: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
-        md: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
-        lg: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        sm: "0 1px 2px 0 rgb(30 60 120 / 0.05)",
+        md: "0 4px 12px -2px rgb(30 60 120 / 0.1), 0 2px 6px -2px rgb(30 60 120 / 0.06)",
+        lg: "0 12px 32px -4px rgb(30 60 120 / 0.14), 0 4px 12px -4px rgb(30 60 120 / 0.08)",
+        glass:
+          "0 8px 32px rgb(30 60 120 / 0.08), 0 2px 8px rgb(30 60 120 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.55)",
       },
       borderRadius: {
-        sm: "0.375rem",
-        md: "0.5rem",
-        lg: "0.75rem",
-        xl: "0.875rem",
+        sm: "0.5rem",
+        md: "0.75rem",
+        lg: "1rem",
+        xl: "1.25rem",
+        "2xl": "1.5rem",
       },
       fontFamily: {
         // 使用与之前版本保持一致的系统字体栈

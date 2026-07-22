@@ -110,7 +110,7 @@ export function RequestLogTable({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border bg-card/50 p-2 backdrop-blur-sm">
+      <div className="rounded-xl glass-card p-2">
         <div className="flex flex-wrap items-center gap-1.5">
           {/* Status code */}
           <Select
@@ -123,7 +123,7 @@ export function RequestLogTable({
               setPage(0);
             }}
           >
-            <SelectTrigger className="h-8 w-[100px] bg-background text-xs">
+            <SelectTrigger className="h-8 w-[100px] text-xs">
               <SelectValue placeholder={t("usage.statusCode")} />
             </SelectTrigger>
             <SelectContent>
@@ -150,7 +150,7 @@ export function RequestLogTable({
         <div className="h-[400px] animate-pulse rounded bg-gray-100" />
       ) : (
         <>
-          <div className="rounded-lg border border-border/50 bg-card/40 backdrop-blur-sm overflow-x-auto">
+          <div className="rounded-2xl glass-card overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>

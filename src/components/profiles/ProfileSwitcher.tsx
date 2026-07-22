@@ -112,8 +112,8 @@ export function ProfileSwitcher({ activeApp }: ProfileSwitcherProps) {
             aria-expanded={open}
             title={t(`profiles.switcherTooltip.${scope}`)}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
-              "hover:bg-black/5 dark:hover:bg-white/5",
+              "inline-flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-sm font-medium transition-all",
+              "glass-pill hover:bg-white/55 dark:hover:bg-white/10",
               currentProfile ? "text-foreground" : "text-muted-foreground",
             )}
           >

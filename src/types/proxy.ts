@@ -116,6 +116,7 @@ export interface FailoverQueueItem {
 }
 
 // 全局代理配置（统一字段，三行镜像）
+// Note: LAN bind permission (`proxyAllowLanListen`) lives on Settings, not here.
 export interface GlobalProxyConfig {
   proxyEnabled: boolean;
   listenAddress: string;

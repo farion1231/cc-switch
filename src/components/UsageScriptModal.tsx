@@ -499,6 +499,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "balance"
         | "official_subscription"
         | undefined,
+      allowPrivateNetwork:
+        selectedTemplate === TEMPLATE_TYPES.CUSTOM
+          ? !!script.allowPrivateNetwork
+          : false,
     };
     onSave(scriptWithTemplate);
     onClose();
@@ -653,6 +657,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.accessToken,
         script.userId,
         selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        selectedTemplate === TEMPLATE_TYPES.CUSTOM
+          ? !!script.allowPrivateNetwork
+          : false,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
@@ -988,6 +995,24 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                       </span>
                     )}
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-white/10 px-3 py-2.5 mt-2">
+                  <div className="space-y-0.5 min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      {t("usageScript.allowPrivateNetwork")}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("usageScript.allowPrivateNetworkHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!script.allowPrivateNetwork}
+                    onCheckedChange={(checked) =>
+                      setScript({ ...script, allowPrivateNetwork: checked })
+                    }
+                    aria-label={t("usageScript.allowPrivateNetwork")}
+                  />
                 </div>
               </div>
             )}

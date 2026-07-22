@@ -195,7 +195,9 @@ export function PiFormFields({
       <ApiKeySection
         value={apiKey}
         onChange={onApiKeyChange}
-        category={category}
+        // Pi 没有 OAuth-only 的免 key 官方供应商：即便是 official 预设
+        // （OpenAI / Anthropic / Gemini）也需用户自填 key，故不让 official 禁用输入框。
+        category={category === "official" ? undefined : category}
         shouldShowLink={shouldShowApiKeyLink}
         websiteUrl={websiteUrl}
         isPartner={isPartner}

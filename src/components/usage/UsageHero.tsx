@@ -226,7 +226,7 @@ export function UsageHero({
 
   if (isLoading) {
     return (
-      <Card className="border border-border/50 bg-card/40 backdrop-blur-sm">
+      <Card>
         <CardContent className="flex items-center justify-center min-h-[200px]">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
         </CardContent>
@@ -243,7 +243,7 @@ export function UsageHero({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
     >
-      <Card className="relative overflow-hidden border border-border/50 bg-card/60 backdrop-blur-xl shadow-sm">
+      <Card className="relative overflow-hidden">
         <CardContent className="p-4 md:p-5">
           <div className="flex flex-col gap-4">
             {/* Top row: Main Token Count, Requests, Cost */}
@@ -278,14 +278,14 @@ export function UsageHero({
                     >
                       {realTotal.toLocaleString()}
                     </span>
-                    <span className="text-xs text-muted-foreground font-medium bg-muted/40 px-1.5 py-0.5 rounded-md">
+                    <span className="text-xs text-muted-foreground font-medium glass-pill px-1.5 py-0.5 rounded-md">
                       ≈ {formatTokensShort(realTotal, lang, 2)}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-5 bg-background/50 px-4 py-2.5 rounded-xl border border-border/40 shadow-sm">
+              <div className="flex items-center gap-5 glass-pill px-4 py-2.5 rounded-xl">
                 <div className="flex flex-col">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
                     {t("usage.totalRequests")}
@@ -295,7 +295,7 @@ export function UsageHero({
                     {requests.toLocaleString()}
                   </span>
                 </div>
-                <div className="w-px h-8 bg-border/60" />
+                <div className="w-px h-8 bg-white/30 dark:bg-white/10" />
                 <div className="flex flex-col">
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
                     {t("usage.totalCost")}
@@ -336,7 +336,7 @@ export function UsageHero({
                 accent="text-emerald-500"
               />
 
-              <div className="col-span-2 lg:col-span-1 flex flex-col justify-center rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm">
+              <div className="col-span-2 lg:col-span-1 flex flex-col justify-center rounded-xl glass-pill p-3">
                 <div className="flex items-center justify-between text-[11px] mb-2">
                   <span className="text-muted-foreground font-medium">
                     {t("usage.cacheHitRate", "缓存命中率")}
@@ -345,7 +345,7 @@ export function UsageHero({
                     {hitPercentLabel}%
                   </span>
                 </div>
-                <div className="relative h-1.5 rounded-full bg-muted/60 overflow-hidden">
+                <div className="relative h-1.5 rounded-full bg-white/40 dark:bg-white/10 overflow-hidden">
                   <motion.div
                     className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
                     initial={{ width: 0 }}
@@ -383,7 +383,7 @@ function MiniStat({
 }: MiniStatProps) {
   return (
     <div
-      className="flex flex-col gap-1 rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm"
+      className="flex flex-col gap-1 rounded-xl glass-pill p-3"
       title={tooltip}
     >
       <div

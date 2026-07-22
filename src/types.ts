@@ -69,6 +69,8 @@ export interface UsageScript {
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
+  /** Custom scripts only: allow private/LAN destinations (SSR F risk). */
+  allowPrivateNetwork?: boolean;
   request?: {
     // 请求配置
     url?: string; // 请求 URL
@@ -381,6 +383,10 @@ export interface Settings {
   firstRunNoticeConfirmed?: boolean;
   // User has confirmed the auto-sync traffic warning
   autoSyncConfirmed?: boolean;
+  // User has confirmed that remote sync uploads plaintext DB (incl. API keys)
+  syncCredentialsConfirmed?: boolean;
+  // Allow proxy listen address to bind non-loopback / LAN interfaces
+  proxyAllowLanListen?: boolean;
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）

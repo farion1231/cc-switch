@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { ToggleRow } from "@/components/ui/toggle-row";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { toast } from "sonner";
 import { useFailoverQueue } from "@/lib/query/failover";
@@ -26,10 +27,25 @@ import {
   useGlobalProxyConfig,
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
+import { useSettingsQuery } from "@/lib/query";
+import { settingsApi } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
 import { extractErrorMessage } from "@/utils/errorUtils";
+
+function isLoopbackListenAddress(address: string): boolean {
+  const normalized =
+    address.trim().toLowerCase() === "localhost"
+      ? "127.0.0.1"
+      : address.trim().toLowerCase();
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -45,6 +61,7 @@ export function ProxyPanel({
   isProxyPending,
 }: ProxyPanelProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { status, isRunning } = useProxyStatus();
 
   // 获取应用接管状态
@@ -54,6 +71,9 @@ export function ProxyPanel({
   // 获取全局代理配置
   const { data: globalConfig } = useGlobalProxyConfig();
   const updateGlobalConfig = useUpdateGlobalProxyConfig();
+  const { data: settings } = useSettingsQuery();
+  const allowLanListen = settings?.proxyAllowLanListen === true;
+  const [showLanListenConfirm, setShowLanListenConfirm] = useState(false);
 
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
@@ -162,6 +182,29 @@ export function ProxyPanel({
       return;
     }
 
+    if (
+      !isLoopbackListenAddress(normalizedAddress) &&
+      !allowLanListen
+    ) {
+      toast.error(
+        t("proxy.settings.lanListenRequired", {
+          defaultValue:
+            "非本机地址需先开启「允许局域网监听」",
+        }),
+      );
+      return;
+    }
+
+    if (normalizedAddress === "0.0.0.0" && !allowLanListen) {
+      toast.error(
+        t("proxy.settings.lanListenRequired", {
+          defaultValue:
+            "非本机地址需先开启「允许局域网监听」",
+        }),
+      );
+      return;
+    }
+
     // 严格校验端口：必须是纯数字
     const portTrimmed = listenPort.trim();
     if (!/^\d+$/.test(portTrimmed)) {
@@ -194,6 +237,56 @@ export function ProxyPanel({
     } catch (error) {
       toast.error(
         t("proxy.settings.configSaveFailed", { defaultValue: "保存配置失败" }),
+      );
+    }
+  };
+
+  const handleLanListenToggle = (checked: boolean) => {
+    if (checked) {
+      if (allowLanListen) return;
+      setShowLanListenConfirm(true);
+      return;
+    }
+    void (async () => {
+      if (!settings) return;
+      try {
+        const { webdavSync: _, ...rest } = settings;
+        await settingsApi.save({ ...rest, proxyAllowLanListen: false });
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
+        toast.success(
+          t("proxy.settings.lanListen.disabled", {
+            defaultValue: "已关闭局域网监听",
+          }),
+          { closeButton: true },
+        );
+      } catch {
+        toast.error(
+          t("proxy.settings.lanListen.saveFailed", {
+            defaultValue: "保存局域网监听设置失败",
+          }),
+        );
+      }
+    })();
+  };
+
+  const handleLanListenConfirm = async () => {
+    setShowLanListenConfirm(false);
+    if (!settings) return;
+    try {
+      const { webdavSync: _, ...rest } = settings;
+      await settingsApi.save({ ...rest, proxyAllowLanListen: true });
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      toast.success(
+        t("proxy.settings.lanListen.enabled", {
+          defaultValue: "已允许局域网监听",
+        }),
+        { closeButton: true },
+      );
+    } catch {
+      toast.error(
+        t("proxy.settings.lanListen.saveFailed", {
+          defaultValue: "保存局域网监听设置失败",
+        }),
       );
     }
   };
@@ -581,6 +674,18 @@ export function ProxyPanel({
                 </div>
               </div>
 
+              <ToggleRow
+                label={t("proxy.settings.lanListen.label", {
+                  defaultValue: "允许局域网监听",
+                })}
+                description={t("proxy.settings.lanListen.description", {
+                  defaultValue:
+                    "允许绑定非本机地址（如 0.0.0.0），局域网设备可访问本代理。存在安全风险。",
+                })}
+                checked={allowLanListen}
+                onCheckedChange={handleLanListenToggle}
+              />
+
               <div className="flex justify-end">
                 <Button
                   size="sm"
@@ -621,6 +726,23 @@ export function ProxyPanel({
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        isOpen={showLanListenConfirm}
+        variant="info"
+        title={t("proxy.settings.lanListen.confirmTitle", {
+          defaultValue: "允许局域网监听？",
+        })}
+        message={t("proxy.settings.lanListen.confirmBody", {
+          defaultValue:
+            "开启后可将代理绑定到非本机地址（含 0.0.0.0），局域网内其他设备可能访问该代理。请确认网络环境可信。",
+        })}
+        confirmText={t("proxy.settings.lanListen.confirm", {
+          defaultValue: "我已知晓风险，开启",
+        })}
+        onConfirm={() => void handleLanListenConfirm()}
+        onCancel={() => setShowLanListenConfirm(false)}
+      />
     </>
   );
 }

@@ -156,7 +156,7 @@ const UnifiedMcpPanel = React.forwardRef<
           </div>
         ) : serverEntries.length === 0 ? (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+            <div className="w-16 h-16 mx-auto mb-4 glass-pill rounded-2xl flex items-center justify-center">
               <Server size={24} className="text-muted-foreground" />
             </div>
             <h3 className="text-lg font-medium text-foreground mb-2">
@@ -168,7 +168,7 @@ const UnifiedMcpPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
+            <div className="rounded-2xl glass-card overflow-hidden">
               {serverEntries.map(([id, server], index) => (
                 <UnifiedMcpListItem
                   key={id}

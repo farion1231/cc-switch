@@ -50,12 +50,12 @@ export const SessionMessageItem = memo(function SessionMessageItem({
   return (
     <div
       className={cn(
-        "rounded-lg border px-3 py-2.5 relative group transition-shadow min-w-0",
+        "rounded-xl glass-card px-3 py-2.5 relative group transition-shadow min-w-0",
         message.role.toLowerCase() === "user"
-          ? "bg-primary/5 border-primary/20 ml-8"
+          ? "!border-primary/25 bg-[color-mix(in_srgb,hsl(var(--primary))_8%,var(--glass-bg-strong))] ml-8"
           : message.role.toLowerCase() === "assistant"
-            ? "bg-blue-500/5 border-blue-500/20 mr-8"
-            : "bg-muted/40 border-border/60",
+            ? "!border-blue-500/25 bg-[color-mix(in_srgb,rgb(59_130_246)_8%,var(--glass-bg-strong))] mr-8"
+            : "",
         isActive && "ring-2 ring-primary ring-offset-2",
       )}
     >

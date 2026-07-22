@@ -117,7 +117,7 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
             </div>
           ) : promptEntries.length === 0 ? (
             <div className="text-center py-12">
-              <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <div className="w-16 h-16 mx-auto mb-4 glass-pill rounded-2xl flex items-center justify-center">
                 <FileText size={24} className="text-muted-foreground" />
               </div>
               <h3 className="text-lg font-medium text-foreground mb-2">

@@ -374,7 +374,7 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
             {/* 搜索来源切换 + 搜索框 */}
             <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center">
               {/* 来源切换 */}
-              <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1 shrink-0">
+              <div className="inline-flex gap-1 rounded-xl glass-pill p-1 shrink-0">
                 <Button
                   type="button"
                   size="sm"
@@ -419,13 +419,13 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                   {/* 仓库筛选 */}
                   <div className="w-full md:w-56">
                     <Select value={filterRepo} onValueChange={setFilterRepo}>
-                      <SelectTrigger className="bg-card border shadow-sm text-foreground">
+                      <SelectTrigger className="text-foreground">
                         <SelectValue
                           placeholder={t("skills.filter.repo")}
                           className="text-left truncate"
                         />
                       </SelectTrigger>
-                      <SelectContent className="bg-card text-foreground shadow-lg max-h-64 min-w-[var(--radix-select-trigger-width)]">
+                      <SelectContent className="text-foreground max-h-64 min-w-[var(--radix-select-trigger-width)]">
                         <SelectItem
                           value="all"
                           className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"
@@ -457,13 +457,13 @@ export const SkillsPage = forwardRef<SkillsPageHandle, SkillsPageProps>(
                         )
                       }
                     >
-                      <SelectTrigger className="bg-card border shadow-sm text-foreground">
+                      <SelectTrigger className="text-foreground">
                         <SelectValue
                           placeholder={t("skills.filter.placeholder")}
                           className="text-left"
                         />
                       </SelectTrigger>
-                      <SelectContent className="bg-card text-foreground shadow-lg">
+                      <SelectContent className="text-foreground">
                         <SelectItem
                           value="all"
                           className="text-left pr-3 [&[data-state=checked]>span:first-child]:hidden"

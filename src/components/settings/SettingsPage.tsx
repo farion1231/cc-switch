@@ -224,7 +224,7 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
+          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-xl">
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
@@ -329,7 +329,7 @@ export function SettingsPage({
                         value="directory"
                         className="rounded-xl glass-card overflow-hidden"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
                           <div className="flex items-center gap-3">
                             <FolderSearch className="h-5 w-5 text-primary" />
                             <div className="text-left">
@@ -368,7 +368,7 @@ export function SettingsPage({
                         value="data"
                         className="rounded-xl glass-card overflow-hidden"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
                           <div className="flex items-center gap-3">
                             <Database className="h-5 w-5 text-blue-500" />
                             <div className="text-left">
@@ -400,7 +400,7 @@ export function SettingsPage({
                         value="backup"
                         className="rounded-xl glass-card overflow-hidden"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
                           <div className="flex items-center gap-3">
                             <HardDriveDownload className="h-5 w-5 text-amber-500" />
                             <div className="text-left">
@@ -433,7 +433,7 @@ export function SettingsPage({
                         value="cloudSync"
                         className="rounded-xl glass-card overflow-hidden"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
                           <div className="flex items-center gap-3">
                             <Cloud className="h-5 w-5 text-blue-500" />
                             <div className="text-left">
@@ -460,7 +460,7 @@ export function SettingsPage({
                         value="connectivityCheck"
                         className="rounded-xl glass-card overflow-hidden"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
                           <div className="flex items-center gap-3">
                             <FlaskConical className="h-5 w-5 text-emerald-500" />
                             <div className="text-left">
@@ -484,7 +484,7 @@ export function SettingsPage({
                         value="logConfig"
                         className="rounded-xl glass-card overflow-hidden"
                       >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
                           <div className="flex items-center gap-3">
                             <ScrollText className="h-5 w-5 text-cyan-500" />
                             <div className="text-left">

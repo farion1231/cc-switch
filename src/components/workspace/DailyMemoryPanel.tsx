@@ -444,7 +444,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                   <button
                     key={result.filename}
                     onClick={() => openFile(result.filename)}
-                    className="w-full flex items-start gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors text-left group"
+                    className="w-full flex items-start gap-3 p-4 rounded-2xl glass-card transition-all text-left group"
                   >
                     <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
                       <Calendar className="w-4 h-4" />
@@ -500,7 +500,7 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
                 <button
                   key={file.filename}
                   onClick={() => openFile(file.filename)}
-                  className="w-full flex items-start gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors text-left group"
+                  className="w-full flex items-start gap-3 p-4 rounded-2xl glass-card transition-all text-left group"
                 >
                   <div className="mt-0.5 text-muted-foreground group-hover:text-foreground transition-colors">
                     <Calendar className="w-4 h-4" />

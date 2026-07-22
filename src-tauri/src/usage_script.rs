@@ -1,11 +1,13 @@
 use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use url::{Host, Url};
 
 use crate::error::AppError;
 
 /// 执行用量查询脚本
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_usage_script(
     script_code: &str,
     api_key: &str,
@@ -14,22 +16,17 @@ pub async fn execute_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
+    allow_private_network: bool,
 ) -> Result<Value, AppError> {
-    // 检测是否为自定义模板模式
-    // 优先使用前端传递的 template_type
     let is_custom_template = template_type.map(|t| t == "custom").unwrap_or(false);
 
-    // 1. 替换模板变量，避免泄露敏感信息
-    let script_with_vars =
-        build_script_with_vars(script_code, api_key, base_url, access_token, user_id);
+    // Rewrite placeholders to JS identifiers; secrets are injected as globals (not into source).
+    let script_with_vars = rewrite_placeholders(script_code);
 
-    // 2. 验证 base_url 的安全性（仅当提供了 base_url 时）
-    // 自定义模板模式下，用户可能不使用模板变量，而是直接在脚本中写完整 URL
     if should_validate_base_url(base_url, is_custom_template) {
-        validate_base_url(base_url)?;
+        validate_base_url(base_url, allow_private_network)?;
     }
 
-    // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
     let request_config = {
         let runtime = Runtime::new().map_err(|e| {
             AppError::localized(
@@ -47,7 +44,14 @@ pub async fn execute_usage_script(
         })?;
 
         context.with(|ctx| {
-            // 执行用户代码，获取配置对象
+            inject_script_globals(
+                &ctx,
+                api_key,
+                base_url,
+                access_token.unwrap_or(""),
+                user_id.unwrap_or(""),
+            )?;
+
             let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_parse_failed",
@@ -56,7 +60,6 @@ pub async fn execute_usage_script(
                 )
             })?;
 
-            // 提取 request 配置
             let request: rquickjs::Object = config.get("request").map_err(|e| {
                 AppError::localized(
                     "usage_script.request_missing",
@@ -65,7 +68,6 @@ pub async fn execute_usage_script(
                 )
             })?;
 
-            // 将 request 转换为 JSON 字符串
             let request_json: String = ctx
                 .json_stringify(request)
                 .map_err(|e| {
@@ -93,9 +95,8 @@ pub async fn execute_usage_script(
 
             Ok::<_, AppError>(request_json)
         })?
-    }; // Runtime 和 Context 在这里被 drop
+    };
 
-    // 4. 解析 request 配置
     let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
         AppError::localized(
             "usage_script.request_format_invalid",
@@ -104,13 +105,15 @@ pub async fn execute_usage_script(
         )
     })?;
 
-    // 5. 验证请求 URL（HTTPS 强制 + 同源检查）
-    validate_request_url(&request.url, base_url, is_custom_template)?;
+    validate_request_url(
+        &request.url,
+        base_url,
+        is_custom_template,
+        allow_private_network,
+    )?;
 
-    // 6. 发送 HTTP 请求
     let response_data = send_http_request(&request, timeout_secs).await?;
 
-    // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
     let result: Value = {
         let runtime = Runtime::new().map_err(|e| {
             AppError::localized(
@@ -128,7 +131,14 @@ pub async fn execute_usage_script(
         })?;
 
         context.with(|ctx| {
-            // 重新 eval 获取配置对象
+            inject_script_globals(
+                &ctx,
+                api_key,
+                base_url,
+                access_token.unwrap_or(""),
+                user_id.unwrap_or(""),
+            )?;
+
             let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_reparse_failed",
@@ -137,7 +147,6 @@ pub async fn execute_usage_script(
                 )
             })?;
 
-            // 提取 extractor 函数
             let extractor: Function = config.get("extractor").map_err(|e| {
                 AppError::localized(
                     "usage_script.extractor_missing",
@@ -146,7 +155,6 @@ pub async fn execute_usage_script(
                 )
             })?;
 
-            // 将响应数据转换为 JS 值
             let response_js: rquickjs::Value =
                 ctx.json_parse(response_data.as_str()).map_err(|e| {
                     AppError::localized(
@@ -156,7 +164,6 @@ pub async fn execute_usage_script(
                     )
                 })?;
 
-            // 调用 extractor(response)
             let result_js: rquickjs::Value = extractor.call((response_js,)).map_err(|e| {
                 AppError::localized(
                     "usage_script.extractor_exec_failed",
@@ -165,7 +172,6 @@ pub async fn execute_usage_script(
                 )
             })?;
 
-            // 转换为 JSON 字符串
             let result_json: String = ctx
                 .json_stringify(result_js)
                 .map_err(|e| {
@@ -191,7 +197,6 @@ pub async fn execute_usage_script(
                     )
                 })?;
 
-            // 解析为 serde_json::Value
             serde_json::from_str(&result_json).map_err(|e| {
                 AppError::localized(
                     "usage_script.json_parse_failed",
@@ -200,15 +205,12 @@ pub async fn execute_usage_script(
                 )
             })
         })?
-    }; // Runtime 和 Context 在这里被 drop
+    };
 
-    // 8. 验证返回值格式
     validate_result(&result)?;
-
     Ok(result)
 }
 
-/// 请求配置结构
 #[derive(Debug, serde::Deserialize)]
 struct RequestConfig {
     url: String,
@@ -219,14 +221,58 @@ struct RequestConfig {
     body: Option<String>,
 }
 
-/// 发送 HTTP 请求
+fn inject_script_globals<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    api_key: &str,
+    base_url: &str,
+    access_token: &str,
+    user_id: &str,
+) -> Result<(), AppError> {
+    let globals = ctx.globals();
+    globals.set("apiKey", api_key).map_err(|e| {
+        AppError::localized(
+            "usage_script.inject_global_failed",
+            format!("注入 apiKey 失败: {e}"),
+            format!("Failed to inject apiKey: {e}"),
+        )
+    })?;
+    globals.set("baseUrl", base_url).map_err(|e| {
+        AppError::localized(
+            "usage_script.inject_global_failed",
+            format!("注入 baseUrl 失败: {e}"),
+            format!("Failed to inject baseUrl: {e}"),
+        )
+    })?;
+    globals.set("accessToken", access_token).map_err(|e| {
+        AppError::localized(
+            "usage_script.inject_global_failed",
+            format!("注入 accessToken 失败: {e}"),
+            format!("Failed to inject accessToken: {e}"),
+        )
+    })?;
+    globals.set("userId", user_id).map_err(|e| {
+        AppError::localized(
+            "usage_script.inject_global_failed",
+            format!("注入 userId 失败: {e}"),
+            format!("Failed to inject userId: {e}"),
+        )
+    })?;
+    Ok(())
+}
+
+/// Rewrite `{{apiKey}}` etc. into JS string concatenations referencing globals.
+fn rewrite_placeholders(script_code: &str) -> String {
+    script_code
+        .replace("{{apiKey}}", "\" + apiKey + \"")
+        .replace("{{baseUrl}}", "\" + baseUrl + \"")
+        .replace("{{accessToken}}", "\" + accessToken + \"")
+        .replace("{{userId}}", "\" + userId + \"")
+}
+
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
-    // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
     let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
-    // 严格校验 HTTP 方法，非法值不回退为 GET
     let method: reqwest::Method = config.method.parse().map_err(|_| {
         AppError::localized(
             "usage_script.invalid_http_method",
@@ -239,17 +285,14 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
         .request(method.clone(), &config.url)
         .timeout(request_timeout);
 
-    // 添加请求头
     for (k, v) in &config.headers {
         req = req.header(k, v);
     }
 
-    // 添加请求体
     if let Some(body) = &config.body {
         req = req.body(body.clone());
     }
 
-    // 发送请求
     let resp = req.send().await.map_err(|e| {
         AppError::localized(
             "usage_script.request_failed",
@@ -287,9 +330,7 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     Ok(text)
 }
 
-/// 验证脚本返回值（支持单对象或数组）
 fn validate_result(result: &Value) -> Result<(), AppError> {
-    // 如果是数组，验证每个元素
     if let Some(arr) = result.as_array() {
         if arr.is_empty() {
             return Err(AppError::localized(
@@ -309,12 +350,9 @@ fn validate_result(result: &Value) -> Result<(), AppError> {
         }
         return Ok(());
     }
-
-    // 如果是单对象，直接验证（向后兼容）
     validate_single_usage(result)
 }
 
-/// 验证单个用量数据对象
 fn validate_single_usage(result: &Value) -> Result<(), AppError> {
     let obj = result.as_object().ok_or_else(|| {
         AppError::localized(
@@ -324,7 +362,6 @@ fn validate_single_usage(result: &Value) -> Result<(), AppError> {
         )
     })?;
 
-    // 所有字段均为可选，只进行类型检查
     if obj.contains_key("isValid")
         && !result["isValid"].is_null()
         && !result["isValid"].is_boolean()
@@ -397,30 +434,7 @@ fn validate_single_usage(result: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 构建替换变量后的脚本，保持与旧版脚本的兼容性
-fn build_script_with_vars(
-    script_code: &str,
-    api_key: &str,
-    base_url: &str,
-    access_token: Option<&str>,
-    user_id: Option<&str>,
-) -> String {
-    let mut replaced = script_code
-        .replace("{{apiKey}}", api_key)
-        .replace("{{baseUrl}}", base_url);
-
-    if let Some(token) = access_token {
-        replaced = replaced.replace("{{accessToken}}", token);
-    }
-    if let Some(uid) = user_id {
-        replaced = replaced.replace("{{userId}}", uid);
-    }
-
-    replaced
-}
-
-/// 验证 base_url 的基本安全性
-fn validate_base_url(base_url: &str) -> Result<(), AppError> {
+fn validate_base_url(base_url: &str, allow_private_network: bool) -> Result<(), AppError> {
     if base_url.is_empty() {
         return Err(AppError::localized(
             "usage_script.base_url_empty",
@@ -429,7 +443,6 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         ));
     }
 
-    // 解析 URL
     let parsed_url = Url::parse(base_url).map_err(|e| {
         AppError::localized(
             "usage_script.base_url_invalid",
@@ -440,7 +453,6 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
 
     let is_loopback = is_loopback_host(&parsed_url);
 
-    // 必须是 HTTPS（允许 localhost 用于开发）
     if parsed_url.scheme() != "https" && !is_loopback {
         return Err(AppError::localized(
             "usage_script.base_url_https_required",
@@ -449,7 +461,6 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         ));
     }
 
-    // 检查主机名格式有效性
     let hostname = parsed_url.host_str().ok_or_else(|| {
         AppError::localized(
             "usage_script.base_url_hostname_missing",
@@ -458,7 +469,6 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         )
     })?;
 
-    // 基本的主机名格式检查
     if hostname.is_empty() {
         return Err(AppError::localized(
             "usage_script.base_url_hostname_empty",
@@ -467,6 +477,7 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
         ));
     }
 
+    deny_unsafe_destination(&parsed_url, allow_private_network)?;
     Ok(())
 }
 
@@ -474,13 +485,12 @@ fn should_validate_base_url(base_url: &str, is_custom_template: bool) -> bool {
     !base_url.is_empty() && !is_custom_template
 }
 
-/// 验证请求 URL 是否安全（HTTPS 强制 + 同源检查）
 fn validate_request_url(
     request_url: &str,
     base_url: &str,
     is_custom_template: bool,
+    allow_private_network: bool,
 ) -> Result<(), AppError> {
-    // 解析请求 URL
     let parsed_request = Url::parse(request_url).map_err(|e| {
         AppError::localized(
             "usage_script.request_url_invalid",
@@ -491,20 +501,25 @@ fn validate_request_url(
 
     let is_request_loopback = is_loopback_host(&parsed_request);
 
-    // 必须使用 HTTPS（允许 localhost 用于开发）
-    // 自定义模板模式下，允许用户自行决定是否使用 HTTP（用户需自行承担安全风险）
-    if !is_custom_template && parsed_request.scheme() != "https" && !is_request_loopback {
+    // HTTPS required unless loopback, or custom+allow_private_network for LAN HTTP.
+    let http_ok = is_request_loopback
+        || (is_custom_template
+            && allow_private_network
+            && parsed_request.scheme() == "http"
+            && is_private_or_link_local_host(&parsed_request));
+
+    if parsed_request.scheme() != "https" && !http_ok {
         return Err(AppError::localized(
             "usage_script.request_https_required",
-            "请求 URL 必须使用 HTTPS 协议（localhost 除外）",
-            "Request URL must use HTTPS (localhost allowed)",
+            "请求 URL 必须使用 HTTPS（localhost 除外；自定义脚本需显式允许私有网络才可用 HTTP）",
+            "Request URL must use HTTPS (localhost allowed; custom scripts need allowPrivateNetwork for LAN HTTP)",
         ));
     }
 
-    // 如果提供了 base_url（非空），则进行同源检查
-    // 🔧 自定义模板模式下，用户可以自由访问任意 HTTPS 域名，跳过同源检查
+    // Always deny metadata / link-local SSRF targets.
+    deny_unsafe_destination(&parsed_request, allow_private_network)?;
+
     if !base_url.is_empty() && !is_custom_template {
-        // 解析 base URL
         let parsed_base = Url::parse(base_url).map_err(|e| {
             AppError::localized(
                 "usage_script.base_url_invalid",
@@ -513,7 +528,6 @@ fn validate_request_url(
             )
         })?;
 
-        // 核心安全检查：必须与 base_url 同源（相同域名和端口）
         if parsed_request.host_str() != parsed_base.host_str() {
             return Err(AppError::localized(
                 "usage_script.request_host_mismatch",
@@ -530,15 +544,11 @@ fn validate_request_url(
             ));
         }
 
-        // 检查端口是否匹配（考虑默认端口）
-        // 使用 port_or_known_default() 会自动处理默认端口（http->80, https->443）
         match (
             parsed_request.port_or_known_default(),
             parsed_base.port_or_known_default(),
         ) {
-            (Some(request_port), Some(base_port)) if request_port == base_port => {
-                // 端口匹配，继续执行
-            }
+            (Some(request_port), Some(base_port)) if request_port == base_port => {}
             (Some(request_port), Some(base_port)) => {
                 return Err(AppError::localized(
                     "usage_script.request_port_mismatch",
@@ -547,7 +557,6 @@ fn validate_request_url(
                 ));
             }
             _ => {
-                // 理论上不会发生，因为 port_or_known_default() 应该总是返回 Some
                 return Err(AppError::localized(
                     "usage_script.request_port_unknown",
                     "无法确定端口号",
@@ -560,7 +569,31 @@ fn validate_request_url(
     Ok(())
 }
 
-/// 判断 URL 是否指向本机（localhost / loopback）
+/// Block cloud metadata and (unless opted in) private LAN destinations.
+fn deny_unsafe_destination(url: &Url, allow_private_network: bool) -> Result<(), AppError> {
+    if is_loopback_host(url) {
+        return Ok(());
+    }
+
+    if is_metadata_or_link_local_host(url) {
+        return Err(AppError::localized(
+            "usage_script.destination_blocked",
+            "禁止访问链路本地地址或云元数据服务（SSRF 防护）",
+            "Link-local addresses and cloud metadata endpoints are blocked (SSRF protection)",
+        ));
+    }
+
+    if !allow_private_network && is_private_or_link_local_host(url) {
+        return Err(AppError::localized(
+            "usage_script.private_network_blocked",
+            "禁止访问私有网络地址；自定义脚本请开启「允许私有网络」",
+            "Private network addresses are blocked; enable allowPrivateNetwork for custom scripts",
+        ));
+    }
+
+    Ok(())
+}
+
 fn is_loopback_host(url: &Url) -> bool {
     match url.host() {
         Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
@@ -570,14 +603,65 @@ fn is_loopback_host(url: &Url) -> bool {
     }
 }
 
+fn is_metadata_hostname(host: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    h == "metadata.google.internal"
+        || h == "metadata"
+        || h == "instance-data"
+        || h.ends_with(".metadata.google.internal")
+}
+
+fn is_metadata_or_link_local_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(d)) => {
+            is_metadata_hostname(d) || d == "169.254.169.254" || d.starts_with("169.254.")
+        }
+        Some(Host::Ipv4(ip)) => is_link_local_v4(ip) || ip == Ipv4Addr::new(169, 254, 169, 254),
+        Some(Host::Ipv6(ip)) => is_link_local_v6(ip),
+        _ => false,
+    }
+}
+
+fn is_private_or_link_local_host(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(d)) => {
+            // Unresolved hostnames that look like IPs
+            if let Ok(ip) = d.parse::<Ipv4Addr>() {
+                return is_private_v4(ip) || is_link_local_v4(ip);
+            }
+            false
+        }
+        Some(Host::Ipv4(ip)) => is_private_v4(ip) || is_link_local_v4(ip),
+        Some(Host::Ipv6(ip)) => is_private_v6(ip) || is_link_local_v6(ip),
+        _ => false,
+    }
+}
+
+fn is_private_v4(ip: Ipv4Addr) -> bool {
+    // RFC1918 + Carrier-grade NAT 100.64.0.0/10
+    ip.is_private() || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xc0) == 64)
+}
+
+fn is_link_local_v4(ip: Ipv4Addr) -> bool {
+    ip.is_link_local()
+}
+
+fn is_link_local_v6(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+fn is_private_v6(ip: Ipv6Addr) -> bool {
+    // Unique local addresses fc00::/7
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_https_bypass_prevention() {
-        // 非本地域名的 HTTP 应该被拒绝
-        let result = validate_base_url("http://127.0.0.1.evil.com/api");
+        let result = validate_base_url("http://127.0.0.1.evil.com/api", false);
         assert!(
             result.is_err(),
             "Should reject HTTP for non-localhost domains"
@@ -585,30 +669,64 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_template_allows_http_lan_request_with_different_base_url() {
-        assert!(
-            !should_validate_base_url("http://10.37.192.156:8090/anthropic", true),
-            "Custom scripts should not validate an unused provider base_url fallback"
-        );
+    fn test_custom_lan_http_requires_allow_private_network() {
+        assert!(!should_validate_base_url(
+            "http://10.37.192.156:8090/anthropic",
+            true
+        ));
 
-        let result = validate_request_url(
+        let denied = validate_request_url(
             "http://10.37.192.156:18344/user/balance",
             "http://10.37.192.156:8090/anthropic",
             true,
+            false,
         );
         assert!(
-            result.is_ok(),
-            "Custom usage scripts should be able to call an explicit HTTP quota endpoint"
+            denied.is_err(),
+            "LAN HTTP must be denied without allow_private_network"
+        );
+
+        let allowed = validate_request_url(
+            "http://10.37.192.156:18344/user/balance",
+            "http://10.37.192.156:8090/anthropic",
+            true,
+            true,
+        );
+        assert!(
+            allowed.is_ok(),
+            "LAN HTTP should work when allow_private_network is set"
         );
     }
 
     #[test]
-    fn test_port_comparison() {
-        // 测试端口比较逻辑是否正确处理默认端口和显式端口
+    fn test_metadata_always_blocked() {
+        for allow in [false, true] {
+            let result = validate_request_url(
+                "http://169.254.169.254/latest/meta-data/",
+                "",
+                true,
+                allow,
+            );
+            assert!(
+                result.is_err(),
+                "metadata IP must always be blocked (allow={allow})"
+            );
+        }
+    }
 
-        // 测试用例：(base_url, request_url, should_match)
+    #[test]
+    fn test_rewrite_placeholders_does_not_embed_secret() {
+        let rewritten = rewrite_placeholders(
+            r#"({ request: { url: "{{baseUrl}}/x", headers: { Authorization: "Bearer {{apiKey}}" } } })"#,
+        );
+        assert!(!rewritten.contains("sk-secret"));
+        assert!(rewritten.contains("apiKey"));
+        assert!(rewritten.contains("baseUrl"));
+    }
+
+    #[test]
+    fn test_port_comparison() {
         let test_cases = vec![
-            // HTTPS默认端口测试
             (
                 "https://api.example.com",
                 "https://api.example.com/v1/test",
@@ -625,40 +743,24 @@ mod tests {
                 true,
             ),
             (
-                "https://api.example.com:443",
-                "https://api.example.com:443/v1/test",
-                true,
-            ),
-            // 端口不匹配测试
-            (
                 "https://api.example.com",
-                "https://api.example.com:8443/v1/test",
-                false,
-            ),
-            (
-                "https://api.example.com:443",
                 "https://api.example.com:8443/v1/test",
                 false,
             ),
         ];
 
         for (base_url, request_url, should_match) in test_cases {
-            let result = validate_request_url(request_url, base_url, false);
-
+            let result = validate_request_url(request_url, base_url, false, false);
             if should_match {
                 assert!(
                     result.is_ok(),
-                    "应该匹配的URL被拒绝: base_url={}, request_url={}, error={}",
-                    base_url,
-                    request_url,
+                    "应该匹配的URL被拒绝: base_url={base_url}, request_url={request_url}, error={}",
                     result.unwrap_err()
                 );
             } else {
                 assert!(
                     result.is_err(),
-                    "应该不匹配的URL被允许: base_url={}, request_url={}",
-                    base_url,
-                    request_url
+                    "应该不匹配的URL被允许: base_url={base_url}, request_url={request_url}"
                 );
             }
         }

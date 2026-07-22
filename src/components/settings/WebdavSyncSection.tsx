@@ -314,6 +314,34 @@ export function WebdavSyncSection({
   const [dialogType, setDialogType] = useState<DialogType>(null);
   const [remoteInfo, setRemoteInfo] = useState<RemoteSnapshotInfo | null>(null);
   const [showAutoSyncConfirm, setShowAutoSyncConfirm] = useState(false);
+  const [showCredentialsRiskConfirm, setShowCredentialsRiskConfirm] =
+    useState(false);
+  const pendingCredentialsActionRef = useRef<(() => void) | null>(null);
+
+  const ensureCredentialsRiskAck = useCallback(
+    (action: () => void) => {
+      if (settings?.syncCredentialsConfirmed) {
+        action();
+        return;
+      }
+      pendingCredentialsActionRef.current = action;
+      setShowCredentialsRiskConfirm(true);
+    },
+    [settings?.syncCredentialsConfirmed],
+  );
+
+  const handleCredentialsRiskConfirm = useCallback(async () => {
+    setShowCredentialsRiskConfirm(false);
+    await onAutoSave?.({ syncCredentialsConfirmed: true });
+    const action = pendingCredentialsActionRef.current;
+    pendingCredentialsActionRef.current = null;
+    action?.();
+  }, [onAutoSave]);
+
+  const handleCredentialsRiskCancel = useCallback(() => {
+    setShowCredentialsRiskConfirm(false);
+    pendingCredentialsActionRef.current = null;
+  }, []);
 
   const closeDialog = useCallback(() => {
     setDialogType(null);
@@ -491,56 +519,71 @@ export function WebdavSyncSection({
   }, [buildSettings, passwordTouched, t]);
 
   const handleSave = useCallback(async () => {
-    const settings = buildSettings();
-    if (!settings) {
+    const settingsPayload = buildSettings();
+    if (!settingsPayload) {
       toast.error(t("settings.webdavSync.missingUrl"));
       return;
     }
-    setActionState("saving");
-    pendingPasswordPreservationRef.current = form.password
-      ? {
-          key: buildPasswordPreservationKey(settings),
-          password: form.password,
-        }
-      : null;
-    try {
-      await settingsApi.webdavSyncSaveSettings(settings, passwordTouched);
-      setDirty(false);
-      setPasswordTouched(false);
-      // Show "saved" indicator for 2 seconds
-      setJustSaved(true);
-      if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
-      justSavedTimerRef.current = setTimeout(() => {
-        setJustSaved(false);
-        justSavedTimerRef.current = null;
-      }, 2000);
-      await queryClient.invalidateQueries();
-    } catch (error) {
-      pendingPasswordPreservationRef.current = null;
-      toast.error(
-        t("settings.webdavSync.saveFailed", {
-          error: (error as Error)?.message ?? String(error),
-        }),
-      );
-      setActionState("idle");
-      return;
-    }
+    const runSave = async () => {
+      setActionState("saving");
+      pendingPasswordPreservationRef.current = form.password
+        ? {
+            key: buildPasswordPreservationKey(settingsPayload),
+            password: form.password,
+          }
+        : null;
+      try {
+        await settingsApi.webdavSyncSaveSettings(
+          settingsPayload,
+          passwordTouched,
+        );
+        setDirty(false);
+        setPasswordTouched(false);
+        // Show "saved" indicator for 2 seconds
+        setJustSaved(true);
+        if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = setTimeout(() => {
+          setJustSaved(false);
+          justSavedTimerRef.current = null;
+        }, 2000);
+        await queryClient.invalidateQueries();
+      } catch (error) {
+        pendingPasswordPreservationRef.current = null;
+        toast.error(
+          t("settings.webdavSync.saveFailed", {
+            error: (error as Error)?.message ?? String(error),
+          }),
+        );
+        setActionState("idle");
+        return;
+      }
 
-    // Auto-test connection after save
-    setActionState("testing");
-    try {
-      await settingsApi.webdavTestConnection(settings, true);
-      toast.success(t("settings.webdavSync.saveAndTestSuccess"));
-    } catch (error) {
-      toast.warning(
-        t("settings.webdavSync.saveAndTestFailed", {
-          error: (error as Error)?.message ?? String(error),
-        }),
-      );
-    } finally {
-      setActionState("idle");
-    }
-  }, [buildSettings, form.password, passwordTouched, queryClient, t]);
+      // Auto-test connection after save
+      setActionState("testing");
+      try {
+        await settingsApi.webdavTestConnection(settingsPayload, true);
+        toast.success(t("settings.webdavSync.saveAndTestSuccess"));
+      } catch (error) {
+        toast.warning(
+          t("settings.webdavSync.saveAndTestFailed", {
+            error: (error as Error)?.message ?? String(error),
+          }),
+        );
+      } finally {
+        setActionState("idle");
+      }
+    };
+    ensureCredentialsRiskAck(() => {
+      void runSave();
+    });
+  }, [
+    buildSettings,
+    ensureCredentialsRiskAck,
+    form.password,
+    passwordTouched,
+    queryClient,
+    t,
+  ]);
 
   /** Fetch remote info, then open upload confirmation dialog. */
   const handleUploadClick = useCallback(async () => {
@@ -548,23 +591,28 @@ export function WebdavSyncSection({
       toast.error(t("settings.webdavSync.unsavedChanges"));
       return;
     }
-    setActionState("fetching_remote");
-    try {
-      const info = await settingsApi.webdavSyncFetchRemoteInfo();
-      if ("empty" in info) {
+    const runUploadClick = async () => {
+      setActionState("fetching_remote");
+      try {
+        const info = await settingsApi.webdavSyncFetchRemoteInfo();
+        if ("empty" in info) {
+          setRemoteInfo(null);
+        } else {
+          setRemoteInfo(info);
+        }
+        setDialogType("upload");
+      } catch {
         setRemoteInfo(null);
-      } else {
-        setRemoteInfo(info);
+        toast.error(t("settings.webdavSync.fetchRemoteFailed"));
+        setActionState("idle");
+        return;
       }
-      setDialogType("upload");
-    } catch {
-      setRemoteInfo(null);
-      toast.error(t("settings.webdavSync.fetchRemoteFailed"));
       setActionState("idle");
-      return;
-    }
-    setActionState("idle");
-  }, [dirty, t]);
+    };
+    ensureCredentialsRiskAck(() => {
+      void runUploadClick();
+    });
+  }, [dirty, ensureCredentialsRiskAck, t]);
 
   /** Actually perform the upload after user confirms. */
   const handleUploadConfirm = useCallback(async () => {
@@ -595,36 +643,41 @@ export function WebdavSyncSection({
       toast.error(t("settings.webdavSync.unsavedChanges"));
       return;
     }
-    setActionState("fetching_remote");
-    try {
-      const info = await settingsApi.webdavSyncFetchRemoteInfo();
-      if ("empty" in info) {
-        toast.info(t("settings.webdavSync.noRemoteData"));
-        return;
-      }
-      if (!info.compatible) {
+    const runDownloadClick = async () => {
+      setActionState("fetching_remote");
+      try {
+        const info = await settingsApi.webdavSyncFetchRemoteInfo();
+        if ("empty" in info) {
+          toast.info(t("settings.webdavSync.noRemoteData"));
+          return;
+        }
+        if (!info.compatible) {
+          toast.error(
+            t("settings.webdavSync.incompatibleVersion", {
+              protocolVersion: info.protocolVersion,
+              dbCompatVersion:
+                formatDbCompatVersion(info.dbCompatVersion) ??
+                t("common.unknown"),
+            }),
+          );
+          return;
+        }
+        setRemoteInfo(info);
+        setDialogType("download");
+      } catch (error) {
         toast.error(
-          t("settings.webdavSync.incompatibleVersion", {
-            protocolVersion: info.protocolVersion,
-            dbCompatVersion:
-              formatDbCompatVersion(info.dbCompatVersion) ??
-              t("common.unknown"),
+          t("settings.webdavSync.downloadFailed", {
+            error: (error as Error)?.message ?? String(error),
           }),
         );
-        return;
+      } finally {
+        setActionState("idle");
       }
-      setRemoteInfo(info);
-      setDialogType("download");
-    } catch (error) {
-      toast.error(
-        t("settings.webdavSync.downloadFailed", {
-          error: (error as Error)?.message ?? String(error),
-        }),
-      );
-    } finally {
-      setActionState("idle");
-    }
-  }, [dirty, t]);
+    };
+    ensureCredentialsRiskAck(() => {
+      void runDownloadClick();
+    });
+  }, [dirty, ensureCredentialsRiskAck, t]);
 
   /** Actually perform the download after user confirms. */
   const handleDownloadConfirm = useCallback(async () => {
@@ -721,67 +774,83 @@ export function WebdavSyncSection({
       toast.error(t("settings.s3Sync.missingBucket"));
       return;
     }
-    setS3ActionState("saving");
-    try {
-      await settingsApi.s3SyncSaveSettings(s3Settings, s3SecretTouched);
-      setS3Dirty(false);
-      setS3SecretTouched(false);
-      setS3JustSaved(true);
-      if (s3JustSavedTimerRef.current)
-        clearTimeout(s3JustSavedTimerRef.current);
-      s3JustSavedTimerRef.current = setTimeout(() => {
-        setS3JustSaved(false);
-        s3JustSavedTimerRef.current = null;
-      }, 2000);
-      await queryClient.invalidateQueries();
-    } catch (error) {
-      toast.error(
-        t("settings.s3Sync.saveFailed", {
-          error: (error as Error)?.message ?? String(error),
-        }),
-      );
-      setS3ActionState("idle");
-      return;
-    }
+    const runSave = async () => {
+      setS3ActionState("saving");
+      try {
+        await settingsApi.s3SyncSaveSettings(s3Settings, s3SecretTouched);
+        setS3Dirty(false);
+        setS3SecretTouched(false);
+        setS3JustSaved(true);
+        if (s3JustSavedTimerRef.current)
+          clearTimeout(s3JustSavedTimerRef.current);
+        s3JustSavedTimerRef.current = setTimeout(() => {
+          setS3JustSaved(false);
+          s3JustSavedTimerRef.current = null;
+        }, 2000);
+        await queryClient.invalidateQueries();
+      } catch (error) {
+        toast.error(
+          t("settings.s3Sync.saveFailed", {
+            error: (error as Error)?.message ?? String(error),
+          }),
+        );
+        setS3ActionState("idle");
+        return;
+      }
 
-    // Auto-test connection after save
-    setS3ActionState("testing");
-    try {
-      await settingsApi.s3TestConnection(s3Settings, true);
-      toast.success(t("settings.s3Sync.saveAndTestSuccess"));
-    } catch (error) {
-      toast.warning(
-        t("settings.s3Sync.saveAndTestFailed", {
-          error: (error as Error)?.message ?? String(error),
-        }),
-      );
-    } finally {
-      setS3ActionState("idle");
-    }
-  }, [buildS3Settings, s3SecretTouched, queryClient, t]);
+      // Auto-test connection after save
+      setS3ActionState("testing");
+      try {
+        await settingsApi.s3TestConnection(s3Settings, true);
+        toast.success(t("settings.s3Sync.saveAndTestSuccess"));
+      } catch (error) {
+        toast.warning(
+          t("settings.s3Sync.saveAndTestFailed", {
+            error: (error as Error)?.message ?? String(error),
+          }),
+        );
+      } finally {
+        setS3ActionState("idle");
+      }
+    };
+    ensureCredentialsRiskAck(() => {
+      void runSave();
+    });
+  }, [
+    buildS3Settings,
+    ensureCredentialsRiskAck,
+    s3SecretTouched,
+    queryClient,
+    t,
+  ]);
 
   const handleS3UploadClick = useCallback(async () => {
     if (s3Dirty) {
       toast.error(t("settings.s3Sync.unsavedChanges"));
       return;
     }
-    setS3ActionState("fetching_remote");
-    try {
-      const info = await settingsApi.s3SyncFetchRemoteInfo();
-      if ("empty" in info) {
+    const runUploadClick = async () => {
+      setS3ActionState("fetching_remote");
+      try {
+        const info = await settingsApi.s3SyncFetchRemoteInfo();
+        if ("empty" in info) {
+          setS3RemoteInfo(null);
+        } else {
+          setS3RemoteInfo(info);
+        }
+        setS3DialogType("upload");
+      } catch {
         setS3RemoteInfo(null);
-      } else {
-        setS3RemoteInfo(info);
+        toast.error(t("settings.s3Sync.fetchRemoteFailed"));
+        setS3ActionState("idle");
+        return;
       }
-      setS3DialogType("upload");
-    } catch {
-      setS3RemoteInfo(null);
-      toast.error(t("settings.s3Sync.fetchRemoteFailed"));
       setS3ActionState("idle");
-      return;
-    }
-    setS3ActionState("idle");
-  }, [s3Dirty, t]);
+    };
+    ensureCredentialsRiskAck(() => {
+      void runUploadClick();
+    });
+  }, [ensureCredentialsRiskAck, s3Dirty, t]);
 
   const handleS3UploadConfirm = useCallback(async () => {
     if (s3Dirty) {
@@ -810,33 +879,38 @@ export function WebdavSyncSection({
       toast.error(t("settings.s3Sync.unsavedChanges"));
       return;
     }
-    setS3ActionState("fetching_remote");
-    try {
-      const info = await settingsApi.s3SyncFetchRemoteInfo();
-      if ("empty" in info) {
-        toast.info(t("settings.s3Sync.noRemoteData"));
-        return;
-      }
-      if (!info.compatible) {
+    const runDownloadClick = async () => {
+      setS3ActionState("fetching_remote");
+      try {
+        const info = await settingsApi.s3SyncFetchRemoteInfo();
+        if ("empty" in info) {
+          toast.info(t("settings.s3Sync.noRemoteData"));
+          return;
+        }
+        if (!info.compatible) {
+          toast.error(
+            t("settings.s3Sync.incompatibleVersion", {
+              version: info.version,
+            }),
+          );
+          return;
+        }
+        setS3RemoteInfo(info);
+        setS3DialogType("download");
+      } catch (error) {
         toast.error(
-          t("settings.s3Sync.incompatibleVersion", {
-            version: info.version,
+          t("settings.s3Sync.downloadFailed", {
+            error: (error as Error)?.message ?? String(error),
           }),
         );
-        return;
+      } finally {
+        setS3ActionState("idle");
       }
-      setS3RemoteInfo(info);
-      setS3DialogType("download");
-    } catch (error) {
-      toast.error(
-        t("settings.s3Sync.downloadFailed", {
-          error: (error as Error)?.message ?? String(error),
-        }),
-      );
-    } finally {
-      setS3ActionState("idle");
-    }
-  }, [s3Dirty, t]);
+    };
+    ensureCredentialsRiskAck(() => {
+      void runDownloadClick();
+    });
+  }, [ensureCredentialsRiskAck, s3Dirty, t]);
 
   const handleS3DownloadConfirm = useCallback(async () => {
     if (s3Dirty) {
@@ -993,7 +1067,7 @@ export function WebdavSyncSection({
 
       {/* ─── WebDAV form ──────────────────────────────────── */}
       {syncType === "webdav" && (
-        <div className="space-y-4 rounded-lg border border-border bg-muted/40 p-6">
+        <div className="space-y-4 rounded-2xl glass-card p-6">
           {/* Config fields */}
           <div className="space-y-3">
             {/* Service preset selector */}
@@ -1228,7 +1302,7 @@ export function WebdavSyncSection({
 
       {/* ─── S3 form ──────────────────────────────────────── */}
       {syncType === "s3" && (
-        <div className="space-y-4 rounded-lg border border-border bg-muted/40 p-6">
+        <div className="space-y-4 rounded-2xl glass-card p-6">
           <div className="space-y-3">
             {/* S3 preset selector */}
             <div className="flex items-center gap-4">
@@ -1861,6 +1935,17 @@ export function WebdavSyncSection({
         confirmText={t("confirm.autoSync.confirm")}
         onConfirm={() => void handleAutoSyncConfirm()}
         onCancel={() => setShowAutoSyncConfirm(false)}
+      />
+
+      {/* ─── Sync credentials risk acknowledgment ─────────── */}
+      <ConfirmDialog
+        isOpen={showCredentialsRiskConfirm}
+        variant="info"
+        title={t("settings.webdavSync.credentialsRiskTitle")}
+        message={t("settings.webdavSync.credentialsRiskBody")}
+        confirmText={t("settings.webdavSync.credentialsRiskConfirm")}
+        onConfirm={() => void handleCredentialsRiskConfirm()}
+        onCancel={handleCredentialsRiskCancel}
       />
     </section>
   );

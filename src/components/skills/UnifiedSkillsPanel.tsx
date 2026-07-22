@@ -409,7 +409,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           </div>
         ) : !skills || skills.length === 0 ? (
           <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+            <div className="w-16 h-16 mx-auto mb-4 glass-pill rounded-2xl flex items-center justify-center">
               <Sparkles size={24} className="text-muted-foreground" />
             </div>
             <h3 className="text-lg font-medium text-foreground mb-2">
@@ -421,7 +421,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           </div>
         ) : (
           <TooltipProvider delayDuration={300}>
-            <div className="rounded-xl border border-border-default overflow-hidden">
+            <div className="rounded-2xl glass-card overflow-hidden">
               {skills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
@@ -660,7 +660,7 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
               {backups.map((backup) => (
                 <div
                   key={backup.backupId}
-                  className="rounded-xl border border-border-default bg-background/70 p-4 shadow-sm"
+                  className="rounded-2xl glass-card p-4"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 flex-1">
@@ -668,7 +668,7 @@ const RestoreSkillsDialog: React.FC<RestoreSkillsDialogProps> = ({
                         <div className="font-medium text-sm text-foreground">
                           {backup.skill.name}
                         </div>
-                        <div className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                        <div className="rounded-lg glass-pill px-2 py-0.5 text-[11px] text-muted-foreground">
                           {backup.skill.directory}
                         </div>
                       </div>
@@ -786,8 +786,8 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-background rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl max-h-[80vh] flex flex-col">
+      <div className="fixed inset-0 glass-overlay flex items-center justify-center z-50">
+        <div className="glass-panel rounded-2xl p-6 max-w-lg w-full mx-4 max-h-[80vh] flex flex-col">
           <h2 className="text-lg font-semibold mb-2">{t("skills.import")}</h2>
           <p className="text-sm text-muted-foreground mb-4">
             {t("skills.importDescription")}
@@ -797,7 +797,7 @@ const ImportSkillsDialog: React.FC<ImportSkillsDialogProps> = ({
             {skills.map((skill) => (
               <div
                 key={skill.directory}
-                className="flex items-start gap-3 p-3 rounded-lg border hover:bg-muted"
+                className="flex items-start gap-3 p-3 rounded-xl glass-card"
               >
                 <input
                   type="checkbox"

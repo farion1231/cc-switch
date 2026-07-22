@@ -276,6 +276,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "teamProjectId")]
     pub team_project_id: Option<String>,
+    /// 自定义脚本是否允许访问私有网络（局域网 HTTP）；默认 false
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "allowPrivateNetwork")]
+    pub allow_private_network: Option<bool>,
 }
 
 /// 用量数据

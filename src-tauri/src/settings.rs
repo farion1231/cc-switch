@@ -164,6 +164,20 @@ impl WebDavSyncSettings {
         Ok(())
     }
 
+    pub fn require_credentials_risk_ack() -> Result<(), crate::error::AppError> {
+        let confirmed = crate::settings::get_settings()
+            .sync_credentials_confirmed
+            .unwrap_or(false);
+        if confirmed {
+            return Ok(());
+        }
+        Err(crate::error::AppError::localized(
+            "sync.credentials_ack_required",
+            "远程同步会上传包含 API Key 的数据库明文副本。请先在设置中确认风险后再继续。",
+            "Remote sync uploads a plaintext database copy that includes API keys. Acknowledge this risk in Settings before continuing.",
+        ))
+    }
+
     pub fn normalize(&mut self) {
         self.base_url = self.base_url.trim().to_string();
         self.username = self.username.trim().to_string();
@@ -227,6 +241,10 @@ impl Default for S3SyncSettings {
 }
 
 impl S3SyncSettings {
+    pub fn require_credentials_risk_ack() -> Result<(), crate::error::AppError> {
+        WebDavSyncSettings::require_credentials_risk_ack()
+    }
+
     pub fn validate(&self) -> Result<(), crate::error::AppError> {
         if self.bucket.trim().is_empty() {
             return Err(crate::error::AppError::localized(
@@ -367,6 +385,9 @@ pub struct AppSettings {
     /// 是否在主页面启用本地代理功能（默认关闭）
     #[serde(default)]
     pub enable_local_proxy: bool,
+    /// 是否允许本地代理绑定非本机地址（设备级，默认 false）
+    #[serde(default)]
+    pub proxy_allow_lan_listen: bool,
     /// User has confirmed the local proxy first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_confirmed: Option<bool>,
@@ -401,6 +422,12 @@ pub struct AppSettings {
     /// User has confirmed the first-run welcome notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_run_notice_confirmed: Option<bool>,
+    /// User has confirmed the auto-sync traffic / frequency warning
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_sync_confirmed: Option<bool>,
+    /// User acknowledged remote sync exports API keys in plaintext
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_credentials_confirmed: Option<bool>,
     /// User has confirmed the common config first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_config_confirmed: Option<bool>,
@@ -524,6 +551,7 @@ impl Default for AppSettings {
             launch_on_startup: false,
             silent_startup: false,
             enable_local_proxy: false,
+            proxy_allow_lan_listen: false,
             proxy_confirmed: None,
             usage_confirmed: None,
             usage_dashboard_refresh_interval_ms: None,
@@ -534,6 +562,8 @@ impl Default for AppSettings {
             unify_codex_migrate_existing: None,
             failover_confirmed: None,
             first_run_notice_confirmed: None,
+            auto_sync_confirmed: None,
+            sync_credentials_confirmed: None,
             common_config_confirmed: None,
             language: None,
             visible_apps: None,

@@ -33,6 +33,7 @@ export const usageApi = {
     accessToken?: string,
     userId?: string,
     templateType?: TemplateType,
+    allowPrivateNetwork?: boolean,
   ): Promise<UsageResult> => {
     return invoke("testUsageScript", {
       providerId,
@@ -44,6 +45,7 @@ export const usageApi = {
       accessToken,
       userId,
       templateType,
+      allowPrivateNetwork,
     });
   },
 

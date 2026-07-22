@@ -55,6 +55,45 @@ impl Default for ProxyConfig {
     }
 }
 
+/// Validate proxy listen address. Non-loopback binds require `allow_lan`.
+pub fn validate_proxy_listen_address(addr: &str, allow_lan: bool) -> Result<(), crate::error::AppError> {
+    let trimmed = addr.trim();
+    let normalized = if trimmed.eq_ignore_ascii_case("localhost") {
+        "127.0.0.1"
+    } else {
+        trimmed
+    };
+
+    let is_loopback = matches!(
+        normalized,
+        "127.0.0.1" | "::1" | "localhost"
+    ) || normalized.eq_ignore_ascii_case("localhost");
+
+    if is_loopback {
+        return Ok(());
+    }
+
+    if !allow_lan {
+        return Err(crate::error::AppError::localized(
+            "proxy.listen_lan_blocked",
+            "监听地址仅允许本机（127.0.0.1 / ::1）。如需局域网访问，请先开启「允许局域网监听」。",
+            "Listen address must be loopback (127.0.0.1 / ::1). Enable “Allow LAN listen” to bind other addresses.",
+        ));
+    }
+
+    // Basic format check when LAN is explicitly allowed
+    if normalized == "0.0.0.0" || normalized == "::" || normalized.contains('.') || normalized.contains(':')
+    {
+        return Ok(());
+    }
+
+    Err(crate::error::AppError::localized(
+        "proxy.listen_address_invalid",
+        format!("无效的监听地址: {addr}"),
+        format!("Invalid listen address: {addr}"),
+    ))
+}
+
 /// 代理服务器状态
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyStatus {

@@ -508,6 +508,9 @@
       "autoSyncLastErrorTitle": "Last auto sync failed",
       "autoSyncLastErrorHint": "Please check network or WebDAV settings. Auto sync will retry on future changes.",
       "missingUrl": "Please enter the WebDAV server URL",
+      "credentialsRiskTitle": "Remote sync risk",
+      "credentialsRiskBody": "Remote sync uploads a plaintext copy of your database, including API keys and credentials stored in CC Switch. Only continue if you trust this remote server and the network path to it.",
+      "credentialsRiskConfirm": "I understand the risk",
       "presets": {
         "label": "Provider",
         "jianguoyun": "Jianguoyun",
@@ -1669,6 +1672,8 @@
     "formatSuccess": "Format successful",
     "formatFailed": "Format failed",
     "supportedVariables": "Supported Variables",
+    "allowPrivateNetwork": "Allow private network",
+    "allowPrivateNetworkHint": "Permit custom scripts to call LAN / private IP addresses (SSRF risk).",
     "variablesHint": "Supported variables: {{apiKey}}, {{baseUrl}} | extractor function receives API response JSON object",
     "scriptConfig": "Request configuration",
     "extractorCode": "Extractor code",

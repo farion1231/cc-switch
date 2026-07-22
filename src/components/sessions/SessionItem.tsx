@@ -47,10 +47,10 @@ export function SessionItem({
   return (
     <div
       className={cn(
-        "flex items-start gap-2 rounded-lg px-3 py-2.5 transition-all group",
+        "flex items-start gap-2 rounded-xl px-3 py-2.5 transition-all group",
         isSelected
-          ? "bg-primary/10 border border-primary/30"
-          : "hover:bg-muted/60 border border-transparent",
+          ? "glass-card-active"
+          : "border border-transparent hover:bg-white/35 dark:hover:bg-white/[0.06]",
       )}
     >
       {selectionMode && (

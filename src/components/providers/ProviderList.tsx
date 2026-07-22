@@ -1,19 +1,10 @@
-import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
 import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Search, X } from "lucide-react";
+  AlertTriangle,
+  CheckSquare,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -45,10 +36,27 @@ import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
-import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { isTextEditableTarget } from "@/utils/domUtils";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { extractErrorMessage } from "@/utils/errorUtils";
+import { CSS } from "@dnd-kit/utilities";
+import { DndContext, closestCenter } from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  type CSSProperties,
+} from "react";
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -65,6 +73,7 @@ interface ProviderListProps {
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onCreate?: () => void;
+  onDeleteMany?: (providers: Provider[]) => Promise<void>;
   isLoading?: boolean;
   isProxyRunning?: boolean; // 代理服务运行状态
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
@@ -87,6 +96,7 @@ export function ProviderList({
   onOpenWebsite,
   onOpenTerminal,
   onCreate,
+  onDeleteMany,
   isLoading = false,
   isProxyRunning = false,
   isProxyTakeover = false,
@@ -201,7 +211,10 @@ export function ProviderList({
   );
 
   const [searchTerm, setSearchTerm] = useState("");
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
@@ -264,6 +277,13 @@ export function ProviderList({
   });
 
   useEffect(() => {
+    setSearchTerm("");
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setBatchDeleteOpen(false);
+  }, [appId]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
 
@@ -273,28 +293,61 @@ export function ProviderList({
         // ProviderPresetSelector 的搜索框），避免与其同名快捷键冲突。
         if (isTextEditableTarget(document.activeElement)) return;
         event.preventDefault();
-        setIsSearchOpen(true);
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
         return;
       }
 
-      if (key === "escape") {
-        setIsSearchOpen(false);
+      if (key === "escape" && selectionMode) {
+        setSelectionMode(false);
+        setSelectedIds(new Set());
       }
     };
 
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [selectionMode]);
 
-  useEffect(() => {
-    if (isSearchOpen) {
-      const frame = requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-      return () => cancelAnimationFrame(frame);
-    }
-  }, [isSearchOpen]);
+  const resolveIsCurrent = useCallback(
+    (provider: Provider): boolean => {
+      const isOmo = provider.category === "omo";
+      const isOmoSlim = provider.category === "omo-slim";
+      if (isOmo) return provider.id === (currentOmoId || "");
+      if (isOmoSlim) return provider.id === (currentOmoSlimId || "");
+      if (appId === "hermes") return hermesCurrentProviderId === provider.id;
+      if (appId === "pi") return piActiveProviderId === provider.id;
+      return provider.id === currentProviderId;
+    },
+    [
+      appId,
+      currentOmoId,
+      currentOmoSlimId,
+      hermesCurrentProviderId,
+      piActiveProviderId,
+      currentProviderId,
+    ],
+  );
+
+  const isProviderDeletable = useCallback(
+    (provider: Provider): boolean => {
+      if (
+        appId === "hermes" &&
+        isHermesReadOnlyProvider(provider.settingsConfig)
+      ) {
+        return false;
+      }
+      const isOmo =
+        provider.category === "omo" || provider.category === "omo-slim";
+      const isAdditiveMode =
+        (appId === "opencode" && !isOmo) ||
+        appId === "openclaw" ||
+        appId === "hermes" ||
+        appId === "pi";
+      if (isOmo || isAdditiveMode) return true;
+      return !resolveIsCurrent(provider);
+    },
+    [appId, resolveIsCurrent],
+  );
 
   const filteredProviders = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -306,6 +359,75 @@ export function ProviderList({
       );
     });
   }, [searchTerm, sortedProviders]);
+
+  const deletableFilteredProviders = useMemo(
+    () => filteredProviders.filter(isProviderDeletable),
+    [filteredProviders, isProviderDeletable],
+  );
+
+  const selectedProviders = useMemo(
+    () =>
+      filteredProviders.filter(
+        (provider) =>
+          selectedIds.has(provider.id) && isProviderDeletable(provider),
+      ),
+    [filteredProviders, selectedIds, isProviderDeletable],
+  );
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visibleIds = new Set(filteredProviders.map((p) => p.id));
+      const next = new Set([...prev].filter((id) => visibleIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filteredProviders]);
+
+  const allDeletableSelected =
+    deletableFilteredProviders.length > 0 &&
+    deletableFilteredProviders.every((provider) =>
+      selectedIds.has(provider.id),
+    );
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setBatchDeleteOpen(false);
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    if (allDeletableSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(deletableFilteredProviders.map((p) => p.id)));
+  }, [allDeletableSelected, deletableFilteredProviders]);
+
+  const handleBatchDeleteConfirm = useCallback(async () => {
+    if (!onDeleteMany || selectedProviders.length === 0) return;
+    setIsBatchDeleting(true);
+    try {
+      await onDeleteMany(selectedProviders);
+      toast.success(
+        t("provider.batchDeleteSuccess", {
+          count: selectedProviders.length,
+          defaultValue: `已删除 ${selectedProviders.length} 个供应商`,
+        }),
+        { closeButton: true },
+      );
+      exitSelectionMode();
+    } catch (error) {
+      toast.error(
+        extractErrorMessage(error) ||
+          t("provider.batchDeleteRequestFailed", {
+            defaultValue: "批量删除失败，请稍后重试",
+          }),
+      );
+    } finally {
+      setIsBatchDeleting(false);
+      setBatchDeleteOpen(false);
+    }
+  }, [onDeleteMany, selectedProviders, t, exitSelectionMode]);
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -370,7 +492,7 @@ export function ProviderList({
         {[0, 1, 2].map((index) => (
           <div
             key={index}
-            className="w-full border border-dashed rounded-lg h-28 border-muted-foreground/40 bg-muted/40"
+            className="w-full border border-dashed rounded-2xl h-28 border-white/30 dark:border-white/15 glass-pill"
           />
         ))}
       </div>
@@ -401,28 +523,11 @@ export function ProviderList({
           {filteredProviders.map((provider) => {
             const isOmo = provider.category === "omo";
             const isOmoSlim = provider.category === "omo-slim";
-            const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
-            const isOmoSlimCurrent =
-              isOmoSlim && provider.id === (currentOmoSlimId || "");
-            const isHermesCurrent =
-              appId === "hermes" && hermesCurrentProviderId === provider.id;
-            const isPiCurrent =
-              appId === "pi" && piActiveProviderId === provider.id;
             return (
               <SortableProviderCard
                 key={provider.id}
                 provider={provider}
-                isCurrent={
-                  isOmo
-                    ? isOmoCurrent
-                    : isOmoSlim
-                      ? isOmoSlimCurrent
-                      : appId === "hermes"
-                        ? isHermesCurrent
-                        : appId === "pi"
-                          ? isPiCurrent
-                          : provider.id === currentProviderId
-                }
+                isCurrent={resolveIsCurrent(provider)}
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
                 isOmo={isOmo}
@@ -450,15 +555,24 @@ export function ProviderList({
                 activeProviderId={activeProviderId}
                 // OpenClaw: default model / Hermes: model.provider === provider.id
                 isDefaultModel={
-                  appId === "hermes"
-                    ? isHermesCurrent
-                    : appId === "pi"
-                      ? isPiCurrent
-                      : isProviderDefaultModel(provider.id)
+                  appId === "hermes" || appId === "pi"
+                    ? resolveIsCurrent(provider)
+                    : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={
                   onSetAsDefault ? () => onSetAsDefault(provider) : undefined
                 }
+                selectionMode={selectionMode}
+                selected={selectedIds.has(provider.id)}
+                selectable={isProviderDeletable(provider)}
+                onSelectChange={(next) => {
+                  setSelectedIds((prev) => {
+                    const copy = new Set(prev);
+                    if (next) copy.add(provider.id);
+                    else copy.delete(provider.id);
+                    return copy;
+                  });
+                }}
               />
             );
           })}
@@ -484,79 +598,138 @@ export function ProviderList({
           </ul>
         </div>
       )}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
-                  >
-                    {t("common.clear", { defaultValue: "Clear" })}
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={t("provider.searchPlaceholder", {
+              defaultValue: "搜索供应商名称、备注或网址…",
+            })}
+            aria-label={t("provider.searchAriaLabel", {
+              defaultValue: "搜索供应商",
+            })}
+            className="h-9 pl-9 pr-9"
+          />
+          {searchTerm ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
+              onClick={() => setSearchTerm("")}
+              aria-label={t("common.clear", { defaultValue: "清除" })}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {selectionMode ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleSelectAll}
+                disabled={deletableFilteredProviders.length === 0}
+              >
+                {allDeletableSelected
+                  ? t("provider.deselectAll", { defaultValue: "取消全选" })
+                  : t("provider.selectAll", { defaultValue: "全选" })}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={selectedProviders.length === 0 || isBatchDeleting}
+                onClick={() => setBatchDeleteOpen(true)}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                {t("provider.batchDelete", {
+                  count: selectedProviders.length,
+                  defaultValue: `一键删除${selectedProviders.length > 0 ? ` (${selectedProviders.length})` : ""}`,
+                })}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={exitSelectionMode}>
+                {t("common.cancel", { defaultValue: "取消" })}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSelectionMode(true)}
+              disabled={deletableFilteredProviders.length === 0}
+              title={t("provider.batchManageTooltip", {
+                defaultValue: "批量选择并一键删除",
+              })}
+            >
+              <CheckSquare className="mr-1.5 h-3.5 w-3.5" />
+              {t("provider.batchManage", { defaultValue: "批量管理" })}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {(searchTerm.trim() || selectionMode) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground px-0.5">
+          <span>
+            {searchTerm.trim()
+              ? t("provider.searchResultCount", {
+                  count: filteredProviders.length,
+                  total: sortedProviders.length,
+                  defaultValue: `找到 ${filteredProviders.length} / ${sortedProviders.length} 个供应商`,
+                })
+              : t("provider.batchManageHint", {
+                  defaultValue: "勾选后可一键删除；当前使用中的供应商不可删除。",
+                })}
+          </span>
+          {selectionMode && (
+            <span>
+              {t("provider.selectedCount", {
+                count: selectedProviders.length,
+                defaultValue: `已选 ${selectedProviders.length} 个`,
+              })}
+            </span>
+          )}
+        </div>
+      )}
 
       {filteredProviders.length === 0 ? (
-        <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
+        <div className="px-6 py-8 text-sm text-center border border-dashed rounded-2xl border-border text-muted-foreground glass-panel">
           {t("provider.noSearchResults", {
-            defaultValue: "No providers match your search.",
+            defaultValue: "没有符合搜索条件的供应商。",
           })}
         </div>
       ) : (
         renderProviderList()
       )}
+
+      <ConfirmDialog
+        isOpen={batchDeleteOpen}
+        title={t("provider.batchDeleteConfirmTitle", {
+          defaultValue: "一键删除供应商",
+        })}
+        message={t("provider.batchDeleteConfirmMessage", {
+          count: selectedProviders.length,
+          defaultValue: `确定删除已选中的 ${selectedProviders.length} 个供应商吗？此操作无法撤销。`,
+        })}
+        confirmText={
+          isBatchDeleting
+            ? t("common.deleting", { defaultValue: "删除中..." })
+            : t("provider.batchDeleteConfirmAction", {
+                defaultValue: "一键删除",
+              })
+        }
+        onConfirm={() => {
+          void handleBatchDeleteConfirm();
+        }}
+        onCancel={() => {
+          if (!isBatchDeleting) setBatchDeleteOpen(false);
+        }}
+      />
     </div>
   );
 }
@@ -590,6 +763,10 @@ interface SortableProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  selectable?: boolean;
+  onSelectChange?: (selected: boolean) => void;
 }
 
 function SortableProviderCard({
@@ -620,6 +797,10 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  selectionMode,
+  selected,
+  selectable,
+  onSelectChange,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -628,7 +809,7 @@ function SortableProviderCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: provider.id });
+  } = useSortable({ id: provider.id, disabled: selectionMode });
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -673,6 +854,10 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        selectionMode={selectionMode}
+        selected={selected}
+        selectable={selectable}
+        onSelectChange={onSelectChange}
       />
     </div>
   );

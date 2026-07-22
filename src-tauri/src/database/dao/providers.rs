@@ -43,9 +43,38 @@ impl Database {
                 let meta_str: String = row.get(10)?;
                 let in_failover_queue: bool = row.get(11)?;
 
-                let settings_config =
-                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
+                let settings_plain = crate::secrets::decrypt_blob(&settings_config_str)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                e.to_string(),
+                            )),
+                        )
+                    })?;
+                let settings_config: serde_json::Value =
+                    serde_json::from_str(&settings_plain).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            2,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("Invalid settings_config JSON for provider {id}: {e}"),
+                            )),
+                        )
+                    })?;
+                let meta: ProviderMeta = serde_json::from_str(&meta_str).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        10,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Invalid meta JSON for provider {id}: {e}"),
+                        )),
+                    )
+                })?;
 
                 Ok((
                     id,
@@ -150,8 +179,38 @@ impl Database {
                 let meta_str: String = row.get(9)?;
                 let in_failover_queue: bool = row.get(10)?;
 
-                let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
+                let settings_plain = crate::secrets::decrypt_blob(&settings_config_str)
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                e.to_string(),
+                            )),
+                        )
+                    })?;
+                let settings_config: serde_json::Value =
+                    serde_json::from_str(&settings_plain).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("Invalid settings_config JSON for provider {id}: {e}"),
+                            )),
+                        )
+                    })?;
+                let meta: ProviderMeta = serde_json::from_str(&meta_str).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        9,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Invalid meta JSON for provider {id}: {e}"),
+                        )),
+                    )
+                })?;
 
                 Ok(Provider {
                     id: id.to_string(),
@@ -198,6 +257,11 @@ impl Database {
         let (is_current, in_failover_queue) =
             existing.unwrap_or((false, provider.in_failover_queue));
 
+        let settings_json = serde_json::to_string(&provider.settings_config).map_err(|e| {
+            AppError::Database(format!("Failed to serialize settings_config: {e}"))
+        })?;
+        let settings_stored = crate::secrets::encrypt_blob(&settings_json)?;
+
         if is_update {
             tx.execute(
                 "UPDATE providers SET
@@ -216,9 +280,7 @@ impl Database {
                 WHERE id = ?13 AND app_type = ?14",
                 params![
                     provider.name,
-                    serde_json::to_string(&provider.settings_config).map_err(|e| {
-                        AppError::Database(format!("Failed to serialize settings_config: {e}"))
-                    })?,
+                    settings_stored,
                     provider.website_url,
                     provider.category,
                     provider.created_at,
@@ -246,8 +308,7 @@ impl Database {
                     provider.id,
                     app_type,
                     provider.name,
-                    serde_json::to_string(&provider.settings_config)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize settings_config: {e}")))?,
+                    settings_stored,
                     provider.website_url,
                     provider.category,
                     provider.created_at,
@@ -316,15 +377,13 @@ impl Database {
         settings_config: &serde_json::Value,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let settings_json = serde_json::to_string(settings_config).map_err(|e| {
+            AppError::Database(format!("Failed to serialize settings_config: {e}"))
+        })?;
+        let settings_stored = crate::secrets::encrypt_blob(&settings_json)?;
         conn.execute(
             "UPDATE providers SET settings_config = ?1 WHERE id = ?2 AND app_type = ?3",
-            params![
-                serde_json::to_string(settings_config).map_err(|e| AppError::Database(format!(
-                    "Failed to serialize settings_config: {e}"
-                )))?,
-                provider_id,
-                app_type
-            ],
+            params![settings_stored, provider_id, app_type],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -471,7 +530,8 @@ impl Database {
                 Err(e) => return Err(AppError::Database(e.to_string())),
             };
 
-        let settings_config = serde_json::from_str(&settings_config_str).map_err(|e| {
+        let settings_plain = crate::secrets::decrypt_blob(&settings_config_str)?;
+        let settings_config = serde_json::from_str(&settings_plain).map_err(|e| {
             AppError::Database(format!(
                 "Failed to parse {category} provider settings_config (provider_id={id}): {e}"
             ))

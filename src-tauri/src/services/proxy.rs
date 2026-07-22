@@ -522,6 +522,12 @@ impl ProxyService {
             .get_global_proxy_config()
             .await
             .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
+        let allow_lan = crate::settings::get_settings().proxy_allow_lan_listen;
+        crate::proxy::types::validate_proxy_listen_address(
+            &global_config.listen_address,
+            allow_lan,
+        )
+        .map_err(|e| e.to_string())?;
 
         if !global_config.proxy_enabled {
             global_config.proxy_enabled = true;
@@ -3041,6 +3047,10 @@ impl ProxyService {
 
     /// 更新代理配置
     pub async fn update_config(&self, config: &ProxyConfig) -> Result<(), String> {
+        let allow_lan = crate::settings::get_settings().proxy_allow_lan_listen;
+        crate::proxy::types::validate_proxy_listen_address(&config.listen_address, allow_lan)
+            .map_err(|e| e.to_string())?;
+
         // 记录旧配置用于判定是否需要重启
         let previous = self
             .db

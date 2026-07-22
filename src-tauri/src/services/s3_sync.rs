@@ -41,6 +41,7 @@ where
 /// Check S3 connectivity by issuing a HEAD request against the bucket.
 pub async fn check_connection(settings: &S3SyncSettings) -> Result<(), AppError> {
     settings.validate()?;
+    S3SyncSettings::require_credentials_risk_ack()?;
     let creds = creds_for(settings);
     s3::test_connection(&creds).await
 }
@@ -51,6 +52,7 @@ pub async fn upload(
     settings: &mut S3SyncSettings,
 ) -> Result<Value, AppError> {
     settings.validate()?;
+    S3SyncSettings::require_credentials_risk_ack()?;
     let creds = creds_for(settings);
 
     let snapshot = build_local_snapshot(db)?;
@@ -95,6 +97,7 @@ pub async fn download(
     settings: &mut S3SyncSettings,
 ) -> Result<Value, AppError> {
     settings.validate()?;
+    S3SyncSettings::require_credentials_risk_ack()?;
     let creds = creds_for(settings);
 
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
@@ -133,6 +136,7 @@ pub async fn download(
 /// Fetch remote manifest info without downloading artifacts.
 pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value>, AppError> {
     settings.validate()?;
+    S3SyncSettings::require_credentials_risk_ack()?;
     let creds = creds_for(settings);
     let manifest_key = s3_key(settings, REMOTE_MANIFEST);
 

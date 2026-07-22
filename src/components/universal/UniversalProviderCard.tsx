@@ -29,7 +29,7 @@ export function UniversalProviderCard({
   ].filter((app): app is string => app !== null);
 
   return (
-    <div className="group relative rounded-xl border border-border/50 bg-card p-4 transition-all hover:border-border hover:shadow-md">
+    <div className="group relative rounded-2xl glass-card p-4 transition-all">
       {/* 头部：图标和名称 */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">

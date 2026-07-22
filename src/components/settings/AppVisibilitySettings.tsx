@@ -77,7 +77,7 @@ export function AppVisibilitySettings({
           {t("settings.appVisibility.description")}
         </p>
       </header>
-      <div className="flex flex-wrap gap-1 rounded-md border border-border-default bg-background p-1">
+      <div className="flex flex-wrap gap-1 rounded-xl glass-pill p-1">
         {APP_CONFIG.map((app) => {
           const isVisible = visibleApps[app.id];
           // Disable button if this is the last visible app
@@ -136,7 +136,7 @@ function AppButton({
         "min-w-[90px] w-auto gap-1.5 px-3",
         active
           ? "shadow-sm"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+          : "text-muted-foreground hover:text-foreground hover:bg-white/35 dark:hover:bg-white/10",
       )}
     >
       <ProviderIcon icon={icon} name={name} size={14} />

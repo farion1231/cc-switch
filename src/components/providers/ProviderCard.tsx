@@ -10,6 +10,7 @@ import type { AppId } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { Checkbox } from "@/components/ui/checkbox";
 import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
@@ -66,6 +67,10 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  selectable?: boolean;
+  onSelectChange?: (selected: boolean) => void;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -165,6 +170,10 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  selectionMode = false,
+  selected = false,
+  selectable = true,
+  onSelectChange,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -311,18 +320,17 @@ export function ProviderCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border border-border p-4 transition-all duration-300",
-        "bg-card text-card-foreground group",
+        "relative overflow-hidden rounded-2xl glass-card p-4 transition-all duration-300",
+        "text-card-foreground group",
         isAutoFailoverEnabled || isProxyTakeover
           ? "hover:border-emerald-500/50"
-          : "hover:border-border-active",
-        shouldUseGreen &&
-          "border-emerald-500/60 shadow-sm shadow-emerald-500/10",
-        shouldUseBlue && "border-blue-500/60 shadow-sm shadow-blue-500/10",
+          : "hover:border-blue-500/35",
+        shouldUseGreen && "glass-card-active-emerald",
+        shouldUseBlue && "glass-card-active",
         !(isActiveProvider || hasPersistentConfigHighlight) &&
-          "hover:shadow-sm",
+          "hover:shadow-md",
         dragHandleProps?.isDragging &&
-          "cursor-grabbing border-primary shadow-lg scale-105 z-10",
+          "cursor-grabbing !border-primary shadow-lg scale-[1.02] z-10",
       )}
     >
       <div
@@ -338,21 +346,49 @@ export function ProviderCard({
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
-            )}
-            aria-label={t("provider.dragHandle")}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
+          {selectionMode ? (
+            <div className="-ml-1.5 flex flex-shrink-0 items-center p-1.5">
+              <Checkbox
+                checked={selected}
+                disabled={!selectable}
+                onCheckedChange={(value) => {
+                  if (!selectable) return;
+                  onSelectChange?.(value === true);
+                }}
+                aria-label={t("provider.selectProvider", {
+                  defaultValue: "选择供应商",
+                  name: provider.name,
+                })}
+                onClick={(event) => event.stopPropagation()}
+              />
+            </div>
+          ) : (
+            <button
+              type="button"
+              className={cn(
+                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+                "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+                dragHandleProps?.isDragging && "cursor-grabbing",
+              )}
+              aria-label={t("provider.dragHandle")}
+              {...(dragHandleProps?.attributes ?? {})}
+              {...(dragHandleProps?.listeners ?? {})}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          )}
 
-          <div className="h-8 w-8 flex-shrink-0 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
+          <div
+            className={cn(
+              "h-8 w-8 flex-shrink-0 rounded-xl bg-white/45 dark:bg-white/10 flex items-center justify-center border border-white/40 dark:border-white/10 group-hover:scale-105 transition-transform duration-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]",
+              selectionMode && selectable && "cursor-pointer",
+            )}
+            onClick={() => {
+              if (selectionMode && selectable) {
+                onSelectChange?.(!selected);
+              }
+            }}
+          >
             <ProviderIcon
               icon={resolveProviderIcon(
                 appId,

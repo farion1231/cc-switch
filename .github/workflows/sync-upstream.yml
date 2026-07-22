@@ -1,0 +1,166 @@
+# 把官方 farion1231/cc-switch 同步进本 fork，不覆盖你自己的提交。
+#
+# - 定时每天跑一次；也可在 Actions 里手动 Run workflow
+# - 默认开 PR（可审阅后再合），避免静默冲掉定制
+# - 产品线若在 feat/pi-support：手动跑时把 target_branch 填成 feat/pi-support
+#
+# 受保护分支推送失败时，在仓库 Settings → Secrets 添加：
+#   SYNC_UPSTREAM_TOKEN = 有 contents:write + pull_requests:write 的 PAT
+
+name: Sync Upstream
+
+on:
+  schedule:
+    # 每天 08:00 UTC = 北京时间 16:00
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "本 fork 上要合入官方更新的目标分支"
+        required: false
+        default: "main"
+      create_pr_only:
+        description: "true=只开 PR；false=无冲突时直接合进目标分支"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: farion1231/cc-switch
+      UPSTREAM_BRANCH: main
+      TARGET_BRANCH: ${{ github.event.inputs.target_branch || 'main' }}
+      CREATE_PR_ONLY: ${{ github.event.inputs.create_pr_only || 'true' }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_UPSTREAM_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "https://github.com/${UPSTREAM_REPO}.git"
+          else
+            git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          fi
+          git fetch upstream --prune
+          git fetch origin --prune
+
+      - name: Ensure target branch exists locally
+        run: |
+          if git show-ref --verify --quiet "refs/remotes/origin/${TARGET_BRANCH}"; then
+            git checkout -B "$TARGET_BRANCH" "origin/${TARGET_BRANCH}"
+          elif git show-ref --verify --quiet "refs/heads/${TARGET_BRANCH}"; then
+            git checkout "$TARGET_BRANCH"
+          else
+            echo "Target branch '${TARGET_BRANCH}' not on origin; creating from upstream/${UPSTREAM_BRANCH}"
+            git checkout -B "$TARGET_BRANCH" "upstream/${UPSTREAM_BRANCH}"
+            git push -u origin "$TARGET_BRANCH"
+          fi
+
+      - name: Check whether sync is needed
+        id: need
+        run: |
+          BEHIND=$(git rev-list --count "HEAD..upstream/${UPSTREAM_BRANCH}")
+          echo "behind=${BEHIND}" >> "$GITHUB_OUTPUT"
+          echo "Behind upstream/${UPSTREAM_BRANCH}: ${BEHIND} commit(s)"
+          if [ "$BEHIND" = "0" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream onto sync branch
+        if: steps.need.outputs.skip != 'true'
+        id: merge
+        run: |
+          SYNC_BRANCH="chore/sync-upstream-$(date -u +%Y%m%d)"
+          echo "sync_branch=${SYNC_BRANCH}" >> "$GITHUB_OUTPUT"
+          git checkout -B "$SYNC_BRANCH" "$TARGET_BRANCH"
+
+          if git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            git push -u origin "$SYNC_BRANCH" --force-with-lease || git push -u origin "$SYNC_BRANCH"
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+            # 无法推送含冲突的 merge；推送目标分支 tip，并在 PR 里给出对照链接与本地解法
+            git checkout -B "$SYNC_BRANCH" "$TARGET_BRANCH"
+            git push -u origin "$SYNC_BRANCH" --force-with-lease || git push -u origin "$SYNC_BRANCH"
+          fi
+
+      - name: Direct merge to target (no PR)
+        if: steps.need.outputs.skip != 'true' && env.CREATE_PR_ONLY == 'false' && steps.merge.outputs.conflict != 'true'
+        run: |
+          git checkout "$TARGET_BRANCH"
+          git merge --ff-only "${{ steps.merge.outputs.sync_branch }}" || git merge --no-edit "${{ steps.merge.outputs.sync_branch }}"
+          git push origin "$TARGET_BRANCH"
+
+      - name: Open sync pull request
+        if: steps.need.outputs.skip != 'true' && (env.CREATE_PR_ONLY == 'true' || steps.merge.outputs.conflict == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_UPSTREAM_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="chore: sync upstream ${UPSTREAM_BRANCH} ($(date -u +%Y-%m-%d))"
+          COMPARE_URL="https://github.com/${{ github.repository }}/compare/${TARGET_BRANCH}...${UPSTREAM_REPO}:${UPSTREAM_BRANCH}"
+          BODY=$(cat <<EOF
+          ## Summary
+          Auto-sync from \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` → \`${TARGET_BRANCH}\`.
+
+          - Behind by **${{ steps.need.outputs.behind }}** commit(s)
+          - Merge conflict: **${{ steps.merge.outputs.conflict }}**
+          - Upstream diff: ${COMPARE_URL}
+
+          ## Notes
+          - Only pulls **official** commits into **this fork**.
+          - Your custom commits on \`${TARGET_BRANCH}\` stay; resolve conflicts if needed.
+          - In-app updater must use **this fork's** \`latest.json\`, not \`farion1231/cc-switch\`.
+
+          ## If conflict = true
+          \`\`\`bash
+          git fetch upstream
+          git checkout ${TARGET_BRANCH}
+          git checkout -b ${{ steps.merge.outputs.sync_branch }}
+          git merge upstream/${UPSTREAM_BRANCH}
+          # fix conflicts → git add -A && git commit
+          git push -u origin HEAD
+          \`\`\`
+          Then merge this PR (or open a new one from the conflict-resolved branch).
+          EOF
+          )
+
+          EXISTING=$(gh pr list --head "${{ steps.merge.outputs.sync_branch }}" --json number --jq '.[0].number')
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            echo "PR already exists: #$EXISTING"
+            gh pr edit "$EXISTING" --title "$TITLE" --body "$BODY"
+          else
+            gh pr create \
+              --base "$TARGET_BRANCH" \
+              --head "${{ steps.merge.outputs.sync_branch }}" \
+              --title "$TITLE" \
+              --body "$BODY"
+          fi
+
+      - name: Nothing to sync
+        if: steps.need.outputs.skip == 'true'
+        run: echo "Already up to date with upstream/${UPSTREAM_BRANCH}."

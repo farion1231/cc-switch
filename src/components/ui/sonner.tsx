@@ -17,7 +17,7 @@ export function Toaster() {
         duration: 2000,
         classNames: {
           toast:
-            "group rounded-md border bg-background text-foreground shadow-lg",
+            "group rounded-xl glass-panel text-foreground !border-white/30 dark:!border-white/10",
           title: "text-sm font-semibold",
           description: "text-sm text-muted-foreground",
           closeButton:

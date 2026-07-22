@@ -1147,7 +1147,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                       </div>
                     </div>
                     {selectionMode && (
-                      <div className="grid gap-3 rounded-md border bg-muted/40 px-3 py-2.5">
+                      <div className="grid gap-3 rounded-xl glass-pill px-3 py-2.5">
                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Badge variant="outline" className="text-xs">
                             {t("sessionManager.selectedCount", {
@@ -1253,7 +1253,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                 toggleProviderGroup(providerGroup.providerId)
                               }
                             >
-                              <div className="flex w-full items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-2 transition-colors hover:bg-muted">
+                              <div className="flex w-full items-center gap-2 rounded-xl glass-pill px-2.5 py-2 transition-colors hover:bg-white/45 dark:hover:bg-white/10">
                                 {renderProviderGroupCheckbox(
                                   providerGroup,
                                   providerLabel,
@@ -1317,7 +1317,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                                           )
                                         }
                                       >
-                                        <div className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                                        <div className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-white/35 hover:text-foreground dark:hover:bg-white/10">
                                           {renderDirectoryGroupCheckbox(
                                             directoryGroup,
                                             directorySelectionState,
@@ -1583,7 +1583,7 @@ export function SessionManagerPage({ appId }: { appId: string }) {
                     {/* 恢复命令预览 */}
                     {selectedSession.resumeCommand && (
                       <div className="mt-3 flex items-center gap-2">
-                        <div className="flex-1 rounded-md bg-muted/60 px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
+                        <div className="flex-1 rounded-xl glass-pill px-3 py-1.5 font-mono text-xs text-muted-foreground truncate">
                           {selectedSession.resumeCommand}
                         </div>
                         <Tooltip>

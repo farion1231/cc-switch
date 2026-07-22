@@ -4,34 +4,34 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
-        // 主按钮：蓝底白字（对应旧版 primary）
+        // 主按钮：液态蓝
         default:
-          "bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
-        // 危险按钮：红底白字（对应旧版 danger）
+          "bg-blue-500/90 text-white shadow-md shadow-blue-500/20 backdrop-blur-sm hover:bg-blue-500 hover:shadow-lg hover:shadow-blue-500/25 dark:bg-blue-500/85 dark:hover:bg-blue-500",
+        // 危险按钮
         destructive:
-          "bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700",
-        // 轮廓按钮
+          "bg-red-500/90 text-white shadow-md shadow-red-500/15 backdrop-blur-sm hover:bg-red-500 dark:bg-red-500/85 dark:hover:bg-red-500",
+        // 轮廓按钮 — 玻璃描边
         outline:
-          "border border-border-default bg-background text-muted-foreground hover:bg-gray-100 hover:text-gray-900 hover:border-border-hover dark:hover:bg-gray-800 dark:hover:text-gray-100",
-        // 次按钮：灰色（对应旧版 secondary）
+          "border border-white/40 bg-white/35 text-muted-foreground shadow-sm backdrop-blur-md hover:bg-white/55 hover:text-foreground dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10 dark:hover:text-gray-100",
+        // 次按钮
         secondary:
-          "text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200",
-        // 幽灵按钮（对应旧版 ghost）
+          "text-gray-500 hover:bg-white/40 dark:text-gray-400 dark:hover:bg-white/10 dark:hover:text-gray-200",
+        // 幽灵按钮
         ghost:
-          "text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-gray-800",
-        // MCP 专属按钮：祖母绿
-        mcp: "bg-emerald-500 text-white hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700",
+          "text-gray-500 hover:text-foreground hover:bg-white/35 dark:text-gray-400 dark:hover:text-gray-100 dark:hover:bg-white/10",
+        // MCP 专属按钮
+        mcp: "bg-emerald-500/90 text-white shadow-md shadow-emerald-500/15 backdrop-blur-sm hover:bg-emerald-500 dark:bg-emerald-500/85 dark:hover:bg-emerald-500",
         // 链接按钮
         link: "text-blue-500 underline-offset-4 hover:underline dark:text-blue-400",
       },
       size: {
         default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
+        sm: "h-8 rounded-lg px-3 text-xs",
+        lg: "h-10 rounded-xl px-8",
         icon: "h-9 w-9 p-1.5",
       },
     },

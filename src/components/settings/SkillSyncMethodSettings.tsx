@@ -25,7 +25,7 @@ export function SkillSyncMethodSettings({
           {t("settings.skillSync.description")}
         </p>
       </header>
-      <div className="inline-flex gap-1 rounded-md border border-border-default bg-background p-1">
+      <div className="inline-flex gap-1 rounded-xl glass-pill p-1">
         <SyncMethodButton
           active={displayValue === "symlink"}
           onClick={() => onChange("symlink")}
@@ -69,7 +69,7 @@ function SyncMethodButton({
         "min-w-[96px]",
         active
           ? "shadow-sm"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted",
+          : "text-muted-foreground hover:text-foreground hover:bg-white/35 dark:hover:bg-white/10",
       )}
     >
       {children}

@@ -106,6 +106,9 @@ pub async fn update_global_proxy_config(
     state: tauri::State<'_, AppState>,
     config: GlobalProxyConfig,
 ) -> Result<(), String> {
+    let allow_lan = crate::settings::get_settings().proxy_allow_lan_listen;
+    crate::proxy::types::validate_proxy_listen_address(&config.listen_address, allow_lan)
+        .map_err(|e| e.to_string())?;
     let db = &state.db;
     db.update_global_proxy_config(config)
         .await

@@ -26,7 +26,7 @@ export interface PiFormState {
   handlePiApiKeyChange: (apiKey: string) => void;
   handlePiApiChange: (api: string) => void;
   handlePiModelsChange: (models: PiModelEntry[]) => void;
-  resetPiState: (config?: PiProviderConfig) => void;
+  resetPiState: (config?: PiProviderConfig, providerKey?: string) => void;
 }
 
 function parsePiField<T>(
@@ -139,13 +139,16 @@ export function usePiFormState({
     [updatePiConfig],
   );
 
-  const resetPiState = useCallback((config?: PiProviderConfig) => {
-    setPiProviderKey("");
-    setPiBaseUrl(config?.baseUrl || "");
-    setPiApiKey(config?.apiKey || "");
-    setPiApi(config?.api || "openai-completions");
-    setPiModels(config?.models || []);
-  }, []);
+  const resetPiState = useCallback(
+    (config?: PiProviderConfig, providerKey?: string) => {
+      setPiProviderKey(providerKey || "");
+      setPiBaseUrl(config?.baseUrl || "");
+      setPiApiKey(config?.apiKey || "");
+      setPiApi(config?.api || "openai-completions");
+      setPiModels(config?.models || []);
+    },
+    [],
+  );
 
   return {
     piProviderKey,

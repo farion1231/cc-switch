@@ -13,7 +13,10 @@
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
-    "test:unit:watch": "vitest watch"
+    "test:unit:watch": "vitest watch",
+    "sync:upstream": "pwsh -NoProfile -File scripts/sync-upstream.ps1",
+    "sync:upstream:push": "pwsh -NoProfile -File scripts/sync-upstream.ps1 -Stash -Push",
+    "tauri:signer:generate": "pwsh -NoProfile -File scripts/setup-updater-keys.ps1"
   },
   "keywords": [],
   "author": "Jason Young",

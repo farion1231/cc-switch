@@ -5,6 +5,8 @@ release/
 *.log
 .env
 .env.local
+# Tauri updater private key — keep only under %USERPROFILE%\.tauri\
+**/cc-switch-pro.key
 *.tsbuildinfo
 .npmrc
 CLAUDE.md

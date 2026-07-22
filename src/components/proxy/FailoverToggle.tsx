@@ -60,7 +60,7 @@ export function FailoverToggle({ className, activeApp }: FailoverToggleProps) {
   return (
     <div
       className={cn(
-        "flex items-center gap-1 px-1.5 h-8 rounded-lg bg-muted/50 transition-all",
+        "flex items-center gap-1 px-1.5 h-8 rounded-xl glass-pill transition-all",
         className,
       )}
       title={tooltipText}

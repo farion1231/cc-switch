@@ -60,9 +60,9 @@
       }
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4MDI4QzlBNTczOTI4RTMKUldUaktEbFhtb3dDeUM5US9kT0FmdGR5Ti9vQzcwa2dTMlpibDVDUmQ2M0VGTzVOWnd0SGpFVlEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzQTgxOEVGMThFNzY4RDcKUldUWGFPY1k3eGlvVXdBTFEwRUNsNjVxc0MrZExlSlJLQ0xiMUFlWkNSZGNjamlQVmxSalFaNzkK",
       "endpoints": [
-        "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
+        "https://github.com/xjwm5685-ui/cc-switch-pro/releases/latest/download/latest.json"
       ]
     }
   }

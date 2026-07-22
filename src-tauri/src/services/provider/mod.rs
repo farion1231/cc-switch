@@ -283,6 +283,7 @@ mod tests {
             secret_access_key: Some("sk-test".to_string()),
             team_organization_id: None,
             team_project_id: None,
+            allow_private_network: None,
         }
     }
 
@@ -3424,6 +3425,7 @@ impl ProviderService {
         access_token: Option<&str>,
         user_id: Option<&str>,
         template_type: Option<&str>,
+        allow_private_network: bool,
     ) -> Result<UsageResult, AppError> {
         usage::test_usage_script(
             state,
@@ -3436,6 +3438,7 @@ impl ProviderService {
             access_token,
             user_id,
             template_type,
+            allow_private_network,
         )
         .await
     }

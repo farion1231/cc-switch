@@ -53,6 +53,7 @@ struct RemoteSnapshot {
 /// Check WebDAV connectivity and ensure remote directory structure.
 pub async fn check_connection(settings: &WebDavSyncSettings) -> Result<(), AppError> {
     settings.validate()?;
+    WebDavSyncSettings::require_credentials_risk_ack()?;
     let auth = auth_for(settings);
     test_connection(&settings.base_url, &auth).await?;
     let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
@@ -66,6 +67,7 @@ pub async fn upload(
     settings: &mut WebDavSyncSettings,
 ) -> Result<Value, AppError> {
     settings.validate()?;
+    WebDavSyncSettings::require_credentials_risk_ack()?;
     let auth = auth_for(settings);
     let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
     ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
@@ -112,6 +114,7 @@ pub async fn download(
     settings: &mut WebDavSyncSettings,
 ) -> Result<Value, AppError> {
     settings.validate()?;
+    WebDavSyncSettings::require_credentials_risk_ack()?;
     let auth = auth_for(settings);
     let snapshot = find_remote_snapshot(settings, &auth)
         .await?
@@ -163,6 +166,7 @@ pub async fn download(
 /// Fetch remote manifest info without downloading artifacts.
 pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<Value>, AppError> {
     settings.validate()?;
+    WebDavSyncSettings::require_credentials_risk_ack()?;
     let auth = auth_for(settings);
     let Some(snapshot) = find_remote_snapshot(settings, &auth).await? else {
         return Ok(None);

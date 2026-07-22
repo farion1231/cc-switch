@@ -215,7 +215,7 @@ export function UsageDashboard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center p-1 bg-muted/30 rounded-lg border border-border/50">
+          <div className="flex items-center p-1 glass-pill rounded-xl">
             {APP_FILTER_OPTIONS.map((type) => {
               const label = t(`usage.appFilter.${type}`);
               return (
@@ -226,10 +226,10 @@ export function UsageDashboard({
                   title={label}
                   aria-label={label}
                   className={cn(
-                    "flex h-8 items-center justify-center px-2.5 rounded-md transition-all",
+                    "flex h-8 items-center justify-center px-2.5 rounded-lg transition-all",
                     appType === type
-                      ? "bg-background text-primary shadow-sm"
-                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                      ? "bg-white/70 text-primary shadow-sm backdrop-blur-md dark:bg-white/15"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/35 dark:hover:bg-white/10",
                   )}
                 >
                   {type === "all" ? (
@@ -253,7 +253,7 @@ export function UsageDashboard({
             onValueChange={(v) => changeProviderName(decodeOptionValue(v))}
           >
             <SelectTrigger
-              className="h-9 w-[100px] bg-background text-xs focus:border-border-default [&>span]:min-w-0 [&>span]:truncate"
+              className="h-9 w-[100px] text-xs [&>span]:min-w-0 [&>span]:truncate"
               title={providerName ?? t("usage.filterBySource")}
             >
               <SelectValue />
@@ -278,7 +278,7 @@ export function UsageDashboard({
             onValueChange={(v) => setModel(decodeOptionValue(v))}
           >
             <SelectTrigger
-              className="h-9 w-[100px] bg-background text-xs focus:border-border-default [&>span]:min-w-0 [&>span]:truncate"
+              className="h-9 w-[100px] text-xs [&>span]:min-w-0 [&>span]:truncate"
               title={model ?? t("usage.filterByModel")}
             >
               <SelectValue />
@@ -304,7 +304,7 @@ export function UsageDashboard({
               onValueChange={(v) => changeRefreshInterval(Number(v))}
             >
               <SelectTrigger
-                className="h-9 w-[100px] bg-background text-xs focus:border-border-default"
+                className="h-9 w-[100px] text-xs"
                 title={t("usage.refreshInterval")}
                 aria-label={t("usage.refreshInterval")}
               >
@@ -351,7 +351,7 @@ export function UsageDashboard({
       <div className="space-y-4">
         <Tabs defaultValue="logs" className="w-full">
           <div className="flex items-center justify-between mb-4">
-            <TabsList className="bg-muted/50">
+            <TabsList>
               <TabsTrigger value="logs" className="gap-2">
                 <ListFilter className="h-4 w-4" />
                 {t("usage.requestLogs")}
@@ -412,7 +412,7 @@ export function UsageDashboard({
           value="pricing"
           className="rounded-xl glass-card overflow-hidden"
         >
-          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-white/30 dark:hover:bg-white/[0.04] data-[state=open]:bg-white/25 dark:data-[state=open]:bg-white/[0.04]">
             <div className="flex items-center gap-3">
               <Coins className="h-5 w-5 text-yellow-500" />
               <div className="text-left">

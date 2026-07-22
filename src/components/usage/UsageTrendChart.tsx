@@ -49,7 +49,7 @@ export function UsageTrendChart({
 
   if (isLoading) {
     return (
-      <div className="flex h-[350px] items-center justify-center rounded-xl bg-card/40 border border-border/50">
+      <div className="flex h-[350px] items-center justify-center rounded-2xl glass-card">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/30" />
       </div>
     );
@@ -90,7 +90,7 @@ export function UsageTrendChart({
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-md">
+        <div className="rounded-xl glass-panel p-3">
           <p className="mb-2 font-medium">{label}</p>
           {payload.map((entry: any, index: number) => (
             <div
@@ -117,7 +117,7 @@ export function UsageTrendChart({
   };
 
   return (
-    <div className="rounded-xl border border-border/50 bg-card/40 p-6 backdrop-blur-sm">
+    <div className="rounded-2xl glass-card p-6">
       <div className="mb-6 flex items-center justify-between">
         <h3 className="text-lg font-semibold">
           {t("usage.trends", "使用趋势")}

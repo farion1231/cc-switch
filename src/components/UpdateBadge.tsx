@@ -31,8 +31,8 @@ export function UpdateBadge({ className = "", onClick }: UpdateBadgeProps) {
       aria-label={title}
       onClick={onClick}
       className={`
-        relative h-8 w-8 rounded-full
-        ${isActive ? "text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-500/10" : "text-muted-foreground hover:bg-muted/60"}
+        relative h-8 w-8 rounded-xl glass-pill
+        ${isActive ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15" : "text-muted-foreground"}
         ${className}
       `}
     >
