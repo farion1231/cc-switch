@@ -4,6 +4,7 @@
 //! Implements AWS Signature Version 4 request signing.
 //! The sync protocol logic lives in the upcoming `s3_sync` module.
 
+use bytes::Bytes;
 use reqwest::StatusCode;
 use std::time::Duration;
 use url::Url;
@@ -31,9 +32,41 @@ pub(crate) struct S3Credentials {
 
 // ─── URL construction ────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum S3UrlStyle {
+    VirtualHosted,
+    PathStyle,
+}
+
 /// Returns `true` for AWS official endpoints (empty or contains `amazonaws.com`).
 fn is_aws_endpoint(endpoint: &str) -> bool {
     endpoint.is_empty() || endpoint.contains("amazonaws.com")
+}
+
+fn endpoint_prefers_virtual_hosted(endpoint: &str) -> bool {
+    let endpoint = endpoint.trim_end_matches('/').to_ascii_lowercase();
+    endpoint.contains("myqcloud.com")
+        || endpoint.contains("aliyuncs.com")
+        || endpoint.contains("myhuaweicloud.com")
+        || endpoint.contains("cloudflarestorage.com")
+}
+
+fn effective_url_style(creds: &S3Credentials) -> S3UrlStyle {
+    if is_aws_endpoint(&creds.endpoint) {
+        return S3UrlStyle::VirtualHosted;
+    }
+    if endpoint_prefers_virtual_hosted(&creds.endpoint) {
+        S3UrlStyle::VirtualHosted
+    } else {
+        S3UrlStyle::PathStyle
+    }
+}
+
+fn alternate_url_style(style: S3UrlStyle) -> S3UrlStyle {
+    match style {
+        S3UrlStyle::VirtualHosted => S3UrlStyle::PathStyle,
+        S3UrlStyle::PathStyle => S3UrlStyle::VirtualHosted,
+    }
 }
 
 /// Split an endpoint into its scheme and host-with-port parts.
@@ -60,31 +93,60 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
 /// Build the full URL for an S3 object.
 ///
 /// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
-/// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
+/// - Custom endpoints can use path style:    `https://{endpoint}/{bucket}/{key}`
+/// - Custom endpoints can use hosted style:  `https://{bucket}.{endpoint}/{key}`
+#[cfg(test)]
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
+    build_object_url_with_style(creds, key, effective_url_style(creds))
+}
+
+fn build_object_url_with_style(creds: &S3Credentials, key: &str, style: S3UrlStyle) -> String {
     let key = key.trim_start_matches('/');
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/{}",
-            creds.bucket, creds.region, key
-        )
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+    match style {
+        S3UrlStyle::VirtualHosted if is_aws_endpoint(&creds.endpoint) => {
+            format!(
+                "https://{}.s3.{}.amazonaws.com/{}",
+                creds.bucket, creds.region, key
+            )
+        }
+        S3UrlStyle::VirtualHosted => {
+            let (scheme, host) = split_scheme_host(&creds.endpoint);
+            format!("{}://{}.{}/{}", scheme, creds.bucket, host, key)
+        }
+        S3UrlStyle::PathStyle => {
+            let (scheme, host) = split_scheme_host(&creds.endpoint);
+            format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+        }
     }
 }
 
 /// Build the bucket-level URL (for HEAD bucket / test connection).
+#[cfg(test)]
 fn build_bucket_url(creds: &S3Credentials) -> String {
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/",
-            creds.bucket, creds.region
-        )
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/", scheme, host, creds.bucket)
+    build_bucket_url_with_style(creds, effective_url_style(creds))
+}
+
+fn build_bucket_url_with_style(creds: &S3Credentials, style: S3UrlStyle) -> String {
+    match style {
+        S3UrlStyle::VirtualHosted if is_aws_endpoint(&creds.endpoint) => {
+            format!(
+                "https://{}.s3.{}.amazonaws.com/",
+                creds.bucket, creds.region
+            )
+        }
+        S3UrlStyle::VirtualHosted => {
+            let (scheme, host) = split_scheme_host(&creds.endpoint);
+            format!("{}://{}.{}/", scheme, creds.bucket, host)
+        }
+        S3UrlStyle::PathStyle => {
+            let (scheme, host) = split_scheme_host(&creds.endpoint);
+            format!("{}://{}/{}/", scheme, host, creds.bucket)
+        }
     }
+}
+
+fn should_retry_with_alternate_style(status: StatusCode, creds: &S3Credentials) -> bool {
+    status == StatusCode::FORBIDDEN && !is_aws_endpoint(&creds.endpoint)
 }
 
 // ─── Cryptographic helpers ───────────────────────────────────
@@ -323,7 +385,8 @@ fn ensure_content_length_within_limit(
 
 /// Test S3 connectivity by sending HEAD to the bucket root.
 pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppError> {
-    let url_str = build_bucket_url(creds);
+    let primary_style = effective_url_style(creds);
+    let url_str = build_bucket_url_with_style(creds, primary_style);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
             "s3.url.invalid",
@@ -355,6 +418,40 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
     if resp.status().is_success() {
         return Ok(());
     }
+    if should_retry_with_alternate_style(resp.status(), creds) {
+        let retry_url_str = build_bucket_url_with_style(creds, alternate_url_style(primary_style));
+        let retry_url = Url::parse(&retry_url_str).map_err(|e| {
+            AppError::localized(
+                "s3.url.invalid",
+                format!("S3 URL 无效: {e}"),
+                format!("Invalid S3 URL: {e}"),
+            )
+        })?;
+        let mut retry_headers = reqwest::header::HeaderMap::new();
+        sign_request(
+            "HEAD",
+            &retry_url,
+            &mut retry_headers,
+            &body_hash,
+            creds,
+            chrono::Utc::now(),
+        );
+        let retry_resp = client
+            .head(retry_url.as_str())
+            .headers(retry_headers)
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", &e))?;
+        if retry_resp.status().is_success() {
+            return Ok(());
+        }
+        return Err(s3_status_error(
+            "HEAD bucket",
+            retry_resp.status(),
+            &retry_url_str,
+        ));
+    }
     Err(s3_status_error("HEAD bucket", resp.status(), &url_str))
 }
 
@@ -365,7 +462,8 @@ pub(crate) async fn put_object(
     bytes: Vec<u8>,
     content_type: &str,
 ) -> Result<(), AppError> {
-    let url_str = build_object_url(creds, key);
+    let primary_style = effective_url_style(creds);
+    let url_str = build_object_url_with_style(creds, key, primary_style);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
             "s3.url.invalid",
@@ -375,7 +473,8 @@ pub(crate) async fn put_object(
     })?;
 
     let client = http_client::get();
-    let body_hash = sha256_hex(&bytes);
+    let body = Bytes::from(bytes);
+    let body_hash = sha256_hex(&body);
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("content-type", content_type.parse().unwrap());
     sign_request(
@@ -390,7 +489,7 @@ pub(crate) async fn put_object(
     let resp = client
         .put(url.as_str())
         .headers(headers)
-        .body(bytes)
+        .body(body.clone())
         .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
         .send()
         .await
@@ -398,6 +497,39 @@ pub(crate) async fn put_object(
 
     if resp.status().is_success() {
         return Ok(());
+    }
+    if should_retry_with_alternate_style(resp.status(), creds) {
+        let retry_url_str =
+            build_object_url_with_style(creds, key, alternate_url_style(primary_style));
+        let retry_url = Url::parse(&retry_url_str).map_err(|e| {
+            AppError::localized(
+                "s3.url.invalid",
+                format!("S3 URL 无效: {e}"),
+                format!("Invalid S3 URL: {e}"),
+            )
+        })?;
+        let mut retry_headers = reqwest::header::HeaderMap::new();
+        retry_headers.insert("content-type", content_type.parse().unwrap());
+        sign_request(
+            "PUT",
+            &retry_url,
+            &mut retry_headers,
+            &body_hash,
+            creds,
+            chrono::Utc::now(),
+        );
+        let retry_resp = client
+            .put(retry_url.as_str())
+            .headers(retry_headers)
+            .body(body)
+            .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
+        if retry_resp.status().is_success() {
+            return Ok(());
+        }
+        return Err(s3_status_error("PUT", retry_resp.status(), &retry_url_str));
     }
     Err(s3_status_error("PUT", resp.status(), &url_str))
 }
@@ -410,7 +542,84 @@ pub(crate) async fn get_object(
     key: &str,
     max_bytes: usize,
 ) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
-    let url_str = build_object_url(creds, key);
+    let primary_style = effective_url_style(creds);
+    let url_str = build_object_url_with_style(creds, key, primary_style);
+    let url = Url::parse(&url_str).map_err(|e| {
+        AppError::localized(
+            "s3.url.invalid",
+            format!("S3 URL 无效: {e}"),
+            format!("Invalid S3 URL: {e}"),
+        )
+    })?;
+
+    let client = http_client::get();
+    let body_hash = sha256_hex(b"");
+    let mut headers = reqwest::header::HeaderMap::new();
+    sign_request(
+        "GET",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
+
+    let resp = client
+        .get(url.as_str())
+        .headers(headers)
+        .timeout(Duration::from_secs(TRANSFER_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", &e))?;
+
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        if should_retry_with_alternate_style(resp.status(), creds) {
+            return get_object_with_style(
+                creds,
+                key,
+                max_bytes,
+                alternate_url_style(primary_style),
+            )
+            .await;
+        }
+        return Err(s3_status_error("GET", resp.status(), &url_str));
+    }
+    ensure_content_length_within_limit(resp.headers(), max_bytes, &url_str)?;
+
+    let etag = resp
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let mut bytes = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            AppError::localized(
+                "s3.response_read_failed",
+                format!("读取 S3 响应失败: {e}"),
+                format!("Failed to read S3 response: {e}"),
+            )
+        })?;
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(response_too_large_error(&url_str, max_bytes));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(Some((bytes, etag)))
+}
+
+async fn get_object_with_style(
+    creds: &S3Credentials,
+    key: &str,
+    max_bytes: usize,
+    style: S3UrlStyle,
+) -> Result<Option<(Vec<u8>, Option<String>)>, AppError> {
+    let url_str = build_object_url_with_style(creds, key, style);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
             "s3.url.invalid",
@@ -476,7 +685,58 @@ pub(crate) async fn head_object(
     creds: &S3Credentials,
     key: &str,
 ) -> Result<Option<String>, AppError> {
-    let url_str = build_object_url(creds, key);
+    let primary_style = effective_url_style(creds);
+    let url_str = build_object_url_with_style(creds, key, primary_style);
+    let url = Url::parse(&url_str).map_err(|e| {
+        AppError::localized(
+            "s3.url.invalid",
+            format!("S3 URL 无效: {e}"),
+            format!("Invalid S3 URL: {e}"),
+        )
+    })?;
+
+    let client = http_client::get();
+    let body_hash = sha256_hex(b"");
+    let mut headers = reqwest::header::HeaderMap::new();
+    sign_request(
+        "HEAD",
+        &url,
+        &mut headers,
+        &body_hash,
+        creds,
+        chrono::Utc::now(),
+    );
+
+    let resp = client
+        .head(url.as_str())
+        .headers(headers)
+        .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", &e))?;
+
+    if resp.status() == StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        if should_retry_with_alternate_style(resp.status(), creds) {
+            return head_object_with_style(creds, key, alternate_url_style(primary_style)).await;
+        }
+        return Err(s3_status_error("HEAD", resp.status(), &url_str));
+    }
+    Ok(resp
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string()))
+}
+
+async fn head_object_with_style(
+    creds: &S3Credentials,
+    key: &str,
+    style: S3UrlStyle,
+) -> Result<Option<String>, AppError> {
+    let url_str = build_object_url_with_style(creds, key, style);
     let url = Url::parse(&url_str).map_err(|e| {
         AppError::localized(
             "s3.url.invalid",
@@ -589,6 +849,32 @@ mod tests {
     }
 
     #[test]
+    fn build_object_url_virtual_hosted_custom_endpoint() {
+        let creds = test_creds(
+            "cos.ap-guangzhou.myqcloud.com",
+            "ap-guangzhou",
+            "example-bucket-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/v2/db-v6/default/db.sql"),
+            "https://example-bucket-1250000000.cos.ap-guangzhou.myqcloud.com/cc-switch-sync/v2/db-v6/default/db.sql"
+        );
+    }
+
+    #[test]
+    fn build_object_url_auto_detects_cos_virtual_hosted_endpoint() {
+        let creds = test_creds(
+            "cos.ap-guangzhou.myqcloud.com",
+            "ap-guangzhou",
+            "example-bucket-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/v2/db-v6/default/db.sql"),
+            "https://example-bucket-1250000000.cos.ap-guangzhou.myqcloud.com/cc-switch-sync/v2/db-v6/default/db.sql"
+        );
+    }
+
+    #[test]
     fn build_object_url_strips_leading_slash_from_key() {
         let creds = test_creds("", "us-east-1", "b");
         assert_eq!(
@@ -612,6 +898,15 @@ mod tests {
         assert_eq!(
             build_bucket_url(&creds),
             "https://storage.example.com/data/"
+        );
+    }
+
+    #[test]
+    fn build_bucket_url_virtual_hosted_custom_endpoint() {
+        let creds = test_creds("cos.ap-beijing.myqcloud.com", "ap-beijing", "bucket-123");
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://bucket-123.cos.ap-beijing.myqcloud.com/"
         );
     }
 
@@ -692,6 +987,23 @@ mod tests {
         assert!(!is_aws_endpoint("minio.example.com"));
         assert!(!is_aws_endpoint("storage.googleapis.com"));
         assert!(!is_aws_endpoint("r2.cloudflarestorage.com"));
+    }
+
+    #[test]
+    fn endpoint_prefers_virtual_hosted_detection() {
+        assert!(endpoint_prefers_virtual_hosted(
+            "cos.ap-guangzhou.myqcloud.com"
+        ));
+        assert!(endpoint_prefers_virtual_hosted(
+            "https://oss-cn-hangzhou.aliyuncs.com/"
+        ));
+        assert!(endpoint_prefers_virtual_hosted(
+            "https://obs.cn-north-4.myhuaweicloud.com"
+        ));
+        assert!(endpoint_prefers_virtual_hosted(
+            "https://account.r2.cloudflarestorage.com"
+        ));
+        assert!(!endpoint_prefers_virtual_hosted("http://minio.local:9000"));
     }
 
     // ── URI encoding ──
