@@ -1170,7 +1170,7 @@
     "fetchModelsTimeout": "请求超时，请检查网络连接",
     "modelContextWindowLabel": "上下文长度",
     "modelContextWindowPlaceholder": "1M / 200K",
-    "modelContextWindowHint": "?????????????????? 200K",
+    "modelContextWindowHint": "声明模型上下文窗口大小，留空使用默认 200K",
     "autoSyncContextWindow": "自动同步模型上下文长度",
     "autoSyncContextWindowTooltip": "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。"
   },

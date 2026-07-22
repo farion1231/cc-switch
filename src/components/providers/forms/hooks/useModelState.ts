@@ -104,7 +104,6 @@ export function setModelSuffix(model: string, windowStr: string): string {
   if (!cleaned) return base;
   const window = parseWindowToken(cleaned);
   if (window === undefined) return base;
-  if (window === undefined) return base;
   // 小数输入时输出计算结果（如 1.5M → [1500000]），否则保留清洗后的原始格式
   const suffix = cleaned.includes(".") ? String(window) : cleaned.toLowerCase();
   return `${base}[${suffix}]`;

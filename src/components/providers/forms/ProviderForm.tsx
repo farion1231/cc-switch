@@ -2273,6 +2273,8 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              settingsConfig={form.getValues("settingsConfig")}
+              onSettingsConfigChange={handleSettingsConfigChange}
             />
           )}
 
