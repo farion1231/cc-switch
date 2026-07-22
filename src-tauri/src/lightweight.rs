@@ -49,6 +49,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         {
             crate::tray::apply_tray_policy(app, true);
         }
+        crate::auto_lightweight::mark_focused();
         LIGHTWEIGHT_MODE.store(false, Ordering::Release);
         crate::tray::refresh_tray_menu(app);
         log::info!("退出轻量模式");
@@ -89,6 +90,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         crate::tray::apply_tray_policy(app, true);
     }
 
+    crate::auto_lightweight::mark_focused();
     LIGHTWEIGHT_MODE.store(false, Ordering::Release);
     crate::tray::refresh_tray_menu(app);
     log::info!("退出轻量模式");

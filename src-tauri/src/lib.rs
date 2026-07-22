@@ -1,6 +1,7 @@
 mod app_config;
 mod app_store;
 mod auto_launch;
+mod auto_lightweight;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
@@ -258,6 +259,7 @@ fn handle_deeplink_url(
                     let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
+                    crate::auto_lightweight::mark_focused();
                     #[cfg(target_os = "linux")]
                     {
                         linux_fix::nudge_main_window(window.clone());
@@ -359,6 +361,7 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
+                crate::auto_lightweight::mark_focused();
                 #[cfg(target_os = "linux")]
                 {
                     linux_fix::nudge_main_window(window.clone());
@@ -371,8 +374,11 @@ pub fn run() {
         // 注册 deep-link 插件（处理 macOS AppleEvent 和其他平台的深链接）
         .plugin(tauri_plugin_deep_link::init())
         // 拦截窗口关闭：根据设置决定是否最小化到托盘
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(focused) => {
+                crate::auto_lightweight::record_focus_state(*focused);
+            }
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 // 数据库版本过新的恢复模式下没有托盘可唤回，关闭即退出，避免应用隐身后台
                 let in_db_recovery = crate::init_status::get_init_error()
                     .map(|p| p.kind.as_deref() == Some("db_version_too_new"))
@@ -388,6 +394,7 @@ pub fn run() {
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
                     let _ = window.hide();
+                    crate::auto_lightweight::mark_unfocused();
                     #[cfg(target_os = "windows")]
                     {
                         let _ = window.set_skip_taskbar(true);
@@ -401,6 +408,7 @@ pub fn run() {
                     window.app_handle().exit(0);
                 }
             }
+            _ => {}
         })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1017,6 +1025,7 @@ pub fn run() {
                             log::error!("退出轻量模式重建窗口失败: {e}");
                         }
                     }
+                    crate::auto_lightweight::mark_focused();
 
                     for (i, url) in urls.iter().enumerate() {
                         let url_str = url.as_str();
@@ -1087,6 +1096,7 @@ pub fn run() {
             );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
+            crate::auto_lightweight::start_worker(app.handle().clone());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1280,6 +1290,7 @@ pub fn run() {
                 if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
                     let _ = window.hide();
+                    crate::auto_lightweight::mark_unfocused();
                     #[cfg(target_os = "windows")]
                     let _ = window.set_skip_taskbar(true);
                     #[cfg(target_os = "macos")]
@@ -1288,6 +1299,7 @@ pub fn run() {
                 } else {
                     // 正常启动模式：显示窗口
                     let _ = window.show();
+                    crate::auto_lightweight::mark_focused();
                     log::info!("正常启动模式：主窗口已显示");
 
                     // Linux: 解决首次启动 UI 无响应问题（Tauri #10746 + wry #637）。
@@ -1708,6 +1720,7 @@ pub fn run() {
                         let _ = window.unminimize();
                         let _ = window.show();
                         let _ = window.set_focus();
+                        crate::auto_lightweight::mark_focused();
                         tray::apply_tray_policy(app_handle, true);
                     } else if crate::lightweight::is_lightweight_mode() {
                         if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
@@ -1731,6 +1744,7 @@ pub fn run() {
                                     log::error!("退出轻量模式重建窗口失败: {e}");
                                 }
                             }
+                            crate::auto_lightweight::mark_focused();
 
                             // 解析并广播深链接事件，复用与 single_instance 相同的逻辑
                             match crate::deeplink::parse_deeplink_url(&url_str) {
@@ -1773,6 +1787,7 @@ pub fn run() {
                                 let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
+                                crate::auto_lightweight::mark_focused();
                             }
                         }
                     }
