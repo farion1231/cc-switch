@@ -1300,6 +1300,29 @@ pub fn run() {
                 }
             }
 
+            // Startup grace 期结束。start_worker 内 push 了 2 次 suppression:
+            //   - 第一次 release 在此同步执行，覆盖 setup 闭包同步路径的写入
+            //     (migration inserts、默认值插入等)。
+            //   - 第二次 release 由下面 spawn 的 30s 延迟任务执行，覆盖从
+            //     setup 闭包 spawn 出去的、可能在 setup 返回之后才完成的后台
+            //     维护任务 (periodic_backup_if_needed、recover_from_crash
+            //     settings 写入、session usage sync 等)。
+            // 这两个 release 净释放 2 次，与 worker 推入的 2 次配对，净增为 0。
+            //
+            // Codex review P1 指出原版只在 setup 末尾 release 一次，无法覆盖
+            // setup 返回后的后台写入；这里通过延迟 release 补足。
+            //
+            // 30s 对 startup 后台任务来说绰绰有余（实测 <5s），且应用刚启动
+            // 30s 内用户不可能产生主动配置修改（窗口还在渲染）。
+            // 见 #4547。
+            crate::services::webdav_auto_sync::release_startup_auto_sync();
+            crate::services::s3_auto_sync::release_startup_auto_sync();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                crate::services::webdav_auto_sync::release_startup_auto_sync();
+                crate::services::s3_auto_sync::release_startup_auto_sync();
+            });
+
 
             Ok(())
         })
