@@ -873,7 +873,10 @@
       "defaultCostMultiplierRequired": "默认倍率不能为空",
       "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     },
-    "saveFailedGeneric": "保存失败，请重试"
+    "saveFailedGeneric": "保存失败，请重试",
+    "zcodeConfigDir": "ZCode 配置目录",
+    "zcodeConfigDirDescription": "覆盖 ZCode 配置目录（默认：~/.zcode）",
+    "browsePlaceholderZcode": "例如：/home/<你的用户名>/.zcode"
   },
   "apps": {
     "claude": "Claude",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1064,7 +1068,14 @@
       "qiniu": "七牛云",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "zaiApiKey": "Z.AI（API Key）",
+      "bigmodelApiKey": "BigModel / 智谱（API Key）",
+      "moonshotKimi": "Moonshot / Kimi",
+      "minimax": "MiniMax",
+      "qwen": "Qwen / 阿里云",
+      "xiaomiMimo": "小米 MiMo",
+      "customOpenAICompatible": "自定义（OpenAI 兼容）"
     },
     "parameterConfig": "参数配置 - {{name}} *",
     "mainModel": "主模型 (可选)",
@@ -1501,7 +1512,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
@@ -1511,7 +1523,8 @@
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
+      "opencode_session": "OpenCode 会话日志",
+      "zcode_session": "ZCode 会话"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
@@ -3014,5 +3027,43 @@
     "expiredHint": "请运行 {{tool}} 命令刷新登录",
     "queryFailed": "查询失败",
     "refresh": "刷新"
+  },
+  "zcode": {
+    "kind": "供应商类型",
+    "kindHint": "该供应商使用的 API 协议格式",
+    "kindPlaceholder": "选择供应商类型",
+    "providerName": "供应商名称",
+    "providerNameHint": "在 ZCode 中显示的名称",
+    "providerNamePlaceholder": "我的供应商",
+    "baseUrl": "基础 URL",
+    "baseUrlHint": "自定义 API 端点地址",
+    "baseUrlRequired": "基础 URL 不能为空",
+    "apiKeyRequired": "API Key 不能为空",
+    "models": "模型",
+    "modelsHint": "配置可用模型及其显示名称",
+    "addModel": "添加模型",
+    "modelId": "模型 ID",
+    "modelName": "显示名称",
+    "modelLimits": "Token 限制",
+    "limitContext": "上下文",
+    "limitOutput": "输出",
+    "noModels": "未配置任何模型",
+    "toggleModelDetails": "切换模型详情",
+    "providerKey": "供应商标识",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "在 ~/.zcode/v2/config.json 中的唯一标识。只能使用小写字母、数字、冒号和连字符。",
+    "providerKeyLockedHint": "该供应商已添加到 ZCode 配置中，因此其标识无法再修改。",
+    "providerKeyRequired": "供应商标识不能为空",
+    "providerKeyDuplicate": "该标识已被使用",
+    "providerKeyInvalid": "格式无效。只能使用小写字母、数字、冒号和连字符。",
+    "providerKeyStatusLoading": "正在加载供应商标识状态，请稍后再试",
+    "extraOptions": "额外选项",
+    "extraOptionsHint": "配置额外的供应商选项。值会自动解析为合适的类型（数字、布尔等）。",
+    "addExtraOption": "添加",
+    "extraOptionKey": "键",
+    "extraOptionValue": "值",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValuePlaceholder": "600000",
+    "noExtraOptions": "未配置任何额外选项"
   }
 }

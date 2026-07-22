@@ -288,6 +288,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     ],
     defaultColor: "#000000",
   },
+  zcode: {
+    name: "zcode",
+    displayName: "ZCode",
+    category: "ai-provider",
+    keywords: ["zcode", "z.ai", "zhipu", "glm", "agent", "coding"],
+    defaultColor: "#7C3AED",
+  },
   teamorouter: {
     name: "teamorouter",
     displayName: "TeamoRouter",

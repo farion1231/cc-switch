@@ -873,7 +873,10 @@
       "defaultCostMultiplierRequired": "Default multiplier is required",
       "defaultCostMultiplierInvalid": "Invalid multiplier format"
     },
-    "saveFailedGeneric": "Save failed, please try again"
+    "saveFailedGeneric": "Save failed, please try again",
+    "zcodeConfigDir": "ZCode Config Directory",
+    "zcodeConfigDirDescription": "Override the ZCode config directory (default: ~/.zcode)",
+    "browsePlaceholderZcode": "e.g., /home/<your-username>/.zcode"
   },
   "apps": {
     "claude": "Claude",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API backend",
@@ -1064,7 +1068,14 @@
       "qiniu": "Qiniu",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "zaiApiKey": "Z.AI (API Key)",
+      "bigmodelApiKey": "BigModel / Zhipu (API Key)",
+      "moonshotKimi": "Moonshot / Kimi",
+      "minimax": "MiniMax",
+      "qwen": "Qwen / Alibaba",
+      "xiaomiMimo": "Xiaomi MiMo",
+      "customOpenAICompatible": "Custom (OpenAI Compatible)"
     },
     "parameterConfig": "Parameter Config - {{name}} *",
     "mainModel": "Main Model (optional)",
@@ -1501,7 +1512,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "Raw",
     "dataSources": "Data Sources",
@@ -1511,7 +1523,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex Session",
       "gemini_session": "Gemini Session",
-      "opencode_session": "OpenCode Session"
+      "opencode_session": "OpenCode Session",
+      "zcode_session": "ZCode Session"
     },
     "sessionSync": {
       "trigger": "Sync session logs",
@@ -3014,5 +3027,43 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "zcode": {
+    "kind": "Provider Kind",
+    "kindHint": "API protocol format used by this provider",
+    "kindPlaceholder": "Select provider kind",
+    "providerName": "Provider Name",
+    "providerNameHint": "Display name shown in ZCode",
+    "providerNamePlaceholder": "My Provider",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "Custom API endpoint URL",
+    "baseUrlRequired": "Base URL is required",
+    "apiKeyRequired": "API Key is required",
+    "models": "Models",
+    "modelsHint": "Configure available models and their display names",
+    "addModel": "Add Model",
+    "modelId": "Model ID",
+    "modelName": "Display Name",
+    "modelLimits": "Token Limits",
+    "limitContext": "Context",
+    "limitOutput": "Output",
+    "noModels": "No models configured",
+    "toggleModelDetails": "Toggle model details",
+    "providerKey": "Provider Key",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "Unique identifier in ~/.zcode/v2/config.json. Use lowercase letters, numbers, colons, and hyphens only.",
+    "providerKeyLockedHint": "This provider has already been added to the ZCode config, so its key can no longer be changed.",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, colons, and hyphens only.",
+    "providerKeyStatusLoading": "Loading provider key status, please try again later",
+    "extraOptions": "Extra Options",
+    "extraOptionsHint": "Configure extra provider options. Values are auto-parsed to appropriate types (number, boolean, etc.).",
+    "addExtraOption": "Add",
+    "extraOptionKey": "Key",
+    "extraOptionValue": "Value",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValuePlaceholder": "600000",
+    "noExtraOptions": "No extra options configured"
   }
 }

@@ -873,7 +873,10 @@
       "defaultCostMultiplierRequired": "デフォルト倍率は必須です",
       "defaultCostMultiplierInvalid": "デフォルト倍率の形式が正しくありません"
     },
-    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください"
+    "saveFailedGeneric": "保存に失敗しました。もう一度お試しください",
+    "zcodeConfigDir": "ZCode 設定ディレクトリ",
+    "zcodeConfigDirDescription": "ZCode 設定ディレクトリを上書き（デフォルト：~/.zcode）",
+    "browsePlaceholderZcode": "例：/home/<ユーザー名>/.zcode"
   },
   "apps": {
     "claude": "Claude",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1064,7 +1068,14 @@
       "qiniu": "Qiniu",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "zaiApiKey": "Z.AI（APIキー）",
+      "bigmodelApiKey": "BigModel / 智譜（APIキー）",
+      "moonshotKimi": "Moonshot / Kimi",
+      "minimax": "MiniMax",
+      "qwen": "Qwen / Alibaba",
+      "xiaomiMimo": "Xiaomi MiMo",
+      "customOpenAICompatible": "カスタム（OpenAI 互換）"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",
@@ -1501,7 +1512,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "原始",
     "dataSources": "データソース",
@@ -1511,7 +1523,8 @@
       "codex_db": "Codex DB",
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
-      "opencode_session": "OpenCode セッション"
+      "opencode_session": "OpenCode セッション",
+      "zcode_session": "ZCode セッション"
     },
     "sessionSync": {
       "trigger": "セッションログを同期",
@@ -3014,5 +3027,43 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "zcode": {
+    "kind": "プロバイダーの種類",
+    "kindHint": "このプロバイダーが使用する API プロトコル形式",
+    "kindPlaceholder": "プロバイダーの種類を選択",
+    "providerName": "プロバイダー名",
+    "providerNameHint": "ZCode に表示される名前",
+    "providerNamePlaceholder": "マイプロバイダー",
+    "baseUrl": "ベース URL",
+    "baseUrlHint": "カスタム API エンドポイント URL",
+    "baseUrlRequired": "ベース URL は必須です",
+    "apiKeyRequired": "API Key は必須です",
+    "models": "モデル",
+    "modelsHint": "利用可能なモデルと表示名を設定します",
+    "addModel": "モデルを追加",
+    "modelId": "モデル ID",
+    "modelName": "表示名",
+    "modelLimits": "トークン制限",
+    "limitContext": "コンテキスト",
+    "limitOutput": "出力",
+    "noModels": "モデルが設定されていません",
+    "toggleModelDetails": "モデルの詳細を切り替え",
+    "providerKey": "プロバイダーキー",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "~/.zcode/v2/config.json 内の固有識別子。小文字、数字、コロン、ハイフンのみ使用できます。",
+    "providerKeyLockedHint": "このプロバイダーは既に ZCode 設定に追加されているため、キーを変更できません。",
+    "providerKeyRequired": "プロバイダーキーは必須です",
+    "providerKeyDuplicate": "このキーは既に使用されています",
+    "providerKeyInvalid": "無効な形式です。小文字、数字、コロン、ハイフンのみ使用できます。",
+    "providerKeyStatusLoading": "プロバイダーキーの状態を読み込んでいます。後でもう一度お試しください",
+    "extraOptions": "追加オプション",
+    "extraOptionsHint": "追加のプロバイダーオプションを設定します。値は適切な型（数値、真偽値など）に自動解析されます。",
+    "addExtraOption": "追加",
+    "extraOptionKey": "キー",
+    "extraOptionValue": "値",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValuePlaceholder": "600000",
+    "noExtraOptions": "追加オプションは設定されていません"
   }
 }

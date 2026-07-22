@@ -186,6 +186,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::ZCode => crate::zcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -527,6 +529,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::ZCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -601,6 +604,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::ZCode
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -660,6 +664,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::ZCode
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1162,6 +1167,44 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::ZCode => {
+            // ZCode uses additive mode - write provider to config (~/.zcode/v2/config.json)
+            use crate::provider::ZCodeProviderConfig;
+            use crate::zcode_config;
+
+            // Convert settings_config to ZCodeProviderConfig
+            let zcode_config_result =
+                serde_json::from_value::<ZCodeProviderConfig>(provider.settings_config.clone());
+
+            match zcode_config_result {
+                Ok(config) => {
+                    zcode_config::set_typed_provider(&provider.id, &config)?;
+                    log::info!("ZCode provider '{}' written to live config", provider.id);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse ZCode provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    // Fallback: write as raw JSON if it looks like a valid provider fragment
+                    if provider.settings_config.get("options").is_some()
+                        || provider.settings_config.get("kind").is_some()
+                    {
+                        zcode_config::set_provider(&provider.id, provider.settings_config.clone())?;
+                        log::info!(
+                            "ZCode provider '{}' written as raw JSON to live config",
+                            provider.id
+                        );
+                    } else {
+                        return Err(AppError::Message(format!(
+                            "ZCode provider '{}' has invalid config structure for live config (must contain 'kind' or 'options')",
+                            provider.id
+                        )));
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1417,6 +1460,21 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::ZCode => {
+            use crate::zcode_config::{get_zcode_config_path, read_zcode_config};
+
+            let config_path = get_zcode_config_path();
+            if !config_path.exists() {
+                return Err(AppError::localized(
+                    "zcode.config.missing",
+                    "ZCode 配置文件不存在",
+                    "ZCode configuration file not found",
+                ));
+            }
+
+            let config = read_zcode_config()?;
+            Ok(config)
+        }
     }
 }
 
@@ -1525,8 +1583,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "config": config_obj
             })
         }
-        // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        // OpenCode, OpenClaw, Hermes and ZCode use additive mode and are handled by early return above
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::ZCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1971,6 +2029,100 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
     log::info!("OpenClaw provider '{provider_id}' removed from live config");
 
     Ok(())
+}
+
+/// Remove a ZCode provider from the live configuration
+///
+/// This is specific to ZCode's additive mode - removing a provider
+/// from the ~/.zcode/v2/config.json file.
+pub fn remove_zcode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+    use crate::zcode_config;
+
+    // Check if ZCode config directory exists
+    if !zcode_config::get_zcode_dir().exists() {
+        log::debug!("ZCode config directory doesn't exist, skipping removal of '{provider_id}'");
+        return Ok(());
+    }
+
+    zcode_config::remove_provider(provider_id)?;
+    log::info!("ZCode provider '{provider_id}' removed from live config");
+
+    Ok(())
+}
+
+/// Import all providers from ZCode live config to database
+///
+/// This imports existing providers from ~/.zcode/v2/config.json
+/// into the CC Switch database. Each provider found will be added to the
+/// database with is_current set to false.
+pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::zcode_config;
+
+    let providers = zcode_config::get_typed_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids("zcode")?;
+
+    for (id, config) in providers {
+        // Convert to Value for settings_config
+        let settings_config = match serde_json::to_value(&config) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("Failed to serialize ZCode provider '{id}': {e}");
+                continue;
+            }
+        };
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, "zcode") {
+                Ok(Some(existing)) => {
+                    let display_name = config.name.clone().unwrap_or_else(|| existing.name.clone());
+                    if existing.settings_config != settings_config || existing.name != display_name
+                    {
+                        let mut provider = existing;
+                        provider.name = display_name;
+                        provider.settings_config = settings_config;
+                        if let Err(e) = state.db.save_provider("zcode", &provider) {
+                            log::warn!(
+                                "Failed to update ZCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated ZCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("ZCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up ZCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        // Create provider
+        let display_name = config.name.clone().unwrap_or_else(|| id.clone());
+        let mut provider = Provider::with_id(id.clone(), display_name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        // Save to database
+        if let Err(e) = state.db.save_provider("zcode", &provider) {
+            log::warn!("Failed to import ZCode provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported ZCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
 }
 
 #[cfg(test)]

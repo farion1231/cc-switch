@@ -10,6 +10,7 @@
 //! - `gemini` - Gemini MCP 同步和导入
 //! - `opencode` - OpenCode MCP 同步和导入（含 local/remote 格式转换）
 //! - `hermes` - Hermes MCP 同步和导入
+//! - `zcode` - ZCode MCP 同步和导入（标准 stdio 格式，直接透传）
 
 mod claude;
 mod codex;
@@ -18,6 +19,7 @@ mod grokbuild;
 mod hermes;
 mod opencode;
 mod validation;
+mod zcode;
 
 // 重新导出公共 API
 pub use claude::{
@@ -38,3 +40,4 @@ pub use hermes::{import_from_hermes, remove_server_from_hermes, sync_single_serv
 pub use opencode::{
     import_from_opencode, remove_server_from_opencode, sync_single_server_to_opencode,
 };
+pub use zcode::{import_from_zcode, remove_server_from_zcode, sync_single_server_to_zcode};

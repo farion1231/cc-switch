@@ -13,7 +13,8 @@ type AppDirectoryKey =
   | "grokbuild"
   | "opencode"
   | "openclaw"
-  | "hermes";
+  | "hermes"
+  | "zcode";
 type DirectoryKey = "appConfig" | AppDirectoryKey;
 
 export interface ResolvedDirectories {
@@ -25,6 +26,7 @@ export interface ResolvedDirectories {
   opencode: string;
   openclaw: string;
   hermes: string;
+  zcode: string;
 }
 
 // Single source of truth for per-app directory metadata.
@@ -39,6 +41,7 @@ const APP_DIRECTORY_META: Record<
   opencode: { key: "opencode", defaultFolder: ".config/opencode" },
   openclaw: { key: "openclaw", defaultFolder: ".openclaw" },
   hermes: { key: "hermes", defaultFolder: ".hermes" },
+  zcode: { key: "zcode", defaultFolder: ".zcode" },
 };
 
 const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
@@ -52,6 +55,7 @@ const DIRECTORY_KEY_TO_SETTINGS_FIELD: Record<
   opencode: "opencodeConfigDir",
   openclaw: "openclawConfigDir",
   hermes: "hermesConfigDir",
+  zcode: "zcodeConfigDir",
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -138,6 +142,7 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+    zcode: "",
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -150,6 +155,7 @@ export function useDirectorySettings({
     opencode: "",
     openclaw: "",
     hermes: "",
+    zcode: "",
   });
   const initialAppConfigDirRef = useRef<string | undefined>(undefined);
 
@@ -169,6 +175,7 @@ export function useDirectorySettings({
           opencodeDir,
           openclawDir,
           hermesDir,
+          zcodeDir,
           defaultAppConfig,
           defaultClaudeDir,
           defaultCodexDir,
@@ -177,6 +184,7 @@ export function useDirectorySettings({
           defaultOpencodeDir,
           defaultOpenclawDir,
           defaultHermesDir,
+          defaultZcodeDir,
         ] = await Promise.all([
           settingsApi.getAppConfigDirOverride(),
           settingsApi.getConfigDir("claude"),
@@ -186,6 +194,7 @@ export function useDirectorySettings({
           settingsApi.getConfigDir("opencode"),
           settingsApi.getConfigDir("openclaw"),
           settingsApi.getConfigDir("hermes"),
+          settingsApi.getConfigDir("zcode"),
           computeDefaultAppConfigDir(),
           computeDefaultConfigDir("claude"),
           computeDefaultConfigDir("codex"),
@@ -194,6 +203,7 @@ export function useDirectorySettings({
           computeDefaultConfigDir("opencode"),
           computeDefaultConfigDir("openclaw"),
           computeDefaultConfigDir("hermes"),
+          computeDefaultConfigDir("zcode"),
         ]);
 
         if (!active) return;
@@ -209,6 +219,7 @@ export function useDirectorySettings({
           opencode: defaultOpencodeDir ?? "",
           openclaw: defaultOpenclawDir ?? "",
           hermes: defaultHermesDir ?? "",
+          zcode: defaultZcodeDir ?? "",
         };
 
         setAppConfigDir(normalizedOverride);
@@ -223,6 +234,7 @@ export function useDirectorySettings({
           opencode: opencodeDir || defaultsRef.current.opencode,
           openclaw: openclawDir || defaultsRef.current.openclaw,
           hermes: hermesDir || defaultsRef.current.hermes,
+          zcode: zcodeDir || defaultsRef.current.zcode,
         });
       } catch (error) {
         console.error(
@@ -365,6 +377,7 @@ export function useDirectorySettings({
         opencode: overrides?.opencode ?? defaultsRef.current.opencode,
         openclaw: overrides?.openclaw ?? defaultsRef.current.openclaw,
         hermes: overrides?.hermes ?? defaultsRef.current.hermes,
+        zcode: overrides?.zcode ?? defaultsRef.current.zcode,
       });
     },
     [],
