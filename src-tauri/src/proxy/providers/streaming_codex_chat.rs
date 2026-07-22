@@ -7,7 +7,7 @@ use super::{
     },
     transform_codex_chat::{
         chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
-        response_id_from_chat_id, response_status_from_finish_reason,
+        normalize_chat_error_fields, response_id_from_chat_id, response_status_from_finish_reason,
         response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
         CodexToolContext,
     },
@@ -674,10 +674,26 @@ impl ChatToResponsesState {
     }
 
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
+        self.failed_event_with_error(message, error_type, Value::Null, Value::Null)
+    }
+
+    fn failed_event_with_error(
+        &mut self,
+        message: String,
+        error_type: Option<String>,
+        code: Value,
+        param: Value,
+    ) -> Bytes {
         self.completed = true;
         let mut error = json!({ "message": message });
         if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
             error["type"] = json!(error_type);
+        }
+        if !code.is_null() {
+            error["code"] = code;
+        }
+        if !param.is_null() {
+            error["param"] = param;
         }
 
         let mut response = self.base_response("failed", self.completed_output_items());
@@ -775,8 +791,13 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         };
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
-                            let (message, error_type) = extract_chat_sse_error(&chunk);
-                            yield Ok(state.failed_event(message, error_type));
+                            let fields = extract_chat_sse_error(&chunk);
+                            yield Ok(state.failed_event_with_error(
+                                fields.message,
+                                Some(fields.error_type),
+                                fields.code,
+                                fields.param,
+                            ));
                             stream_failed = true;
                             break;
                         }
@@ -821,26 +842,14 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
     }
 }
 
-fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
-    let error = value.get("error").unwrap_or(value);
-    let message = error
-        .as_str()
-        .map(ToString::to_string)
-        .or_else(|| {
-            error
-                .get("message")
-                .or_else(|| error.get("detail"))
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| error.to_string());
-    let error_type = error
-        .get("type")
-        .or_else(|| error.get("code"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
-
-    (message, error_type)
+fn extract_chat_sse_error(value: &Value) -> super::transform_codex_chat::ChatErrorFields {
+    let mut fields = normalize_chat_error_fields(value);
+    if fields.error_type == "upstream_error" {
+        if let Some(code) = fields.code.as_str().filter(|value| !value.is_empty()) {
+            fields.error_type = code.to_string();
+        }
+    }
+    fields
 }
 
 #[cfg(test)]
@@ -1237,6 +1246,24 @@ mod tests {
         assert!(output.contains("event: response.failed"));
         assert!(output.contains("bad request"));
         assert!(output.contains("invalid_request_error"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn chat_sse_minimax_invalid_tool_arguments_error_is_enriched() {
+        let output = collect(vec![
+            "event: error\ndata: {\"base_resp\":{\"status_code\":2013,\"status_msg\":\"invalid params, invalid function arguments json string, tool_call_id: call_abc\"}}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        assert!(output.contains("event: response.failed"));
+        assert!(output.contains("invalid function arguments json string"));
+        assert!(output.contains("Diagnosis: upstream rejected tool call arguments as invalid JSON"));
+        assert!(output.contains("failed to parse function arguments"));
+        assert!(output.contains("\"code\":2013"));
+        assert!(output.contains("\"param\":\"function_call.arguments\""));
+        assert!(output.contains("\"type\":\"upstream_tool_arguments_error\""));
         assert!(!output.contains("event: response.completed"));
     }
 
