@@ -1,4 +1,4 @@
-# 在 Codex 中用 Claude：CC Switch 本地路由攻略
+# 通过 CC Switch 在 Codex 中使用 Claude 模型
 
 > 适用版本：CC Switch 3.17.0 及以上（「Anthropic Messages 上游」自 3.17.0 引入）。本文根据仓库内文档与代码整理，以 Claude 系中转网关为例演示。截图来自当前前端界面，使用去敏示例数据生成，避免泄露真实 API Key。
 
