@@ -10,6 +10,13 @@ pub fn launch_terminal(
         return Err("Resume command is empty".to_string());
     }
 
+    // CubeShell launches via its registered `cubeshell://` URL scheme, which it
+    // registers on macOS / Windows / Linux. Handle it before the macOS-only guard
+    // so it works cross-platform.
+    if matches!(target, "cube-shell" | "cubeshell") {
+        return launch_cube_shell(command, cwd);
+    }
+
     if !cfg!(target_os = "macos") {
         return Err("Terminal resume is only supported on macOS".to_string());
     }
@@ -245,6 +252,69 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+fn launch_cube_shell(command: &str, cwd: Option<&str>) -> Result<(), String> {
+    // CubeShell registers the `cubeshell://` URL scheme. We open a local terminal
+    // tab at the working directory and pass the resume command to be run inside it.
+    let cube_url = build_cube_shell_url(command, cwd)?;
+
+    // Open the URL with the platform's default URL handler.
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        c.arg(&cube_url);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        // `start` is a cmd builtin; the empty "" is the window title arg, which
+        // prevents `start` from treating the quoted URL as a title.
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", "", cube_url.as_str()]);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = Command::new("xdg-open");
+        c.arg(&cube_url);
+        c
+    };
+
+    let status = cmd
+        .status()
+        .map_err(|e| format!("Failed to launch CubeShell: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to launch CubeShell. Make sure it is installed.".to_string())
+    }
+}
+
+fn build_cube_shell_url(command: &str, cwd: Option<&str>) -> Result<String, String> {
+    // CubeShell requires the path to exist and be a directory, so fall back to the
+    // home dir when no cwd is provided. path/command are URL-encoded for transport.
+    let dir = cwd
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(home_dir);
+
+    let mut cube_url =
+        url::Url::parse("cubeshell://open-local").map_err(|e| format!("Invalid URL: {e}"))?;
+    cube_url
+        .query_pairs_mut()
+        .append_pair("path", &dir)
+        .append_pair("command", command);
+    Ok(cube_url.to_string())
+}
+
+fn home_dir() -> String {
+    // HOME on macOS/Linux, USERPROFILE on Windows.
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string())
+}
+
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Alacritty: open -na Alacritty --args --working-directory ... -e shell -c command
     let full_command = build_shell_command(command, None);
@@ -359,6 +429,20 @@ mod tests {
                 "-c".to_string(),
                 "claude --resume abc-123".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn cube_shell_url_encodes_path_and_command() {
+        let url = build_cube_shell_url(
+            "claude --resume abc-123",
+            Some("/tmp/project dir"),
+        )
+        .expect("should build cubeshell url");
+
+        assert_eq!(
+            url,
+            "cubeshell://open-local?path=%2Ftmp%2Fproject+dir&command=claude+--resume+abc-123"
         );
     }
 
