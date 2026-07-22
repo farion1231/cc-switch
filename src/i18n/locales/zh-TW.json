@@ -844,7 +844,10 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "zcodeConfigDir": "ZCode 設定目錄",
+    "zcodeConfigDirDescription": "覆寫 ZCode 設定目錄（預設：~/.zcode）",
+    "browsePlaceholderZcode": "例如：/home/<你的使用者名稱>/.zcode"
   },
   "apps": {
     "claude": "Claude",
@@ -856,7 +859,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "zcode": "ZCode"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1036,7 +1040,14 @@
       "qiniu": "七牛雲",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "zaiApiKey": "Z.AI（API Key）",
+      "bigmodelApiKey": "BigModel / 智譜（API Key）",
+      "moonshotKimi": "Moonshot / Kimi",
+      "minimax": "MiniMax",
+      "qwen": "Qwen / 阿里雲",
+      "xiaomiMimo": "小米 MiMo",
+      "customOpenAICompatible": "自訂（OpenAI 相容）"
     },
     "parameterConfig": "參數設定 - {{name}} *",
     "mainModel": "主模型 (選填)",
@@ -1473,7 +1484,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "zcode": "ZCode"
     },
     "rawInputLabel": "原始",
     "dataSources": "資料來源",
@@ -1483,7 +1495,8 @@
       "codex_db": "Codex 資料庫",
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
-      "opencode_session": "OpenCode 工作階段日誌"
+      "opencode_session": "OpenCode 工作階段日誌",
+      "zcode_session": "ZCode 工作階段"
     },
     "sessionSync": {
       "trigger": "同步工作階段日誌",
@@ -2986,5 +2999,43 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "zcode": {
+    "kind": "供應商類型",
+    "kindHint": "此供應商使用的 API 協定格式",
+    "kindPlaceholder": "選擇供應商類型",
+    "providerName": "供應商名稱",
+    "providerNameHint": "在 ZCode 中顯示的名稱",
+    "providerNamePlaceholder": "我的供應商",
+    "baseUrl": "基礎 URL",
+    "baseUrlHint": "自訂 API 端點位址",
+    "baseUrlRequired": "基礎 URL 不能為空",
+    "apiKeyRequired": "API Key 不能為空",
+    "models": "模型",
+    "modelsHint": "設定可用模型及其顯示名稱",
+    "addModel": "新增模型",
+    "modelId": "模型 ID",
+    "modelName": "顯示名稱",
+    "modelLimits": "Token 限制",
+    "limitContext": "上下文",
+    "limitOutput": "輸出",
+    "noModels": "未設定任何模型",
+    "toggleModelDetails": "切換模型詳情",
+    "providerKey": "供應商識別碼",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyHint": "在 ~/.zcode/v2/config.json 中的唯一識別碼。僅能使用小寫字母、數字、冒號和連字號。",
+    "providerKeyLockedHint": "此供應商已新增至 ZCode 設定，因此其識別碼無法再修改。",
+    "providerKeyRequired": "供應商識別碼不能為空",
+    "providerKeyDuplicate": "此識別碼已被使用",
+    "providerKeyInvalid": "格式無效。僅能使用小寫字母、數字、冒號和連字號。",
+    "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
+    "extraOptions": "額外選項",
+    "extraOptionsHint": "設定額外的供應商選項。值會自動解析為合適的類型（數字、布林等）。",
+    "addExtraOption": "新增",
+    "extraOptionKey": "鍵",
+    "extraOptionValue": "值",
+    "extraOptionKeyPlaceholder": "timeout",
+    "extraOptionValuePlaceholder": "600000",
+    "noExtraOptions": "未設定任何額外選項"
   }
 }

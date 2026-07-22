@@ -223,6 +223,10 @@ export function ProviderList({
         const count = await providersApi.importHermesFromLive();
         return count > 0;
       }
+      if (appId === "zcode") {
+        const count = await providersApi.importZcodeFromLive();
+        return count > 0;
+      }
       if (appId === "claude-desktop") {
         const count = await providersApi.importClaudeDesktopFromClaude();
         return count > 0;

@@ -192,6 +192,14 @@ impl Provider {
                     str_at(options.and_then(|o| o.get("apiKey"))),
                 )
             }
+            // ZCode nests credentials under `options` (baseURL/apiKey), same as OpenCode.
+            AppType::ZCode => {
+                let options = settings.get("options");
+                (
+                    str_at(options.and_then(|o| o.get("baseURL"))),
+                    str_at(options.and_then(|o| o.get("apiKey"))),
+                )
+            }
             // Claude and Claude Desktop both use the Anthropic-style env map, keeping
             // the OpenRouter/Google key fallbacks the JS-script path relies on.
             // Listed explicitly (not `_`) so a new AppType fails to compile here.
@@ -967,6 +975,121 @@ pub struct OpenCodeModelLimit {
     /// 输出 token 限制
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
+}
+
+// ============================================================================
+// ZCode 供应商配置结构
+// ============================================================================
+
+/// ZCode 供应商的 settings_config 结构
+///
+/// ZCode (dev.zcode.app) 的 provider 配置位于 `~/.zcode/v2/config.json`，
+/// 通过 `kind` 字段指定供应商类型（anthropic / openai-compatible / openai），
+/// 凭据嵌套在 `options`（baseURL / apiKey），与 OpenCode 结构类似。
+/// 配置示例：
+/// ```json
+/// {
+///   "name": "Bigmodel - Coding Plan",
+///   "kind": "anthropic",
+///   "options": { "baseURL": "https://open.bigmodel.cn/api/anthropic", "apiKey": "xxx" },
+///   "enabled": true,
+///   "source": "custom",
+///   "models": {
+///     "GLM-5.2": {
+///       "limit": { "context": 1000000, "output": 64000 },
+///       "modalities": { "input": ["text"], "output": ["text"] },
+///       "reasoning": { "enabled": true, "variants": ["enabled","off"], "defaultVariant": "enabled" }
+///     }
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeProviderConfig {
+    /// 供应商显示名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// 供应商类型："anthropic" | "openai-compatible" | "openai"
+    #[serde(default)]
+    pub kind: String,
+
+    /// 供应商选项（API 密钥、基础 URL 等）
+    #[serde(default)]
+    pub options: ZCodeProviderOptions,
+
+    /// 是否启用（可为 true/false/null）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
+    /// 来源标记（如 "custom"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
+    /// 模型定义映射
+    #[serde(default)]
+    pub models: HashMap<String, ZCodeModel>,
+}
+
+/// ZCode 供应商选项
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeProviderOptions {
+    /// API 基础 URL
+    #[serde(rename = "baseURL", skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    /// API 密钥
+    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+
+    /// 额外选项（headers 等）
+    /// 使用 flatten 捕获所有未明确定义的字段
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// ZCode 模型定义
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeModel {
+    /// 模型限制（上下文和输出 token 数）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<ZCodeModelLimit>,
+
+    /// 模型输入/输出模态
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<ZCodeModelModalities>,
+
+    /// reasoning 能力描述
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Value>,
+
+    /// 额外字段
+    /// 使用 flatten 捕获所有未明确定义的字段
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// ZCode 模型限制
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeModelLimit {
+    /// 上下文 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+
+    /// 输出 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+}
+
+/// ZCode 模型输入/输出模态
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeModelModalities {
+    /// 输入模态（如 ["text"]）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<String>,
+
+    /// 输出模态（如 ["text"]）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
 }
 
 #[cfg(test)]
