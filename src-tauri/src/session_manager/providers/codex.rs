@@ -82,7 +82,7 @@ fn load_thread_titles() -> HashMap<String, String> {
 fn load_thread_titles_for_target(target: &CodexTargetContext) -> HashMap<String, String> {
     let config_dir = target.config_dir();
     let config_text = std::fs::read_to_string(target.config_path()).unwrap_or_default();
-    let db_paths = codex_state_db_paths(&config_dir, &config_text);
+    let db_paths = codex_state_db_paths(config_dir, &config_text);
     load_thread_titles_from_paths(&config_dir.join(CODEX_SESSION_INDEX_FILENAME), &db_paths)
 }
 

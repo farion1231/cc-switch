@@ -666,7 +666,7 @@ fn ensure_wsl_success(output: Output, action: &str) -> Result<Vec<u8>, AppError>
 }
 
 fn decode_wsl_text(bytes: &[u8]) -> String {
-    if bytes.iter().any(|byte| *byte == 0) {
+    if bytes.contains(&0) {
         let words = bytes
             .chunks_exact(2)
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
