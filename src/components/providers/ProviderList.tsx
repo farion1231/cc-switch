@@ -192,6 +192,10 @@ export function ProviderList({
   const [searchTerm, setSearchTerm] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const closeSearch = useCallback(() => {
+    setSearchTerm("");
+    setIsSearchOpen(false);
+  }, []);
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
@@ -265,13 +269,13 @@ export function ProviderList({
       }
 
       if (key === "escape") {
-        setIsSearchOpen(false);
+        closeSearch();
       }
     };
 
     globalThis.addEventListener("keydown", handleKeyDown);
     return () => globalThis.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [closeSearch]);
 
   useEffect(() => {
     if (isSearchOpen) {
@@ -504,7 +508,7 @@ export function ProviderList({
                   variant="ghost"
                   size="icon"
                   className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
+                  onClick={closeSearch}
                   aria-label={t("provider.searchCloseAriaLabel", {
                     defaultValue: "Close provider search",
                   })}
