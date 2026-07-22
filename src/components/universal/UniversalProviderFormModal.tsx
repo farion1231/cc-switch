@@ -133,15 +133,24 @@ export function UniversalProviderFormModal({
     const haiku = models.claude?.haikuModel || "claude-haiku-4-20250514";
     const sonnet = models.claude?.sonnetModel || "claude-sonnet-4-20250514";
     const opus = models.claude?.opusModel || "claude-sonnet-4-20250514";
+    const fable = models.claude?.fableModel;
+    const subagent = models.claude?.subagentModel;
+    const env: Record<string, string> = {
+      ANTHROPIC_BASE_URL: baseUrl,
+      ANTHROPIC_AUTH_TOKEN: apiKey,
+      ANTHROPIC_MODEL: model,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
+    };
+    if (fable?.trim()) {
+      env.ANTHROPIC_DEFAULT_FABLE_MODEL = fable;
+    }
+    if (subagent?.trim()) {
+      env.CLAUDE_CODE_SUBAGENT_MODEL = subagent;
+    }
     return {
-      env: {
-        ANTHROPIC_BASE_URL: baseUrl,
-        ANTHROPIC_AUTH_TOKEN: apiKey,
-        ANTHROPIC_MODEL: model,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: haiku,
-        ANTHROPIC_DEFAULT_SONNET_MODEL: sonnet,
-        ANTHROPIC_DEFAULT_OPUS_MODEL: opus,
-      },
+      env,
     };
   }, [claudeEnabled, baseUrl, apiKey, models.claude]);
 
@@ -532,10 +541,11 @@ requires_openai_auth = true`;
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">
+                  <Label htmlFor="universal-claude-model" className="text-xs">
                     {t("universalProvider.model", { defaultValue: "主模型" })}
                   </Label>
                   <Input
+                    id="universal-claude-model"
                     value={models.claude?.model || ""}
                     onChange={(e) =>
                       updateModel("claude", "model", e.target.value)
@@ -544,8 +554,14 @@ requires_openai_auth = true`;
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Haiku</Label>
+                  <Label
+                    htmlFor="universal-claude-haiku-model"
+                    className="text-xs"
+                  >
+                    Haiku
+                  </Label>
                   <Input
+                    id="universal-claude-haiku-model"
                     value={models.claude?.haikuModel || ""}
                     onChange={(e) =>
                       updateModel("claude", "haikuModel", e.target.value)
@@ -554,8 +570,14 @@ requires_openai_auth = true`;
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Sonnet</Label>
+                  <Label
+                    htmlFor="universal-claude-sonnet-model"
+                    className="text-xs"
+                  >
+                    Sonnet
+                  </Label>
                   <Input
+                    id="universal-claude-sonnet-model"
                     value={models.claude?.sonnetModel || ""}
                     onChange={(e) =>
                       updateModel("claude", "sonnetModel", e.target.value)
@@ -564,13 +586,55 @@ requires_openai_auth = true`;
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Opus</Label>
+                  <Label
+                    htmlFor="universal-claude-opus-model"
+                    className="text-xs"
+                  >
+                    Opus
+                  </Label>
                   <Input
+                    id="universal-claude-opus-model"
                     value={models.claude?.opusModel || ""}
                     onChange={(e) =>
                       updateModel("claude", "opusModel", e.target.value)
                     }
                     placeholder="claude-sonnet-4-20250514"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="universal-claude-fable-model"
+                    className="text-xs"
+                  >
+                    {t("providerForm.modelRoleFable", {
+                      defaultValue: "Fable",
+                    })}
+                  </Label>
+                  <Input
+                    id="universal-claude-fable-model"
+                    value={models.claude?.fableModel || ""}
+                    onChange={(e) =>
+                      updateModel("claude", "fableModel", e.target.value)
+                    }
+                    placeholder="claude-fable-5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="universal-claude-subagent-model"
+                    className="text-xs"
+                  >
+                    {t("providerForm.modelRoleSubagent", {
+                      defaultValue: "Subagent",
+                    })}
+                  </Label>
+                  <Input
+                    id="universal-claude-subagent-model"
+                    value={models.claude?.subagentModel || ""}
+                    onChange={(e) =>
+                      updateModel("claude", "subagentModel", e.target.value)
+                    }
+                    placeholder="claude-sonnet-5"
                   />
                 </div>
               </div>

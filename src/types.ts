@@ -546,6 +546,8 @@ export interface ClaudeModelConfig {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  fableModel?: string;
+  subagentModel?: string;
 }
 
 // Codex 模型配置
