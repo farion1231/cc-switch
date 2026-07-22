@@ -16,6 +16,129 @@ type OmoProviderRow = (
     String,
 );
 
+/// 规范化 endpoint / base_url：trim 并去掉末尾 `/`
+fn normalize_endpoint_url(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// 从 settings_config 按 app_type 提取当前 base_url（已规范化）
+fn extract_settings_base_url(app_type: &str, settings: &serde_json::Value) -> Option<String> {
+    let raw = match app_type {
+        "claude" | "claude-desktop" => settings
+            .pointer("/env/ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        "gemini" => settings
+            .pointer("/env/GOOGLE_GEMINI_BASE_URL")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        "codex" => settings
+            .get("config")
+            .and_then(|v| v.as_str())
+            .and_then(crate::codex_config::extract_codex_base_url),
+        "opencode" => settings
+            .pointer("/options/baseURL")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        "openclaw" => settings
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        "hermes" => settings
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        _ => None,
+    };
+    raw.as_deref().and_then(normalize_endpoint_url)
+}
+
+/// 同步 `provider_endpoints`：
+/// 1. 读取 DB 已有端点（更新时保留测速面板 API 新增的端点）
+/// 2. 合并入参 `meta.custom_endpoints`
+/// 3. base_url 变更时移除旧地址并写入新地址
+/// 4. DELETE + reinsert
+fn resync_provider_endpoints_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    app_type: &str,
+    provider_id: &str,
+    meta_endpoints: HashMap<String, crate::settings::CustomEndpoint>,
+    old_settings: Option<&serde_json::Value>,
+    new_settings: &serde_json::Value,
+) -> Result<(), AppError> {
+    // url -> added_at
+    let mut final_map: HashMap<String, i64> = HashMap::new();
+
+    // 1) DB 已有端点
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT url, added_at FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![provider_id, app_type], |row| {
+                let url: String = row.get(0)?;
+                let added_at: Option<i64> = row.get(1)?;
+                Ok((url, added_at.unwrap_or(0)))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for row in rows {
+            let (url, added_at) = row.map_err(|e| AppError::Database(e.to_string()))?;
+            if let Some(normalized) = normalize_endpoint_url(&url) {
+                final_map.entry(normalized).or_insert(added_at);
+            }
+        }
+    }
+
+    // 2) 合并 meta.custom_endpoints
+    for (url, endpoint) in meta_endpoints {
+        if let Some(normalized) = normalize_endpoint_url(&url) {
+            final_map.entry(normalized).or_insert(endpoint.added_at);
+        }
+    }
+
+    // 3) base_url 变更迁移
+    let old_base = old_settings.and_then(|s| extract_settings_base_url(app_type, s));
+    let new_base = extract_settings_base_url(app_type, new_settings);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    if old_base.as_deref() != new_base.as_deref() {
+        if let Some(old) = old_base.as_ref() {
+            final_map.remove(old);
+        }
+        if let Some(new_url) = new_base.as_ref() {
+            final_map.entry(new_url.clone()).or_insert(now_ms);
+        }
+    } else if let Some(new_url) = new_base.as_ref() {
+        // base_url 未变：仍确保其存在于端点表
+        final_map.entry(new_url.clone()).or_insert(now_ms);
+    }
+
+    // 4) DELETE + reinsert
+    tx.execute(
+        "DELETE FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2",
+        params![provider_id, app_type],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    for (url, added_at) in final_map {
+        tx.execute(
+            "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![provider_id, app_type, url, added_at],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    }
+
+    Ok(())
+}
+
 impl Database {
     pub fn get_all_providers(
         &self,
@@ -177,6 +300,12 @@ impl Database {
         }
     }
 
+    /// 保存供应商（新增或更新）
+    ///
+    /// 更新时同步 `provider_endpoints`：
+    /// - 合并 DB 已有端点与入参 `meta.custom_endpoints`
+    /// - 当 `settings_config` 中的 base_url 变更时，移除旧 base_url 并写入新 base_url
+    /// - 对该 `provider_id + app_type` 做 DELETE + reinsert，保证与 settings 一致
     pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
@@ -186,17 +315,20 @@ impl Database {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
 
-        let existing: Option<(bool, bool)> = tx
+        let existing: Option<(bool, bool, String)> = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, settings_config FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
+        let (is_current, in_failover_queue, old_settings_str) = existing.unwrap_or((
+            false,
+            provider.in_failover_queue,
+            String::new(),
+        ));
 
         if is_update {
             tx.execute(
@@ -236,6 +368,17 @@ impl Database {
                 ],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+
+            let old_settings: serde_json::Value = serde_json::from_str(&old_settings_str)
+                .unwrap_or(serde_json::Value::Null);
+            resync_provider_endpoints_in_tx(
+                &tx,
+                app_type,
+                &provider.id,
+                endpoints,
+                Some(&old_settings),
+                &provider.settings_config,
+            )?;
         } else {
             tx.execute(
                 "INSERT INTO providers (
@@ -263,14 +406,15 @@ impl Database {
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-            for (url, endpoint) in endpoints {
-                tx.execute(
-                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at)
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![provider.id, app_type, url, endpoint.added_at],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            }
+            // 新建：写入 meta 中的端点，并确保当前 base_url 在列表中
+            resync_provider_endpoints_in_tx(
+                &tx,
+                app_type,
+                &provider.id,
+                endpoints,
+                None,
+                &provider.settings_config,
+            )?;
         }
 
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
@@ -824,5 +968,237 @@ mod ensure_official_seed_tests {
         let result =
             db.ensure_official_seed_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, AppType::Claude);
         assert!(result.is_err(), "(id, app_type) mismatch should be Err");
+    }
+}
+
+#[cfg(test)]
+mod save_provider_endpoints_sync_tests {
+    use super::{extract_settings_base_url, normalize_endpoint_url};
+    use crate::database::Database;
+    use crate::provider::{Provider, ProviderMeta};
+    use crate::settings::CustomEndpoint;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn endpoint_urls(db: &Database, provider_id: &str, app_type: &str) -> Vec<String> {
+        let conn = db.conn.lock().expect("lock");
+        let mut stmt = conn
+            .prepare(
+                "SELECT url FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY url",
+            )
+            .expect("prepare");
+        let rows = stmt
+            .query_map(rusqlite::params![provider_id, app_type], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("query");
+        rows.map(|r| r.expect("row")).collect()
+    }
+
+    fn codex_provider(id: &str, base_url: &str, endpoints: &[&str]) -> Provider {
+        let mut custom_endpoints = HashMap::new();
+        let now = 1_700_000_000_000_i64;
+        for url in endpoints {
+            custom_endpoints.insert(
+                (*url).to_string(),
+                CustomEndpoint {
+                    url: (*url).to_string(),
+                    added_at: now,
+                    last_used: None,
+                },
+            );
+        }
+        Provider {
+            id: id.to_string(),
+            name: "test-codex".to_string(),
+            settings_config: json!({
+                "auth": { "OPENAI_API_KEY": "sk-test" },
+                "config": format!("model_provider = \"custom\"\nbase_url = \"{base_url}\"\n")
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(now),
+            sort_index: Some(0),
+            notes: None,
+            meta: Some(ProviderMeta {
+                custom_endpoints,
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    #[test]
+    fn normalize_endpoint_url_trims_slash() {
+        assert_eq!(
+            normalize_endpoint_url(" https://example.com/v1/ "),
+            Some("https://example.com/v1".to_string())
+        );
+        assert_eq!(normalize_endpoint_url("   "), None);
+    }
+
+    #[test]
+    fn extract_codex_and_claude_base_url() {
+        let codex = json!({
+            "config": "base_url = \"http://127.0.0.1:3012/v1/\"\n"
+        });
+        assert_eq!(
+            extract_settings_base_url("codex", &codex).as_deref(),
+            Some("http://127.0.0.1:3012/v1")
+        );
+
+        let claude = json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.example.com/" }
+        });
+        assert_eq!(
+            extract_settings_base_url("claude", &claude).as_deref(),
+            Some("https://api.example.com")
+        );
+    }
+
+    /// #5099: 创建后更新 base_url，provider_endpoints 应替换为新地址
+    #[test]
+    fn update_replaces_base_url_endpoint() {
+        let db = Database::memory().expect("memory db");
+        let old_url = "http://127.0.0.1:3012/v1";
+        let new_url = "http://192.168.31.135:3010/v1";
+
+        let provider = codex_provider("p1", old_url, &[old_url]);
+        db.save_provider("codex", &provider).expect("create");
+        assert_eq!(endpoint_urls(&db, "p1", "codex"), vec![old_url.to_string()]);
+
+        // 模拟编辑保存：settings 已是新 base_url，meta 仍可能携带旧 endpoints
+        let mut updated = codex_provider("p1", new_url, &[old_url]);
+        updated.name = "renamed".to_string();
+        db.save_provider("codex", &updated).expect("update");
+
+        let urls = endpoint_urls(&db, "p1", "codex");
+        assert!(
+            urls.contains(&new_url.to_string()),
+            "new base_url must be present: {urls:?}"
+        );
+        assert!(
+            !urls.contains(&old_url.to_string()),
+            "old base_url must be removed: {urls:?}"
+        );
+    }
+
+    /// 更新 base_url 时保留其他自定义端点
+    #[test]
+    fn update_base_url_keeps_other_custom_endpoints() {
+        let db = Database::memory().expect("memory db");
+        let old_url = "http://127.0.0.1:3012/v1";
+        let backup = "http://backup.example.com/v1";
+        let new_url = "http://192.168.31.135:3010/v1";
+
+        let provider = codex_provider("p2", old_url, &[old_url, backup]);
+        db.save_provider("codex", &provider).expect("create");
+
+        let updated = codex_provider("p2", new_url, &[old_url, backup]);
+        db.save_provider("codex", &updated).expect("update");
+
+        let urls = endpoint_urls(&db, "p2", "codex");
+        assert!(urls.contains(&new_url.to_string()), "{urls:?}");
+        assert!(urls.contains(&backup.to_string()), "{urls:?}");
+        assert!(!urls.contains(&old_url.to_string()), "{urls:?}");
+    }
+
+    /// 更新时 meta 未带 endpoints，仍应根据 settings base_url 同步
+    #[test]
+    fn update_syncs_base_url_when_meta_endpoints_empty() {
+        let db = Database::memory().expect("memory db");
+        let old_url = "http://old.example.com/v1";
+        let new_url = "http://new.example.com/v1";
+
+        let provider = codex_provider("p3", old_url, &[old_url]);
+        db.save_provider("codex", &provider).expect("create");
+
+        // 不带 custom_endpoints（编辑表单常见路径）
+        let mut updated = codex_provider("p3", new_url, &[]);
+        updated.meta = Some(ProviderMeta::default());
+        db.save_provider("codex", &updated).expect("update");
+
+        let urls = endpoint_urls(&db, "p3", "codex");
+        assert_eq!(urls, vec![new_url.to_string()]);
+    }
+
+    /// 经 API 新增的端点在仅改 base_url 的更新中应被保留
+    #[test]
+    fn update_preserves_api_added_endpoints() {
+        let db = Database::memory().expect("memory db");
+        let old_url = "http://old.example.com/v1";
+        let new_url = "http://new.example.com/v1";
+        let api_added = "http://api-added.example.com/v1";
+
+        let provider = codex_provider("p4", old_url, &[old_url]);
+        db.save_provider("codex", &provider).expect("create");
+        db.add_custom_endpoint("codex", "p4", api_added)
+            .expect("api add");
+
+        // meta 只有旧 base（表单打开时的快照），不含 API 新增
+        let updated = codex_provider("p4", new_url, &[old_url]);
+        db.save_provider("codex", &updated).expect("update");
+
+        let urls = endpoint_urls(&db, "p4", "codex");
+        assert!(urls.contains(&new_url.to_string()), "{urls:?}");
+        assert!(urls.contains(&api_added.to_string()), "{urls:?}");
+        assert!(!urls.contains(&old_url.to_string()), "{urls:?}");
+    }
+
+    /// Claude 供应商同样同步 ANTHROPIC_BASE_URL
+    #[test]
+    fn update_syncs_claude_base_url_endpoint() {
+        let db = Database::memory().expect("memory db");
+        let old_url = "https://old.claude.example";
+        let new_url = "https://new.claude.example";
+        let now = 1_700_000_000_000_i64;
+
+        let mut custom_endpoints = HashMap::new();
+        custom_endpoints.insert(
+            old_url.to_string(),
+            CustomEndpoint {
+                url: old_url.to_string(),
+                added_at: now,
+                last_used: None,
+            },
+        );
+
+        let provider = Provider {
+            id: "claude-1".to_string(),
+            name: "claude".to_string(),
+            settings_config: json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "ANTHROPIC_BASE_URL": old_url
+                }
+            }),
+            website_url: None,
+            category: Some("custom".to_string()),
+            created_at: Some(now),
+            sort_index: Some(0),
+            notes: None,
+            meta: Some(ProviderMeta {
+                custom_endpoints,
+                ..Default::default()
+            }),
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        };
+        db.save_provider("claude", &provider).expect("create");
+
+        let mut updated = provider.clone();
+        updated.settings_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                "ANTHROPIC_BASE_URL": new_url
+            }
+        });
+        db.save_provider("claude", &updated).expect("update");
+
+        let urls = endpoint_urls(&db, "claude-1", "claude");
+        assert_eq!(urls, vec![new_url.to_string()]);
     }
 }
