@@ -529,6 +529,27 @@ fn codex_catalog_model_entry(
         }
     }
 
+    // Reasoning effort is model capability data. Preserve the selected template's
+    // values (including localized descriptions) unless this model explicitly
+    // declares its own metadata in cc-switch's modelCatalog.
+    let has_reasoning_override = spec.supported_reasoning_levels.is_some()
+        || spec.default_reasoning_level.is_some()
+        || spec.reasoning_levels.is_some();
+    if let Some(levels) = &spec.supported_reasoning_levels {
+        entry_obj.insert("supported_reasoning_levels".to_string(), json!(levels));
+    }
+    if let Some(default_level) = &spec.default_reasoning_level {
+        entry_obj.insert("default_reasoning_level".to_string(), json!(default_level));
+    }
+    if has_reasoning_override {
+        // Numeric mappings are template-specific. Do not carry them over to a
+        // model that only overrides its named reasoning-level capabilities.
+        entry_obj.insert(
+            "reasoning_levels".to_string(),
+            spec.reasoning_levels.clone().unwrap_or(Value::Null),
+        );
+    }
+
     entry
 }
 
@@ -550,6 +571,15 @@ struct CodexCatalogModelSpec {
     /// back to the template default when absent. Only consulted for
     /// `NativeResponses`.
     base_instructions: Option<String>,
+    /// Explicit per-model reasoning effort choices. When absent, preserve the
+    /// complete capability data and localized descriptions from the template.
+    supported_reasoning_levels: Option<Vec<Value>>,
+    /// Explicit per-model default reasoning effort. When absent, preserve the
+    /// template's default.
+    default_reasoning_level: Option<String>,
+    /// Optional per-model numeric reasoning mappings. These are only carried
+    /// over when explicitly declared because they are template-specific.
+    reasoning_levels: Option<Value>,
 }
 
 fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
@@ -618,6 +648,23 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .map(str::to_string);
+        let supported_reasoning_levels = model_config
+            .get("supportedReasoningLevels")
+            .or_else(|| model_config.get("supported_reasoning_levels"))
+            .and_then(|value| value.as_array())
+            .filter(|levels| !levels.is_empty())
+            .cloned();
+        let default_reasoning_level = model_config
+            .get("defaultReasoningLevel")
+            .or_else(|| model_config.get("default_reasoning_level"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|level| !level.is_empty())
+            .map(str::to_string);
+        let reasoning_levels = model_config
+            .get("reasoningLevels")
+            .or_else(|| model_config.get("reasoning_levels"))
+            .cloned();
 
         specs.push(CodexCatalogModelSpec {
             model: model.to_string(),
@@ -626,6 +673,9 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
             supports_parallel_tool_calls,
             input_modalities,
             base_instructions,
+            supported_reasoning_levels,
+            default_reasoning_level,
+            reasoning_levels,
         });
     }
 
@@ -3085,6 +3135,9 @@ base_url = "https://production.api/v1"
             supports_parallel_tool_calls: None,
             input_modalities: None,
             base_instructions: None,
+            supported_reasoning_levels: None,
+            default_reasoning_level: None,
+            reasoning_levels: None,
         }];
         // Using a gpt-5.5-shaped template under ProxyChat must NOT strip
         // apply_patch_tool_type. (The native template lacks it, so synthesize
@@ -3697,6 +3750,107 @@ model_catalog_json = "cc-switch-model-catalog.json"
         assert!(
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
+        );
+    }
+
+    #[test]
+    fn catalog_model_entry_preserves_template_reasoning_metadata() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "supported_reasoning_levels": [
+                { "effort": "low", "description": "Fast" },
+                { "effort": "xhigh", "description": "Extra high" },
+            ],
+            "default_reasoning_level": "xhigh",
+            "reasoning_levels": [{ "level": 4, "effort": "xhigh" }],
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "test-model".to_string(),
+            display_name: "Test Model".to_string(),
+            context_window: 128_000,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+            supported_reasoning_levels: None,
+            default_reasoning_level: None,
+            reasoning_levels: None,
+        };
+        let entry =
+            codex_catalog_model_entry(&template, &spec, 0, CodexCatalogToolProfile::ProxyChat);
+
+        assert_eq!(
+            entry["supported_reasoning_levels"], template["supported_reasoning_levels"],
+            "template capabilities, including xhigh and descriptions, must be retained"
+        );
+        assert_eq!(
+            entry["default_reasoning_level"],
+            template["default_reasoning_level"]
+        );
+        assert_eq!(entry["reasoning_levels"], template["reasoning_levels"]);
+    }
+
+    #[test]
+    fn catalog_model_entry_uses_model_specific_reasoning_metadata() {
+        let template = json!({
+            "slug": "gpt-5.5",
+            "supported_reasoning_levels": [{ "effort": "xhigh", "description": "Extra high" }],
+            "default_reasoning_level": "xhigh",
+            "reasoning_levels": [{ "level": 4, "effort": "xhigh" }],
+        });
+        let spec = CodexCatalogModelSpec {
+            model: "provider-model".to_string(),
+            display_name: "Provider Model".to_string(),
+            context_window: 128_000,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+            supported_reasoning_levels: Some(vec![
+                json!({ "effort": "minimal", "description": "Minimal reasoning" }),
+                json!({ "effort": "max", "description": "Maximum reasoning" }),
+            ]),
+            default_reasoning_level: Some("minimal".to_string()),
+            reasoning_levels: None,
+        };
+        let entry =
+            codex_catalog_model_entry(&template, &spec, 0, CodexCatalogToolProfile::ProxyChat);
+
+        assert_eq!(
+            entry["supported_reasoning_levels"],
+            json!([
+                { "effort": "minimal", "description": "Minimal reasoning" },
+                { "effort": "max", "description": "Maximum reasoning" },
+            ])
+        );
+        assert_eq!(entry["default_reasoning_level"], json!("minimal"));
+        assert!(
+            entry["reasoning_levels"].is_null(),
+            "a named capability override must not inherit a template-specific numeric mapping"
+        );
+    }
+
+    #[test]
+    fn catalog_model_specs_read_model_specific_reasoning_metadata() {
+        let settings = json!({
+            "modelCatalog": { "models": [{
+                "model": "provider-model",
+                "supportedReasoningLevels": [{ "effort": "none", "description": "No reasoning" }],
+                "defaultReasoningLevel": "none",
+                "reasoningLevels": [{ "level": 0, "effort": "none" }],
+            }] }
+        });
+
+        let specs = codex_catalog_model_specs(&settings, "");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].supported_reasoning_levels,
+            Some(vec![
+                json!({ "effort": "none", "description": "No reasoning" })
+            ])
+        );
+        assert_eq!(specs[0].default_reasoning_level.as_deref(), Some("none"));
+        assert_eq!(
+            specs[0].reasoning_levels,
+            Some(json!([{ "level": 0, "effort": "none" }]))
         );
     }
 }
