@@ -1055,7 +1055,8 @@
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 9.9 元（150 ドル相当）の Coding Plan を購入できます！",
       "zetaapi": "ZetaAPI はモデルを水増し・劣化させず、公式価格の 35% から利用できます。CC Switch 利用者限定特典：このリンクから登録し、初回チャージ時にプロモコード CC-SWITCH を使うと初回チャージ 10% オフ！",
       "teamorouter": "TeamoRouter はエンタープライズグレードの Agentic LLM ゲートウェイで、料金は最大 90% オフ。CC Switch ユーザーに特別特典を提供しています：このリンクから新規登録すると初回チャージが 10% オフ！",
-      "unity2": "Unity2.ai は CC Switch ユーザーに専属特典を提供しています：このリンクから登録すると $2 分のクレジット、公式グループ参加でさらに $10、最大 $12 の無料クレジットがもらえます！"
+      "unity2": "Unity2.ai は CC Switch ユーザーに専属特典を提供しています：このリンクから登録すると $2 分のクレジット、公式グループ参加でさらに $10、最大 $12 の無料クレジットがもらえます！",
+      "tokenhub": "TokenHub は騰訊雲のモデルサービスプラットフォームで、Hunyuan、DeepSeek、GLM、Kimi などのモデルを集約し、Anthropic および OpenAI API フォーマットと互換性があります。"
     },
     "presets": {
       "ucloud": "Compshare",
@@ -1064,7 +1065,8 @@
       "qiniu": "Qiniu",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "tokenhub": "TokenHub"
     },
     "parameterConfig": "パラメーター設定 - {{name}} *",
     "mainModel": "メインモデル（任意）",

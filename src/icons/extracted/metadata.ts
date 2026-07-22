@@ -130,6 +130,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["ernie", "wenxin"],
     defaultColor: "#2932E1",
   },
+  tokenhub: {
+    name: "tokenhub",
+    displayName: "TokenHub",
+    category: "ai-provider",
+    keywords: ["tokenhub", "tencent", "tencentmaas", "lkeap"],
+    defaultColor: "#00A4FF",
+  },
   bailian: {
     name: "bailian",
     displayName: "Bailian",

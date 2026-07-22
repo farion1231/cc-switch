@@ -1551,4 +1551,21 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "mimo-v2.5-pro", provider: "xiaomi_mimo_token_plan" },
     },
   },
+  {
+    name: "TokenHub",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    settingsConfig: {
+      name: "tokenhub",
+      base_url: "https://tokenhub.tencentmaas.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [{ id: "hy3", name: "Hunyuan hy3" }],
+    },
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#00A4FF",
+    suggestedDefaults: {
+      model: { default: "hy3", provider: "tokenhub" },
+    },
+  },
 ];

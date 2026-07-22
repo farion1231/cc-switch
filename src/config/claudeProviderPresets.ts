@@ -1431,4 +1431,50 @@ export const providerPresets: ProviderPreset[] = [
     icon: "aws",
     iconColor: "#FF9900",
   },
+  {
+    name: "TokenHub",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "TokenHub Token Plan",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL:
+          "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "tokenhub",
+    icon: "tokenhub",
+    iconColor: "#00A4FF",
+  },
+  {
+    name: "TokenHub Token Plan 企业版",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://tokenhub.tencentmaas.com/plan/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "cn_official",
+    isPartner: true,
+    partnerPromotionKey: "tokenhub",
+    icon: "tokenhub",
+    iconColor: "#00A4FF",
+  },
 ];

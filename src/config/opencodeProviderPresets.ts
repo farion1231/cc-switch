@@ -2088,4 +2088,35 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     iconColor: "#6366F1",
     isCustomTemplate: true,
   },
+  {
+    name: "TokenHub",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TokenHub",
+      options: {
+        baseURL: "https://tokenhub.tencentmaas.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {},
+    },
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#00A4FF",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://tokenhub.tencentmaas.com/v1",
+        defaultValue: "https://tokenhub.tencentmaas.com/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
 ];

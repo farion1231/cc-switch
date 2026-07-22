@@ -1602,4 +1602,27 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     endpointCandidates: ["https://api.therouter.ai/v1"],
     category: "aggregator",
   },
+  {
+    name: "TokenHub",
+    websiteUrl: "https://console.cloud.tencent.com/tokenhub/models",
+    apiKeyUrl: "https://console.cloud.tencent.com/tokenhub/apikey",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tokenhub",
+      "https://tokenhub.tencentmaas.com/v1",
+      "hy3",
+    ),
+    endpointCandidates: ["https://tokenhub.tencentmaas.com/v1"],
+    apiFormat: "openai_chat",
+    modelCatalog: modelCatalog([
+      {
+        model: "hy3",
+        displayName: "Hunyuan hy3",
+        contextWindow: 256000,
+      },
+    ]),
+    category: "cn_official",
+    icon: "tokenhub",
+    iconColor: "#00A4FF",
+  },
 ];
