@@ -81,7 +81,7 @@ export function ModelDropdown({
       <PopoverContent
         align="end"
         collisionPadding={8}
-        className="z-[200] w-[min(32rem,calc(100vw-1rem))] p-0"
+        className="z-[200] w-[min(24rem,calc(100vw-1rem))] p-0"
       >
         <Command
           shouldFilter={false}
