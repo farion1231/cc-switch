@@ -8,6 +8,7 @@
 //! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
 use super::{
+    claude_desktop_probe,
     content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
     error_mapper::{get_error_message, map_proxy_error_to_status},
     forwarder::ActiveConnectionGuard,
@@ -173,6 +174,14 @@ async fn handle_messages_for_app(
         .to_bytes();
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+
+    if app_type == AppType::ClaudeDesktop
+        && crate::settings::get_settings().intercept_claude_desktop_startup_probe
+        && claude_desktop_probe::is_startup_probe(&body)
+    {
+        log::info!("[Claude Desktop] intercepted startup probe locally");
+        return Ok(Json(claude_desktop_probe::response(&body)).into_response());
+    }
 
     let mut ctx =
         RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;

@@ -343,6 +343,8 @@
         "enableFeatureDescription": "開啟後，主頁面頂部將顯示路由和故障轉移開關",
         "enableFailoverToggle": "在主頁面顯示故障轉移開關",
         "enableFailoverToggleDescription": "開啟後，主頁面頂部將獨立顯示故障轉移開關",
+        "interceptClaudeDesktopStartupProbe": "攔截 Claude Desktop 啟動探測",
+        "interceptClaudeDesktopStartupProbeDescription": "在本機回應固定的一 Token 啟動探針，不再轉送給供應商；供應商是否可用將在第一次真實請求時確認。",
         "running": "執行中",
         "stopped": "已停止"
       },
