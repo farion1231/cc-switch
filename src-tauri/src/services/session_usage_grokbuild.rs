@@ -196,7 +196,11 @@ fn parse_inference_done(value: &Value, line_offset: i64) -> Option<GrokTurnUsage
         model_elapsed_ms: ctx
             .get("model_elapsed_ms")
             .and_then(|v| v.as_i64())
-            .or_else(|| ctx.get("model_elapsed_ms").and_then(|v| v.as_u64()).map(|n| n as i64)),
+            .or_else(|| {
+                ctx.get("model_elapsed_ms")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as i64)
+            }),
         timestamp: value
             .get("ts")
             .and_then(|v| v.as_str())
@@ -371,26 +375,26 @@ fn insert_grokbuild_session_entry(
 
     let pricing = find_grokbuild_pricing(&conn, model);
     let multiplier = Decimal::from(1);
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
-        match pricing {
-            Some(p) => {
-                let cost = CostCalculator::calculate_for_app(APP_TYPE, &usage, &p, multiplier);
-                (
-                    cost.input_cost.to_string(),
-                    cost.output_cost.to_string(),
-                    cost.cache_read_cost.to_string(),
-                    cost.cache_creation_cost.to_string(),
-                    cost.total_cost.to_string(),
-                )
-            }
-            None => (
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-            ),
-        };
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
+    {
+        Some(p) => {
+            let cost = CostCalculator::calculate_for_app(APP_TYPE, &usage, &p, multiplier);
+            (
+                cost.input_cost.to_string(),
+                cost.output_cost.to_string(),
+                cost.cache_read_cost.to_string(),
+                cost.cache_creation_cost.to_string(),
+                cost.total_cost.to_string(),
+            )
+        }
+        None => (
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+        ),
+    };
 
     conn.execute(
         "INSERT INTO proxy_request_logs (
@@ -520,18 +524,12 @@ mod tests {
         };
         let request_id = "grokbuild_session:sess-1:L10";
         assert!(insert_grokbuild_session_entry(
-            &db,
-            request_id,
-            &turn,
-            "grok-4.5"
+            &db, request_id, &turn, "grok-4.5"
         )?);
 
         // second insert same id with same values → no change counted as skip-ish
         assert!(!insert_grokbuild_session_entry(
-            &db,
-            request_id,
-            &turn,
-            "grok-4.5"
+            &db, request_id, &turn, "grok-4.5"
         )?);
 
         let conn = lock_conn!(db.conn);
