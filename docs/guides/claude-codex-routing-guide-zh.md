@@ -1,4 +1,4 @@
-# 在 Claude Code 中用 Codex：CC Switch 本地路由攻略
+# 通过 CC Switch 在 Claude Code 中使用 GPT 模型
 
 > 适用版本：CC Switch 3.17.0 及以上（更早版本已具备本文两种接入方式，但 gpt-5.6 预设与客户端身份修复自 3.17.0 落地，低版本请求 `gpt-5.6-luna` 这类新模型会误报 404）。本文根据仓库内文档与代码整理，示例数据均已去敏。
 
@@ -75,8 +75,6 @@ CC Switch 的做法是让 Claude Code 始终连本机路由，仍以 Anthropic M
 
 > **注意**：live 配置是 Claude Code 进程启动时读取的。首次开启接管（或关闭接管恢复直连）后，如果 Claude Code 正在运行，请重开一个终端会话。之后在路由模式下切换供应商就是热切换，无需再重启。
 
-<!-- TODO 截图 04：本地路由页面中启用 Claude Code 接管（docs/images/claude-codex-routing/04-local-route-claude-takeover.png）。此图需在「Claude Code 路由已开启」状态下截取，而开启接管会把本机 settings.json 的 base_url 改写为 127.0.0.1，需在不依赖该配置的环境中补拍。 -->
-
 ## 第三步：切换供应商并验证
 
 回到 Claude Code 供应商列表，点击目标供应商的 `启用`。如果路由没有在运行，CC Switch 会提示「此供应商使用 OpenAI Responses 接口格式，需要路由服务才能正常使用，请先启动路由」——这个提示不会拦截切换，但路由未开时请求必然失败，回到第二步打开即可。
@@ -140,4 +138,4 @@ CC Switch 的做法是让 Claude Code 始终连本机路由，仍以 Anthropic M
 - [CC Switch 用户手册：代理服务](../user-manual/zh/4-proxy/4.1-service.md)
 - [CC Switch 用户手册：应用路由](../user-manual/zh/4-proxy/4.2-routing.md)
 - [CC Switch v3.17.0 发布说明](../release-notes/v3.17.0-zh.md)
-- 反方向攻略：[在 Codex 中用 Claude](./codex-claude-routing-guide-zh.md)
+- 反方向攻略：[在 Codex 中使用 Claude 模型](./codex-claude-routing-guide-zh.md)
