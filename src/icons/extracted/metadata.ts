@@ -9,6 +9,21 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["aigocode", "aigo", "code", "third-party"],
     defaultColor: "#5B7FFF",
   },
+  arcrouter: {
+    name: "arcrouter",
+    displayName: "ArcRouter",
+    category: "ai-provider",
+    keywords: [
+      "arcrouter",
+      "arcrouter.ai",
+      "aggregator",
+      "relay",
+      "claude",
+      "codex",
+      "gateway",
+    ],
+    defaultColor: "#B9BCC1",
+  },
   apikeyfun: {
     name: "apikeyfun",
     displayName: "APIKEY.FUN",
