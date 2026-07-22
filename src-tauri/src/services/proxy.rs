@@ -3445,6 +3445,61 @@ mod tests {
         assert_env_str(env, "ANTHROPIC_BASE_URL", Some("http://127.0.0.1:15721"));
     }
 
+    #[test]
+    fn aggregate_claude_takeover_propagates_one_m_marker_from_route_model() {
+        let mut provider = Provider::with_id(
+            "agg".to_string(),
+            "Aggregate".to_string(),
+            json!({"env": {"ANTHROPIC_AUTH_TOKEN": "placeholder"}}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            aggregate_routes: Some(AggregateRoutes {
+                haiku: Some(AggregateRoute {
+                    provider_id: "deepseek".to_string(),
+                    model: "deepseek-v4-flash[1M]".to_string(),
+                }),
+                opus: Some(AggregateRoute {
+                    provider_id: "kimi".to_string(),
+                    model: "k3[1M]".to_string(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let mut live_config = provider.settings_config.clone();
+        ProxyService::apply_claude_takeover_fields_for_provider(
+            &mut live_config,
+            "http://127.0.0.1:15721",
+            &provider,
+        );
+
+        let env = live_config
+            .get("env")
+            .and_then(|value| value.as_object())
+            .expect("env should exist");
+
+        // 路由模型带 [1M] 标记且该档支持 1M：别名追加 [1M]，显示名剥离标记
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            Some("claude-opus-4-8[1M]"),
+        );
+        assert_env_str(env, "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", Some("k3"));
+        // haiku 档不支持 1M：即使路由模型带标记，别名也不追加
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            Some("claude-haiku-4-5"),
+        );
+        assert_env_str(
+            env,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            Some("deepseek-v4-flash"),
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn hot_switch_to_aggregate_preserves_existing_live_backup() {

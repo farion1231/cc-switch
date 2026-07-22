@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Layers3 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -12,6 +13,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ModelInputWithFetch } from "./shared/ModelInputWithFetch";
+import {
+  hasClaudeOneMMarker,
+  setClaudeOneMMarker,
+  stripClaudeOneMMarker,
+} from "./hooks/useModelState";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -141,7 +147,7 @@ export function AggregateProviderFields({
             </p>
           )}
 
-          <div className="hidden grid-cols-[100px_minmax(0,1fr)_minmax(0,1fr)] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+          <div className="hidden grid-cols-[100px_minmax(0,1fr)_minmax(0,1fr)_104px] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
             <span>
               {t("providerForm.aggregate.tier", { defaultValue: "Tier" })}
             </span>
@@ -155,10 +161,18 @@ export function AggregateProviderFields({
                 defaultValue: "Target model",
               })}
             </span>
+            <span>
+              {t("providerForm.modelOneMHeader", {
+                defaultValue: "Declare 1M",
+              })}
+            </span>
           </div>
 
           {AGGREGATE_ROUTE_TIERS.map((tier) => {
             const route = routes[tier];
+            const routeModel = route?.model ?? "";
+            const routeModelBase = stripClaudeOneMMarker(routeModel);
+            const routeUsesOneM = hasClaudeOneMMarker(routeModel);
             const target = targets.find(
               (item) => item.id === route?.providerId,
             );
@@ -182,7 +196,7 @@ export function AggregateProviderFields({
             return (
               <div
                 key={tier}
-                className="grid grid-cols-1 gap-2 md:grid-cols-[100px_minmax(0,1fr)_minmax(0,1fr)] md:items-center"
+                className="grid grid-cols-1 gap-2 md:grid-cols-[100px_minmax(0,1fr)_minmax(0,1fr)_104px] md:items-center"
               >
                 <Label
                   htmlFor={`aggregate-${tier}-model`}
@@ -224,8 +238,12 @@ export function AggregateProviderFields({
                 </Select>
                 <ModelInputWithFetch
                   id={`aggregate-${tier}-model`}
-                  value={route?.model ?? ""}
-                  onChange={(model) => updateRoute(tier, { model })}
+                  value={routeModelBase}
+                  onChange={(model) =>
+                    updateRoute(tier, {
+                      model: setClaudeOneMMarker(model, routeUsesOneM),
+                    })
+                  }
                   placeholder={t("providerForm.aggregate.modelPlaceholder", {
                     defaultValue: "e.g. kimi-k3",
                   })}
@@ -233,6 +251,24 @@ export function AggregateProviderFields({
                   isLoading={loadingProviderId === target?.id}
                   onFetch={target ? () => void fetchModels(target) : undefined}
                 />
+                <label className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                  <Checkbox
+                    aria-label={t("providerForm.modelOneMLabel", {
+                      defaultValue: "1M",
+                    })}
+                    checked={routeUsesOneM}
+                    onCheckedChange={(checked) => {
+                      const base = routeModelBase.trim();
+                      if (!base) return;
+                      updateRoute(tier, {
+                        model: setClaudeOneMMarker(base, checked === true),
+                      });
+                    }}
+                  />
+                  {t("providerForm.modelOneMLabel", {
+                    defaultValue: "1M",
+                  })}
+                </label>
               </div>
             );
           })}
