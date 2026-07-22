@@ -708,8 +708,26 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
-    const newSortIndex =
-      provider.sortIndex !== undefined ? provider.sortIndex + 1 : undefined;
+    // Fix #4234: Ensure duplicate appears next to original, even if original lacks sortIndex
+    let newSortIndex: number;
+    let needNormalizeAll = false;
+    let originalIdx = -1;
+
+    if (provider.sortIndex !== undefined) {
+      // Original has sortIndex → insert duplicate right below it
+      newSortIndex = provider.sortIndex + 1;
+    } else {
+      // Original lacks sortIndex. Indexed items always sort ahead of unindexed ones
+      // (sortIndex ?? MAX_SAFE_INTEGER), so assigning sortIndex only to original+copy
+      // would lift them above the other unindexed providers. Normalize the whole list
+      // to contiguous indices by its current display order, then slot the duplicate
+      // right below the original — this preserves relative order for both the
+      // all-unindexed and the mixed indexed/unindexed cases.
+      const allProviders = Object.values(providers); // already sorted by sortProviders
+      originalIdx = allProviders.findIndex((p) => p.id === provider.id);
+      needNormalizeAll = true;
+      newSortIndex = originalIdx + 1;
+    }
 
     const duplicatedProvider: Omit<Provider, "id" | "createdAt"> & {
       providerKey?: string;
@@ -719,7 +737,7 @@ function App() {
       settingsConfig: deepClone(provider.settingsConfig),
       websiteUrl: provider.websiteUrl,
       category: provider.category,
-      sortIndex: newSortIndex, // 复制原 sortIndex + 1
+      sortIndex: newSortIndex,
       meta: provider.meta ? deepClone(provider.meta) : undefined,
       icon: provider.icon,
       iconColor: provider.iconColor,
@@ -770,31 +788,47 @@ function App() {
       duplicatedProvider.addToLive = false;
     }
 
-    if (provider.sortIndex !== undefined) {
-      const updates = Object.values(providers)
+    // Update sortIndex for affected providers
+    const updates: Array<{ id: string; sortIndex: number }> = [];
+
+    if (needNormalizeAll) {
+      // Normalize the whole list to contiguous indices (0..N) by display order,
+      // reserving `newSortIndex` (= originalIdx + 1) for the duplicate.
+      Object.values(providers).forEach((p, idx) => {
+        updates.push({
+          id: p.id,
+          sortIndex: idx <= originalIdx ? idx : idx + 1,
+        });
+      });
+    } else {
+      // Original already had sortIndex → shift subsequent indexed providers down by 1
+      // to make room for the duplicate slotted right below the original.
+      Object.values(providers)
         .filter(
           (p) =>
             p.sortIndex !== undefined &&
-            p.sortIndex >= newSortIndex! &&
+            p.sortIndex >= newSortIndex &&
             p.id !== provider.id,
         )
-        .map((p) => ({
-          id: p.id,
-          sortIndex: p.sortIndex! + 1,
-        }));
+        .forEach((p) => {
+          updates.push({
+            id: p.id,
+            sortIndex: p.sortIndex! + 1,
+          });
+        });
+    }
 
-      if (updates.length > 0) {
-        try {
-          await providersApi.updateSortOrder(updates, activeApp);
-        } catch (error) {
-          console.error("[App] Failed to update sort order", error);
-          toast.error(
-            t("provider.sortUpdateFailed", {
-              defaultValue: "排序更新失败",
-            }),
-          );
-          return; // 如果排序更新失败，不继续添加
-        }
+    if (updates.length > 0) {
+      try {
+        await providersApi.updateSortOrder(updates, activeApp);
+      } catch (error) {
+        console.error("[App] Failed to update sort order", error);
+        toast.error(
+          t("provider.sortUpdateFailed", {
+            defaultValue: "排序更新失败",
+          }),
+        );
+        return; // 如果排序更新失败，不继续添加
       }
     }
 
