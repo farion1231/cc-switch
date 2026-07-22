@@ -145,14 +145,14 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
 
           {/* Content */}
           <div
-              className={cn(
-                "flex-1 overflow-y-auto scroll-overlay",
-                scrollbarVisible && "scroll-overlay-visible",
-              )}
-            >
-              <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
-                {children}
-              </div>
+            className={cn(
+              "flex-1 overflow-y-auto scroll-overlay",
+              scrollbarVisible && "scroll-overlay-visible",
+            )}
+          >
+            <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
+              {children}
+            </div>
           </div>
 
           {/* Footer */}
