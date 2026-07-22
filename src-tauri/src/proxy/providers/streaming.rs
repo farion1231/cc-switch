@@ -188,6 +188,123 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                 if data.trim() == "[DONE]" {
                                     log::debug!("[Claude/OpenRouter] <<< OpenAI SSE: [DONE]");
 
+                                    // 兜底：若上游从未发送有效 finish_reason（或 finish 之后又有新的
+                                    // content block 打开），在 message_stop 之前关闭仍打开的 block，
+                                    // 保证输出的 Anthropic SSE 结构完整。正常流程中 finish_reason
+                                    // 处理已关闭全部 block，此处为空操作。
+                                    if let Some(index) = current_non_tool_block_index.take() {
+                                        let event = json!({
+                                            "type": "content_block_stop",
+                                            "index": index
+                                        });
+                                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                            serde_json::to_string(&event).unwrap_or_default());
+                                        yield Ok(Bytes::from(sse_data));
+                                    }
+                                    current_non_tool_block_type = None;
+
+                                    // Late-start flush：某些上游发送了 tool_calls（含
+                                    // name/arguments）但缺少 id，且没给出有效 finish_reason。
+                                    // 正常路径（finish_reason 非空）会在关闭 tool block 前
+                                    // 补发 content_block_start；[DONE] 兜底也需要同样的逻辑，
+                                    // 否则 message_delta(tool_use) 后面没有 tool_use content
+                                    // block，客户端无法执行工具。
+                                    {
+                                        let mut late_tool_starts: Vec<(u32, String, String, String)> =
+                                            Vec::new();
+                                        for (tool_idx, state) in tool_blocks_by_index.iter_mut() {
+                                            if state.started {
+                                                continue;
+                                            }
+                                            let has_payload = !state.pending_args.is_empty()
+                                                || !state.id.is_empty()
+                                                || !state.name.is_empty();
+                                            if !has_payload {
+                                                continue;
+                                            }
+                                            let fallback_id = if state.id.is_empty() {
+                                                format!("tool_call_{tool_idx}")
+                                            } else {
+                                                state.id.clone()
+                                            };
+                                            let fallback_name = if state.name.is_empty() {
+                                                "unknown_tool".to_string()
+                                            } else {
+                                                state.name.clone()
+                                            };
+                                            state.started = true;
+                                            let pending = std::mem::take(&mut state.pending_args);
+                                            late_tool_starts.push((
+                                                state.anthropic_index,
+                                                fallback_id,
+                                                fallback_name,
+                                                pending,
+                                            ));
+                                        }
+                                        late_tool_starts.sort_unstable_by_key(|(index, _, _, _)| *index);
+                                        for (index, id, name, pending) in late_tool_starts {
+                                            let event = json!({
+                                                "type": "content_block_start",
+                                                "index": index,
+                                                "content_block": {
+                                                    "type": "tool_use",
+                                                    "id": id,
+                                                    "name": name
+                                                }
+                                            });
+                                            let sse_data = format!("event: content_block_start\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse_data));
+                                            open_tool_block_indices.insert(index);
+                                            if !pending.is_empty() {
+                                                let delta_event = json!({
+                                                    "type": "content_block_delta",
+                                                    "index": index,
+                                                    "delta": {
+                                                        "type": "input_json_delta",
+                                                        "partial_json": pending
+                                                    }
+                                                });
+                                                let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
+                                                    serde_json::to_string(&delta_event).unwrap_or_default());
+                                                yield Ok(Bytes::from(delta_sse));
+                                            }
+                                        }
+                                    }
+
+                                    if !open_tool_block_indices.is_empty() {
+                                        let mut tool_indices: Vec<u32> =
+                                            open_tool_block_indices.iter().copied().collect();
+                                        tool_indices.sort_unstable();
+                                        for index in tool_indices {
+                                            let event = json!({
+                                                "type": "content_block_stop",
+                                                "index": index
+                                            });
+                                            let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                                                serde_json::to_string(&event).unwrap_or_default());
+                                            yield Ok(Bytes::from(sse_data));
+                                        }
+                                        open_tool_block_indices.clear();
+                                    }
+
+                                    // 兜底：消息已开始但从未收到有效 finish_reason 时，合成一个
+                                    // message_delta，避免客户端收到没有 stop_reason 的消息流。
+                                    // 若流中曾出现 tool_calls，stop_reason 须为 tool_use，
+                                    // 否则客户端认为轮次结束而不执行工具。
+                                    if pending_message_delta.is_none()
+                                        && !has_emitted_message_delta
+                                        && has_sent_message_start
+                                    {
+                                        let fallback_reason = if tool_blocks_by_index.is_empty() {
+                                            "end_turn"
+                                        } else {
+                                            "tool_use"
+                                        };
+                                        pending_message_delta =
+                                            Some((Some(fallback_reason.to_string()), latest_usage.clone()));
+                                    }
+
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
                                         let event = build_message_delta_event(stop_reason, usage_json);
@@ -514,7 +631,17 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 注意：OpenRouter 某些 provider 会发送多个带 finish_reason 的 chunk
                                         // （第一个 usage 为 null，后续才补全）。此处只做缓存，不立即发送，
                                         // 等到 [DONE] 或流末尾再统一发出，确保 usage 完整且只发一次。
-                                        if let Some(finish_reason) = &choice.finish_reason {
+                                        // 另注：SenseNova 等上游在 reasoning 流式 chunk 中携带
+                                        // finish_reason: ""（空字符串）。空值并不代表生成结束，若按结束
+                                        // 处理会提前关闭 content block 并吞掉真正的 finish_reason，
+                                        // 导致 message_stop 前残留未关闭的 block，客户端（如 Claude
+                                        // Desktop）会丢弃整条 assistant 消息，因此视为缺失。
+                                        if let Some(finish_reason) = choice
+                                            .finish_reason
+                                            .as_deref()
+                                            .map(str::trim)
+                                            .filter(|reason| !reason.is_empty())
+                                        {
                                             let stop_reason = map_stop_reason(Some(finish_reason));
                                             let usage_json =
                                                 chunk_usage_json.clone().or_else(|| latest_usage.clone());
@@ -647,6 +774,35 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 流自然结束但未收到 [DONE] 时，确保发送缓存的 message_delta 和 message_stop。
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
         if !stream_ended_with_error {
+            // 与 [DONE] 分支相同的兜底：发出 message_delta/message_stop 前，
+            // 先关闭仍处于打开状态的 content block。
+            if pending_message_delta.is_some() {
+                if let Some(index) = current_non_tool_block_index.take() {
+                    let event = json!({
+                        "type": "content_block_stop",
+                        "index": index
+                    });
+                    let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default());
+                    yield Ok(Bytes::from(sse_data));
+                }
+                if !open_tool_block_indices.is_empty() {
+                    let mut tool_indices: Vec<u32> =
+                        open_tool_block_indices.iter().copied().collect();
+                    tool_indices.sort_unstable();
+                    for index in tool_indices {
+                        let event = json!({
+                            "type": "content_block_stop",
+                            "index": index
+                        });
+                        let sse_data = format!("event: content_block_stop\ndata: {}\n\n",
+                            serde_json::to_string(&event).unwrap_or_default());
+                        yield Ok(Bytes::from(sse_data));
+                    }
+                    open_tool_block_indices.clear();
+                }
+            }
+
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
@@ -758,6 +914,225 @@ mod tests {
             map_stop_reason(Some("content_filter")),
             Some("end_turn".to_string())
         );
+    }
+
+    fn assert_all_blocks_closed_before_message_stop(events: &[Value]) {
+        let mut open_indices: HashSet<u64> = HashSet::new();
+        for event in events {
+            match event_type(event) {
+                Some("content_block_start") => {
+                    let index = event.get("index").and_then(|v| v.as_u64()).unwrap();
+                    assert!(
+                        open_indices.insert(index),
+                        "content_block_start for already-open index {index}"
+                    );
+                }
+                Some("content_block_stop") => {
+                    let index = event.get("index").and_then(|v| v.as_u64()).unwrap();
+                    assert!(
+                        open_indices.remove(&index),
+                        "content_block_stop for index {index} that is not open"
+                    );
+                }
+                Some("message_stop") => {
+                    assert!(
+                        open_indices.is_empty(),
+                        "message_stop emitted with unclosed content blocks: {open_indices:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            open_indices.is_empty(),
+            "stream ended with unclosed content blocks: {open_indices:?}"
+        );
+    }
+
+    // SenseNova 在 reasoning 流式 chunk 中携带 finish_reason: ""（空字符串），
+    // 不应被当作生成结束处理（#5087）。
+    #[tokio::test]
+    async fn test_streaming_ignores_empty_finish_reason_in_reasoning_chunks() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"想\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"知道\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"你好！\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":5}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        // reasoning 不应被空 finish_reason 拆成多个 thinking block
+        let thinking_starts = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("thinking")
+            })
+            .count();
+        assert_eq!(thinking_starts, 1, "expected a single thinking block");
+
+        // 只允许一个 message_delta，且 stop_reason 来自真正的 finish_reason
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("end_turn")
+        );
+
+        assert_all_blocks_closed_before_message_stop(&events);
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    // 上游从未发送有效 finish_reason 时，[DONE] 兜底应关闭打开的 block
+    // 并合成 message_delta，保证输出结构完整。
+    #[tokio::test]
+    async fn test_streaming_closes_blocks_when_finish_reason_never_arrives() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"思考\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"id\":\"chatcmpl_sn\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"content\":\"答案\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("end_turn")
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    // 上游发送了 tool_calls 但从未给出有效 finish_reason 时，
+    // 合成的 message_delta 应使用 stop_reason: tool_use（而非 end_turn），
+    // 否则客户端不会执行工具。
+    #[tokio::test]
+    async fn test_streaming_synthesizes_tool_use_stop_reason_when_tools_present() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_t\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_0\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"BJ\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("tool_use"),
+            "synthesized stop_reason should be tool_use when tool blocks are present"
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
+    }
+
+    // 上游发送了 tool call（有 name/arguments 但无 id），且从未给出
+    // 有效 finish_reason。[DONE] 兜底需补发 late-tool-start（合成 id），
+    // 再关闭 block，确保客户端能拿到完整的 tool_use content block。
+    #[tokio::test]
+    async fn test_streaming_late_tool_start_flush_on_done_without_finish_reason() {
+        let input = concat!(
+            "data: {\"id\":\"chatcmpl_lt\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        // 必须有一个 tool_use content_block_start（含合成 id）
+        let tool_starts: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_start")
+                    && event
+                        .pointer("/content_block/type")
+                        .and_then(|v| v.as_str())
+                        == Some("tool_use")
+            })
+            .collect();
+        assert_eq!(
+            tool_starts.len(),
+            1,
+            "expected exactly one tool_use content_block_start"
+        );
+        assert_eq!(
+            tool_starts[0]
+                .pointer("/content_block/name")
+                .and_then(|v| v.as_str()),
+            Some("read_file")
+        );
+        // id 应已被合成（tool_call_0）因为上游没给 id
+        let tool_id = tool_starts[0]
+            .pointer("/content_block/id")
+            .and_then(|v| v.as_str())
+            .expect("tool block should have an id");
+        assert!(
+            !tool_id.is_empty(),
+            "synthesized tool call id should be non-empty"
+        );
+
+        // 参数应通过 input_json_delta 发出
+        let arg_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(|v| v.as_str())
+                        == Some("input_json_delta")
+            })
+            .collect();
+        assert!(
+            !arg_deltas.is_empty(),
+            "tool arguments should be emitted via input_json_delta"
+        );
+
+        assert_all_blocks_closed_before_message_stop(&events);
+
+        let message_deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_delta"))
+            .collect();
+        assert_eq!(message_deltas.len(), 1);
+        assert_eq!(
+            message_deltas[0]
+                .pointer("/delta/stop_reason")
+                .and_then(|v| v.as_str()),
+            Some("tool_use")
+        );
+
+        assert!(events
+            .iter()
+            .any(|event| event_type(event) == Some("message_stop")));
     }
 
     #[tokio::test]
