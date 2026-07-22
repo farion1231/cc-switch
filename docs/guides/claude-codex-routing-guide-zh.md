@@ -138,4 +138,4 @@ CC Switch 的做法是让 Claude Code 始终连本机路由，仍以 Anthropic M
 - [CC Switch 用户手册：代理服务](../user-manual/zh/4-proxy/4.1-service.md)
 - [CC Switch 用户手册：应用路由](../user-manual/zh/4-proxy/4.2-routing.md)
 - [CC Switch v3.17.0 发布说明](../release-notes/v3.17.0-zh.md)
-- 反方向攻略：[在 Codex 中用 Claude](./codex-claude-routing-guide-zh.md)
+- 反方向攻略：[在 Codex 中使用 Claude 模型](./codex-claude-routing-guide-zh.md)
