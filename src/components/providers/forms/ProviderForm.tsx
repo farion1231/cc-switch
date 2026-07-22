@@ -365,6 +365,7 @@ function ProviderFormFull({
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setUnifySessionHistory(initialData?.meta?.unifySessionHistory ?? false);
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -554,6 +555,9 @@ function ProviderFormFull({
     );
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
+  );
+  const [unifySessionHistory, setUnifySessionHistory] = useState<boolean>(
+    () => initialData?.meta?.unifySessionHistory ?? false,
   );
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
@@ -1599,6 +1603,7 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      unifySessionHistory: appId === "codex" ? unifySessionHistory : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
@@ -1658,6 +1663,9 @@ function ProviderFormFull({
 
     if (!isCodexOauthProvider && "codexFastMode" in nextMeta) {
       delete nextMeta.codexFastMode;
+    }
+    if (appId !== "codex" && "unifySessionHistory" in nextMeta) {
+      delete nextMeta.unifySessionHistory;
     }
 
     payload.meta = nextMeta;
@@ -2328,6 +2336,8 @@ function ProviderFormFull({
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
               onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+              unifySessionHistory={unifySessionHistory}
+              onUnifySessionHistoryChange={setUnifySessionHistory}
             />
           )}
 

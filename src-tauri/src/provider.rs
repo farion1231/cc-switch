@@ -518,6 +518,13 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 切换到此供应商时，将所有 Codex 会话历史的 model_provider 统一改写为当前供应商。
+    /// 启用后切换供应商重启 Codex 即可看到全部历史会话。
+    #[serde(
+        rename = "unifySessionHistory",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unify_session_history: Option<bool>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。
