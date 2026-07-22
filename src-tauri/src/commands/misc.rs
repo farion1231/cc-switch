@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 7] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 8] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "kimi",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -428,6 +428,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
+        "kimi" => "Kimi Code",
         _ => "Unknown",
     }
 }
@@ -450,6 +451,16 @@ const HERMES_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
+/// Kimi Code 官方安装器（install.sh / install.ps1）与 CLI 自升级 `kimi upgrade`。
+/// 与 Hermes 同款策略：优先跑 CLI 自升级，失败/缺失时回退官方 installer。
+const KIMI_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+const KIMI_UPDATE_UNIX: &str =
+    "kimi upgrade || bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
+#[cfg(target_os = "windows")]
+const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
 const HERMES_INSTALL_WINDOWS_SCRIPT: &str =
@@ -481,6 +492,20 @@ fn hermes_update_windows_command() -> String {
     format!("hermes update || {}", hermes_install_windows_command())
 }
 
+#[cfg(target_os = "windows")]
+fn kimi_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(KIMI_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn kimi_update_windows_command() -> String {
+    // 与 hermes 同理：PowerShell fallback 不需要 `call`（EncodedCommand 已是单一参数）。
+    format!("kimi upgrade || {}", kimi_install_windows_command())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum LifecycleCommandShell {
     Posix,
@@ -496,6 +521,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "grok" => Some("npm i -g @xai-official/grok@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
+        "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         _ => None,
     }
 }
@@ -505,6 +531,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
         "claude" | "codex" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
+        "kimi" => Some("upgrade"),
         _ => None,
     }
 }
@@ -546,6 +573,26 @@ fn tool_action_shell_command_for_shell(
                 #[cfg(target_os = "windows")]
                 (ToolLifecycleAction::Update, LifecycleCommandShell::WindowsBatch) => {
                     return Some(hermes_update_windows_command());
+                }
+                #[cfg(not(target_os = "windows"))]
+                (_, LifecycleCommandShell::WindowsBatch) => return None,
+            }
+            .to_string(),
+        );
+    }
+
+    if tool == "kimi" {
+        return Some(
+            match (action, shell) {
+                (ToolLifecycleAction::Install, LifecycleCommandShell::Posix) => KIMI_INSTALL_UNIX,
+                (ToolLifecycleAction::Update, LifecycleCommandShell::Posix) => KIMI_UPDATE_UNIX,
+                #[cfg(target_os = "windows")]
+                (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => {
+                    return Some(kimi_install_windows_command());
+                }
+                #[cfg(target_os = "windows")]
+                (ToolLifecycleAction::Update, LifecycleCommandShell::WindowsBatch) => {
+                    return Some(kimi_update_windows_command());
                 }
                 #[cfg(not(target_os = "windows"))]
                 (_, LifecycleCommandShell::WindowsBatch) => return None,
@@ -776,6 +823,7 @@ async fn get_single_tool_version_impl(
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         _ => None,
     };
 
@@ -1622,6 +1670,11 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         }
     }
 
+    // Kimi Code 官方安装器（install.sh / install.ps1）固定装到 ~/.kimi-code/bin
+    if tool == "kimi" && !home.as_os_str().is_empty() {
+        push_unique_path(&mut search_paths, home.join(".kimi-code").join("bin"));
+    }
+
     let path_env = std::env::var_os("PATH");
     extend_from_cli_path_env(&mut search_paths, path_env);
     search_paths
@@ -2270,6 +2323,10 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
     if tool == "hermes" {
         return anchored_official_update_command(tool, bin_path);
     }
+    if tool == "kimi" {
+        // Kimi Code 自带 `kimi upgrade`，CLI 自己知道安装环境（原生安装器或 npm）。
+        return anchored_official_update_command(tool, bin_path);
+    }
     if tool == "claude"
         && (real_lower.contains("/.local/share/claude/")
             || real_lower.contains("/claude/versions/"))
@@ -2351,6 +2408,10 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
 #[cfg(target_os = "windows")]
 fn anchored_command_from_paths(tool: &str, bin_path: &str, _real_target: &str) -> Option<String> {
     if tool == "hermes" {
+        return anchored_official_update_command(tool, bin_path);
+    }
+    if tool == "kimi" {
+        // Kimi Code 自带 `kimi upgrade`，CLI 自己知道安装环境（原生安装器或 npm）。
         return anchored_official_update_command(tool, bin_path);
     }
     let package_command = package_manager_anchored_command_from_paths(tool, bin_path);
@@ -2450,6 +2511,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "claude" => installer_with_npm_fallback(CLAUDE_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "kimi" => installer_with_npm_fallback(KIMI_INSTALL_UNIX, tool),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -2562,6 +2624,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),
+        "kimi" => crate::settings::get_kimi_override_dir(),
         _ => None,
     }?;
 

@@ -527,6 +527,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Kimi
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -601,6 +602,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Kimi
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -660,6 +662,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::Kimi
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1162,6 +1165,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::Kimi => {
+            return Err(AppError::localized(
+                "kimi.live.write_unsupported",
+                "Kimi Code 的供应商 live 写入将在后续版本支持",
+                "Live provider writes for Kimi Code are not supported yet",
+            ));
+        }
     }
     Ok(())
 }
@@ -1417,6 +1427,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::Kimi => Err(AppError::localized(
+            "kimi.live.read_unsupported",
+            "Kimi Code 的 live 配置读取将在后续版本支持",
+            "Reading Kimi Code live configuration is not supported yet",
+        )),
     }
 }
 
@@ -1518,6 +1533,13 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
             unreachable!("additive mode apps are handled by early return")
+        }
+        AppType::Kimi => {
+            return Err(AppError::localized(
+                "kimi.import_unsupported",
+                "Kimi Code 的供应商导入将在后续版本支持",
+                "Provider import for Kimi Code is not supported yet",
+            ));
         }
     };
 

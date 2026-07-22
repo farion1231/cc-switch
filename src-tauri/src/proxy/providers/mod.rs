@@ -194,6 +194,8 @@ impl ProviderType {
             }
             AppType::GrokBuild => ProviderType::Codex,
             AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => ProviderType::Codex,
+            // Kimi Code provider 为二期适配，暂按 OpenAI 兼容分类占位
+            AppType::Kimi => ProviderType::Codex,
         }
     }
 
@@ -246,6 +248,8 @@ pub fn get_adapter(app_type: &AppType) -> Box<dyn ProviderAdapter> {
         AppType::Gemini => Box::new(GeminiAdapter::new()),
         AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
+        // Kimi Code provider 为二期适配，暂复用 Codex 适配器占位
+        AppType::Kimi => Box::new(CodexAdapter::new()),
     }
 }
 

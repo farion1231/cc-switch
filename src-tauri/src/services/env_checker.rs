@@ -37,6 +37,12 @@ fn get_keywords_for_app(app: &str) -> Vec<&str> {
         "claude" => vec!["ANTHROPIC"],
         "codex" => vec!["OPENAI"],
         "gemini" => vec!["GEMINI", "GOOGLE_GEMINI"],
+        "kimi" => vec![
+            "KIMI_API_KEY",
+            "KIMI_BASE_URL",
+            "KIMI_MODEL",
+            "KIMI_CODE_HOME",
+        ],
         _ => vec![],
     }
 }
@@ -162,6 +168,15 @@ mod tests {
         assert_eq!(
             get_keywords_for_app("gemini"),
             vec!["GEMINI", "GOOGLE_GEMINI"]
+        );
+        assert_eq!(
+            get_keywords_for_app("kimi"),
+            vec![
+                "KIMI_API_KEY",
+                "KIMI_BASE_URL",
+                "KIMI_MODEL",
+                "KIMI_CODE_HOME"
+            ]
         );
         assert_eq!(get_keywords_for_app("unknown"), Vec::<&str>::new());
     }

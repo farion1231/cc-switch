@@ -46,6 +46,8 @@ pub struct VisibleApps {
     pub openclaw: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub kimi: bool,
 }
 
 impl Default for VisibleApps {
@@ -59,6 +61,7 @@ impl Default for VisibleApps {
             opencode: true,
             openclaw: true,
             hermes: false, // 默认不显示，需用户手动启用
+            kimi: false,   // 默认不显示，需用户手动启用
         }
     }
 }
@@ -75,6 +78,7 @@ impl VisibleApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
             AppType::Hermes => self.hermes,
+            AppType::Kimi => self.kimi,
         }
     }
 }
@@ -422,6 +426,8 @@ pub struct AppSettings {
     pub openclaw_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kimi_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -448,6 +454,9 @@ pub struct AppSettings {
     /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_hermes: Option<String>,
+    /// 当前 Kimi Code 供应商 ID（本地存储，保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_kimi: Option<String>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -533,6 +542,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
+            kimi_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -541,6 +551,7 @@ impl Default for AppSettings {
             current_provider_opencode: None,
             current_provider_openclaw: None,
             current_provider_hermes: None,
+            current_provider_kimi: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -609,6 +620,13 @@ impl AppSettings {
 
         self.hermes_config_dir = self
             .hermes_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.kimi_config_dir = self
+            .kimi_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -933,6 +951,14 @@ pub fn get_hermes_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_kimi_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .kimi_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
     settings_store()
         .read()
@@ -970,6 +996,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
         AppType::Hermes => settings.current_provider_hermes.clone(),
+        AppType::Kimi => settings.current_provider_kimi.clone(),
     }
 }
 
@@ -988,6 +1015,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
+        AppType::Kimi => settings.current_provider_kimi = id_owned.clone(),
     })
 }
 

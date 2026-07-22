@@ -18,6 +18,15 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         ));
     }
 
+    // Kimi Code 的 Prompts 能力为二期适配，暂不映射提示词文件。
+    if matches!(app, AppType::Kimi) {
+        return Err(AppError::localized(
+            "app.prompts_unsupported",
+            "Kimi Code 暂不支持 Prompts",
+            "Kimi Code does not support Prompts yet",
+        ));
+    }
+
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
         AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
@@ -26,7 +35,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::Kimi => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -34,7 +43,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::Kimi => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

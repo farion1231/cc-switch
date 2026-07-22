@@ -882,7 +882,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimi": "Kimi Code"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -1735,7 +1736,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "kimi": "Kimi Code"
       }
     },
     "userLevelPath": "ユーザーレベルの MCP パス",

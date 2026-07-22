@@ -2999,6 +2999,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Kimi => Ok(String::new()),   // Kimi Code 暂不支持通用配置片段
         }
     }
 
@@ -3016,6 +3017,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Kimi => Ok(String::new()),   // Kimi Code 暂不支持通用配置片段
         }
     }
 
@@ -3535,6 +3537,16 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Kimi => {
+                // Kimi Code provider 为二期适配：先仅校验是 JSON 对象
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.kimi.settings.not_object",
+                        "Kimi Code 配置必须是 JSON 对象",
+                        "Kimi Code configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -3763,6 +3775,11 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
+            AppType::Kimi => Err(AppError::localized(
+                "provider.kimi.credentials_unsupported",
+                "Kimi Code 的供应商凭据提取将在后续版本支持",
+                "Credential extraction for Kimi Code is not supported yet",
+            )),
         }
     }
 }

@@ -17,6 +17,8 @@ mod gemini_mcp;
 mod grok_config;
 pub mod hermes_config;
 mod init_status;
+pub mod kimi_config;
+mod kimi_mcp;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -49,10 +51,11 @@ pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkIm
 pub use error::AppError;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
-    remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
-    sync_single_server_to_gemini, sync_single_server_to_grokbuild,
+    import_from_kimi, remove_server_from_claude, remove_server_from_codex,
+    remove_server_from_gemini, remove_server_from_grokbuild, remove_server_from_kimi,
+    sync_enabled_to_claude, sync_enabled_to_codex, sync_enabled_to_gemini, sync_enabled_to_kimi,
+    sync_single_server_to_claude, sync_single_server_to_codex, sync_single_server_to_gemini,
+    sync_single_server_to_grokbuild, sync_single_server_to_kimi,
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
@@ -807,6 +810,14 @@ pub fn run() {
                     }
                     Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
                     Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
+                }
+
+                match crate::services::mcp::McpService::import_from_kimi(&app_state) {
+                    Ok(count) if count > 0 => {
+                        log::info!("✓ Imported {count} MCP server(s) from Kimi Code");
+                    }
+                    Ok(_) => log::debug!("○ No Kimi Code MCP servers found to import"),
+                    Err(e) => log::warn!("✗ Failed to import Kimi Code MCP: {e}"),
                 }
             }
 

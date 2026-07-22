@@ -138,6 +138,9 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Kimi => {
+                // Kimi Code provider 管理为二期适配，暂不做 live 同步
+            }
         }
 
         Ok(())

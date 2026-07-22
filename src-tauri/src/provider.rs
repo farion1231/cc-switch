@@ -174,6 +174,8 @@ impl Provider {
                 str_at(settings.get("base_url")),
                 str_at(settings.get("api_key")),
             ),
+            // Kimi Code provider 配置为二期适配，暂无可解析的凭据结构。
+            AppType::Kimi => (String::new(), String::new()),
             // OpenClaw (openclaw.json) flattens credentials at the top level, camelCase.
             AppType::OpenClaw => (
                 str_at(settings.get("baseUrl")),

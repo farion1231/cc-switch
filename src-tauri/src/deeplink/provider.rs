@@ -149,6 +149,13 @@ pub(crate) fn build_provider_from_request(
         AppType::OpenCode => build_opencode_settings(request),
         AppType::OpenClaw => build_additive_app_settings(request),
         AppType::Hermes => build_hermes_settings(request),
+        AppType::Kimi => {
+            return Err(AppError::localized(
+                "provider.kimi_unsupported",
+                "Kimi Code 的供应商管理将在后续版本支持，暂无法通过链接导入",
+                "Provider management for Kimi Code is not supported yet",
+            ));
+        }
     };
 
     // Build usage script configuration if provided

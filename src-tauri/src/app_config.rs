@@ -19,6 +19,8 @@ pub struct McpApps {
     pub opencode: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub kimi: bool,
 }
 
 impl McpApps {
@@ -32,6 +34,7 @@ impl McpApps {
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => false, // OpenClaw doesn't support MCP
             AppType::Hermes => self.hermes,
+            AppType::Kimi => self.kimi,
             AppType::ClaudeDesktop => false,
         }
     }
@@ -46,6 +49,7 @@ impl McpApps {
             AppType::OpenCode => self.opencode = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support MCP, ignore
             AppType::Hermes => self.hermes = enabled,
+            AppType::Kimi => self.kimi = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P provider config doesn't support MCP here
         }
     }
@@ -71,6 +75,9 @@ impl McpApps {
         if self.hermes {
             apps.push(AppType::Hermes);
         }
+        if self.kimi {
+            apps.push(AppType::Kimi);
+        }
         apps
     }
 
@@ -82,6 +89,7 @@ impl McpApps {
             && !self.grokbuild
             && !self.opencode
             && !self.hermes
+            && !self.kimi
     }
 }
 
@@ -100,6 +108,8 @@ pub struct SkillApps {
     pub opencode: bool,
     #[serde(default)]
     pub hermes: bool,
+    #[serde(default)]
+    pub kimi: bool,
 }
 
 impl SkillApps {
@@ -112,6 +122,7 @@ impl SkillApps {
             AppType::GrokBuild => self.grokbuild,
             AppType::OpenCode => self.opencode,
             AppType::Hermes => self.hermes,
+            AppType::Kimi => self.kimi,
             AppType::OpenClaw => false, // OpenClaw doesn't support Skills
             AppType::ClaudeDesktop => false,
         }
@@ -126,6 +137,7 @@ impl SkillApps {
             AppType::GrokBuild => self.grokbuild = enabled,
             AppType::OpenCode => self.opencode = enabled,
             AppType::Hermes => self.hermes = enabled,
+            AppType::Kimi => self.kimi = enabled,
             AppType::OpenClaw => {} // OpenClaw doesn't support Skills, ignore
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
         }
@@ -152,6 +164,9 @@ impl SkillApps {
         if self.hermes {
             apps.push(AppType::Hermes);
         }
+        if self.kimi {
+            apps.push(AppType::Kimi);
+        }
         apps
     }
 
@@ -163,6 +178,7 @@ impl SkillApps {
             && !self.grokbuild
             && !self.opencode
             && !self.hermes
+            && !self.kimi
     }
 
     /// 仅启用指定应用（其他应用设为禁用）
@@ -306,6 +322,9 @@ pub struct McpRoot {
     /// Hermes MCP 配置（实际使用 config.yaml）
     #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
     pub hermes: McpConfig,
+    /// Kimi Code MCP 配置（实际使用 ~/.kimi-code/mcp.json）
+    #[serde(default, skip_serializing_if = "McpConfig::is_empty")]
+    pub kimi: McpConfig,
 }
 
 impl Default for McpRoot {
@@ -322,6 +341,7 @@ impl Default for McpRoot {
             opencode: McpConfig::default(),
             openclaw: McpConfig::default(),
             hermes: McpConfig::default(),
+            kimi: McpConfig::default(),
         }
     }
 }
@@ -357,6 +377,8 @@ pub struct PromptRoot {
     pub openclaw: PromptConfig,
     #[serde(default)]
     pub hermes: PromptConfig,
+    #[serde(default)]
+    pub kimi: PromptConfig,
 }
 
 use crate::config::{copy_file, get_app_config_dir, get_app_config_path, write_json_file};
@@ -381,6 +403,7 @@ pub enum AppType {
     OpenCode,
     OpenClaw,
     Hermes,
+    Kimi,
 }
 
 impl AppType {
@@ -394,6 +417,7 @@ impl AppType {
             AppType::OpenCode => "opencode",
             AppType::OpenClaw => "openclaw",
             AppType::Hermes => "hermes",
+            AppType::Kimi => "kimi",
         }
     }
 
@@ -419,6 +443,7 @@ impl AppType {
             AppType::OpenCode,
             AppType::OpenClaw,
             AppType::Hermes,
+            AppType::Kimi,
         ]
         .into_iter()
     }
@@ -438,10 +463,11 @@ impl FromStr for AppType {
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
+            "kimi" | "kimi-code" | "kimi_code" | "kimicode" => Ok(AppType::Kimi),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, kimi。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, kimi."),
             )),
         }
     }
@@ -481,6 +507,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode.as_ref(),
             AppType::OpenClaw => self.openclaw.as_ref(),
             AppType::Hermes => self.hermes.as_ref(),
+            AppType::Kimi => None, // Kimi Code 暂不支持通用配置片段
         }
     }
 
@@ -495,6 +522,7 @@ impl CommonConfigSnippets {
             AppType::OpenCode => self.opencode = snippet,
             AppType::OpenClaw => self.openclaw = snippet,
             AppType::Hermes => self.hermes = snippet,
+            AppType::Kimi => {} // Kimi Code 暂不支持通用配置片段
         }
     }
 }
@@ -539,6 +567,7 @@ impl Default for MultiAppConfig {
         apps.insert("opencode".to_string(), ProviderManager::default());
         apps.insert("openclaw".to_string(), ProviderManager::default());
         apps.insert("hermes".to_string(), ProviderManager::default());
+        apps.insert("kimi".to_string(), ProviderManager::default());
 
         Self {
             version: 2,
@@ -702,6 +731,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &self.mcp.opencode,
             AppType::OpenClaw => &self.mcp.openclaw,
             AppType::Hermes => &self.mcp.hermes,
+            AppType::Kimi => &self.mcp.kimi,
         }
     }
 
@@ -716,6 +746,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut self.mcp.opencode,
             AppType::OpenClaw => &mut self.mcp.openclaw,
             AppType::Hermes => &mut self.mcp.hermes,
+            AppType::Kimi => &mut self.mcp.kimi,
         }
     }
 
@@ -757,6 +788,7 @@ impl MultiAppConfig {
             || !self.prompts.opencode.prompts.is_empty()
             || !self.prompts.openclaw.prompts.is_empty()
             || !self.prompts.hermes.prompts.is_empty()
+            || !self.prompts.kimi.prompts.is_empty()
         {
             return Ok(false);
         }
@@ -846,6 +878,7 @@ impl MultiAppConfig {
             AppType::OpenCode => &mut config.prompts.opencode.prompts,
             AppType::OpenClaw => &mut config.prompts.openclaw.prompts,
             AppType::Hermes => &mut config.prompts.hermes.prompts,
+            AppType::Kimi => &mut config.prompts.kimi.prompts,
         };
 
         prompts.insert(id, prompt);
@@ -889,6 +922,7 @@ impl MultiAppConfig {
                 AppType::OpenCode => &self.mcp.opencode.servers,
                 AppType::OpenClaw => continue, // OpenClaw MCP is still in development, skip
                 AppType::Hermes => continue,   // Hermes didn't exist in v3.6.x, skip
+                AppType::Kimi => continue,     // Kimi Code didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {
