@@ -43,5 +43,6 @@ pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+    RequestLogDetail, TrendGranularity, TrendGranularityRequest, TrendPrecision, TrendUnit,
+    UsageSummary, UsageSummaryByApp, UsageTrendPoint, UsageTrendResponse,
 };

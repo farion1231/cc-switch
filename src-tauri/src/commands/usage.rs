@@ -52,13 +52,15 @@ pub fn get_usage_trends(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
-) -> Result<Vec<DailyStats>, AppError> {
-    state.db.get_daily_trends(
+    granularity: Option<TrendGranularityRequest>,
+) -> Result<UsageTrendResponse, AppError> {
+    state.db.get_usage_trends(
         start_date,
         end_date,
         app_type.as_deref(),
         provider_name.as_deref(),
         model.as_deref(),
+        granularity,
     )
 }
 
