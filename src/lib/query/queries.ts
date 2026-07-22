@@ -321,5 +321,6 @@ export const useSessionMessagesQuery = (
     queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
     enabled: Boolean(providerId && sourcePath),
     staleTime: 30 * 1000,
+    gcTime: 0,
   });
 };

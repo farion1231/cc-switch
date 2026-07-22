@@ -7,6 +7,17 @@ use serde_json::Value;
 
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
+pub const MAX_MESSAGE_CONTENT_CHARS: usize = 10_000;
+
+pub fn truncate_message_content(mut content: String) -> String {
+    let Some((truncate_at, _)) = content.char_indices().nth(MAX_MESSAGE_CONTENT_CHARS) else {
+        return content;
+    };
+
+    content.truncate(truncate_at);
+    content.push_str("\n… [truncated]");
+    content
+}
 
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
@@ -172,6 +183,44 @@ mod tests {
         assert_eq!(
             parse_timestamp_to_ms(&json!("1970-01-01T00:00:01Z")),
             Some(1_000)
+        );
+    }
+
+    #[test]
+    fn truncate_message_content_keeps_short_content() {
+        let content = "short content".to_string();
+
+        assert_eq!(truncate_message_content(content.clone()), content);
+    }
+
+    #[test]
+    fn truncate_message_content_caps_oversized_ascii_content() {
+        let content = "a".repeat(MAX_MESSAGE_CONTENT_CHARS + 1);
+        let truncated = truncate_message_content(content);
+
+        assert_eq!(
+            truncated,
+            format!("{}\n… [truncated]", "a".repeat(MAX_MESSAGE_CONTENT_CHARS))
+        );
+        assert_eq!(
+            truncated.chars().count(),
+            MAX_MESSAGE_CONTENT_CHARS + "\n… [truncated]".chars().count()
+        );
+    }
+
+    #[test]
+    fn truncate_message_content_handles_multibyte_boundary() {
+        let content = format!("{}🙂tail", "你".repeat(MAX_MESSAGE_CONTENT_CHARS - 1));
+        let truncated = truncate_message_content(content);
+        let expected = format!(
+            "{}🙂\n… [truncated]",
+            "你".repeat(MAX_MESSAGE_CONTENT_CHARS - 1)
+        );
+
+        assert_eq!(truncated, expected);
+        assert_eq!(
+            truncated.chars().count(),
+            MAX_MESSAGE_CONTENT_CHARS + "\n… [truncated]".chars().count()
         );
     }
 }
