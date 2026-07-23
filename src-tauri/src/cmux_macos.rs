@@ -47,10 +47,7 @@ fn spawn_cmux_main_with_allow_all() -> bool {
 #[cfg(target_os = "macos")]
 pub fn restart_cmux_with_allow_all() -> Result<(), String> {
     let _ = Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "cmux" to if running then quit"#,
-        ])
+        .args(["-e", r#"tell application "cmux" to if running then quit"#])
         .status();
 
     thread::sleep(Duration::from_millis(1600));

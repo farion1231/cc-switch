@@ -2641,8 +2641,7 @@ fn launch_macos_cmux(script_file: &std::path::Path, cwd: Option<&Path>) -> Resul
     }
     cmd_text.push_str(&format!("bash '{}'\n", script_file.display()));
 
-    crate::cmux_macos::run_in_cmux(&cmd_text)
-        .map_err(|e| format!("启动 cmux 失败: {e}"))
+    crate::cmux_macos::run_in_cmux(&cmd_text).map_err(|e| format!("启动 cmux 失败: {e}"))
 }
 
 /// 打开指定提供商的终端
@@ -3094,74 +3093,6 @@ fn launch_macos_open_app(
     }
 
     Ok(())
-}
-
-<<<<<<< HEAD
-#[cfg(target_os = "macos")]
-fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-    use std::process::Command;
-
-    let mut cmd = Command::new("open");
-    cmd.arg("-a").arg("Warp");
-
-    // Warp URI scheme cannot work well with script_file, because:
-    //
-    // 1. script_file's name ends up with .sh, so Warp would open the file rather than execute it
-    // 2. script_file has no execution permission, so we need to add one more indirection
-    let mut second_script_file = tempfile::Builder::new()
-        .disable_cleanup(true)
-        .permissions(std::fs::Permissions::from_mode(0o755))
-        .tempfile()
-        .map_err(|e| format!("Failed to create temporary script file: {e}"))?;
-
-    writeln!(
-        &mut second_script_file,
-        r#"#!/usr/bin/env sh
-
-        rm -- "$0"
-
-        exec sh {quoted_script}
-        "#,
-        quoted_script = shell_single_quote(&script_file.to_string_lossy()),
-    )
-    .map_err(|e| format!("Failed to write to temporary script file for Warp: {e}"))?;
-
-    let mut warp_url = url::Url::parse("warp://action/new_tab").unwrap();
-    warp_url
-        .query_pairs_mut()
-        .append_pair("path", &second_script_file.path().to_string_lossy());
-    let warp_url = warp_url.to_string();
-    cmd.arg(warp_url);
-
-    let output = cmd.output().map_err(|e| format!("启动 Warp 失败: {e}"))?;
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
-        return Err(format!(
-            "Warp 启动失败 (exit code: {:?}): {}",
-            output.status.code(),
-            stderr
-        ));
-    }
-
-    Ok(())
-=======
-/// macOS: cmux (terminal built on Ghostty with workspace management)
-#[cfg(target_os = "macos")]
-fn launch_macos_cmux(script_file: &std::path::Path, cwd: Option<&Path>) -> Result<(), String> {
-    let mut cmd_text = String::new();
-    if let Some(dir) = cwd {
-        cmd_text.push_str(&format!(
-            "cd {} && ",
-            shell_single_quote(&dir.to_string_lossy())
-        ));
-    }
-    cmd_text.push_str(&format!("bash '{}'\n", script_file.display()));
-
-    crate::cmux_macos::run_in_cmux(&cmd_text)
-        .map_err(|e| format!("启动 cmux 失败: {e}"))
->>>>>>> 659088fd (feat(macos): add cmux as preferred terminal)
 }
 
 /// Linux: 根据用户首选终端启动
