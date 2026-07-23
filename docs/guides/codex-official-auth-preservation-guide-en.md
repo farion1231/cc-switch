@@ -170,6 +170,24 @@ If you switch to DeepSeek, Codex can still display the official account, while m
 
 Codex reads the model catalog at startup. Even if CC Switch has generated a new model catalog, a running Codex process may not hot-load it, so restart Codex after editing model mappings.
 
+### Old threads may still call official `api.openai.com` (while new chats work)
+
+After switching to a third-party provider:
+
+- **New Codex App chats** usually follow the third-party `base_url` in `config.toml` and work.
+- **Older threads created under ChatGPT account / official-model era** may still send sampling requests to `https://api.openai.com/v1/responses` when continued.
+- If `auth.json` / bearer currently holds a third-party API key, official OpenAI returns `401 invalid_api_key`. The same key can work fine in new App chats and CLI.
+
+This is often not “the key is broken”. It means the **old thread’s runtime auth/endpoint path can stay pinned to the official channel**, even though CC Switch already wrote `model_provider = "custom"` as the default.
+
+Workarounds:
+
+1. Prefer **New Chat** while on a third-party provider.
+2. To keep old context: open a new third-party chat and paste a summary, or read the old thread via tools; do not keep retrying inside the old account-era thread.
+3. If you must continue that exact old thread: switch back to `OpenAI Official`, restore a valid ChatGPT login, then continue.
+
+Tracked in: https://github.com/farion1231/cc-switch/issues/5672
+
 ### Turning the switch off returns to the old behavior
 
 If `Keep official login when switching third-party providers` is turned off, third-party provider switching uses the compatibility behavior from older versions and may write `auth.json` again. If your goal is to keep official remote control and official plugins long term, keep this switch enabled.
@@ -195,6 +213,10 @@ If the provider uses Chat Completions, confirm that the provider form has `Needs
 **Can I switch back to OpenAI Official while local routing is enabled?**
 
 Not recommended. CC Switch tries to prevent switching to official providers while local routing takeover is active, because accessing official APIs through a proxy may create account risk. Use official login only to preserve `auth.json`, and route model traffic to third-party providers.
+
+**Why do new chats work but continuing an old thread returns 401 (`api.openai.com` + invalid_api_key)?**
+
+The old thread is often still using the official Responses host while the active key is a third-party key. Prefer New Chat. See the side-effect section above and issue #5672.
 
 **Why is this flow so complex? Can it be simplified?**
 

@@ -170,6 +170,24 @@ CC Switch 本地路由
 
 Codex 的模型目录是启动时读取的。即使 CC Switch 已经生成了新的模型目录，正在运行的 Codex 也不一定会热加载，所以修改模型映射后请重启 Codex。
 
+### 旧会话可能仍打官方 `api.openai.com`（新会话正常）
+
+切换到第三方供应商后：
+
+- **新开的 Codex App 会话**通常会走 `config.toml` 里的第三方 `base_url`，可以正常对话。
+- **在 ChatGPT 账号 / 官方模型时期创建的旧会话**，续聊时仍可能把请求发到 `https://api.openai.com/v1/responses`。
+- 此时若 `auth.json` / bearer 里是第三方 API Key，官方会返回 `401 invalid_api_key`。同一把 key 在新会话和 CLI 上可能完全正常。
+
+这不是“key 一定坏了”，而是 **旧线程的运行时鉴权/端点可能仍钉在官方通道**，与当前 CC Switch 写入的默认 `model_provider=custom` 不一致。
+
+临时处理：
+
+1. 第三方模式下优先 **新开对话** 继续工作。
+2. 需要旧上下文时：新会话粘贴摘要，或用工具读取旧 thread；不要在旧账号会话窗口里反复重试。
+3. 若必须续聊该旧会话：切回 `OpenAI Official`，恢复有效的 ChatGPT 登录后再继续。
+
+跟踪与细节见 issue：https://github.com/farion1231/cc-switch/issues/5672
+
 ### 关闭开关会回到旧行为
 
 如果关闭 `切换第三方时保留官方登录`，第三方供应商切换会沿用兼容旧版本的行为，可能重新写入 `auth.json`。如果你的目标是长期保留官方远程操作和官方插件，建议保持该开关开启。
@@ -195,6 +213,10 @@ Codex 的模型目录是启动时读取的。即使 CC Switch 已经生成了新
 **可以在本地路由模式下切回 OpenAI Official 吗？**
 
 不建议。CC Switch 会尽量阻止在本地路由接管模式下切到官方供应商，因为用代理访问官方 API 可能带来账号风险。建议官方登录只用于保留 `auth.json`，模型流量则切到第三方供应商。
+
+**为什么新会话正常，旧会话续聊却 401（`api.openai.com` + invalid_api_key）？**
+
+这通常是旧会话仍走官方 Responses 通道，而当前 key 是第三方 key。请优先新开对话；详见上文「旧会话可能仍打官方 api.openai.com」和 issue #5672。
 
 **为什么流程做的这么复杂？可以简化吗？**
 
