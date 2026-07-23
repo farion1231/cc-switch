@@ -300,6 +300,86 @@ describe("useProviderActions", () => {
     expect(switchProviderMutateAsync).toHaveBeenCalledTimes(3);
   });
 
+  it("warns for managed OAuth until the current Code app is taken over", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        providerType: "codex_oauth",
+        apiFormat: "openai_responses",
+      },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("codex", true, false),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining("托管 OAuth"),
+    );
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("does not warn for managed OAuth after the current Code app is taken over", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: {
+        providerType: "codex_oauth",
+        apiFormat: "openai_responses",
+      },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("codex", true, true),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).not.toHaveBeenCalled();
+    expect(switchProviderMutateAsync).toHaveBeenCalledWith(provider.id);
+  });
+
+  it("uses proxy process readiness for Claude Desktop routing", async () => {
+    switchProviderMutateAsync.mockResolvedValue(undefined);
+    const { wrapper } = createWrapper();
+    const provider = createProvider({
+      category: "custom",
+      meta: { claudeDesktopMode: "proxy" },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ isProxyRunning }) =>
+        useProviderActions("claude-desktop", isProxyRunning, false),
+      { initialProps: { isProxyRunning: true }, wrapper },
+    );
+
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+    expect(toastWarningMock).not.toHaveBeenCalled();
+
+    rerender({ isProxyRunning: false });
+    await act(async () => {
+      await result.current.switchProvider(provider);
+    });
+
+    expect(toastWarningMock).toHaveBeenCalledTimes(1);
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Claude Desktop 本地路由模式"),
+    );
+  });
+
   it("allows the built-in Codex official provider during takeover", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce(undefined);
     const { wrapper } = createWrapper();

@@ -206,6 +206,19 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
     ) && codex_provider_uses_anthropic(provider)
 }
 
+/// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
+/// tool declarations flattened before forwarding.
+///
+/// Codex 0.142+ emits ChatGPT-backend-private `{"type":"namespace",…}` tool
+/// shapes that strict third-party Responses gateways reject with
+/// `422 unknown variant "namespace"`. Only providers whose upstream is such a
+/// strict native gateway need the flatten+restore pass; the Chat/Anthropic
+/// transform paths already unwrap namespaces on their own. Currently that is the
+/// managed xAI (Grok) OAuth provider — the first strict gateway cc-switch hit.
+pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
+    provider.is_xai_oauth()
+}
+
 /// The single built-in official Codex provider.  Unlike managed Codex OAuth
 /// providers used by Claude, this route receives authentication from the
 /// calling Codex client (`requires_openai_auth = true`).
@@ -226,6 +239,11 @@ pub fn resolve_codex_catalog_tool_profile(
 ) -> crate::codex_config::CodexCatalogToolProfile {
     use crate::codex_config::CodexCatalogToolProfile;
     if is_codex_official_provider(provider) {
+        return CodexCatalogToolProfile::NativeResponses;
+    }
+    // xAI OAuth pins the native Responses profile regardless of editable
+    // api_format, mirroring the Claude-side managed-provider invariant.
+    if provider.is_xai_oauth() {
         return CodexCatalogToolProfile::NativeResponses;
     }
     if codex_provider_uses_anthropic(provider) {
@@ -656,6 +674,12 @@ impl ProviderAdapter for CodexAdapter {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
         }
 
+        // xAI OAuth: ignore editable provider base URLs and always use the xAI
+        // API origin associated with the managed token.
+        if provider.is_xai_oauth() {
+            return Ok(super::XAI_API_BASE_URL.to_string());
+        }
+
         // 1. 尝试直接获取 base_url 字段
         if let Some(url) = provider
             .settings_config
@@ -706,6 +730,15 @@ impl ProviderAdapter for CodexAdapter {
     }
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
+        // xAI OAuth (Grok subscription): placeholder credentials only; the real
+        // access_token is resolved per-request by the forwarder via XaiOAuthManager.
+        if provider.is_xai_oauth() {
+            return Some(AuthInfo::new(
+                "xai_oauth_placeholder".to_string(),
+                AuthStrategy::XaiOAuth,
+            ));
+        }
+
         // Anthropic upstream: the auth field is chosen by the user in the UI (meta.apiKeyField).
         //   ANTHROPIC_API_KEY    → x-api-key (AuthStrategy::Anthropic)
         //   ANTHROPIC_AUTH_TOKEN → Authorization: Bearer (default, AuthStrategy::Bearer)
@@ -1508,5 +1541,71 @@ wire_api = "chat"
         assert_eq!(config.thinking_param.as_deref(), Some("enable_thinking"));
         assert_eq!(config.supports_effort, Some(false));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn xai_oauth_invariants_ignore_editable_base_url_and_auth() {
+        let adapter = CodexAdapter::new();
+        let mut provider = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "user-edited" },
+            "config": r#"
+model = "grok-4.5"
+
+[model_providers.custom]
+name = "xai"
+base_url = "https://attacker.example/v1"
+wire_api = "responses"
+"#
+        }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+
+        // 可编辑字段（base_url / auth key）不得影响托管路由：
+        // 端点硬定向 api.x.ai，凭据是占位符（真 token 由 forwarder 注入）。
+        assert_eq!(
+            adapter.extract_base_url(&provider).unwrap(),
+            super::super::XAI_API_BASE_URL
+        );
+        let auth = adapter
+            .extract_auth(&provider)
+            .expect("managed auth placeholder");
+        assert_eq!(auth.api_key, "xai_oauth_placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::XaiOAuth);
+    }
+
+    #[test]
+    fn xai_oauth_pins_native_responses_catalog_profile() {
+        let mut provider = create_provider(json!({ "auth": {}, "config": "" }));
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            // 即使 api_format 被改成 anthropic，catalog 画像也必须钉死原生 Responses
+            api_format: Some("anthropic".to_string()),
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            resolve_codex_catalog_tool_profile(&provider),
+            crate::codex_config::CodexCatalogToolProfile::NativeResponses
+        ));
+    }
+
+    #[test]
+    fn namespace_flatten_gate_only_fires_for_xai_oauth() {
+        // xAI OAuth: strict native gateway → needs namespace flattening.
+        let mut xai = create_provider(json!({ "auth": {}, "config": "" }));
+        xai.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("xai_oauth".to_string()),
+            ..Default::default()
+        });
+        assert!(provider_needs_responses_namespace_flatten(&xai));
+
+        // A plain third-party API-key Codex provider must not be flattened.
+        let plain = create_provider(json!({
+            "auth": { "OPENAI_API_KEY": "sk-x" },
+            "config": "base_url = \"https://api.x.ai/v1\"\nwire_api = \"responses\""
+        }));
+        assert!(!provider_needs_responses_namespace_flatten(&plain));
     }
 }
