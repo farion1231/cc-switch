@@ -359,24 +359,44 @@ fn server_tool_result_text(block: &Value) -> Option<String> {
     match content {
         Value::Array(items) => {
             for item in items {
+                let before = parts.len();
                 if let Some(text) = item.get("text").and_then(Value::as_str) {
                     parts.push(text.to_string());
                     continue;
                 }
                 let title = item.get("title").and_then(Value::as_str);
                 let url = item.get("url").and_then(Value::as_str);
-                match (title, url) {
-                    (Some(t), Some(u)) => parts.push(format!("{t} ({u})")),
-                    (Some(t), None) => parts.push(t.to_string()),
-                    (None, Some(u)) => parts.push(u.to_string()),
-                    (None, None) => {}
+                // title/url 摘要只适用于 web_search_result；其它带 url 的对象
+                // （如 web_fetch_result）正文在嵌套字段里，走下面的整体序列化
+                if item.get("type").and_then(Value::as_str) == Some("web_search_result") {
+                    match (title, url) {
+                        (Some(t), Some(u)) => parts.push(format!("{t} ({u})")),
+                        (Some(t), None) => parts.push(t.to_string()),
+                        (None, Some(u)) => parts.push(u.to_string()),
+                        (None, None) => {}
+                    }
                 }
                 if let Some(code) = item.get("error_code").and_then(Value::as_str) {
                     parts.push(format!("[error: {code}]"));
                 }
+                // 未识别的对象形结果项（如 code_execution_output、嵌套的
+                // web_fetch_result）：整体序列化保留，避免工具输出被静默丢弃
+                if parts.len() == before && item.is_object() {
+                    parts.push(item.to_string());
+                }
             }
         }
         Value::String(text) => parts.push(text.clone()),
+        // 对象形 content：错误形态（如 web_search_tool_result_error）提取
+        // error_code，其余（如 code_execution_tool_result 的对象 content）
+        // 序列化保留
+        Value::Object(_) => {
+            if let Some(code) = content.get("error_code").and_then(Value::as_str) {
+                parts.push(format!("[error: {code}]"));
+            } else {
+                parts.push(content.to_string());
+            }
+        }
         _ => {}
     }
     if parts.is_empty() {
@@ -2968,6 +2988,70 @@ mod tests {
         let content = body["messages"][0]["content"].as_array().unwrap();
         assert_eq!(content.len(), 1);
         assert_eq!(content[0]["type"], "text");
+    }
+
+    #[test]
+    fn test_object_shaped_server_tool_results_are_preserved() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "code_execution_tool_result",
+                            "tool_use_id": "srvtoolu_2",
+                            "content": { "type": "code_execution_output", "stdout": "42" }
+                        },
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srvtoolu_3",
+                            "content": { "type": "web_search_tool_result_error", "error_code": "max_uses_exceeded" }
+                        },
+                        {
+                            "type": "web_fetch_tool_result",
+                            "tool_use_id": "srvtoolu_4",
+                            "content": [
+                                { "type": "web_fetch_result", "url": "https://example.com", "content": { "type": "document", "title": "Doc" } }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_server_tool_blocks_for_non_official(
+            &mut body,
+            &kimi_for_coding_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        // 对象形 content：序列化保留，工具输出不丢失
+        assert_eq!(content[0]["type"], "text");
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("code_execution_output")
+                && content[0]["text"].as_str().unwrap().contains("42"),
+            "object-shaped result should be serialized, got {:?}",
+            content[0]["text"]
+        );
+        // 错误形态：提取 error_code
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "[error: max_uses_exceeded]");
+        // 数组内未识别的对象项：序列化保留而不是丢弃
+        assert_eq!(content[2]["type"], "text");
+        assert!(
+            content[2]["text"]
+                .as_str()
+                .unwrap()
+                .contains("web_fetch_result"),
+            "unrecognized object item should be serialized, got {:?}",
+            content[2]["text"]
+        );
     }
 
     #[test]
