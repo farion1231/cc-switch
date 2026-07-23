@@ -27,7 +27,10 @@ use super::{
         },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::create_anthropic_sse_stream_from_responses,
+        streaming_responses::{
+            create_anthropic_sse_stream_from_responses,
+            create_anthropic_sse_stream_from_responses_with_web_search_name,
+        },
         transform, transform_codex_anthropic, transform_codex_chat,
         transform_codex_responses_namespace, transform_gemini, transform_responses,
     },
@@ -402,6 +405,8 @@ async fn handle_claude_transform(
     };
     let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
     let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
+    let hosted_web_search_name =
+        transform_responses::anthropic_web_search_tool_name(original_body).map(ToString::to_string);
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
@@ -409,7 +414,16 @@ async fn handle_claude_transform(
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
-            Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+            if let Some(name) = hosted_web_search_name.clone() {
+                Box::new(Box::pin(
+                    create_anthropic_sse_stream_from_responses_with_web_search_name(
+                        stream,
+                        Some(name),
+                    ),
+                ))
+            } else {
+                Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+            }
         } else if api_format == "gemini_native" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
                 stream,
@@ -578,7 +592,14 @@ async fn handle_claude_transform(
 
     // 根据 api_format 选择非流式转换器
     let transform_result = if api_format == "openai_responses" {
-        transform_responses::responses_to_anthropic(upstream_response)
+        if let Some(name) = hosted_web_search_name.as_deref() {
+            transform_responses::responses_to_anthropic_with_web_search_name(
+                upstream_response,
+                Some(name),
+            )
+        } else {
+            transform_responses::responses_to_anthropic(upstream_response)
+        }
     } else if api_format == "gemini_native" {
         transform_gemini::gemini_to_anthropic_with_shadow_and_hints(
             upstream_response,
