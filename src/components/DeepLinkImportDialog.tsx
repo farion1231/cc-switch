@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { DeepLinkImportRequest, deeplinkApi } from "@/lib/api/deeplink";
+import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
 import {
   Dialog,
   DialogContent,
@@ -220,62 +221,10 @@ export function DeepLinkImportDialog() {
       ? "url"
       : null;
 
-  // Parse config file content for display
-  interface ParsedConfig {
-    type: "claude" | "codex" | "gemini";
-    env?: Record<string, string>;
-    auth?: Record<string, string>;
-    tomlConfig?: string;
-    raw: Record<string, unknown>;
-  }
-
-  // Helper to decode base64 with UTF-8 support
-  const b64ToUtf8 = (str: string): string => {
-    try {
-      const binString = atob(str);
-      const bytes = Uint8Array.from(binString, (m) => m.codePointAt(0) || 0);
-      return new TextDecoder().decode(bytes);
-    } catch (e) {
-      console.error("Failed to decode base64:", e);
-      return atob(str);
-    }
-  };
-
-  const parsedConfig = useMemo((): ParsedConfig | null => {
-    if (!request?.config) return null;
-    try {
-      const decoded = b64ToUtf8(request.config);
-      const parsed = JSON.parse(decoded) as Record<string, unknown>;
-
-      if (request.app === "claude") {
-        // Claude 格式: { env: { ANTHROPIC_AUTH_TOKEN: ..., ... } }
-        return {
-          type: "claude",
-          env: (parsed.env as Record<string, string>) || {},
-          raw: parsed,
-        };
-      } else if (request.app === "codex") {
-        // Codex 格式: { auth: { OPENAI_API_KEY: ... }, config: "TOML string" }
-        return {
-          type: "codex",
-          auth: (parsed.auth as Record<string, string>) || {},
-          tomlConfig: (parsed.config as string) || "",
-          raw: parsed,
-        };
-      } else if (request.app === "gemini") {
-        // Gemini 格式: 扁平结构 { GEMINI_API_KEY: ..., GEMINI_BASE_URL: ... }
-        return {
-          type: "gemini",
-          env: parsed as Record<string, string>,
-          raw: parsed,
-        };
-      }
-      return null;
-    } catch (e) {
-      console.error("Failed to parse config:", e);
-      return null;
-    }
-  }, [request?.config, request?.app]);
+  const parsedConfig = useMemo(
+    () => (request ? parseDeepLinkConfigPreview(request) : null),
+    [request],
+  );
 
   // Helper to mask sensitive values
   const maskValue = (key: string, value: string): string => {
@@ -544,9 +493,11 @@ export function DeepLinkImportDialog() {
                             )}
 
                           {/* Codex config */}
-                          {parsedConfig.type === "codex" && (
+                          {(parsedConfig.type === "codex" ||
+                            parsedConfig.type === "grokbuild") && (
                             <div className="space-y-2">
-                              {parsedConfig.auth &&
+                              {parsedConfig.type === "codex" &&
+                                parsedConfig.auth &&
                                 Object.keys(parsedConfig.auth).length > 0 && (
                                   <div className="space-y-1.5">
                                     <div className="text-xs text-muted-foreground">
