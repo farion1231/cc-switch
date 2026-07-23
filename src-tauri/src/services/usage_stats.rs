@@ -1850,10 +1850,11 @@ impl Database {
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
         // 与 CostCalculator::calculate_for_app 保持一致的计算逻辑：
-        // 1. 历史 Codex/Gemini 行只包含 cache read；新 total 行还包含 cache write。
+        // 1. 历史 cache-inclusive 行只包含 cache read；新 total 行还包含 cache write。
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let cache_inclusive_app = matches!(log.app_type.as_str(), "codex" | "gemini");
+        let cache_inclusive_app =
+            crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str());
         let billable_input_tokens =
             if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
                 log.input_tokens as u64
@@ -2610,6 +2611,53 @@ mod tests {
             ]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_deducts_cache_read_for_grokbuild_total_rows() -> Result<(), AppError> {
+        // 回归：回填侧的 cache-inclusive 判定曾硬编码 codex|gemini 漏掉
+        // grokbuild，导致 TOTAL 行按全量 input 计价、cache_read 双算。
+        // 判定收敛到 sql_helpers::is_cache_inclusive_app 后按 450 fresh 计价。
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "grokbuild-total-backfill",
+                "grokbuild",
+                "_grok_session",
+                "grok-4.5",
+                "grok_session",
+                1000,
+                700,
+                100,
+                250,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'grokbuild-total-backfill'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, total_cost): (String, String, String) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'grokbuild-total-backfill'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        // grok-4.5 定价 2/6/0.50：input = (700-250)×2/1M，cache_read = 250×0.5/1M
+        assert_eq!(input_cost, "0.000900");
+        assert_eq!(cache_read_cost, "0.000125");
+        assert_eq!(total_cost, "0.001625");
         Ok(())
     }
 
