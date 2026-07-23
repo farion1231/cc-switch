@@ -261,11 +261,28 @@ fn wsl_adapter_projects_provider_fields_atomically_and_restores_exact_snapshot()
   printf 'CALL\n'
   for arg in "$@"; do printf 'ARG:%s\n' "$arg"; done
 }} >> '{}'
-while [ "$1" != "--" ]; do shift; done
+while [ "$1" != "--" ] && [ "$1" != "--exec" ]; do shift; done
 shift
 command="$1"
 shift
 case "$command" in
+  /bin/sh)
+    case "$4" in
+      *cc-switch-model-catalog.json)
+        mapped_path='{}'
+        mapped_temporary='{}'
+        ;;
+      *)
+        if [ -f '{}' ]; then
+          rm -f '{}'
+          exit 55
+        fi
+        mapped_path='{}'
+        mapped_temporary='{}'
+        ;;
+    esac
+    exec /bin/sh -c "$2" "$3" "$mapped_path" "$mapped_temporary" "$6"
+    ;;
   test)
     case "$2" in
       *cc-switch-model-catalog.json) [ -f '{}' ] ;;
@@ -316,6 +333,12 @@ case "$command" in
 esac
 "#,
         log.display(),
+        catalog.display(),
+        pending_catalog.display(),
+        fail_next_config_replace.display(),
+        fail_next_config_replace.display(),
+        live.display(),
+        pending.display(),
         catalog.display(),
         live.display(),
         catalog.display(),
@@ -373,6 +396,15 @@ experimental_bearer_token = "secret"
     let snapshot = adapter
         .apply_provider_config(&target, desired, Some(desired_catalog))
         .expect("apply Provider projection");
+    let apply_call_count = std::fs::read_to_string(&log)
+        .expect("read WSL invocation log after apply")
+        .lines()
+        .filter(|line| *line == "CALL")
+        .count();
+    assert_eq!(
+        apply_call_count, 4,
+        "a two-file WSL projection should use two snapshot reads and two batched atomic writes"
+    );
     let projected = std::fs::read_to_string(&live).expect("read projected config");
     let parsed = projected
         .parse::<toml::Table>()
@@ -414,7 +446,9 @@ experimental_bearer_token = "secret"
     let error = adapter
         .apply_provider_config(&target, desired, Some(desired_catalog))
         .expect_err("config replacement failure must abort the two-file transaction");
-    assert!(error.to_string().contains("replace WSL config.toml"));
+    assert!(error
+        .to_string()
+        .contains("atomically write and verify WSL managed file"));
     assert_eq!(
         std::fs::read(&live).expect("read config after automatic rollback"),
         original
@@ -425,8 +459,12 @@ experimental_bearer_token = "secret"
     );
 
     let arguments = std::fs::read_to_string(log).expect("read argument log");
-    assert!(arguments.contains("ARG:tee\n"));
-    assert!(arguments.contains("ARG:mv\n"));
-    assert!(!arguments.contains("ARG:sh\n"));
+    assert!(
+        arguments.contains("ARG:--exec\nARG:/bin/sh\n"),
+        "WSL shell scripts must use explicit exec mode so Windows preserves positional arguments"
+    );
+    assert!(arguments.contains("ARG:/bin/sh\n"));
+    assert!(arguments.contains("ARG:-c\n"));
+    assert!(!arguments.contains("ARG:-l\n"));
     assert!(!arguments.contains("ARG:bash\n"));
 }

@@ -6,6 +6,7 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::app_config::AppType;
 use crate::codex_state_db::codex_state_db_paths;
@@ -51,6 +52,37 @@ pub struct WslConfigSnapshot {
     original_config: Option<Vec<u8>>,
     original_catalog: Option<Vec<u8>>,
 }
+
+// Keep the script static and pass every dynamic value as a positional argument.
+// `/bin/sh -c` is deliberately non-login, so it neither reads the target user's
+// shell profile nor interpolates Provider content. One process performs the
+// permission lookup, temporary write, digest verification, chmod, and rename.
+const WSL_ATOMIC_WRITE_SCRIPT: &str = r#"set -eu
+path=$1
+temporary=$2
+expected_sha256=$3
+if [ -f "$path" ]; then
+  mode=$(stat -c %a -- "$path")
+else
+  mode=600
+fi
+case "$mode" in
+  ''|*[!0-7]*) exit 65 ;;
+esac
+if [ "${#mode}" -lt 3 ] || [ "${#mode}" -gt 4 ]; then
+  exit 65
+fi
+trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
+cat > "$temporary"
+actual_sha256=$(sha256sum -- "$temporary")
+actual_sha256=${actual_sha256%% *}
+if [ "$actual_sha256" != "$expected_sha256" ]; then
+  exit 66
+fi
+chmod -- "$mode" "$temporary"
+mv -f -- "$temporary" "$path"
+trap - EXIT HUP INT TERM
+"#;
 
 /// Read-only inspection for a local Windows Managed Target.
 pub struct WindowsTargetInspector;
@@ -376,11 +408,18 @@ impl WslTargetAdapter {
         user: &str,
         path: &str,
     ) -> Result<Option<Vec<u8>>, AppError> {
-        if !self.file_exists(distro, user, path)? {
+        let output = self.run(distro, user, &["cat", "--", path])?;
+        if output.status.success() {
+            return Ok(Some(output.stdout));
+        }
+        if !self
+            .run(distro, user, &["test", "-e", path])?
+            .status
+            .success()
+        {
             return Ok(None);
         }
-        let output = self.run(distro, user, &["cat", "--", path])?;
-        ensure_wsl_success(output, "read WSL config.toml").map(Some)
+        ensure_wsl_success(output, "read WSL managed file").map(Some)
     }
 
     fn write_file_atomic(
@@ -391,45 +430,22 @@ impl WslTargetAdapter {
         contents: &[u8],
     ) -> Result<(), AppError> {
         let temporary = format!("{path}.cc-switch-{}.tmp", uuid::Uuid::new_v4());
-        let mode = if self.file_exists(distro, user, path)? {
-            let output = self.run(distro, user, &["stat", "-c", "%a", "--", path])?;
-            let bytes = ensure_wsl_success(output, "read WSL managed file permissions")?;
-            let mode = String::from_utf8_lossy(&bytes).trim().to_string();
-            if mode.len() < 3
-                || mode.len() > 4
-                || !mode.bytes().all(|byte| matches!(byte, b'0'..=b'7'))
-            {
-                return Err(AppError::Message(format!(
-                    "WSL managed file has an invalid permission mode: {mode}"
-                )));
-            }
-            mode
-        } else {
-            "600".to_string()
-        };
-        let write = self.run_with_input(distro, user, &["tee", "--", &temporary], contents)?;
-        if let Err(error) = ensure_wsl_success(write, "write WSL config.toml temporary file") {
-            let _ = self.run(distro, user, &["rm", "-f", "--", &temporary]);
-            return Err(error);
-        }
-        let permissions = self.run(distro, user, &["chmod", "--", &mode, &temporary])?;
-        if let Err(error) = ensure_wsl_success(permissions, "preserve WSL managed file permissions")
-        {
-            let _ = self.run(distro, user, &["rm", "-f", "--", &temporary]);
-            return Err(error);
-        }
-        let replace = self.run(distro, user, &["mv", "-f", "--", &temporary, path])?;
-        if let Err(error) = ensure_wsl_success(replace, "replace WSL config.toml atomically") {
-            let _ = self.run(distro, user, &["rm", "-f", "--", &temporary]);
-            return Err(error);
-        }
-        let read_back = self.read_optional_file(distro, user, path)?;
-        if read_back.as_deref() != Some(contents) {
-            return Err(AppError::Message(
-                "WSL managed file verification failed after atomic replacement".to_string(),
-            ));
-        }
-        Ok(())
+        let expected_sha256 = format!("{:x}", Sha256::digest(contents));
+        let write = self.run_with_input(
+            distro,
+            user,
+            &[
+                "/bin/sh",
+                "-c",
+                WSL_ATOMIC_WRITE_SCRIPT,
+                "cc-switch-wsl-write",
+                path,
+                &temporary,
+                &expected_sha256,
+            ],
+            contents,
+        )?;
+        ensure_wsl_success(write, "atomically write and verify WSL managed file").map(|_| ())
     }
 
     fn run_with_input(
@@ -445,7 +461,7 @@ impl WslTargetAdapter {
             .arg(distro)
             .arg("-u")
             .arg(user)
-            .arg("--")
+            .arg("--exec")
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
