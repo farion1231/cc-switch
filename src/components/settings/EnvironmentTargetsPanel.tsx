@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   History,
   Loader2,
   RefreshCw,
@@ -215,6 +216,16 @@ export function EnvironmentTargetsPanel() {
     (activationProviderId && providers.data?.[activationProviderId]?.name) ||
     activationProviderId ||
     t("settings.environments.selectProvider");
+  const providerNameById = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const provider of Object.values(providers.data ?? {})) {
+      names[provider.id] = provider.name;
+    }
+    return names;
+  }, [providers.data]);
+  const [historyOpenByTarget, setHistoryOpenByTarget] = useState<
+    Record<string, boolean>
+  >({});
 
   return (
     <div className="space-y-4">
@@ -297,8 +308,10 @@ export function EnvironmentTargetsPanel() {
                   </Badge>
                   <Badge variant="secondary">
                     {t("settings.environments.currentProvider")}:{" "}
-                    {target.currentProviderId ??
-                      t("settings.environments.notLinked")}
+                    {target.currentProviderId
+                      ? (providerNameById[target.currentProviderId] ??
+                        target.currentProviderId)
+                      : t("settings.environments.notLinked")}
                   </Badge>
                 </div>
               </CardHeader>
@@ -479,56 +492,74 @@ export function EnvironmentTargetsPanel() {
                 {inspection?.reachable &&
                 target.managementState === "managed" ? (
                   <div className="mt-3 border-t pt-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="flex items-center gap-2 text-sm font-medium">
-                          <History className="h-4 w-4" />
-                          {t("settings.environments.historyCompatibility")}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 text-left"
+                      onClick={() =>
+                        setHistoryOpenByTarget((current) => ({
+                          ...current,
+                          [target.id]: !current[target.id],
+                        }))
+                      }
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        <History className="h-4 w-4" />
+                        {t("settings.environments.historyCompatibility")}
+                      </span>
+                      <ChevronDown
+                        className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                          historyOpenByTarget[target.id] ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                    {historyOpenByTarget[target.id] ? (
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-muted-foreground">
                           {t(
                             "settings.environments.historyCompatibilityNotice",
                           )}
                         </p>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={historyMutation.isPending}
+                            onClick={() =>
+                              setHistoryAction({ target, type: "restore" })
+                            }
+                          >
+                            {historyMutation.isPending &&
+                            historyMutation.variables?.target.id ===
+                              target.id &&
+                            historyMutation.variables.type === "restore" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RotateCcw className="h-4 w-4" />
+                            )}
+                            {t("settings.environments.restoreHistory")}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={historyMutation.isPending}
+                            onClick={() =>
+                              setHistoryAction({ target, type: "migrate" })
+                            }
+                          >
+                            {historyMutation.isPending &&
+                            historyMutation.variables?.target.id ===
+                              target.id &&
+                            historyMutation.variables.type === "migrate" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <History className="h-4 w-4" />
+                            )}
+                            {t("settings.environments.migrateHistory")}
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex shrink-0 flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={historyMutation.isPending}
-                          onClick={() =>
-                            setHistoryAction({ target, type: "restore" })
-                          }
-                        >
-                          {historyMutation.isPending &&
-                          historyMutation.variables?.target.id === target.id &&
-                          historyMutation.variables.type === "restore" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <RotateCcw className="h-4 w-4" />
-                          )}
-                          {t("settings.environments.restoreHistory")}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={historyMutation.isPending}
-                          onClick={() =>
-                            setHistoryAction({ target, type: "migrate" })
-                          }
-                        >
-                          {historyMutation.isPending &&
-                          historyMutation.variables?.target.id === target.id &&
-                          historyMutation.variables.type === "migrate" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <History className="h-4 w-4" />
-                          )}
-                          {t("settings.environments.migrateHistory")}
-                        </Button>
-                      </div>
-                    </div>
+                    ) : null}
                   </div>
                 ) : null}
               </CardContent>

@@ -399,6 +399,7 @@
       "historyNothingToRestore": "此环境当前没有仍标记为 custom 的已迁移会话可恢复",
       "historyMigrationFailed": "旧历史迁移失败；未完成的修改可从备份恢复",
       "historyRestoreFailed": "恢复原会话标签失败",
+      "activeTargetCurrent": "当前 Provider：{{provider}}",
       "sessions": "活跃会话 {{active}} · 已归档 {{archived}}",
       "stateDbPresent": "状态数据库存在",
       "stateDbMissing": "未发现状态数据库",

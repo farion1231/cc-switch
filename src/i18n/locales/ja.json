@@ -399,6 +399,7 @@
       "historyNothingToRestore": "この環境に復元対象となる移行済みセッションが残っていません",
       "historyMigrationFailed": "旧履歴の移行に失敗しました",
       "historyRestoreFailed": "元のラベルの復元に失敗しました",
+      "activeTargetCurrent": "現在の Provider：{{provider}}",
       "sessions": "アクティブ {{active}} · アーカイブ {{archived}}",
       "stateDbPresent": "状態データベースあり",
       "stateDbMissing": "状態データベースなし",

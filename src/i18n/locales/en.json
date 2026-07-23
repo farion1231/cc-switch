@@ -399,6 +399,7 @@
       "historyNothingToRestore": "No migrated session labels remain to restore in this environment",
       "historyMigrationFailed": "Legacy history migration failed; incomplete changes can be recovered from backup",
       "historyRestoreFailed": "Failed to restore original session labels",
+      "activeTargetCurrent": "Current Provider: {{provider}}",
       "sessions": "Active sessions {{active}} · archived {{archived}}",
       "stateDbPresent": "State database found",
       "stateDbMissing": "State database not found",

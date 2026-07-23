@@ -18,6 +18,8 @@ interface ManagedTargetSelectorProps {
   onManage: () => void;
   isLoading?: boolean;
   error?: string;
+  /** Map of provider id -> display name for the selected environment summary. */
+  providerNames?: Record<string, string>;
 }
 
 export function ManagedTargetSelector({
@@ -27,8 +29,13 @@ export function ManagedTargetSelector({
   onManage,
   isLoading = false,
   error,
+  providerNames = {},
 }: ManagedTargetSelectorProps) {
   const { t } = useTranslation();
+  const selected = targets.find((target) => target.id === selectedTargetId);
+  const selectedProviderLabel = selected?.currentProviderId
+    ? (providerNames[selected.currentProviderId] ?? selected.currentProviderId)
+    : t("settings.environments.notLinked");
 
   if (error) {
     return (
@@ -61,7 +68,12 @@ export function ManagedTargetSelector({
             {t("settings.environments.activeTarget")}
           </p>
           <p className="text-xs text-muted-foreground">
-            {t("settings.environments.activeTargetNotice")}
+            {selected
+              ? t("settings.environments.activeTargetCurrent", {
+                  defaultValue: "当前 Provider：{{provider}}",
+                  provider: selectedProviderLabel,
+                })
+              : t("settings.environments.activeTargetNotice")}
           </p>
         </div>
       </div>
@@ -77,14 +89,21 @@ export function ManagedTargetSelector({
             />
           </SelectTrigger>
           <SelectContent>
-            {targets.map((target) => (
-              <SelectItem key={target.id} value={target.id}>
-                {target.name}
-                {target.kind.type === "wsl"
-                  ? ` · WSL ${target.kind.distro}`
-                  : " · Windows"}
-              </SelectItem>
-            ))}
+            {targets.map((target) => {
+              const providerLabel = target.currentProviderId
+                ? (providerNames[target.currentProviderId] ??
+                  target.currentProviderId)
+                : t("settings.environments.notLinked");
+              return (
+                <SelectItem key={target.id} value={target.id}>
+                  {target.name}
+                  {target.kind.type === "wsl"
+                    ? ` · WSL ${target.kind.distro}`
+                    : " · Windows"}
+                  {` · ${providerLabel}`}
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
         <Button

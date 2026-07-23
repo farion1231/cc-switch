@@ -399,6 +399,7 @@
       "historyNothingToRestore": "此環境目前沒有仍標記為 custom 的已遷移工作階段可還原",
       "historyMigrationFailed": "舊歷史遷移失敗",
       "historyRestoreFailed": "還原原工作階段標籤失敗",
+      "activeTargetCurrent": "目前 Provider：{{provider}}",
       "sessions": "作用中工作階段 {{active}} · 已封存 {{archived}}",
       "stateDbPresent": "狀態資料庫存在",
       "stateDbMissing": "未發現狀態資料庫",

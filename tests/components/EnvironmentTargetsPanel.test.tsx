@@ -98,8 +98,17 @@ describe("EnvironmentTargetsPanel history migration", () => {
     });
   });
 
+  const expandHistorySection = async () => {
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "settings.environments.historyCompatibility",
+      }),
+    );
+  };
+
   it("requires confirmation and migrates only the selected Target", async () => {
     render(<EnvironmentTargetsPanel />, { wrapper });
+    await expandHistorySection();
 
     fireEvent.click(
       await screen.findByRole("button", {
@@ -131,6 +140,7 @@ describe("EnvironmentTargetsPanel history migration", () => {
         }),
     );
     render(<EnvironmentTargetsPanel />, { wrapper });
+    await expandHistorySection();
 
     fireEvent.click(
       await screen.findByRole("button", {
@@ -195,6 +205,7 @@ describe("EnvironmentTargetsPanel history migration", () => {
       skippedReason: "no_backup_ledger",
     });
     render(<EnvironmentTargetsPanel />, { wrapper });
+    await expandHistorySection();
 
     fireEvent.click(
       await screen.findByRole("button", {
@@ -223,6 +234,7 @@ describe("EnvironmentTargetsPanel history migration", () => {
       skippedReason: "nothing_to_restore",
     });
     render(<EnvironmentTargetsPanel />, { wrapper });
+    await expandHistorySection();
 
     fireEvent.click(
       await screen.findByRole("button", {
