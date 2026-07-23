@@ -30,6 +30,27 @@ function renderForm(
 }
 
 describe("ClaudeDesktopProviderForm", () => {
+  it("新建自定义直连供应商默认保存 ANTHROPIC_API_KEY", async () => {
+    const onSubmit = vi.fn();
+    renderForm(undefined, onSubmit);
+
+    fireEvent.change(screen.getByLabelText("provider.name"), {
+      target: { value: "Custom Direct" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "sk-test" },
+    });
+    fireEvent.change(screen.getByLabelText("providerForm.apiEndpoint"), {
+      target: { value: "https://api.example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const settingsConfig = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(settingsConfig.env.ANTHROPIC_API_KEY).toBe("sk-test");
+    expect(settingsConfig.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
+
   it.each(["github_copilot", "codex_oauth", "xai_oauth"])(
     "托管 OAuth %s 即使旧数据是 direct 也强制开启模型映射",
     (providerType) => {
