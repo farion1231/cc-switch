@@ -38,6 +38,7 @@ import type { SettingsFormState } from "@/hooks/useSettings";
 import type {
   RemoteSnapshotInfo,
   S3SyncSettings,
+  SkillsArchiveStats,
   WebDavSyncSettings,
 } from "@/types";
 
@@ -157,6 +158,21 @@ function formatDbCompatVersion(version?: number | null): string | null {
   return typeof version === "number" ? `db-v${version}` : null;
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const formatted = new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: unitIndex === 0 ? 0 : 1,
+  }).format(value);
+  return `${formatted} ${units[unitIndex]}`;
+}
+
 function buildPasswordPreservationKey(values: {
   baseUrl?: string | null;
   username?: string | null;
@@ -184,6 +200,26 @@ type ActionState =
 type SyncType = "webdav" | "s3";
 
 type DialogType = "upload" | "download" | "mutual_exclusion" | null;
+
+function SkillsArchiveStatsRows({
+  stats,
+  entriesLabel,
+  extractedSizeLabel,
+}: {
+  stats?: SkillsArchiveStats | null;
+  entriesLabel: ReactNode;
+  extractedSizeLabel: ReactNode;
+}) {
+  if (!stats) return null;
+  return (
+    <>
+      <dt className="font-medium text-foreground">{entriesLabel}</dt>
+      <dd>{stats.entryCount.toLocaleString()}</dd>
+      <dt className="font-medium text-foreground">{extractedSizeLabel}</dt>
+      <dd>{formatBytes(stats.uncompressedSize)}</dd>
+    </>
+  );
+}
 
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
@@ -1676,6 +1712,15 @@ export function WebdavSyncSection({
                       {t("settings.webdavSync.confirmDownload.artifacts")}
                     </dt>
                     <dd>{remoteInfo.artifacts.join(", ")}</dd>
+                    <SkillsArchiveStatsRows
+                      stats={remoteInfo.skillsArchive}
+                      entriesLabel={t(
+                        "settings.webdavSync.confirmDownload.skillsEntries",
+                      )}
+                      extractedSizeLabel={t(
+                        "settings.webdavSync.confirmDownload.estimatedExtractedSize",
+                      )}
+                    />
                   </dl>
                 )}
                 {remoteInfo?.layout === "legacy" && (
@@ -1800,6 +1845,15 @@ export function WebdavSyncSection({
                       {t("settings.s3Sync.confirmDownload.artifacts")}
                     </dt>
                     <dd>{s3RemoteInfo.artifacts.join(", ")}</dd>
+                    <SkillsArchiveStatsRows
+                      stats={s3RemoteInfo.skillsArchive}
+                      entriesLabel={t(
+                        "settings.s3Sync.confirmDownload.skillsEntries",
+                      )}
+                      extractedSizeLabel={t(
+                        "settings.s3Sync.confirmDownload.estimatedExtractedSize",
+                      )}
+                    />
                   </dl>
                 )}
                 <p className="text-destructive font-medium">
