@@ -68,9 +68,8 @@ pub async fn upload(
     settings.validate()?;
     let auth = auth_for(settings);
     let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
-    ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
-
     let snapshot = build_local_snapshot(db)?;
+    ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_DB_SQL)?;

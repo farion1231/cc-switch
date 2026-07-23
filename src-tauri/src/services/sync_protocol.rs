@@ -127,6 +127,7 @@ pub(crate) fn build_local_snapshot(
     let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
     let skills_archive_stats = zip_skills_ssot(&skills_zip_path)?;
     let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
+    validate_local_snapshot_artifact_sizes(db_sql.len() as u64, skills_zip.len() as u64)?;
 
     // Build artifact map and compute hashes
     let mut artifacts = BTreeMap::new();
@@ -169,6 +170,14 @@ pub(crate) fn build_local_snapshot(
         manifest_bytes,
         manifest_hash,
     })
+}
+
+fn validate_local_snapshot_artifact_sizes(
+    db_sql_size: u64,
+    skills_zip_size: u64,
+) -> Result<(), AppError> {
+    validate_artifact_size_limit(REMOTE_DB_SQL, db_sql_size)?;
+    validate_artifact_size_limit(REMOTE_SKILLS_ZIP, skills_zip_size)
 }
 
 // ─── Manifest handling ───────────────────────────────────────
@@ -673,6 +682,25 @@ mod tests {
     #[test]
     fn validate_artifact_size_limit_accepts_limit_boundary() {
         assert!(validate_artifact_size_limit("skills.zip", MAX_SYNC_ARTIFACT_BYTES).is_ok());
+    }
+
+    #[test]
+    fn local_snapshot_preflight_applies_download_limits_to_both_artifacts() {
+        assert!(validate_local_snapshot_artifact_sizes(
+            MAX_SYNC_ARTIFACT_BYTES,
+            MAX_SYNC_ARTIFACT_BYTES,
+        )
+        .is_ok());
+        assert!(validate_local_snapshot_artifact_sizes(
+            MAX_SYNC_ARTIFACT_BYTES + 1,
+            MAX_SYNC_ARTIFACT_BYTES,
+        )
+        .is_err());
+        assert!(validate_local_snapshot_artifact_sizes(
+            MAX_SYNC_ARTIFACT_BYTES,
+            MAX_SYNC_ARTIFACT_BYTES + 1,
+        )
+        .is_err());
     }
 
     #[test]
