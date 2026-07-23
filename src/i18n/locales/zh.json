@@ -1924,6 +1924,7 @@
     "enabled": "已启用",
     "enable": "启用",
     "enabledName": "已启用: {{name}}",
+    "enabledCount": "已启用 {{count}} 个",
     "noneEnabled": "未启用任何提示词",
     "currentFile": "当前 {{filename}} 内容",
     "empty": "暂无提示词",

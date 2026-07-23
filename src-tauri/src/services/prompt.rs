@@ -17,6 +17,16 @@ fn get_unix_timestamp() -> Result<i64, AppError> {
 
 pub struct PromptService;
 
+fn enabled_prompt_content(prompts: &IndexMap<String, Prompt>) -> String {
+    prompts
+        .values()
+        .filter(|prompt| prompt.enabled)
+        .map(|prompt| prompt.content.trim())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 impl PromptService {
     pub fn get_prompts(
         state: &AppState,
@@ -38,19 +48,15 @@ impl PromptService {
 
         if is_enabled {
             // 启用提示词：写入内容到文件
+            let prompts = state.db.get_prompts(app.as_str())?;
             let target_path = prompt_file_path(&app)?;
-            write_text_file(&target_path, &prompt.content)?;
+            write_text_file(&target_path, &enabled_prompt_content(&prompts))?;
         } else {
             // 禁用提示词：检查是否还有其他已启用的提示词
             let prompts = state.db.get_prompts(app.as_str())?;
-            let any_enabled = prompts.values().any(|p| p.enabled);
-
-            if !any_enabled {
-                // 所有提示词都已禁用，清空文件
-                let target_path = prompt_file_path(&app)?;
-                if target_path.exists() {
-                    write_text_file(&target_path, "")?;
-                }
+            let target_path = prompt_file_path(&app)?;
+            if target_path.exists() {
+                write_text_file(&target_path, &enabled_prompt_content(&prompts))?;
             }
         }
 
@@ -123,17 +129,13 @@ impl PromptService {
         // 启用目标提示词并写入文件
         let mut prompts = state.db.get_prompts(app.as_str())?;
 
-        for prompt in prompts.values_mut() {
-            prompt.enabled = false;
-        }
-
         if let Some(prompt) = prompts.get_mut(id) {
             prompt.enabled = true;
-            write_text_file(&target_path, &prompt.content)?; // 原子写入
-            state.db.save_prompt(app.as_str(), prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
         }
+
+        write_text_file(&target_path, &enabled_prompt_content(&prompts))?;
 
         // Save all prompts to disable others
         for (_, prompt) in prompts.iter() {
