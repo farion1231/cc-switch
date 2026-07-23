@@ -6,8 +6,11 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Search,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -79,6 +82,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [skillSearchQuery, setSkillSearchQuery] = useState("");
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -131,6 +135,28 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+
+    const query = skillSearchQuery.trim().toLowerCase();
+    if (!query) return skills;
+
+    return skills.filter((skill) => {
+      const searchableText = [
+        skill.name,
+        skill.description,
+        skill.directory,
+        skill.repoOwner,
+        skill.repoName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(query);
+    });
+  }, [skills, skillSearchQuery]);
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -400,6 +426,35 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      <div className="relative mb-4 flex-shrink-0">
+        <Search
+          size={15}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          type="text"
+          value={skillSearchQuery}
+          onChange={(event) => setSkillSearchQuery(event.target.value)}
+          placeholder={t("skills.installedSearchPlaceholder")}
+          aria-label={t("skills.installedSearchLabel")}
+          className="h-9 pl-9 pr-10"
+        />
+        {skillSearchQuery && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => setSkillSearchQuery("")}
+            aria-label={t("common.clear")}
+            title={t("common.clear")}
+            className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
+          >
+            <X size={14} />
+          </Button>
+        )}
+      </div>
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -417,10 +472,24 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Search size={24} className="text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              {t("skills.noInstalledMatches")}
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {t("skills.noInstalledMatchesDescription", {
+                query: skillSearchQuery,
+              })}
+            </p>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -432,7 +501,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>
