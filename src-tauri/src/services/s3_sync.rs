@@ -16,9 +16,10 @@ use crate::settings::{update_s3_sync_status, S3SyncSettings, WebDavSyncStatus};
 
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, localized, persist_sync_success_best_effort, sha256_hex,
-    validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
-    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
-    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    skills_archive_stats_from_artifacts, validate_artifact_size_limit, validate_manifest_compat,
+    verify_artifact, ArtifactMeta, RemoteLayout, SyncManifest, DB_COMPAT_VERSION,
+    MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES, PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST,
+    REMOTE_SKILLS_ZIP,
 };
 
 // ─── Sync lock ───────────────────────────────────────────────
@@ -146,6 +147,7 @@ pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value
     })?;
 
     let compatible = validate_manifest_compat(&manifest, RemoteLayout::Current).is_ok();
+    let skills_archive = skills_archive_stats_from_artifacts(&manifest.artifacts);
 
     let payload = serde_json::json!({
         "deviceName": manifest.device_name,
@@ -156,6 +158,7 @@ pub async fn fetch_remote_info(settings: &S3SyncSettings) -> Result<Option<Value
         "dbCompatVersion": manifest.db_compat_version,
         "compatible": compatible,
         "artifacts": manifest.artifacts.keys().collect::<Vec<_>>(),
+        "skillsArchive": skills_archive,
         "layout": RemoteLayout::Current.as_str(),
         "remotePath": s3_dir_display(settings),
     });

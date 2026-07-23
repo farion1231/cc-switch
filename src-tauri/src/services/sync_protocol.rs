@@ -16,6 +16,7 @@ use crate::error::AppError;
 // Re-export archive functions for use by transport layers.
 pub(crate) use super::webdav_sync::archive::{
     backup_current_skills, restore_skills_from_backup, restore_skills_zip, zip_skills_ssot,
+    SkillsArchiveStats,
 };
 
 // ─── Protocol constants ──────────────────────────────────────
@@ -73,9 +74,14 @@ pub(crate) struct SyncManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ArtifactMeta {
     pub sha256: String,
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncompressed_size: Option<u64>,
 }
 
 pub(crate) struct LocalSnapshot {
@@ -119,7 +125,7 @@ pub(crate) fn build_local_snapshot(
         )
     })?;
     let skills_zip_path = tmp.path().join(REMOTE_SKILLS_ZIP);
-    zip_skills_ssot(&skills_zip_path)?;
+    let skills_archive_stats = zip_skills_ssot(&skills_zip_path)?;
     let skills_zip = fs::read(&skills_zip_path).map_err(|e| AppError::io(&skills_zip_path, e))?;
 
     // Build artifact map and compute hashes
@@ -129,6 +135,8 @@ pub(crate) fn build_local_snapshot(
         ArtifactMeta {
             sha256: sha256_hex(&db_sql),
             size: db_sql.len() as u64,
+            entry_count: None,
+            uncompressed_size: None,
         },
     );
     artifacts.insert(
@@ -136,6 +144,8 @@ pub(crate) fn build_local_snapshot(
         ArtifactMeta {
             sha256: sha256_hex(&skills_zip),
             size: skills_zip.len() as u64,
+            entry_count: Some(skills_archive_stats.entry_count),
+            uncompressed_size: Some(skills_archive_stats.uncompressed_size),
         },
     );
 
@@ -172,6 +182,16 @@ pub(crate) fn compute_snapshot_id(artifacts: &BTreeMap<String, ArtifactMeta>) ->
         .map(|(name, meta)| format!("{}:{}", name, meta.sha256))
         .collect();
     sha256_hex(parts.join("|").as_bytes())
+}
+
+pub(crate) fn skills_archive_stats_from_artifacts(
+    artifacts: &BTreeMap<String, ArtifactMeta>,
+) -> Option<SkillsArchiveStats> {
+    let meta = artifacts.get(REMOTE_SKILLS_ZIP)?;
+    Some(SkillsArchiveStats {
+        entry_count: meta.entry_count?,
+        uncompressed_size: meta.uncompressed_size?,
+    })
 }
 
 pub(crate) fn effective_db_compat_version(
@@ -423,6 +443,8 @@ mod tests {
         ArtifactMeta {
             sha256: sha256.to_string(),
             size,
+            entry_count: None,
+            uncompressed_size: None,
         }
     }
 
@@ -595,6 +617,50 @@ mod tests {
     }
 
     #[test]
+    fn artifact_meta_deserializes_legacy_manifest_without_archive_stats() {
+        let meta: ArtifactMeta =
+            serde_json::from_str(r#"{"sha256":"abc","size":12}"#).expect("legacy artifact");
+
+        assert_eq!(meta.entry_count, None);
+        assert_eq!(meta.uncompressed_size, None);
+    }
+
+    #[test]
+    fn artifact_meta_serializes_optional_archive_stats_in_camel_case() {
+        let meta = ArtifactMeta {
+            sha256: "abc".to_string(),
+            size: 12,
+            entry_count: Some(12_676),
+            uncompressed_size: Some(105_906_176),
+        };
+        let value = serde_json::to_value(meta).expect("serialize artifact");
+
+        assert_eq!(value["entryCount"], serde_json::json!(12_676));
+        assert_eq!(value["uncompressedSize"], serde_json::json!(105_906_176));
+    }
+
+    #[test]
+    fn skills_archive_stats_require_both_optional_fields() {
+        let mut artifacts = BTreeMap::new();
+        let mut skills = artifact("abc", 12);
+        skills.entry_count = Some(12_676);
+        artifacts.insert(REMOTE_SKILLS_ZIP.to_string(), skills);
+        assert_eq!(skills_archive_stats_from_artifacts(&artifacts), None);
+
+        artifacts
+            .get_mut(REMOTE_SKILLS_ZIP)
+            .expect("skills artifact")
+            .uncompressed_size = Some(105_906_176);
+        assert_eq!(
+            skills_archive_stats_from_artifacts(&artifacts),
+            Some(SkillsArchiveStats {
+                entry_count: 12_676,
+                uncompressed_size: 105_906_176,
+            })
+        );
+    }
+
+    #[test]
     fn validate_artifact_size_limit_rejects_oversized_artifacts() {
         let err = validate_artifact_size_limit("skills.zip", MAX_SYNC_ARTIFACT_BYTES + 1)
             .expect_err("artifact larger than limit should be rejected");
@@ -626,6 +692,8 @@ mod tests {
         let meta = ArtifactMeta {
             sha256: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
             size: 5,
+            entry_count: None,
+            uncompressed_size: None,
         };
         let bytes = b"hello";
         let err = verify_artifact(bytes, "test.bin", &meta)
@@ -642,6 +710,8 @@ mod tests {
         let meta = ArtifactMeta {
             sha256: sha256_hex(data),
             size: data.len() as u64,
+            entry_count: None,
+            uncompressed_size: None,
         };
         assert!(verify_artifact(data, "test.bin", &meta).is_ok());
     }
