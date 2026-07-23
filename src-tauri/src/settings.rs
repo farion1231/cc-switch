@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock};
@@ -334,6 +335,31 @@ pub struct CodexOfficialHistoryUnifyMigration {
     pub codex_config_dir: Option<String>,
 }
 
+/// System Prompt 注入开关配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InjectionToggle {
+    /// 是否启用注入
+    #[serde(default)]
+    pub enabled: bool,
+    /// 是否接受统一规则
+    #[serde(default)]
+    pub receive_shared: bool,
+    /// 自定义提示词文件路径（为空则使用默认的 CLAUDE.md/AGENTS.md/GEMINI.md）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_file_path: Option<String>,
+}
+
+impl Default for InjectionToggle {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            receive_shared: false,
+            custom_file_path: None,
+        }
+    }
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -488,6 +514,11 @@ pub struct AppSettings {
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
+
+    // ===== System Prompt 注入设置 =====
+    /// 每个 AI 工具的注入开关状态 (app_type.as_str() → InjectionToggle)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub system_prompt_injection: HashMap<String, InjectionToggle>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -550,6 +581,7 @@ impl Default for AppSettings {
             backup_retain_count: None,
             preferred_terminal: None,
             local_migrations: None,
+            system_prompt_injection: HashMap::new(),
         }
     }
 }
@@ -1141,6 +1173,51 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
             s3.status = status;
         }
     })
+}
+
+// ===== System Prompt 注入管理函数 =====
+
+/// 获取指定应用的注入开关状态
+pub fn get_injection_toggle(app_type: &str) -> InjectionToggle {
+    settings_store()
+        .read()
+        .ok()
+        .and_then(|s| s.system_prompt_injection.get(app_type).cloned())
+        .unwrap_or_default()
+}
+
+/// 设置指定应用的注入开关状态
+pub fn set_injection_toggle(app_type: &str, toggle: InjectionToggle) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        settings
+            .system_prompt_injection
+            .insert(app_type.to_string(), toggle);
+    })
+}
+
+/// 获取系统提示词共享规则文件路径
+pub fn shared_prompt_path() -> PathBuf {
+    crate::config::get_app_config_dir().join("system_prompt_shared.md")
+}
+
+/// 读取共享规则内容
+pub fn load_shared_prompt() -> String {
+    let path = shared_prompt_path();
+    if path.exists() {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
+/// 保存共享规则内容
+pub fn save_shared_prompt(content: &str) -> Result<(), AppError> {
+    let path = shared_prompt_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::io(parent, e))?;
+    }
+    std::fs::write(&path, content).map_err(|e| AppError::io(&path, e))
 }
 
 #[cfg(test)]
