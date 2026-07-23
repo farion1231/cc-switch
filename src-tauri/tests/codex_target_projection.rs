@@ -150,3 +150,34 @@ name = "Old"
         "the stale active managed route must be removed"
     );
 }
+
+#[test]
+fn provider_projection_replaces_generated_route_with_stable_custom_route() {
+    let live = r#"model_provider = "cc_switch_pinai_0860d0fe"
+
+[model_providers.cc_switch_pinai_0860d0fe]
+name = "PinAI"
+base_url = "https://api.pinaic.com"
+wire_api = "responses"
+legacy_timeout = 45
+"#;
+    let desired = r#"model_provider = "custom"
+
+[model_providers.custom]
+name = "Another relay"
+base_url = "https://relay.example"
+wire_api = "responses"
+"#;
+
+    let projected = project_codex_provider_config(live, desired).expect("project config");
+    let parsed = projected.parse::<toml::Table>().expect("valid TOML");
+
+    assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+    assert!(parsed["model_providers"]
+        .get("cc_switch_pinai_0860d0fe")
+        .is_none());
+    assert_eq!(
+        parsed["model_providers"]["custom"]["base_url"].as_str(),
+        Some("https://relay.example")
+    );
+}

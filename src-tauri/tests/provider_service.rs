@@ -456,13 +456,28 @@ fn first_wsl_activation_projects_live_then_marks_only_that_target_managed() {
         "approval_policy = \"on-request\"\nsqlite_home = \"/home/mikasa/state\"\nmodel_provider = \"old\"\n\n[mcp_servers.local]\ncommand = \"linux-tool\"\n",
     )
     .expect("seed WSL config");
+    std::fs::set_permissions(&live, std::fs::Permissions::from_mode(0o640))
+        .expect("set WSL config permissions");
     let script = format!(
         r#"#!/bin/sh
-while [ "$1" != "--" ]; do shift; done
+while [ "$1" != "--" ] && [ "$1" != "--exec" ]; do shift; done
 shift
 command="$1"
 shift
 case "$command" in
+  /bin/sh)
+    case "$4" in
+      *cc-switch-model-catalog.json)
+        mapped_path='{}'
+        mapped_temporary='{}'
+        ;;
+      *)
+        mapped_path='{}'
+        mapped_temporary='{}'
+        ;;
+    esac
+    exec /bin/sh -c "$2" "$3" "$mapped_path" "$mapped_temporary" "$6"
+    ;;
   test)
     case "$2" in
       *cc-switch-model-catalog.json) [ -f '{}' ] ;;
@@ -506,6 +521,10 @@ case "$command" in
   *) exit 2 ;;
 esac
 "#,
+        catalog.display(),
+        pending_catalog.display(),
+        live.display(),
+        pending.display(),
         catalog.display(),
         live.display(),
         catalog.display(),
@@ -603,7 +622,7 @@ esac
     );
     let projected = std::fs::read_to_string(&live).expect("read WSL config");
     let parsed = projected.parse::<toml::Table>().expect("valid TOML");
-    let first_provider_key = "cc_switch_new_provider_newprovi";
+    let first_provider_key = "custom";
     assert_eq!(parsed["model_provider"].as_str(), Some(first_provider_key));
     assert_eq!(parsed["model"].as_str(), Some("gpt-new"));
     assert_eq!(
@@ -644,16 +663,17 @@ esac
         .parse::<toml::Table>()
         .expect("valid switched TOML");
     assert_eq!(switched_toml["model"].as_str(), Some("gpt-second"));
+    assert_eq!(switched_toml["model_provider"].as_str(), Some("custom"));
     assert_eq!(
-        switched_toml["model_provider"].as_str(),
-        Some("cc_switch_second_provider_secondpr")
+        switched_toml["model_providers"][first_provider_key]["base_url"].as_str(),
+        Some("https://second.example/v1"),
+        "the stable custom route must be replaced with the selected Provider"
     );
-    assert!(
-        switched_toml["model_providers"]
-            .get(first_provider_key)
-            .is_none(),
-        "the previous CC Switch managed route must be removed"
-    );
+    assert!(switched_toml["model_providers"]
+        .as_table()
+        .expect("provider tables")
+        .keys()
+        .all(|key| !key.starts_with("cc_switch_")));
     assert!(switched_toml.get("model_catalog_json").is_none());
     assert!(
         !catalog.exists(),
@@ -675,6 +695,69 @@ esac
             & 0o777,
         0o640
     );
+}
+
+#[test]
+fn managed_official_target_uses_custom_route_when_unified_history_is_enabled() {
+    let _guard = test_mutex().lock().expect("acquire test mutex");
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let target_dir = tempfile::tempdir().expect("create target directory");
+    let target = ManagedTarget {
+        id: "windows-codex".to_string(),
+        app: AppType::Codex,
+        name: "Windows Codex".to_string(),
+        kind: TargetKind::LocalWindows,
+        config_location: ConfigLocation {
+            path: target_dir.path().display().to_string(),
+        },
+        current_provider_id: Some("relay".to_string()),
+        management_state: ManagementState::Managed,
+        provider_overrides: Default::default(),
+        last_viewed_at: None,
+    };
+    update_settings(AppSettings {
+        preserve_codex_official_auth_on_switch: true,
+        unify_codex_session_history: true,
+        managed_targets: vec![target.clone()],
+        ..AppSettings::default()
+    })
+    .expect("enable unified Codex history");
+    std::fs::write(target_dir.path().join("config.toml"), "model = \"old\"\n")
+        .expect("seed config");
+
+    let mut config = MultiAppConfig::default();
+    let mut official = Provider::with_id(
+        "codex-official".to_string(),
+        "OpenAI Official".to_string(),
+        json!({
+            "auth": {},
+            "config": "model = \"gpt-5.6-sol\"\n"
+        }),
+        None,
+    );
+    official.category = Some("official".to_string());
+    config
+        .get_manager_mut(&AppType::Codex)
+        .expect("codex manager")
+        .providers
+        .insert(official.id.clone(), official);
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    ProviderService::switch_managed_target(&state, "codex-official", &target)
+        .expect("switch managed target to official");
+
+    let projected = std::fs::read_to_string(target_dir.path().join("config.toml"))
+        .expect("read projected config");
+    let parsed = projected.parse::<toml::Table>().expect("valid TOML");
+    assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+    assert_eq!(
+        parsed["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+        Some(true)
+    );
+    assert!(parsed["model_providers"]["custom"]
+        .get("base_url")
+        .is_none());
 }
 
 #[test]

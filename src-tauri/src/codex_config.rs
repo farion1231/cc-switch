@@ -1261,7 +1261,6 @@ pub(crate) fn prepare_codex_provider_projection(
 }
 
 pub(crate) fn normalize_codex_managed_provider_config(
-    provider_id: &str,
     provider_name: &str,
     category: Option<&str>,
     config_text: &str,
@@ -1304,7 +1303,7 @@ pub(crate) fn normalize_codex_managed_provider_config(
             toml::Value::String(provider_name.to_string()),
         );
 
-        let normalized_key = codex_managed_provider_key(provider_id, provider_name);
+        let normalized_key = CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string();
         let mut normalized_tables = toml::Table::new();
         normalized_tables.insert(normalized_key.clone(), toml::Value::Table(active_table));
         config.insert(
@@ -1322,31 +1321,6 @@ pub(crate) fn normalize_codex_managed_provider_config(
             "Failed to normalize Provider Codex config: {error}"
         ))
     })
-}
-
-fn codex_managed_provider_key(provider_id: &str, provider_name: &str) -> String {
-    fn component(value: &str) -> String {
-        let mut output = String::new();
-        for character in value.chars() {
-            if character.is_ascii_alphanumeric() {
-                output.push(character.to_ascii_lowercase());
-            } else if !output.is_empty() && !output.ends_with('_') {
-                output.push('_');
-            }
-        }
-        output.trim_matches('_').to_string()
-    }
-
-    let name = component(provider_name);
-    let name = if name.is_empty() { "provider" } else { &name };
-    let id = provider_id
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .take(8)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    let id = if id.is_empty() { "unknown" } else { &id };
-    format!("cc_switch_{name}_{id}")
 }
 
 /// Reverse of `prepare_codex_config_text_with_model_catalog`: read the
@@ -2472,13 +2446,9 @@ wire_api = "responses"
 requires_openai_auth = true
 "#;
 
-        let normalized = normalize_codex_managed_provider_config(
-            "codex-official",
-            "OpenAI Official",
-            Some("official"),
-            config,
-        )
-        .expect("normalize official provider");
+        let normalized =
+            normalize_codex_managed_provider_config("OpenAI Official", Some("official"), config)
+                .expect("normalize official provider");
         let parsed = normalized.parse::<toml::Table>().expect("valid TOML");
 
         assert_eq!(parsed["model"].as_str(), Some("gpt-5.6-sol"));
@@ -2487,7 +2457,7 @@ requires_openai_auth = true
     }
 
     #[test]
-    fn managed_relay_provider_gets_a_unique_readable_codex_key() {
+    fn managed_relay_provider_uses_stable_custom_codex_route() {
         let config = r#"model = "gpt-5.6-sol"
 model_provider = "custom"
 
@@ -2497,15 +2467,10 @@ base_url = "https://api.pinaic.com"
 wire_api = "responses"
 "#;
 
-        let normalized = normalize_codex_managed_provider_config(
-            "0860d0fe-6ebb-4f42-acca-532ff94a78c9",
-            "PinAI",
-            None,
-            config,
-        )
-        .expect("normalize relay provider");
+        let normalized = normalize_codex_managed_provider_config("PinAI", None, config)
+            .expect("normalize relay provider");
         let parsed = normalized.parse::<toml::Table>().expect("valid TOML");
-        let key = "cc_switch_pinai_0860d0fe";
+        let key = CC_SWITCH_CODEX_MODEL_PROVIDER_ID;
 
         assert_eq!(parsed["model_provider"].as_str(), Some(key));
         assert_eq!(
@@ -2516,7 +2481,13 @@ wire_api = "responses"
             parsed["model_providers"][key]["base_url"].as_str(),
             Some("https://api.pinaic.com")
         );
-        assert!(parsed["model_providers"].get("custom").is_none());
+        assert_eq!(
+            parsed["model_providers"]
+                .as_table()
+                .expect("provider table")
+                .len(),
+            1
+        );
     }
 
     #[test]
