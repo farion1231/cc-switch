@@ -124,7 +124,7 @@ mod tests {
     use crate::database::Database;
     #[cfg(any(target_os = "macos", windows))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::provider::{ProviderMeta, UsageScript};
+    use crate::provider::{ClaudeModelConfig, ProviderMeta, UsageScript};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use serde_json::json;
@@ -245,6 +245,79 @@ mod tests {
         }
 
         result
+    }
+
+    #[test]
+    fn sync_universal_to_apps_clears_stale_optional_claude_models() {
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let state = AppState::new(db.clone());
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.claude = true;
+        universal.models.claude = Some(ClaudeModelConfig {
+            fable_model: Some("claude-fable".to_string()),
+            subagent_model: Some("claude-subagent".to_string()),
+            ..Default::default()
+        });
+
+        ProviderService::upsert_universal(&state, universal.clone())
+            .expect("save universal provider");
+        ProviderService::sync_universal_to_apps(&state, &universal.id).expect("initial sync");
+
+        let generated_id = format!("universal-claude-{}", universal.id);
+        let mut generated = db
+            .get_provider_by_id(&generated_id, "claude")
+            .expect("query generated provider")
+            .expect("generated provider should exist");
+        assert_eq!(
+            generated
+                .settings_config
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(Value::as_str),
+            Some("claude-fable")
+        );
+        assert_eq!(
+            generated
+                .settings_config
+                .pointer("/env/CLAUDE_CODE_SUBAGENT_MODEL")
+                .and_then(Value::as_str),
+            Some("claude-subagent")
+        );
+        generated.settings_config["env"]["CUSTOM_ENV"] = json!("keep-me");
+        db.save_provider("claude", &generated)
+            .expect("save custom provider config");
+
+        universal.models.claude = Some(ClaudeModelConfig {
+            fable_model: None,
+            subagent_model: Some("   ".to_string()),
+            ..Default::default()
+        });
+        ProviderService::upsert_universal(&state, universal.clone())
+            .expect("update universal provider");
+        ProviderService::sync_universal_to_apps(&state, &universal.id)
+            .expect("sync cleared optional models");
+
+        let synced = db
+            .get_provider_by_id(&generated_id, "claude")
+            .expect("query synced provider")
+            .expect("synced provider should exist");
+        let env = synced
+            .settings_config
+            .get("env")
+            .and_then(Value::as_object)
+            .expect("generated provider env");
+
+        assert!(!env.contains_key("ANTHROPIC_DEFAULT_FABLE_MODEL"));
+        assert!(!env.contains_key("CLAUDE_CODE_SUBAGENT_MODEL"));
+        assert_eq!(
+            env.get("CUSTOM_ENV").and_then(Value::as_str),
+            Some("keep-me")
+        );
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
@@ -3927,6 +4000,7 @@ impl ProviderService {
             // 合并已有配置
             if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
                 let mut merged = existing.settings_config.clone();
+                Self::remove_universal_claude_optional_models(&mut merged);
                 Self::merge_json(&mut merged, &claude_provider.settings_config);
                 claude_provider.settings_config = merged;
             }
@@ -3966,6 +4040,17 @@ impl ProviderService {
         }
 
         Ok(true)
+    }
+
+    /// 统一供应商可选 Claude 模型的清空需要具备删除语义。同步时先移除旧值，
+    /// 当前配置若仍有非空值，会在随后的 merge_json 中重新写入。
+    fn remove_universal_claude_optional_models(settings: &mut serde_json::Value) {
+        let Some(env) = settings.get_mut("env").and_then(Value::as_object_mut) else {
+            return;
+        };
+
+        env.remove("ANTHROPIC_DEFAULT_FABLE_MODEL");
+        env.remove("CLAUDE_CODE_SUBAGENT_MODEL");
     }
 
     /// 递归合并 JSON：base 为底，patch 覆盖同名字段
