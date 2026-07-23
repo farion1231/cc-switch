@@ -28,12 +28,20 @@ _Avoid_: Provider copy, silent local patch
 A configuration value owned by a Provider and eligible for projection into a Managed Target.
 _Avoid_: Entire configuration file
 
-**Provider Key**:
-An Application-native identifier selected by a Managed Target to activate one Provider route. For Codex, CC Switch generates a readable, collision-resistant `cc_switch_<name>_<id>` key for non-official Providers; the official Provider uses Codex's native route without a custom key.
-_Avoid_: Provider display name, generic `custom` bucket
+**Provider ID**:
+CC Switch's stable identity for one reusable Provider, independent of how an Application names routes or groups sessions.
+_Avoid_: Provider display name, runtime route, session bucket
+
+**Runtime Route**:
+An Application-native route selected in a Managed Target's active configuration. Multiple Providers may intentionally share one Runtime Route when the Application uses it as a compatibility category rather than an identity.
+_Avoid_: Provider ID, session provenance
+
+**Session Bucket**:
+An Application-native category used to index and discover session history. It is a compatibility mechanism, not proof of the Provider that created a session.
+_Avoid_: Provider ID, session provenance
 
 **Managed Provider Table**:
-The Application-native routing table selected by a Provider Key and owned by CC Switch while it is active. Reprojection replaces stale CC Switch tables and collapses aliases of the same route while retaining their unknown fields.
+The Application-native routing table selected by a Runtime Route and owned by CC Switch while it is active. Reprojection replaces stale CC Switch tables and collapses aliases of the same route while retaining their unknown fields.
 _Avoid_: Every provider table in a Target config, user-authored inactive route
 
 **Local Field**:
@@ -65,5 +73,7 @@ bearer token. Paths, projects, approval/sandbox policy, MCP, response-storage
 policy, authentication files, sessions, state databases, and unknown fields are
 Target-owned. Adding or linking a Target is read-only; the first Projection
 requires explicit activation. Official Codex Providers project to the native
-Codex route. Non-official Providers receive a unique readable Provider Key;
-generic `custom` is not a Managed Target identity.
+Codex route unless unified history is enabled. Under unified history, Codex
+Providers share Codex's `custom` Runtime Route and Session Bucket while retaining
+distinct CC Switch Provider IDs. Each Managed Target keeps its own configuration,
+authentication, sessions, and state database.
