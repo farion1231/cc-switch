@@ -8,6 +8,11 @@ use serde_json::Value;
 /// Maximum number of characters for session titles (shared across providers).
 pub const TITLE_MAX_CHARS: usize = 80;
 
+/// Size of the tail window (in bytes) used when reading the end of large
+/// session files.  Must be large enough to include custom-title entries that
+/// may be positioned at any point in a long-running renamed session.
+const TAIL_WINDOW_BYTES: u64 = 131_072; // 128 KB
+
 /// Read the first `head_n` lines and last `tail_n` lines from a file.
 /// For small files (< 16 KB), reads all lines once to avoid unnecessary seeking.
 pub fn read_head_tail_lines(
@@ -19,7 +24,7 @@ pub fn read_head_tail_lines(
     let file_len = file.metadata()?.len();
 
     // For small files, read all lines once and split
-    if file_len < 16_384 {
+    if file_len < TAIL_WINDOW_BYTES {
         let reader = BufReader::new(file);
         let all: Vec<String> = reader.lines().map_while(Result::ok).collect();
         let head = all.iter().take(head_n).cloned().collect();
@@ -33,7 +38,7 @@ pub fn read_head_tail_lines(
     let head: Vec<String> = reader.lines().take(head_n).map_while(Result::ok).collect();
 
     // Seek to last ~16 KB for tail lines
-    let seek_pos = file_len.saturating_sub(16_384);
+    let seek_pos = file_len.saturating_sub(TAIL_WINDOW_BYTES);
     let mut file2 = File::open(path)?;
     file2.seek(SeekFrom::Start(seek_pos))?;
     let tail_reader = BufReader::new(file2);

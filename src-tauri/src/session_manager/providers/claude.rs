@@ -110,6 +110,25 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         })?;
     }
 
+    // Clean up Claude Code jobs directory entries associated with this
+    // session so the built-in agents panel (← key) does not show stale
+    // entries after the session has been deleted.
+    let jobs_dir = get_claude_config_dir().join("jobs");
+    let jobs_subdir = jobs_dir.join(session_id);
+    let jobs_file = jobs_dir.join(format!("{session_id}.json"));
+    remove_path_if_exists(&jobs_subdir).map_err(|e| {
+        format!(
+            "Failed to delete Claude jobs directory {}: {e}",
+            jobs_subdir.display()
+        )
+    })?;
+    remove_path_if_exists(&jobs_file).map_err(|e| {
+        format!(
+            "Failed to delete Claude jobs file {}: {e}",
+            jobs_file.display()
+        )
+    })?;
+
     std::fs::remove_file(path).map_err(|e| {
         format!(
             "Failed to delete Claude session file {}: {e}",
@@ -131,6 +150,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut first_user_message: Option<String> = None;
+    let mut custom_title: Option<String> = None;
 
     // Extract metadata and first user message from head lines
     for line in &head {
@@ -152,6 +172,18 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
         if created_at.is_none() {
             created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        // Extract custom-title from head region as well; when a session
+        // is renamed early and the conversation grows large the entry may
+        // be beyond the tail window altogether.
+        if custom_title.is_none()
+            && value.get("type").and_then(Value::as_str) == Some("custom-title")
+        {
+            custom_title = value
+                .get("customTitle")
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
         }
         // Extract first real user message as title candidate
         // Skip system-injected caveats and slash commands (e.g. /clear, /compact)
@@ -187,7 +219,6 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
-    let mut custom_title: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
@@ -302,6 +333,7 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
@@ -496,5 +528,123 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
+    }
+
+    #[test]
+    fn parse_session_custom_title_in_head_region_of_large_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-head-custom.jsonl");
+
+        // custom-title in the head region (line 2, within first 10 lines),
+        // then enough padding to push the file past the small-file threshold.
+        let header = concat!(
+            "{\"sessionId\":\"session-big\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"my-rename\",\"sessionId\":\"session-big\"}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"sessionId\":\"session-big\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+        );
+        let padding_line = concat!(
+            "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",",
+            "\"content\":\"padding padding padding padding padding padding ",
+            "padding padding padding padding padding\"},",
+            "\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
+        );
+        let needed = (20_000 - header.len()) / padding_line.len() + 5;
+        let padding: String = std::iter::repeat_n(padding_line, needed).collect::<Vec<_>>().concat();
+
+        std::fs::write(&path, format!("{}{}", header, padding)).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("my-rename"));
+    }
+
+    #[test]
+    fn parse_session_custom_title_beyond_old_tail_window() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-far-custom.jsonl");
+
+        // A stubby line repeated to bulk the file past the old 16 KB threshold
+        // while keeping the line count low enough that the custom-title line
+        // remains within the tail_n=30 window of read_head_tail_lines.
+        let bulk = "x".repeat(999); // ~1 KB per line
+        let bulk_line = |i: usize| -> String {
+            format!("{{\"type\":\"bulk\",\"i\":{i},\"pad\":\"{bulk}\"}}\n",)
+        };
+
+        let mut file = String::new();
+        file.push_str(concat!(
+            "{\"sessionId\":\"session-far\",\"cwd\":\"/tmp/project\",",
+            "\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",",
+            "\"content\":\"start\"},\"sessionId\":\"session-far\",",
+            "\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+        ));
+        // ~20 bulk lines @ ~1 KB each → ~20 KB before the custom-title
+        for i in 0..20 {
+            file.push_str(&bulk_line(i));
+        }
+        // custom-title placed ~few hundred bytes from EOF so it is
+        // guaranteed to be within the last 30 lines.
+        file.push_str(concat!(
+            "{\"type\":\"custom-title\",\"customTitle\":\"late-rename\",",
+            "\"sessionId\":\"session-far\"}\n",
+        ));
+        // A little padding after custom-title ensures the file size is
+        // comfortably above the old 16 KB small-file threshold.
+        for i in 20..30 {
+            file.push_str(&bulk_line(i));
+        }
+
+        std::fs::write(&path, file).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("late-rename"));
+    }
+
+    #[test]
+    #[serial]
+    fn delete_session_cleans_up_jobs_directory() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_dir = temp.path().join("projects");
+        std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+
+        // Redirect Claude config dir under temp via CC_SWITCH_TEST_HOME so
+        // that get_claude_config_dir() returns temp/.claude.
+        let original = std::env::var_os("CC_SWITCH_TEST_HOME");
+        unsafe {
+            std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        }
+
+        // Lay out ~/.claude/jobs/{session_id}/ and ~/.claude/jobs/{session_id}.json
+        let jobs_dir = temp.path().join(".claude").join("jobs");
+        let jobs_subdir = jobs_dir.join("test-session-jobs");
+        std::fs::create_dir_all(&jobs_subdir).expect("create jobs subdir");
+        std::fs::write(jobs_subdir.join("state.json"), "{}").expect("write state.json");
+        let jobs_file = jobs_dir.join("test-session-jobs.json");
+        std::fs::write(&jobs_file, "{}").expect("write jobs file");
+
+        // Create session JSONL
+        let path = sessions_dir.join("test-session-jobs.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"test-session-jobs\",\"cwd\":\"/tmp/project\",",
+                "\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},",
+                "\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            ),
+        )
+        .expect("write session");
+
+        delete_session(&sessions_dir, &path, "test-session-jobs").expect("delete session");
+
+        assert!(!path.exists(), "session JSONL should be deleted");
+        assert!(!jobs_subdir.exists(), "jobs subdirectory should be deleted");
+        assert!(!jobs_file.exists(), "jobs JSON file should be deleted");
+
+        // Restore env
+        match original {
+            Some(v) => unsafe { std::env::set_var("CC_SWITCH_TEST_HOME", v) },
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
     }
 }
