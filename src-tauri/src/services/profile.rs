@@ -9,7 +9,7 @@
 //! - 供应商：`ProviderService::switch`（内建代理接管热切换与接管下禁切官方）
 //! - MCP：`McpService::toggle_app`（改标志 + 单 server 物化）
 //! - Skills：`SkillService::toggle_app`（改标志 + 单 skill 物化）
-//! - Prompt：`PromptService::enable_prompt`（互斥激活 + 原子写 live）
+//! - Prompt：`PromptService::enable_prompt`（启用并原子写入 live 文件）
 //!
 //! apply 为 best-effort：单项失败收集为 warning 继续，不整体回滚。
 

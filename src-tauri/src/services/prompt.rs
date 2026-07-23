@@ -84,18 +84,21 @@ impl PromptService {
                 if !live_content.trim().is_empty() {
                     let mut prompts = state.db.get_prompts(app.as_str())?;
 
-                    // 尝试回填到当前已启用的提示词
-                    if let Some((enabled_id, enabled_prompt)) = prompts
-                        .iter_mut()
-                        .find(|(_, p)| p.enabled)
-                        .map(|(id, p)| (id.clone(), p))
-                    {
+                    // A generated file with multiple enabled prompts must not be
+                    // imported back into one prompt, or later enables would duplicate it.
+                    let enabled_count = prompts.values().filter(|p| p.enabled).count();
+                    if enabled_count == 1 {
+                        let (enabled_id, enabled_prompt) = prompts
+                            .iter_mut()
+                            .find(|(_, p)| p.enabled)
+                            .map(|(id, p)| (id.clone(), p))
+                            .expect("enabled_count guarantees one enabled prompt");
                         let timestamp = get_unix_timestamp()?;
                         enabled_prompt.content = live_content.clone();
                         enabled_prompt.updated_at = Some(timestamp);
                         log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
                         state.db.save_prompt(app.as_str(), enabled_prompt)?;
-                    } else {
+                    } else if enabled_count == 0 {
                         // 没有已启用的提示词，则创建一次备份（避免重复备份）
                         let content_exists = prompts
                             .values()
