@@ -51,8 +51,8 @@ vi.mock("@/hooks/useSkills", () => ({
       {
         directory: "shared-skill",
         name: "Shared Skill",
-        description: "Imported from Claude",
-        foundIn: ["claude"],
+        description: "Imported from Grok Build",
+        foundIn: ["grokbuild"],
         path: "/tmp/shared-skill",
       },
     ],
@@ -82,8 +82,8 @@ describe("UnifiedSkillsPanel", () => {
         {
           directory: "shared-skill",
           name: "Shared Skill",
-          description: "Imported from Claude",
-          foundIn: ["claude"],
+          description: "Imported from Grok Build",
+          foundIn: ["grokbuild"],
           path: "/tmp/shared-skill",
         },
       ],
@@ -115,6 +115,19 @@ describe("UnifiedSkillsPanel", () => {
       expect(screen.getByText("skills.import")).toBeInTheDocument();
       expect(screen.getByText("Shared Skill")).toBeInTheDocument();
       expect(screen.getByText("/tmp/shared-skill")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      screen.getByText("skills.importSelected").click();
+    });
+
+    await waitFor(() => {
+      expect(importSkillsMock).toHaveBeenCalledWith([
+        {
+          directory: "shared-skill",
+          apps: expect.objectContaining({ grokbuild: true }),
+        },
+      ]);
     });
   });
 });

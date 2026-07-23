@@ -8,7 +8,7 @@ use tauri::State;
 /// Parse a deep link URL and return the parsed request for frontend confirmation
 #[tauri::command]
 pub fn parse_deeplink(url: String) -> Result<DeepLinkImportRequest, String> {
-    log::info!("Parsing deep link URL: {url}");
+    log::info!("Parsing deep link URL: {}", crate::url_for_log(&url));
     parse_deeplink_url(&url).map_err(|e| e.to_string())
 }
 

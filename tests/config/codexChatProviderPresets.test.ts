@@ -59,7 +59,7 @@ const expectedChatPresets = new Map<
     "Kimi",
     {
       baseUrl: "https://api.moonshot.cn/v1",
-      contextWindows: { "kimi-k2.7-code": 262144 },
+      contextWindows: { "kimi-k2.7-code": 262144, "kimi-k3": 1048576 },
     },
   ],
   [

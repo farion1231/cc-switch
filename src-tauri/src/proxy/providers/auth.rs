@@ -128,6 +128,13 @@ pub enum AuthStrategy {
     ///
     /// 使用动态获取的 OpenAI access_token（通过 Device Code 流程获取）
     CodexOAuth,
+
+    /// xAI OAuth（Grok API）
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    ///
+    /// access token 由 xAI Device Code 流程获取并由 forwarder 动态注入。
+    XaiOAuth,
 }
 
 #[cfg(test)]
@@ -170,6 +177,7 @@ mod tests {
         assert_eq!(AuthStrategy::Anthropic, AuthStrategy::Anthropic);
         assert_ne!(AuthStrategy::Anthropic, AuthStrategy::Bearer);
         assert_ne!(AuthStrategy::Bearer, AuthStrategy::Google);
+        assert_ne!(AuthStrategy::CodexOAuth, AuthStrategy::XaiOAuth);
     }
 
     #[test]
