@@ -29,6 +29,13 @@ export interface CodexUnifyHistoryRestoreResult {
   skippedReason?: string;
 }
 
+export interface TargetHistoryMigrationResult {
+  changedJsonlFiles: number;
+  changedStateRows: number;
+  backupPath?: string;
+  skippedReason?: string;
+}
+
 export interface WebDavSyncResult {
   status: string;
 }
@@ -80,6 +87,18 @@ export const settingsApi = {
       targetId,
       providerId,
     });
+  },
+
+  async migrateManagedTargetCodexHistory(
+    targetId: string,
+  ): Promise<TargetHistoryMigrationResult> {
+    return await invoke("migrateManagedTargetCodexHistory", { targetId });
+  },
+
+  async restoreManagedTargetCodexHistory(
+    targetId: string,
+  ): Promise<TargetHistoryMigrationResult> {
+    return await invoke("restoreManagedTargetCodexHistory", { targetId });
   },
 
   /** 是否存在统一 Codex 会话历史的迁移备份（关闭弹窗据此显示"恢复备份"勾选） */

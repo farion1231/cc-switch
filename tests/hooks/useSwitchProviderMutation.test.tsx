@@ -1,9 +1,16 @@
 import type { ReactNode } from "react";
-import { act, renderHook } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useSwitchProviderMutation } from "@/lib/query/mutations";
+import { ProviderActions } from "@/components/providers/ProviderActions";
 
 const apiMocks = vi.hoisted(() => ({
   switchProvider: vi.fn(),
@@ -67,6 +74,44 @@ beforeEach(() => {
 });
 
 describe("useSwitchProviderMutation", () => {
+  it("disables the selected Provider immediately while a switch is pending", async () => {
+    let finishSwitch: (() => void) | undefined;
+    apiMocks.switchManagedTargetProvider.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSwitch = resolve;
+        }),
+    );
+    const { wrapper } = createWrapper();
+
+    function Harness() {
+      const mutation = useSwitchProviderMutation("codex", "wsl-ubuntu");
+      return (
+        <ProviderActions
+          appId="codex"
+          providerId="provider-b"
+          isCurrent={false}
+          onSwitch={() => mutation.mutate("provider-b")}
+          onEdit={() => undefined}
+          onDuplicate={() => undefined}
+          onDelete={() => undefined}
+        />
+      );
+    }
+
+    render(<Harness />, { wrapper });
+    const enableButton = screen.getByRole("button", {
+      name: "provider.enable",
+    });
+    fireEvent.click(enableButton);
+
+    expect(
+      await screen.findByRole("button", { name: "切换中" }),
+    ).toBeDisabled();
+
+    await act(async () => finishSwitch?.());
+  });
+
   it("switches only the selected Codex Managed Target", async () => {
     const { wrapper, invalidateSpy } = createWrapper();
     const { result } = renderHook(

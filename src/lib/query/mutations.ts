@@ -283,6 +283,7 @@ export const useSwitchProviderMutation = (
   const { t } = useTranslation();
 
   return useMutation({
+    mutationKey: ["switch-provider", appId],
     mutationFn: async (providerId: string): Promise<SwitchResult> => {
       if (appId === "codex" && managedTargetId) {
         await settingsApi.switchManagedTargetProvider(

@@ -40,6 +40,16 @@ describe("settingsApi managed targets", () => {
         id: "wsl-ubuntu-mikasa",
         currentProviderId: "provider-b",
         managementState: "managed",
+      })
+      .mockResolvedValueOnce({
+        changedJsonlFiles: 48,
+        changedStateRows: 48,
+        backupPath: "/backup/migrate",
+      })
+      .mockResolvedValueOnce({
+        changedJsonlFiles: 48,
+        changedStateRows: 48,
+        backupPath: "/backup/restore",
       });
 
     await expect(settingsApi.listManagedTargets()).resolves.toEqual([
@@ -69,6 +79,12 @@ describe("settingsApi managed targets", () => {
         "provider-b",
       ),
     ).resolves.toMatchObject({ currentProviderId: "provider-b" });
+    await expect(
+      settingsApi.migrateManagedTargetCodexHistory("wsl-ubuntu-mikasa"),
+    ).resolves.toMatchObject({ changedJsonlFiles: 48 });
+    await expect(
+      settingsApi.restoreManagedTargetCodexHistory("wsl-ubuntu-mikasa"),
+    ).resolves.toMatchObject({ changedStateRows: 48 });
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "listManagedTargets");
     expect(invokeMock).toHaveBeenNthCalledWith(2, "inspectManagedTarget", {
@@ -94,6 +110,16 @@ describe("settingsApi managed targets", () => {
         targetId: "wsl-ubuntu-mikasa",
         providerId: "provider-b",
       },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      8,
+      "migrateManagedTargetCodexHistory",
+      { targetId: "wsl-ubuntu-mikasa" },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      9,
+      "restoreManagedTargetCodexHistory",
+      { targetId: "wsl-ubuntu-mikasa" },
     );
   });
 });

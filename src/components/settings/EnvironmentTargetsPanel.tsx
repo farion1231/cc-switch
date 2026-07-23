@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  History,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -31,12 +38,37 @@ interface TargetView {
   inspectionFailed?: boolean;
 }
 
+interface HistoryAction {
+  target: ManagedTarget;
+  type: "migrate" | "restore";
+}
+
 const NO_PROVIDER_LINK = "__cc_switch_no_provider_link__";
 
 function artifactClass(state: TargetArtifactState): string {
   if (state === "valid") return "border-emerald-500/40 text-emerald-600";
   if (state === "invalid") return "border-red-500/40 text-red-600";
   return "border-amber-500/40 text-amber-600";
+}
+
+function historySkippedMessageKey(
+  actionType: HistoryAction["type"],
+  skippedReason: string,
+): string {
+  switch (skippedReason) {
+    case "live_not_unified":
+      return "settings.environments.historyLiveNotUnified";
+    case "already_unified":
+      return "settings.environments.historyAlreadyUnified";
+    case "no_backup_ledger":
+      return "settings.environments.historyNoBackupLedger";
+    case "nothing_to_restore":
+      return "settings.environments.historyNothingToRestore";
+    default:
+      return actionType === "migrate"
+        ? "settings.environments.historyAlreadyUnified"
+        : "settings.environments.historyNothingToRestore";
+  }
 }
 
 export function EnvironmentTargetsPanel() {
@@ -46,6 +78,9 @@ export function EnvironmentTargetsPanel() {
   const isCodexTakeoverActive = takeoverStatus?.codex ?? false;
   const [activationTarget, setActivationTarget] =
     useState<ManagedTarget | null>(null);
+  const [historyAction, setHistoryAction] = useState<HistoryAction | null>(
+    null,
+  );
   const query = useQuery({
     queryKey: ["managed-targets", "inspection"],
     queryFn: async (): Promise<TargetView[]> => {
@@ -130,9 +165,56 @@ export function EnvironmentTargetsPanel() {
       toast.error(t("settings.environments.switchFailed"));
     },
   });
+  const historyMutation = useMutation({
+    mutationFn: async (action: HistoryAction) => {
+      const result =
+        action.type === "migrate"
+          ? await settingsApi.migrateManagedTargetCodexHistory(action.target.id)
+          : await settingsApi.restoreManagedTargetCodexHistory(
+              action.target.id,
+            );
+      return { action, result };
+    },
+    onSuccess: async ({ action, result }) => {
+      setHistoryAction(null);
+      if (result.skippedReason) {
+        toast.info(
+          t(historySkippedMessageKey(action.type, result.skippedReason)),
+        );
+      } else {
+        toast.success(
+          t(
+            action.type === "migrate"
+              ? "settings.environments.historyMigrationSuccess"
+              : "settings.environments.historyRestoreSuccess",
+            {
+              files: result.changedJsonlFiles,
+              rows: result.changedStateRows,
+            },
+          ),
+        );
+      }
+      await queryClient.invalidateQueries({ queryKey: ["managed-targets"] });
+    },
+    onError: (_error, action) => {
+      toast.error(
+        t(
+          action.type === "migrate"
+            ? "settings.environments.historyMigrationFailed"
+            : "settings.environments.historyRestoreFailed",
+        ),
+      );
+    },
+  });
 
   const artifactLabel = (state: TargetArtifactState) =>
     t(`settings.environments.artifact.${state}`);
+
+  const activationProviderId = activationTarget?.currentProviderId ?? "";
+  const activationProviderLabel =
+    (activationProviderId && providers.data?.[activationProviderId]?.name) ||
+    activationProviderId ||
+    t("settings.environments.selectProvider");
 
   return (
     <div className="space-y-4">
@@ -394,6 +476,61 @@ export function EnvironmentTargetsPanel() {
                     ) : null}
                   </div>
                 ) : null}
+                {inspection?.reachable &&
+                target.managementState === "managed" ? (
+                  <div className="mt-3 border-t pt-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="flex items-center gap-2 text-sm font-medium">
+                          <History className="h-4 w-4" />
+                          {t("settings.environments.historyCompatibility")}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t(
+                            "settings.environments.historyCompatibilityNotice",
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={historyMutation.isPending}
+                          onClick={() =>
+                            setHistoryAction({ target, type: "restore" })
+                          }
+                        >
+                          {historyMutation.isPending &&
+                          historyMutation.variables?.target.id === target.id &&
+                          historyMutation.variables.type === "restore" ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" />
+                          )}
+                          {t("settings.environments.restoreHistory")}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={historyMutation.isPending}
+                          onClick={() =>
+                            setHistoryAction({ target, type: "migrate" })
+                          }
+                        >
+                          {historyMutation.isPending &&
+                          historyMutation.variables?.target.id === target.id &&
+                          historyMutation.variables.type === "migrate" ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <History className="h-4 w-4" />
+                          )}
+                          {t("settings.environments.migrateHistory")}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ))}
@@ -500,14 +637,46 @@ export function EnvironmentTargetsPanel() {
         title={t("settings.environments.activationConfirmTitle")}
         message={t("settings.environments.activationConfirmMessage", {
           target: activationTarget?.name ?? "",
-          provider: activationTarget?.currentProviderId ?? "",
+          provider: activationProviderLabel,
         })}
         confirmText={t("settings.environments.activate")}
+        confirmDisabled={activation.isPending}
         onConfirm={() => {
-          if (activationTarget) activation.mutate(activationTarget.id);
+          if (!activationTarget || activation.isPending) return;
+          activation.mutate(activationTarget.id);
         }}
         onCancel={() => {
           if (!activation.isPending) setActivationTarget(null);
+        }}
+      />
+      <ConfirmDialog
+        isOpen={historyAction !== null}
+        variant="info"
+        title={t(
+          historyAction?.type === "restore"
+            ? "settings.environments.historyRestoreConfirmTitle"
+            : "settings.environments.historyMigrationConfirmTitle",
+        )}
+        message={t(
+          historyAction?.type === "restore"
+            ? "settings.environments.historyRestoreConfirmMessage"
+            : "settings.environments.historyMigrationConfirmMessage",
+          { target: historyAction?.target.name ?? "" },
+        )}
+        confirmText={t(
+          historyAction?.type === "restore"
+            ? "settings.environments.confirmRestore"
+            : "settings.environments.confirmMigration",
+        )}
+        confirmDisabled={historyMutation.isPending}
+        onConfirm={() => {
+          if (!historyAction || historyMutation.isPending) return;
+          const action = historyAction;
+          setHistoryAction(null);
+          historyMutation.mutate(action);
+        }}
+        onCancel={() => {
+          if (!historyMutation.isPending) setHistoryAction(null);
         }}
       />
     </div>
