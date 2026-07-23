@@ -549,7 +549,9 @@ mod tests {
             "\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
         );
         let needed = (20_000 - header.len()) / padding_line.len() + 5;
-        let padding: String = std::iter::repeat_n(padding_line, needed).collect::<Vec<_>>().concat();
+        let padding: String = std::iter::repeat_n(padding_line, needed)
+            .collect::<Vec<_>>()
+            .concat();
 
         std::fs::write(&path, format!("{}{}", header, padding)).expect("write");
 
@@ -563,8 +565,11 @@ mod tests {
         let path = temp.path().join("session-far-custom.jsonl");
 
         // A stubby line repeated to bulk the file past the old 16 KB threshold
-        // while keeping the line count low enough that the custom-title line
-        // remains within the tail_n=30 window of read_head_tail_lines.
+        // while keeping line count low enough for the custom-title line to
+        // remain within the tail_n=30 window of read_head_tail_lines.
+        // Custom-title sits ~20 KB from EOF so the old 16 KB tail window
+        // would miss it — but the new 128 KB window (or full-file read for
+        // files under the threshold) catches it.
         let bulk = "x".repeat(999); // ~1 KB per line
         let bulk_line = |i: usize| -> String {
             format!("{{\"type\":\"bulk\",\"i\":{i},\"pad\":\"{bulk}\"}}\n",)
@@ -582,15 +587,14 @@ mod tests {
         for i in 0..20 {
             file.push_str(&bulk_line(i));
         }
-        // custom-title placed ~few hundred bytes from EOF so it is
-        // guaranteed to be within the last 30 lines.
         file.push_str(concat!(
             "{\"type\":\"custom-title\",\"customTitle\":\"late-rename\",",
             "\"sessionId\":\"session-far\"}\n",
         ));
-        // A little padding after custom-title ensures the file size is
-        // comfortably above the old 16 KB small-file threshold.
-        for i in 20..30 {
+        // 20 bulk lines after custom-title (~20 KB) so the old 16 KB
+        // seek window would land past it. File stays < 128 KB so
+        // read_head_tail_lines takes the full-file path.
+        for i in 20..40 {
             file.push_str(&bulk_line(i));
         }
 
