@@ -286,7 +286,8 @@ pub fn apply_proxy_takeover(
     token_placeholder: &str,
 ) -> Result<String, AppError> {
     let updated = update_selected_model_string(config_toml, "base_url", proxy_base_url)?;
-    update_selected_model_string(&updated, "api_key", token_placeholder)
+    let updated = update_selected_model_string(&updated, "api_key", token_placeholder)?;
+    update_selected_model_string(&updated, "api_backend", DEFAULT_API_BACKEND)
 }
 
 pub fn update_api_key(config_toml: &str, api_key: &str) -> Result<String, AppError> {
@@ -511,8 +512,12 @@ context_window = 500000
 
     #[test]
     fn takeover_preserves_env_key_profile_and_injects_inline_placeholder() {
+        let direct_config = valid_env_key_config().replace(
+            "api_backend = \"responses\"",
+            "api_backend = \"chat_completions\"",
+        );
         let updated = apply_proxy_takeover(
-            valid_env_key_config(),
+            &direct_config,
             "http://127.0.0.1:15721/grokbuild/v1",
             "PROXY_MANAGED",
         )
@@ -522,6 +527,7 @@ context_window = 500000
         assert_eq!(selected.profile, "grok-env");
         assert_eq!(selected.env_key.as_deref(), Some("GROK_TEST_API_KEY"));
         assert_eq!(selected.api_key.as_deref(), Some("PROXY_MANAGED"));
+        assert_eq!(selected.api_backend, DEFAULT_API_BACKEND);
     }
 
     #[test]

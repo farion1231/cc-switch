@@ -6,7 +6,7 @@
 //!
 //! 支持从客户端请求中提取 Session ID，用于关联同一对话的多个请求：
 //! - Claude: 从 `metadata.user_id` (格式: `user_xxx_session_yyy`) 或 `metadata.session_id` 提取
-//! - Codex: 从 headers 中的 `session_id` / `x-session-id` 或 `metadata.session_id` 提取
+//! - Codex/Grok Build: 从 headers 中的 `session_id` / `x-session-id` 或 `metadata.session_id` 提取
 //! - 其他: 生成新的 UUID
 
 use axum::http::HeaderMap;
@@ -245,9 +245,15 @@ pub fn extract_session_id(
         }
     }
 
-    // Codex 请求特殊处理
-    if client_format == "codex" || client_format == "openai" {
-        if let Some(result) = extract_codex_session(headers, body) {
+    // Responses 请求特殊处理。Grok Build 使用与 Codex 相同的客户端协议，
+    // 但保留独立前缀，避免统计和缓存键跨应用碰撞。
+    if matches!(client_format, "codex" | "openai" | "grokbuild") {
+        let prefix = if client_format == "grokbuild" {
+            "grokbuild"
+        } else {
+            "codex"
+        };
+        if let Some(result) = extract_responses_session(headers, body, prefix) {
             return result;
         }
     }
@@ -284,7 +290,11 @@ fn extract_claude_session(
 }
 
 /// 提取 Codex Session ID
-fn extract_codex_session(headers: &HeaderMap, body: &serde_json::Value) -> Option<SessionIdResult> {
+fn extract_responses_session(
+    headers: &HeaderMap,
+    body: &serde_json::Value,
+    prefix: &str,
+) -> Option<SessionIdResult> {
     // 1. 从 headers 提取
     for header_name in &["session_id", "x-session-id"] {
         if let Some(value) = headers.get(*header_name) {
@@ -292,7 +302,7 @@ fn extract_codex_session(headers: &HeaderMap, body: &serde_json::Value) -> Optio
                 // Codex Session ID 通常较长（UUID 格式）
                 if session_id.len() > 20 {
                     return Some(SessionIdResult {
-                        session_id: format!("codex_{session_id}"),
+                        session_id: format!("{prefix}_{session_id}"),
                         source: SessionIdSource::Header,
                         client_provided: true,
                     });
@@ -309,7 +319,7 @@ fn extract_codex_session(headers: &HeaderMap, body: &serde_json::Value) -> Optio
     {
         if session_id.len() > 10 {
             return Some(SessionIdResult {
-                session_id: format!("codex_{session_id}"),
+                session_id: format!("{prefix}_{session_id}"),
                 source: SessionIdSource::MetadataSessionId,
                 client_provided: true,
             });
@@ -587,6 +597,25 @@ mod tests {
         assert!(!result.session_id.is_empty());
         assert_eq!(result.source, SessionIdSource::Generated);
         assert!(!result.client_provided);
+    }
+
+    #[test]
+    fn test_grokbuild_extracts_responses_session_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-session-id",
+            "d937243f-2702-4f20-97b6-c9682235ab81".parse().unwrap(),
+        );
+        let body = json!({ "input": "Write a function" });
+
+        let result = extract_session_id(&headers, &body, "grokbuild");
+
+        assert_eq!(
+            result.session_id,
+            "grokbuild_d937243f-2702-4f20-97b6-c9682235ab81"
+        );
+        assert_eq!(result.source, SessionIdSource::Header);
+        assert!(result.client_provided);
     }
 
     #[test]
