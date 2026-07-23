@@ -34,6 +34,7 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod target_history_migration;
 mod target_inspection;
 
 mod tray;
@@ -76,6 +77,7 @@ pub use settings::{
     TargetOverride,
 };
 pub use store::AppState;
+pub use target_history_migration::{CodexTargetHistoryManager, TargetHistoryMigrationResult};
 pub use target_inspection::{
     TargetArtifactState, TargetInspection, WindowsTargetInspector, WslConfigSnapshot,
     WslTargetAdapter, WslTargetDiscovery,
@@ -1364,6 +1366,8 @@ pub fn run() {
             commands::linkManagedTargetProvider,
             commands::activateWslManagedTarget,
             commands::switchManagedTargetProvider,
+            commands::migrateManagedTargetCodexHistory,
+            commands::restoreManagedTargetCodexHistory,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,

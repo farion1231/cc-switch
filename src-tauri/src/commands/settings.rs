@@ -254,6 +254,38 @@ pub async fn switchManagedTargetProvider(
         .ok_or_else(|| format!("Managed Target '{target_id}' disappeared after switching"))
 }
 
+/// Normalize one selected Target's existing Codex history into the shared
+/// `custom` session bucket. The Target path is resolved from local settings;
+/// callers cannot inject an arbitrary filesystem location.
+#[tauri::command]
+pub async fn migrateManagedTargetCodexHistory(
+    target_id: String,
+) -> Result<crate::target_history_migration::TargetHistoryMigrationResult, String> {
+    let target = managed_target_by_id(&target_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::target_history_migration::CodexTargetHistoryManager::default().migrate(&target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
+}
+
+/// Precisely restore labels changed by the selected Target's explicit history
+/// migration. Sessions created in `custom` have no ledger entry and remain
+/// untouched.
+#[tauri::command]
+pub async fn restoreManagedTargetCodexHistory(
+    target_id: String,
+) -> Result<crate::target_history_migration::TargetHistoryMigrationResult, String> {
+    let target = managed_target_by_id(&target_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::target_history_migration::CodexTargetHistoryManager::default().restore(&target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
+}
+
 /// 保存设置
 #[tauri::command]
 pub async fn save_settings(
