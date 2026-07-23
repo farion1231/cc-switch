@@ -240,6 +240,120 @@ impl WslTargetAdapter {
         Ok(discovered)
     }
 
+    /// List Codex sessions inside a WSL Target by reading JSONL files via argv-safe commands.
+    pub fn scan_codex_sessions(
+        &self,
+        target: &ManagedTarget,
+    ) -> Result<Vec<crate::session_manager::SessionMeta>, AppError> {
+        let TargetKind::Wsl { distro, user } = &target.kind else {
+            return Err(AppError::Message(
+                "WSL session scan requires a WSL Target".to_string(),
+            ));
+        };
+        validate_wsl_target(distro, user, &target.config_location.path)?;
+        let config_dir = target.config_location.path.trim_end_matches('/');
+        let mut paths = Vec::new();
+        for subdir in ["sessions", "archived_sessions"] {
+            let root = linux_join(config_dir, subdir);
+            paths.extend(self.list_jsonl_files(distro, user, &root)?);
+        }
+
+        let mut sessions = Vec::new();
+        for linux_path in paths {
+            let Some(bytes) = self.read_file_bytes(distro, user, &linux_path)? else {
+                continue;
+            };
+            let Ok(text) = String::from_utf8(bytes) else {
+                continue;
+            };
+            let source =
+                crate::session_manager::encode_wsl_session_source(distro, user, &linux_path);
+            if let Some(meta) = crate::session_manager::providers::codex::parse_session_from_text(
+                &source,
+                &text,
+                &std::collections::HashMap::new(),
+            ) {
+                sessions.push(meta);
+            }
+        }
+        Ok(sessions)
+    }
+
+    pub fn read_file_bytes(
+        &self,
+        distro: &str,
+        user: &str,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        self.read_optional_file(distro, user, path)
+    }
+
+    pub fn delete_codex_session_file(
+        &self,
+        distro: &str,
+        user: &str,
+        linux_path: &str,
+        session_id: &str,
+    ) -> Result<bool, AppError> {
+        if !linux_path.starts_with('/') || linux_path.contains('\0') {
+            return Err(AppError::InvalidInput(
+                "Invalid WSL session path".to_string(),
+            ));
+        }
+        let Some(bytes) = self.read_file_bytes(distro, user, linux_path)? else {
+            return Err(AppError::Message(format!(
+                "WSL session file not found: {linux_path}"
+            )));
+        };
+        let text = String::from_utf8(bytes)
+            .map_err(|_| AppError::Message("WSL session file is not valid UTF-8".to_string()))?;
+        let meta = crate::session_manager::providers::codex::parse_session_from_text(
+            linux_path,
+            &text,
+            &std::collections::HashMap::new(),
+        )
+        .ok_or_else(|| {
+            AppError::Message("Failed to parse WSL Codex session metadata".to_string())
+        })?;
+        if meta.session_id != session_id {
+            return Err(AppError::Message(format!(
+                "Codex session ID mismatch: expected {session_id}, found {}",
+                meta.session_id
+            )));
+        }
+        self.remove_file(distro, user, linux_path)?;
+        Ok(true)
+    }
+
+    fn list_jsonl_files(
+        &self,
+        distro: &str,
+        user: &str,
+        root: &str,
+    ) -> Result<Vec<String>, AppError> {
+        if !self
+            .run(distro, user, &["test", "-d", root])?
+            .status
+            .success()
+        {
+            return Ok(Vec::new());
+        }
+        let output = self.run(
+            distro,
+            user,
+            &["find", root, "-type", "f", "-name", "*.jsonl", "-print0"],
+        )?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        Ok(output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+            .filter_map(|entry| String::from_utf8(entry.to_vec()).ok())
+            .collect())
+    }
+
     pub fn inspect(&self, target: &ManagedTarget) -> Result<TargetInspection, AppError> {
         if target.app != AppType::Codex {
             return Err(AppError::Message(

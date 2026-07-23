@@ -502,6 +502,9 @@ export interface SessionMeta {
   lastActiveAt?: number;
   sourcePath?: string;
   resumeCommand?: string;
+  /** Set when listed via a Managed Target-aware session query. */
+  targetId?: string;
+  environmentLabel?: string;
 }
 
 export interface SessionMessage {

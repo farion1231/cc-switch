@@ -249,6 +249,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("claude --resume {session_id}")),
+        target_id: None,
+        environment_label: None,
     })
 }
 

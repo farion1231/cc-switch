@@ -45,6 +45,8 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
             if let Some(meta) = parse_session(&path) {
                 sessions.push(SessionMeta {
                     project_dir: project_dir.clone(),
+                    target_id: None,
+                    environment_label: None,
                     ..meta
                 });
             }
@@ -170,6 +172,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at: last_active_at.or(created_at),
         source_path: Some(source_path),
         resume_command: Some(format!("gemini --resume {session_id}")),
+        target_id: None,
+        environment_label: None,
     })
 }
 

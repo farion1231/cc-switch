@@ -212,67 +212,68 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to open session file: {e}"))?;
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
-
     for line in reader.lines() {
-        let line = match line {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        let Ok(line) = line else {
             continue;
-        }
-
-        let payload = match value.get("payload") {
-            Some(payload) => payload,
-            None => continue,
         };
-
-        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-
-        // Codex uses separate payload types for tool interactions
-        let (role, content) = match payload_type {
-            "message" => {
-                let role = payload
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string();
-                let content = payload.get("content").map(extract_text).unwrap_or_default();
-                (role, content)
-            }
-            "function_call" => {
-                let name = payload
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                ("assistant".to_string(), format!("[Tool: {name}]"))
-            }
-            "function_call_output" => {
-                let output = payload
-                    .get("output")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                ("tool".to_string(), output)
-            }
-            _ => continue,
-        };
-
-        if content.trim().is_empty() {
-            continue;
+        if let Some(message) = message_from_session_line(&line) {
+            messages.push(message);
         }
-
-        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-
-        messages.push(SessionMessage { role, content, ts });
     }
-
     Ok(messages)
+}
+
+pub fn load_messages_from_bytes(bytes: &[u8]) -> Result<Vec<SessionMessage>, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("Codex session file is not valid UTF-8: {error}"))?;
+    let mut messages = Vec::new();
+    for line in text.lines() {
+        if let Some(message) = message_from_session_line(line) {
+            messages.push(message);
+        }
+    }
+    Ok(messages)
+}
+
+fn message_from_session_line(line: &str) -> Option<SessionMessage> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        return None;
+    }
+    let payload = value.get("payload")?;
+    let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+    let (role, content) = match payload_type {
+        "message" => {
+            let role = payload
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let content = payload.get("content").map(extract_text).unwrap_or_default();
+            (role, content)
+        }
+        "function_call" => {
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            ("assistant".to_string(), format!("[Tool: {name}]"))
+        }
+        "function_call_output" => {
+            let output = payload
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            ("tool".to_string(), output)
+        }
+        _ => return None,
+    };
+    if content.trim().is_empty() {
+        return None;
+    }
+    let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
+    Some(SessionMessage { role, content, ts })
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -419,6 +420,140 @@ fn parse_session_with_titles(
         last_active_at,
         source_path: Some(path.to_string_lossy().to_string()),
         resume_command: Some(format!("codex resume {session_id}")),
+        target_id: None,
+        environment_label: None,
+    })
+}
+
+/// Parse session metadata from in-memory JSONL (used for WSL-backed files).
+pub fn parse_session_from_text(
+    source_path_display: &str,
+    text: &str,
+    thread_titles: &HashMap<String, String>,
+) -> Option<SessionMeta> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let head_end = lines.len().min(10);
+    let tail_start = lines.len().saturating_sub(30);
+    let head = &lines[..head_end];
+    let tail = &lines[tail_start..];
+
+    let mut session_id: Option<String> = None;
+    let mut project_dir: Option<String> = None;
+    let mut created_at: Option<i64> = None;
+    let mut first_user_message: Option<String> = None;
+
+    for line in head {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if created_at.is_none() {
+            created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            if let Some(payload) = value.get("payload") {
+                if is_subagent_source(payload.get("source")) {
+                    return None;
+                }
+                if session_id.is_none() {
+                    session_id = payload
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string());
+                }
+                if project_dir.is_none() {
+                    project_dir = payload
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string());
+                }
+                if let Some(ts) = payload.get("timestamp").and_then(parse_timestamp_to_ms) {
+                    created_at.get_or_insert(ts);
+                }
+            }
+        }
+        if first_user_message.is_none()
+            && value.get("type").and_then(Value::as_str) == Some("response_item")
+        {
+            if let Some(payload) = value.get("payload") {
+                if payload.get("type").and_then(Value::as_str) == Some("message")
+                    && payload.get("role").and_then(Value::as_str) == Some("user")
+                {
+                    let text = payload.get("content").map(extract_text).unwrap_or_default();
+                    if let Some(title) = title_candidate_from_user_message(&text) {
+                        first_user_message = Some(title);
+                    }
+                }
+            }
+        }
+        if session_id.is_some()
+            && project_dir.is_some()
+            && created_at.is_some()
+            && first_user_message.is_some()
+        {
+            break;
+        }
+    }
+
+    let mut last_active_at: Option<i64> = None;
+    let mut summary: Option<String> = None;
+    for line in tail.iter().rev() {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if last_active_at.is_none() {
+            last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        if summary.is_none() && value.get("type").and_then(Value::as_str) == Some("response_item") {
+            if let Some(payload) = value.get("payload") {
+                if payload.get("type").and_then(Value::as_str) == Some("message") {
+                    let text = payload.get("content").map(extract_text).unwrap_or_default();
+                    if !text.trim().is_empty() {
+                        summary = Some(text);
+                    }
+                }
+            }
+        }
+        if last_active_at.is_some() && summary.is_some() {
+            break;
+        }
+    }
+
+    let session_id = session_id.or_else(|| {
+        Path::new(source_path_display).file_name().and_then(|name| {
+            UUID_RE
+                .find(&name.to_string_lossy())
+                .map(|m| m.as_str().to_string())
+        })
+    })?;
+    let title = thread_titles
+        .get(&session_id)
+        .map(|t| truncate_summary(t, TITLE_MAX_CHARS))
+        .or_else(|| first_user_message.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
+        .or_else(|| {
+            project_dir
+                .as_deref()
+                .and_then(path_basename)
+                .map(|v| v.to_string())
+        });
+    let summary = summary.map(|text| truncate_summary(&text, 160));
+
+    Some(SessionMeta {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: session_id.clone(),
+        title,
+        summary,
+        project_dir,
+        created_at,
+        last_active_at,
+        source_path: Some(source_path_display.to_string()),
+        resume_command: Some(format!("codex resume {session_id}")),
+        target_id: None,
+        environment_label: None,
     })
 }
 

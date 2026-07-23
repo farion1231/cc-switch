@@ -69,7 +69,7 @@ pub use services::{
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
-pub use session_manager::{SessionCatalog, SessionMeta};
+pub use session_manager::{scan_sessions_for_managed_target, SessionCatalog, SessionMeta};
 pub use settings::{
     activate_managed_target, get_current_provider as get_local_current_provider,
     get_managed_targets, register_managed_target, set_managed_target_provider_link,
@@ -1563,6 +1563,7 @@ pub fn run() {
             commands::save_stream_check_config,
             // Session manager
             commands::list_sessions,
+            commands::list_sessions_for_managed_target,
             commands::get_session_messages,
             commands::delete_session,
             commands::delete_sessions,

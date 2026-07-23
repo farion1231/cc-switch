@@ -282,7 +282,17 @@ function App() {
     isProxyRunning,
   });
   const providers = useMemo(() => data?.providers ?? {}, [data]);
-  const codexTargetSelection = useManagedTargetSelection(activeApp === "codex");
+  const providerNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const provider of Object.values(providers)) {
+      names[provider.id] = provider.name;
+    }
+    return names;
+  }, [providers]);
+  const codexTargetSelection = useManagedTargetSelection(
+    activeApp === "codex" ||
+      (currentView === "sessions" && sharedFeatureApp === "codex"),
+  );
   const isSelectedCodexWindowsTakeover =
     activeApp === "codex" &&
     isCurrentAppTakeoverActive &&
@@ -990,6 +1000,28 @@ function App() {
             <SessionManagerPage
               key={sharedFeatureApp}
               appId={sharedFeatureApp}
+              codexTargetId={
+                sharedFeatureApp === "codex"
+                  ? codexTargetSelection.selectedTargetId
+                  : null
+              }
+              codexTargetSelector={
+                sharedFeatureApp === "codex" ? (
+                  <ManagedTargetSelector
+                    targets={codexTargetSelection.managedTargets}
+                    selectedTargetId={codexTargetSelection.selectedTargetId}
+                    onSelect={codexTargetSelection.selectTarget}
+                    onManage={handleManageEnvironments}
+                    isLoading={codexTargetSelection.isLoading}
+                    providerNames={providerNames}
+                    error={
+                      codexTargetSelection.isError
+                        ? extractErrorMessage(codexTargetSelection.error)
+                        : undefined
+                    }
+                  />
+                ) : null
+              }
             />
           );
         case "workspace":
@@ -1010,6 +1042,7 @@ function App() {
                   onSelect={codexTargetSelection.selectTarget}
                   onManage={handleManageEnvironments}
                   isLoading={codexTargetSelection.isLoading}
+                  providerNames={providerNames}
                   error={
                     codexTargetSelection.isError
                       ? extractErrorMessage(codexTargetSelection.error)
