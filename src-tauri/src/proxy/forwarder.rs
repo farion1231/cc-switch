@@ -1386,12 +1386,17 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
+        let is_codex_alpha_search = matches!(app_type, AppType::Codex)
+            && split_endpoint_and_query(&effective_endpoint).0 == "/alpha/search";
+
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
                 is_full_url,
             )
+        } else if is_full_url && is_codex_alpha_search {
+            rewrite_codex_alpha_search_full_url(&base_url, passthrough_query.as_deref())?
         } else if is_full_url
             || codex_chat_base_is_full_endpoint
             || codex_anthropic_base_is_full_endpoint
@@ -3186,6 +3191,67 @@ fn append_query_to_full_url(base_url: &str, query: Option<&str>) -> String {
     }
 }
 
+/// Derive the standalone Alpha Search endpoint from a Codex provider configured
+/// with a complete Responses URL.
+///
+/// Full-URL mode normally means "use this exact URL". That is correct for the
+/// request type it was configured for, but reusing a `/responses` URL for an
+/// Alpha Search request silently posts the search payload to the wrong API. Only
+/// rewrite URL shapes whose sibling endpoint is unambiguous; opaque full URLs
+/// fail closed with a configuration error instead of leaking the search payload
+/// to an unrelated route.
+fn rewrite_codex_alpha_search_full_url(
+    base_url: &str,
+    request_query: Option<&str>,
+) -> Result<String, ProxyError> {
+    let trimmed = base_url.trim();
+    let parsed = url::Url::parse(trimmed).map_err(|_| {
+        ProxyError::ConfigError(
+            "Codex Alpha Search requires a valid full Responses URL".to_string(),
+        )
+    })?;
+
+    // Fragments are never sent in HTTP requests. Drop one before splitting the
+    // query so an accidental fragment cannot move the incoming query behind `#`.
+    let without_fragment = trimmed
+        .split_once('#')
+        .map_or(trimmed, |(head, _fragment)| head);
+    let (url_without_query, base_query) = without_fragment
+        .split_once('?')
+        .map_or((without_fragment, None), |(head, query)| {
+            (head, Some(query))
+        });
+    let url_without_query = url_without_query.trim_end_matches('/');
+
+    let parsed_path = parsed.path().trim_end_matches('/').to_string();
+    let suffix = if parsed_path.ends_with("/responses/compact") {
+        "/responses/compact"
+    } else if parsed_path.ends_with("/responses") {
+        "/responses"
+    } else {
+        return Err(ProxyError::ConfigError(
+            "Codex Alpha Search cannot derive /alpha/search from an opaque full URL; use a base URL or a full URL ending in /responses".to_string(),
+        ));
+    };
+
+    let prefix_len = url_without_query
+        .len()
+        .checked_sub(suffix.len())
+        .ok_or_else(|| ProxyError::ConfigError("Invalid Codex full URL".to_string()))?;
+    let mut rewritten = format!("{}/alpha/search", &url_without_query[..prefix_len]);
+
+    let request_query = request_query.filter(|query| !query.is_empty());
+    let base_query = base_query.filter(|query| !query.is_empty());
+    match (base_query, request_query) {
+        (Some(base), Some(request)) => rewritten.push_str(&format!("?{base}&{request}")),
+        (Some(base), None) => rewritten.push_str(&format!("?{base}")),
+        (None, Some(request)) => rewritten.push_str(&format!("?{request}")),
+        (None, None) => {}
+    }
+
+    Ok(rewritten)
+}
+
 fn build_codex_oauth_session_headers(
     session_id: &str,
 ) -> Vec<(http::HeaderName, http::HeaderValue)> {
@@ -4518,6 +4584,47 @@ mod tests {
         let url = append_query_to_full_url("https://relay.example/api?foo=bar", Some("x-id=1"));
 
         assert_eq!(url, "https://relay.example/api?foo=bar&x-id=1");
+    }
+
+    #[test]
+    fn alpha_search_rewrites_known_full_responses_urls() {
+        let cases = [
+            (
+                "https://relay.example/v1/responses",
+                "https://relay.example/v1/alpha/search?client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/backend-api/codex/responses/compact/",
+                "https://relay.example/backend-api/codex/alpha/search?client_version=0.144.6",
+            ),
+            (
+                "https://relay.example/custom/%2F/v1/responses?api-version=2026-07",
+                "https://relay.example/custom/%2F/v1/alpha/search?api-version=2026-07&client_version=0.144.6",
+            ),
+        ];
+
+        for (base_url, expected) in cases {
+            assert_eq!(
+                rewrite_codex_alpha_search_full_url(base_url, Some("client_version=0.144.6"))
+                    .expect("known Responses full URL should be rewritable"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn alpha_search_rejects_opaque_full_url_instead_of_misrouting_payload() {
+        let error = rewrite_codex_alpha_search_full_url(
+            "https://relay.example/custom/rpc-endpoint",
+            Some("client_version=0.144.6"),
+        )
+        .expect_err("opaque endpoint must fail closed");
+
+        assert!(matches!(
+            error,
+            ProxyError::ConfigError(message)
+                if message.contains("cannot derive /alpha/search")
+        ));
     }
 
     #[test]

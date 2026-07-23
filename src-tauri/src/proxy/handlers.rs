@@ -905,6 +905,71 @@ pub async fn handle_responses_compact(
     handle_responses_compact_for_app(state, request, AppType::Codex, "Codex", "codex").await
 }
 
+/// Handle Codex's standalone Alpha Search protocol as a semantic passthrough.
+///
+/// Recent Codex clients send web-search commands to a dedicated endpoint instead
+/// of embedding them in a Responses request. Keep this path out of the
+/// Responses-to-Chat/Anthropic bridges: those formats cannot represent the Alpha
+/// Search protocol.
+pub async fn handle_alpha_search(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
+    let uri = parts.uri;
+    let mut headers = parts.headers;
+    let extensions = parts.extensions;
+    let body_bytes = req_body
+        .collect()
+        .await
+        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+    let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
+    let body: Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
+
+    let mut ctx =
+        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
+    let endpoint = endpoint_with_query(&uri, "/alpha/search");
+
+    let forwarder = ctx.create_forwarder(&state);
+    let mut result = match forwarder
+        .forward_with_retry(
+            &AppType::Codex,
+            method,
+            &endpoint,
+            body,
+            headers,
+            extensions,
+            ctx.get_providers(),
+        )
+        .await
+    {
+        Ok(result) => result,
+        Err(mut err) => {
+            if let Some(provider) = err.provider.take() {
+                ctx.provider = provider;
+            }
+            log_forward_error(&state, &ctx, false, &err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
+        }
+    };
+
+    let connection_guard = result.connection_guard.take();
+    ctx.outbound_model = result.outbound_model.take();
+    ctx.provider = result.provider;
+
+    process_response(
+        result.response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
+}
+
 pub async fn handle_grokbuild_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
