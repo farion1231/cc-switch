@@ -712,6 +712,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_accepts_valid_routes() {
         with_test_home(|state, _| {
             let kimi = Provider::with_id(
@@ -739,6 +740,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_rejects_missing_target() {
         with_test_home(|state, _| {
             let agg = aggregate_provider_with_routes(
@@ -763,6 +765,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_rejects_nested_aggregate() {
         with_test_home(|state, _| {
             let inner = aggregate_provider_with_routes(
@@ -799,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_rejects_converting_referenced_target() {
         with_test_home(|state, _| {
             let target = Provider::with_id("target".into(), "Target".into(), json!({}), None);
@@ -838,6 +842,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_rejects_self_reference_and_empty_model() {
         with_test_home(|state, _| {
             let self_ref = aggregate_provider_with_routes(
@@ -879,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_rejects_non_claude_app() {
         with_test_home(|state, _| {
             let agg = aggregate_provider_with_routes(
@@ -898,6 +904,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn switch_aggregate_provider_requires_proxy_takeover() {
         with_test_home(|state, _| {
             let target = Provider::with_id(
@@ -927,6 +934,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn add_aggregate_without_current_provider_keeps_it_inactive() {
         with_test_home(|state, _| {
             let target = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
@@ -955,6 +963,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn update_active_provider_to_aggregate_requires_takeover() {
         with_test_home(|state, _| {
             let target = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
@@ -992,6 +1001,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn delete_referenced_aggregate_target_is_rejected() {
         with_test_home(|state, _| {
             let target = Provider::with_id("kimi".into(), "Kimi".into(), json!({}), None);
@@ -1024,6 +1034,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn delete_universal_referenced_by_aggregate_is_rejected() {
         with_test_home(|state, _| {
             // 统一供应商启用 Claude 后生成 universal-claude-uni 子供应商
@@ -1070,6 +1081,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn sync_universal_disabling_claude_referenced_by_aggregate_is_rejected() {
         with_test_home(|state, _| {
             // 初始启用 Claude 并同步出子供应商
@@ -1126,6 +1138,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn validate_aggregate_routes_rejects_official_target() {
         with_test_home(|state, _| {
             let mut official =
