@@ -24,6 +24,13 @@ export const sessionsApi = {
     return await invoke("get_session_messages", { providerId, sourcePath });
   },
 
+  async exportMarkdown(
+    defaultName: string,
+    markdown: string,
+  ): Promise<string | null> {
+    return await invoke("export_session_markdown", { defaultName, markdown });
+  },
+
   async delete(options: DeleteSessionOptions): Promise<boolean> {
     const { providerId, sessionId, sourcePath } = options;
     return await invoke("delete_session", {
