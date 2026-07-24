@@ -1,5 +1,12 @@
 # CC Switch Repository Memory
 
+## 2026-07-25 Codex Desktop 新版历史修复根修
+
+- 最新 Desktop 的 `thread/list` 以 active `~/.codex/state_5.sqlite` 的 `threads` 为主，且 `backfill_state.status='complete'` 会阻止 rollout 再扫描；只改 `model_provider`、`session_index.jsonl` 或 mtime 会让 CCSM 自己的 JSONL 列表看似正常，但 Desktop 仍会因 `has_user_event`、`preview`、`first_user_message`、`recency_at_ms` 缺失而隐藏会话。
+- 修复入口必须在 Codex/ChatGPT 完全退出时，以 `sessions` 与 `archived_sessions` 的 rollout 为事实来源重建/插入 `threads` 元数据，并在同一 SQLite 事务更新 `backfill_state`；`session_index`、workspace hint 和项目映射只能作为辅助，绝不能写 `local_thread_catalog`。
+- 当前 rollout 的真实用户输入结构是 `type='event_msg'` 且 `payload.type='user_message'`，不能继续用旧的字符串或顶层 `type='user_message'` 判断。preview 与 first_user_message 仅从此真实事件或目标事件 preview 提取，避免编造可见历史。
+- 写入前继续拒绝运行中的 `ChatGPT.exe` / `OpenAI.Codex` / `codex.exe app-server`，并备份 state DB（含 WAL/SHM）和受影响 rollout；修复后需重启 Desktop 验证历史不再闪现后消失。
+
 ## 2026-07-20 本机构建缓存与旧发布输出清理
 
 - 清理前仓库最大的可再生成项是 `src-tauri/target`：`52264183717` bytes（48.675 GiB），其中 debug 约 39.011 GiB、release 约 9.663 GiB；现场没有进程从该目录运行，因此可整目录删除，后续 Cargo/Tauri 构建会按需重建。

@@ -232,6 +232,13 @@ export interface CodexHistoryVisibilityRepairOutcome {
   targetProvider: string;
   sourceProviderIds: string[];
   sqliteThreads: number;
+  rolloutThreadsDiscovered: number;
+  threadRowsToInsert: number;
+  threadRowsInserted: number;
+  threadMetadataRowsToRebuild: number;
+  threadMetadataRowsRebuilt: number;
+  backfillStateToUpdate: boolean;
+  backfillStateUpdated: boolean;
   providerRowsToUpdate: number;
   providerRowsUpdated: number;
   rolloutFirstLinesToUpdate: number;

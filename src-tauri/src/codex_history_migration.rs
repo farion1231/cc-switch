@@ -246,6 +246,16 @@ pub struct CodexHistoryVisibilityRepairOutcome {
     pub target_provider: String,
     pub source_provider_ids: Vec<String>,
     pub sqlite_threads: usize,
+    /// 从 rollout 文件发现、但此前未进入 state thread-store 的线程数。
+    pub rollout_threads_discovered: usize,
+    pub thread_rows_to_insert: usize,
+    pub thread_rows_inserted: usize,
+    /// 线程索引字段（preview/first_user_message/has_user_event/recency 等）与 rollout
+    /// 事实不一致的行数。新版 Desktop 的 thread/list 直接依赖这些字段。
+    pub thread_metadata_rows_to_rebuild: usize,
+    pub thread_metadata_rows_rebuilt: usize,
+    pub backfill_state_to_update: bool,
+    pub backfill_state_updated: bool,
     pub provider_rows_to_update: usize,
     pub provider_rows_updated: usize,
     pub rollout_first_lines_to_update: usize,
@@ -729,7 +739,26 @@ pub fn list_codex_history_sessions(
     };
     let conn = Connection::open(&active_db.path)
         .map_err(|e| AppError::Database(format!("open Codex active state DB failed: {e}")))?;
-    let rows = load_codex_thread_history_rows(&conn)?;
+    let mut rows = load_codex_thread_history_rows(&conn)?;
+    // Codex Desktop 现在以 state DB 为 thread/list 的主数据源；而 backfill_state=complete
+    // 时不会再次全量扫描 JSONL。先以 rollout 为权威重建索引快照，避免旧 CCSM 修复只改
+    // provider 后仍留下 has_user_event/preview/recency 缺失的“幽灵历史”。
+    let rollout_metadata = scan_rollout_thread_metadata(codex_dir)?;
+    let existing_ids: HashSet<String> = rows.iter().map(|row| row.id.clone()).collect();
+    let thread_rows_to_insert = rollout_metadata
+        .iter()
+        .filter(|metadata| !existing_ids.contains(&metadata.id))
+        .count();
+    let mut metadata_repairs = Vec::new();
+    for metadata in &rollout_metadata {
+        if let Some(row) = rows.iter_mut().find(|row| row.id == metadata.id) {
+            if apply_rollout_metadata_to_thread_row(row, metadata) {
+                metadata_repairs.push(metadata.clone());
+            }
+        } else {
+            rows.push(thread_history_row_from_rollout(metadata));
+        }
+    }
     let target_provider_candidates =
         codex_target_provider_candidates(live_config_model_provider.as_deref(), &rows);
     let source_counts = history_value_counts(&rows, |row| row.source.clone());
@@ -862,7 +891,23 @@ pub fn read_codex_history_session(
 
     let conn = Connection::open(&active_db.path)
         .map_err(|e| AppError::Database(format!("open Codex active state DB failed: {e}")))?;
-    let rows = load_codex_thread_history_rows(&conn)?;
+    let mut rows = load_codex_thread_history_rows(&conn)?;
+    let rollout_metadata = scan_rollout_thread_metadata(codex_dir)?;
+    let existing_ids: HashSet<String> = rows.iter().map(|row| row.id.clone()).collect();
+    let thread_rows_to_insert = rollout_metadata
+        .iter()
+        .filter(|metadata| !existing_ids.contains(&metadata.id))
+        .count();
+    let mut metadata_repairs = Vec::new();
+    for metadata in &rollout_metadata {
+        if let Some(row) = rows.iter_mut().find(|row| row.id == metadata.id) {
+            if apply_rollout_metadata_to_thread_row(row, metadata) {
+                metadata_repairs.push(metadata.clone());
+            }
+        } else {
+            rows.push(thread_history_row_from_rollout(metadata));
+        }
+    }
     let Some(row) = rows.iter().find(|row| row.id == session_id) else {
         return Ok(CodexHistorySessionDetailOutcome {
             codex_home: codex_dir.to_string_lossy().to_string(),
@@ -1040,6 +1085,26 @@ struct ThreadHistoryRow {
     updated_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Default)]
+/// 从 rollout 重新提取的、可直接用于 state thread-store 的最小元数据集合。
+/// 不猜测用户内容：preview 和 first_user_message 只来自真实 event_msg，目标事件仅能
+/// 提供 preview。这和 Codex state::extract 的语义保持一致。
+struct RolloutThreadMetadata {
+    id: String,
+    rollout_path: PathBuf,
+    model_provider: Option<String>,
+    cwd: Option<String>,
+    source: Option<String>,
+    thread_source: Option<String>,
+    title: Option<String>,
+    preview: Option<String>,
+    first_user_message: Option<String>,
+    has_user_event: bool,
+    archived: bool,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
 #[derive(Debug, Clone)]
 /// 被选中置顶的项目线程，以及即将写入的新时间戳。
 struct FocusThreadRow {
@@ -1098,7 +1163,23 @@ fn repair_codex_history_visibility_at(
         });
     }
 
-    let rows = load_codex_thread_history_rows(&conn)?;
+    let mut rows = load_codex_thread_history_rows(&conn)?;
+    let rollout_metadata = scan_rollout_thread_metadata(codex_dir)?;
+    let existing_ids: HashSet<String> = rows.iter().map(|row| row.id.clone()).collect();
+    let thread_rows_to_insert = rollout_metadata
+        .iter()
+        .filter(|metadata| !existing_ids.contains(&metadata.id))
+        .count();
+    let mut metadata_repairs = Vec::new();
+    for metadata in &rollout_metadata {
+        if let Some(row) = rows.iter_mut().find(|row| row.id == metadata.id) {
+            if apply_rollout_metadata_to_thread_row(row, metadata) {
+                metadata_repairs.push(metadata.clone());
+            }
+        } else {
+            rows.push(thread_history_row_from_rollout(metadata));
+        }
+    }
     let mut effective_source_provider_ids = source_provider_ids;
     // 页面修复的目标是“当前 Codex 历史页能看到全部会话”。历史库里可能存在
     // 手写 provider、远端转发 provider 或未来 Codex 版本产生的新桶名；这些桶
@@ -1279,6 +1360,10 @@ fn repair_codex_history_visibility_at(
         target_provider: target_provider.to_string(),
         source_provider_ids: effective_source_provider_ids.iter().cloned().collect(),
         sqlite_threads: rows.len(),
+        rollout_threads_discovered: rollout_metadata.len(),
+        thread_rows_to_insert,
+        thread_metadata_rows_to_rebuild: metadata_repairs.len(),
+        backfill_state_to_update: Database::table_exists(&conn, "backfill_state")?,
         provider_rows_to_update: provider_update_ids.len(),
         rollout_first_lines_to_update: rollout_provider_updates.len(),
         user_event_rows_to_update: user_event_update_ids.len(),
@@ -1314,7 +1399,9 @@ fn repair_codex_history_visibility_at(
         return Ok(outcome);
     }
 
-    let has_changes = outcome.provider_rows_to_update > 0
+    let has_changes = outcome.thread_rows_to_insert > 0
+        || outcome.thread_metadata_rows_to_rebuild > 0
+        || outcome.provider_rows_to_update > 0
         || outcome.rollout_first_lines_to_update > 0
         || outcome.user_event_rows_to_update > 0
         || outcome.session_index_missing_to_append > 0
@@ -1345,10 +1432,15 @@ fn repair_codex_history_visibility_at(
     let tx = conn
         .transaction()
         .map_err(|e| AppError::Database(format!("开启 Codex 历史修复事务失败: {e}")))?;
+    outcome.thread_rows_inserted =
+        insert_missing_thread_rows(&tx, &rollout_metadata, target_provider)?;
+    outcome.thread_metadata_rows_rebuilt =
+        rebuild_thread_metadata_rows(&tx, &metadata_repairs, target_provider)?;
     outcome.provider_rows_updated =
         update_thread_provider_rows(&tx, target_provider, &provider_update_ids)?;
     outcome.user_event_rows_updated = update_thread_user_event_rows(&tx, &user_event_update_ids)?;
     outcome.sqlite_focus_rows_updated = update_thread_focus_times(&tx, &selected_focus_rows)?;
+    outcome.backfill_state_updated = update_backfill_state_after_rebuild(&tx, &rollout_metadata)?;
     tx.commit()
         .map_err(|e| AppError::Database(format!("提交 Codex 历史修复事务失败: {e}")))?;
 
@@ -1706,6 +1798,224 @@ fn row_has_visible_text(row: &ThreadHistoryRow) -> bool {
         .into_iter()
         .flatten()
         .any(|value| !value.trim().is_empty())
+}
+
+/// 递归读取当前 Codex home 下的 rollout；只接受含 session_meta 且有可发现 preview 的
+/// 文件。这样不会把工具调用或损坏 JSONL 伪造成侧边栏历史。
+fn scan_rollout_thread_metadata(codex_dir: &Path) -> Result<Vec<RolloutThreadMetadata>, AppError> {
+    let mut files = Vec::new();
+    for root_name in ["sessions", "archived_sessions"] {
+        collect_rollout_jsonl_files(&codex_dir.join(root_name), &mut files)?;
+    }
+    let mut by_id = BTreeMap::new();
+    for (path, archived) in files {
+        if let Some(metadata) = parse_rollout_thread_metadata(&path, archived)? {
+            by_id.insert(metadata.id.clone(), metadata);
+        }
+    }
+    Ok(by_id.into_values().collect())
+}
+
+fn collect_rollout_jsonl_files(
+    root: &Path,
+    output: &mut Vec<(PathBuf, bool)>,
+) -> Result<(), AppError> {
+    if !root.exists() {
+        return Ok(());
+    }
+    let archived = root.file_name().and_then(|name| name.to_str()) == Some("archived_sessions");
+    for entry in fs::read_dir(root).map_err(|e| AppError::io(root, e))? {
+        let entry = entry.map_err(|e| AppError::io(root, e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rollout_jsonl_files(&path, output)?;
+        } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
+            output.push((path, archived));
+        }
+    }
+    Ok(())
+}
+
+fn parse_rollout_thread_metadata(
+    path: &Path,
+    archived: bool,
+) -> Result<Option<RolloutThreadMetadata>, AppError> {
+    let content = fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
+    let fallback_ms = fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let mut metadata = RolloutThreadMetadata {
+        rollout_path: path.to_path_buf(),
+        archived,
+        created_at_ms: fallback_ms,
+        updated_at_ms: fallback_ms,
+        ..Default::default()
+    };
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(timestamp) = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_rfc3339_millis)
+        {
+            if metadata.created_at_ms == fallback_ms {
+                metadata.created_at_ms = timestamp;
+            }
+            metadata.updated_at_ms = metadata.updated_at_ms.max(timestamp);
+        }
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            metadata.id = json_string(payload, "id").unwrap_or_default();
+            metadata.model_provider = json_string(payload, "model_provider");
+            metadata.cwd = json_string(payload, "cwd");
+            metadata.source = json_string(payload, "source");
+            metadata.thread_source = json_string(payload, "thread_source");
+            continue;
+        }
+        let event_type = payload
+            .get("type")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("type").and_then(Value::as_str));
+        if matches!(event_type, Some("user_message")) {
+            let message =
+                json_string(payload, "message").or_else(|| json_string(&value, "message"));
+            if let Some(message) = message
+                .map(|text| strip_rollout_user_message_prefix(&text))
+                .filter(|text| !text.is_empty())
+            {
+                metadata.has_user_event = true;
+                if metadata.first_user_message.is_none() {
+                    metadata.first_user_message = Some(message.clone());
+                }
+                if metadata.preview.is_none() {
+                    metadata.preview = Some(message.clone());
+                }
+                if metadata.title.is_none() {
+                    metadata.title = Some(message);
+                }
+            }
+        } else if matches!(event_type, Some("thread_goal_updated")) && metadata.preview.is_none() {
+            let objective = payload
+                .pointer("/goal/objective")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty());
+            metadata.preview = objective.map(str::to_string);
+        }
+    }
+    if metadata.id.is_empty()
+        || metadata
+            .preview
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return Ok(None);
+    }
+    if metadata
+        .title
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        metadata.title = metadata.preview.clone();
+    }
+    Ok(Some(metadata))
+}
+
+fn json_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn parse_rfc3339_millis(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|time| time.timestamp_millis())
+}
+fn strip_rollout_user_message_prefix(value: &str) -> String {
+    value
+        .split_once("<user_instructions>")
+        .map(|(_, rest)| rest)
+        .unwrap_or(value)
+        .trim()
+        .to_string()
+}
+
+fn thread_history_row_from_rollout(metadata: &RolloutThreadMetadata) -> ThreadHistoryRow {
+    ThreadHistoryRow {
+        id: metadata.id.clone(),
+        rollout_path: Some(metadata.rollout_path.to_string_lossy().to_string()),
+        model_provider: metadata.model_provider.clone(),
+        cwd: metadata.cwd.clone(),
+        has_user_event: Some(metadata.has_user_event as i64),
+        archived: Some(metadata.archived as i64),
+        source: metadata.source.clone(),
+        thread_source: metadata.thread_source.clone(),
+        title: metadata.title.clone(),
+        preview: metadata.preview.clone(),
+        first_user_message: metadata.first_user_message.clone(),
+        updated_at_ms: Some(metadata.updated_at_ms),
+        updated_at: Some(metadata.updated_at_ms / 1000),
+    }
+}
+
+fn apply_rollout_metadata_to_thread_row(
+    row: &mut ThreadHistoryRow,
+    metadata: &RolloutThreadMetadata,
+) -> bool {
+    let before = (
+        row.rollout_path.clone(),
+        row.cwd.clone(),
+        row.source.clone(),
+        row.thread_source.clone(),
+        row.title.clone(),
+        row.preview.clone(),
+        row.first_user_message.clone(),
+        row.has_user_event,
+        row.updated_at_ms,
+        row.updated_at,
+        row.archived,
+    );
+    let derived = thread_history_row_from_rollout(metadata);
+    row.rollout_path = derived.rollout_path;
+    row.cwd = derived.cwd.or_else(|| row.cwd.clone());
+    row.source = derived.source.or_else(|| row.source.clone());
+    row.thread_source = derived.thread_source.or_else(|| row.thread_source.clone());
+    row.title = derived.title.or_else(|| row.title.clone());
+    row.preview = derived.preview.or_else(|| row.preview.clone());
+    row.first_user_message = derived
+        .first_user_message
+        .or_else(|| row.first_user_message.clone());
+    row.has_user_event = Some(metadata.has_user_event as i64);
+    row.updated_at_ms = Some(row_updated_ms(&derived).max(row_updated_ms(row)));
+    row.updated_at = row.updated_at_ms.map(|value| value / 1000);
+    row.archived = Some(metadata.archived as i64);
+    before
+        != (
+            row.rollout_path.clone(),
+            row.cwd.clone(),
+            row.source.clone(),
+            row.thread_source.clone(),
+            row.title.clone(),
+            row.preview.clone(),
+            row.first_user_message.clone(),
+            row.has_user_event,
+            row.updated_at_ms,
+            row.updated_at,
+            row.archived,
+        )
 }
 
 /// 读取一行历史的更新时间毫秒值，缺失时回退到秒级字段。
@@ -2331,6 +2641,173 @@ fn update_thread_user_event_rows(
         },
         |_| {},
     )
+}
+
+fn thread_table_columns(tx: &rusqlite::Transaction<'_>) -> Result<HashSet<String>, AppError> {
+    let mut statement = tx
+        .prepare("PRAGMA table_info(threads)")
+        .map_err(|e| AppError::Database(format!("读取 threads schema 失败: {e}")))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| AppError::Database(format!("读取 threads schema 行失败: {e}")))?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|e| AppError::Database(format!("解析 threads schema 失败: {e}")))?;
+    Ok(columns)
+}
+
+/// 按当前 DB 的实际列集合 upsert，既支持新版完整 thread-store，也支持历史测试库。
+/// 所有用户可见字段均由 rollout 覆盖，避免保留旧 backfill 写出的空 preview/has_user_event。
+fn rebuild_thread_metadata_rows(
+    tx: &rusqlite::Transaction<'_>,
+    rows: &[RolloutThreadMetadata],
+    target_provider: &str,
+) -> Result<usize, AppError> {
+    let columns = thread_table_columns(tx)?;
+    let mut changed = 0;
+    for metadata in rows {
+        let mut assignments = Vec::new();
+        let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        macro_rules! set {
+            ($column:literal, $value:expr) => {
+                if columns.contains($column) {
+                    assignments.push(format!("{} = ?", $column));
+                    values.push(Box::new($value));
+                }
+            };
+        }
+        set!(
+            "rollout_path",
+            metadata.rollout_path.to_string_lossy().to_string()
+        );
+        set!("model_provider", target_provider.to_string());
+        set!("cwd", metadata.cwd.clone().unwrap_or_default());
+        set!(
+            "source",
+            metadata.source.clone().unwrap_or_else(|| "cli".to_string())
+        );
+        set!(
+            "thread_source",
+            metadata
+                .thread_source
+                .clone()
+                .unwrap_or_else(|| "user".to_string())
+        );
+        set!("title", metadata.title.clone().unwrap_or_default());
+        set!("preview", metadata.preview.clone().unwrap_or_default());
+        set!(
+            "first_user_message",
+            metadata.first_user_message.clone().unwrap_or_default()
+        );
+        set!("has_user_event", metadata.has_user_event as i64);
+        set!("archived", metadata.archived as i64);
+        set!("updated_at_ms", metadata.updated_at_ms);
+        set!("updated_at", metadata.updated_at_ms / 1000);
+        set!("recency_at_ms", metadata.updated_at_ms);
+        set!("recency_at", metadata.updated_at_ms / 1000);
+        if assignments.is_empty() {
+            continue;
+        }
+        values.push(Box::new(metadata.id.clone()));
+        let sql = format!("UPDATE threads SET {} WHERE id = ?", assignments.join(", "));
+        changed += tx
+            .execute(
+                &sql,
+                rusqlite::params_from_iter(values.iter().map(|value| value.as_ref())),
+            )
+            .map_err(|e| AppError::Database(format!("重建 threads 元数据失败: {e}")))?;
+    }
+    Ok(changed)
+}
+
+fn insert_missing_thread_rows(
+    tx: &rusqlite::Transaction<'_>,
+    rows: &[RolloutThreadMetadata],
+    target_provider: &str,
+) -> Result<usize, AppError> {
+    let columns = thread_table_columns(tx)?;
+    let mut inserted = 0;
+    for metadata in rows {
+        let mut names = vec!["id".to_string()];
+        let mut values: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(metadata.id.clone())];
+        macro_rules! add {
+            ($column:literal, $value:expr) => {
+                if columns.contains($column) {
+                    names.push($column.to_string());
+                    values.push(Box::new($value));
+                }
+            };
+        }
+        add!(
+            "rollout_path",
+            metadata.rollout_path.to_string_lossy().to_string()
+        );
+        add!("created_at", metadata.created_at_ms / 1000);
+        add!("updated_at", metadata.updated_at_ms / 1000);
+        add!("created_at_ms", metadata.created_at_ms);
+        add!("updated_at_ms", metadata.updated_at_ms);
+        add!("recency_at", metadata.updated_at_ms / 1000);
+        add!("recency_at_ms", metadata.updated_at_ms);
+        add!(
+            "source",
+            metadata.source.clone().unwrap_or_else(|| "cli".to_string())
+        );
+        add!(
+            "thread_source",
+            metadata
+                .thread_source
+                .clone()
+                .unwrap_or_else(|| "user".to_string())
+        );
+        add!("model_provider", target_provider.to_string());
+        add!("cwd", metadata.cwd.clone().unwrap_or_default());
+        add!("title", metadata.title.clone().unwrap_or_default());
+        add!("preview", metadata.preview.clone().unwrap_or_default());
+        add!(
+            "first_user_message",
+            metadata.first_user_message.clone().unwrap_or_default()
+        );
+        add!("has_user_event", metadata.has_user_event as i64);
+        add!("archived", metadata.archived as i64);
+        add!("sandbox_policy", String::new());
+        add!("approval_mode", String::new());
+        add!("cli_version", String::new());
+        add!("history_mode", "legacy".to_string());
+        let placeholders = std::iter::repeat("?")
+            .take(names.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO threads ({}) VALUES ({}) ON CONFLICT(id) DO NOTHING",
+            names.join(", "),
+            placeholders
+        );
+        inserted += tx
+            .execute(
+                &sql,
+                rusqlite::params_from_iter(values.iter().map(|value| value.as_ref())),
+            )
+            .map_err(|e| AppError::Database(format!("插入缺失 thread-store 行失败: {e}")))?;
+    }
+    Ok(inserted)
+}
+
+fn update_backfill_state_after_rebuild(
+    tx: &rusqlite::Transaction<'_>,
+    rows: &[RolloutThreadMetadata],
+) -> Result<bool, AppError> {
+    let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='backfill_state')", [], |row| row.get(0)).unwrap_or(false);
+    if !exists {
+        return Ok(false);
+    }
+    let watermark = rows
+        .iter()
+        .map(|row| row.updated_at_ms)
+        .max()
+        .map(|value| value.to_string());
+    let now = Utc::now().timestamp();
+    tx.execute("INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at) VALUES (1, 'complete', ?1, ?2, ?2) ON CONFLICT(id) DO UPDATE SET status='complete', last_watermark=excluded.last_watermark, last_success_at=excluded.last_success_at, updated_at=excluded.updated_at", (&watermark, now))
+        .map_err(|e| AppError::Database(format!("更新 Codex backfill_state 失败: {e}")))?;
+    Ok(true)
 }
 
 /// 更新项目聚焦行的 SQLite 时间戳。
@@ -3931,6 +4408,35 @@ mod tests {
             );",
         )
         .expect("create threads table");
+    }
+
+    #[test]
+    fn rebuilds_thread_store_metadata_from_rollout_when_backfill_is_complete() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let rollout_dir = codex_dir.join("sessions/2026/07/25");
+        fs::create_dir_all(&rollout_dir).expect("sessions dir");
+        let rollout = rollout_dir.join("restored.jsonl");
+        fs::write(&rollout, r#"{"timestamp":"2026-07-25T02:00:00Z","type":"session_meta","payload":{"id":"restored","model_provider":"openai","cwd":"C:\\work","source":"cli"}}
+{"timestamp":"2026-07-25T02:01:00Z","type":"event_msg","payload":{"type":"user_message","message":"restore this history"}}
+"#).expect("rollout");
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("state db");
+        create_history_test_threads_table(&conn);
+        conn.execute_batch("CREATE TABLE backfill_state (id INTEGER PRIMARY KEY, status TEXT NOT NULL, last_watermark TEXT, last_success_at INTEGER, updated_at INTEGER NOT NULL); INSERT INTO backfill_state VALUES (1, 'complete', NULL, 0, 0);")
+            .expect("backfill state");
+        let active = ActiveCodexStateDb { path: db_path.clone(), kind: "codex_root".to_string() };
+        drop(conn);
+        let result = repair_codex_history_visibility_at(
+            &codex_dir, active, "codex_model_router_v2", Some("codex_model_router_v2".to_string()), source_ids(&["openai"]), None,
+            HistoryVisibilityRepairRuntimeOptions { dry_run: false, count: 1, window_limit: 10, balance_recent_window: false, max_per_project: 1, max_total: 1, source_filter: Some("all".to_string()), include_archived: false, include_subagents: false, selected_session_ids: BTreeSet::new(), provider_bucket_sync_enabled: true, backup_root_override: Some(dir.path().join("backup")) }
+        ).expect("repair");
+        assert_eq!(result.thread_rows_inserted, 1);
+        assert!(result.backfill_state_updated);
+        let conn = Connection::open(db_path).expect("read db");
+        let row: (String, i64, String, String) = conn.query_row("SELECT model_provider, has_user_event, preview, first_user_message FROM threads WHERE id='restored'", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).expect("rebuilt row");
+        assert_eq!(row.0, "codex_model_router_v2"); assert_eq!(row.1, 1); assert_eq!(row.2, "restore this history"); assert_eq!(row.3, "restore this history");
+        assert_eq!(conn.query_row("SELECT status FROM backfill_state WHERE id=1", [], |row| row.get::<_, String>(0)).expect("status"), "complete");
     }
 
     #[test]
