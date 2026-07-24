@@ -421,6 +421,22 @@
           "debug": "SSE ストリームとリクエスト/レスポンスを含む詳細情報",
           "trace": "すべてのログ、最も詳細"
         }
+      },
+      "modelTierRouting": {
+        "title": "モデルティアルーティング",
+        "description": "Claude のモデルティア（Opus/Sonnet/Haiku/Fable）に応じてリクエストを異なる provider に振り分けます",
+        "enabled": "モデルティアルーティングを有効化",
+        "enabledDescription": "オンにすると、設定済みティアのリクエストは対象 provider に送信されモデル名が書き換えられます。未設定のティアは通常の provider 選択にフォールバックします",
+        "routesGroup": "ティアルート（Claude）",
+        "tier": {
+          "opus": "Opus",
+          "sonnet": "Sonnet",
+          "haiku": "Haiku",
+          "fable": "Fable"
+        },
+        "noProvider": "— デフォルトを使用 —",
+        "modelPlaceholder": "上流モデル名（例: glm-5.2）",
+        "hint": "ティアを空欄にするとデフォルトの provider を使います。対象 provider の認証 / ベース URL はそのまま使い、モデル名のみ上書きします。ルーティング先は一次ターゲットとなり、失敗時はフェイルオーバーキューで降格します。"
       }
     },
     "language": "言語",
@@ -3017,5 +3033,45 @@
     "expiredHint": "{{tool}}コマンドを実行してログインを更新してください",
     "queryFailed": "クエリに失敗しました",
     "refresh": "更新"
+  },
+  "home": {
+    "routingMode": {
+      "label": "ルーティングモード",
+      "provider": "プロバイダールーティング",
+      "providerDesc": "現在選択中のプロバイダーにすべてのリクエストをルーティング",
+      "modelTier": "モデルティアルーティング",
+      "modelTierDesc": "Claude の各ティアを別々のプロバイダーに振り分け",
+      "confirmTitle": "ローカルプロキシを有効化",
+      "confirmMessage": "モデルティアルーティングは、各ティアを対象プロバイダーに振り分けるためにローカルプロキシが必要です。Claude のプロキシ接管を今すぐ有効にしますか？",
+      "confirmMessageClaudeDesktop": "Claude Desktop のモデルティアルーティングにはローカルルーティングサービスが必要です。今すぐ起動してモデルティアルーティングに切り替えますか？",
+      "confirmAction": "有効化して切替",
+      "active": "有効",
+      "enableProvider": "プロバイダールーティングを有効化",
+      "enableTier": "モデルティアルーティングを有効化"
+    },
+    "modelTierRouting": {
+      "editorDescription": "各 Claude ティアを異なるプロバイダーにルーティングします。プロキシがティア別名を実際の上流モデルに書き換え、表示名はモデルメニューに書き込まれます。",
+      "listDescription": "プロファイルをクリックすると現在のルーティングプロファイルに設定します。マッピング変更は編集ボタンを使います。",
+      "profile": "ルーティングプロファイル",
+      "profileName": "プロファイル名",
+      "profileFallbackName": "プロファイル {{index}}",
+      "profileNewName": "プロファイル {{index}}",
+      "profileCopyName": "{{name}} のコピー",
+      "activeProfile": "有効",
+      "useProfile": "使用",
+      "editProfile": "プロファイルを編集",
+      "addProfile": "プロファイルを追加",
+      "copyProfile": "プロファイルをコピー",
+      "deleteProfile": "プロファイルを削除",
+      "deleteProfileTitle": "ルーティングプロファイルを削除",
+      "deleteProfileConfirm": "ルーティングプロファイル「{{name}}」を削除しますか？",
+      "backToProfiles": "プロファイル一覧へ戻る",
+      "configuredTiers": "{{count}}/{{total}} ティア設定済み",
+      "tier": "ティア",
+      "provider": "プロバイダー",
+      "modelName": "モデル名",
+      "displayName": "表示名",
+      "displayNamePlaceholder": "メニュー表示名（例: GLM-5.2）"
+    }
   }
 }

@@ -27,6 +27,7 @@ import {
   supportsOfficialProxyTakeover,
   providerNeedsRouting,
 } from "@/utils/providerCapabilities";
+import { supportsRouting } from "@/utils/providerRouting";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
@@ -215,10 +216,10 @@ export function ProviderCard({
     appId,
     provider,
   );
-  const isOfficialBlockedByProxy =
-    isProxyTakeover &&
-    provider.category === "official" &&
-    !supportsOfficialRouting;
+  // codex-official 虽属 official 分类，但支持官方代理接管，需从「不可路由」中豁免，
+  // 否则会被误判为不支持路由并拦截接管切换。
+  const isNonRoutableBlockedByProxy =
+    isProxyTakeover && !supportsRouting(provider) && !supportsOfficialRouting;
   const isCopilot =
     provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
     provider.meta?.usage_script?.templateType === "github_copilot";
@@ -393,7 +394,7 @@ export function ProviderCard({
                 </span>
               )}
 
-              {appId === "claude" && provider.category === "official" && (
+              {appId === "claude" && !supportsRouting(provider) && (
                 <span className="inline-flex items-center rounded-md bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
                   {t("claudeCode.noRoutingSupport", {
                     defaultValue: "不支持路由",
@@ -563,7 +564,7 @@ export function ProviderCard({
               isInConfig={isInConfig}
               isTesting={isTesting}
               isProxyTakeover={isProxyTakeover}
-              isOfficialBlockedByProxy={isOfficialBlockedByProxy}
+              isNonRoutableBlockedByProxy={isNonRoutableBlockedByProxy}
               isReadOnly={isHermesReadOnly}
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}

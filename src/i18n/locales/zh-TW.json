@@ -421,6 +421,22 @@
           "debug": "詳細資訊，包含 SSE 串流與請求/回應詳情",
           "trace": "全部日誌，最詳細"
         }
+      },
+      "modelTierRouting": {
+        "title": "模型層級路由",
+        "description": "按 Claude 模型層級（Opus/Sonnet/Haiku/Fable）把請求路由到不同 provider",
+        "enabled": "啟用模型層級路由",
+        "enabledDescription": "開啟後，已設定層級的請求會發往其目標 provider 並改寫模型名；未設定的層級回退到預設 provider 選擇",
+        "routesGroup": "層級路由（Claude）",
+        "tier": {
+          "opus": "Opus",
+          "sonnet": "Sonnet",
+          "haiku": "Haiku",
+          "fable": "Fable"
+        },
+        "noProvider": "— 使用預設 —",
+        "modelPlaceholder": "上游模型名，如 glm-5.2",
+        "hint": "層級留空即使用預設 provider。目標 provider 沿用自身的驗證/base URL，僅模型名被改寫。命中層級為目標首選，失敗時仍按故障轉移佇列降級。"
       }
     },
     "language": "介面語言",
@@ -2989,5 +3005,45 @@
     "expiredHint": "請執行 {{tool}} 命令重新整理登入",
     "queryFailed": "查詢失敗",
     "refresh": "重新整理"
+  },
+  "home": {
+    "routingMode": {
+      "label": "路由模式",
+      "provider": "Provider 路由",
+      "providerDesc": "用當前選中的 provider 統一接管所有請求",
+      "modelTier": "模型層級路由",
+      "modelTierDesc": "按 Claude 層級分發到不同 provider",
+      "confirmTitle": "啟用本地代理",
+      "confirmMessage": "模型層級路由需要本地代理把每個層級分發到對應 provider。現在為 Claude 啟用代理接管嗎？",
+      "confirmMessageClaudeDesktop": "Claude Desktop 的模型層級路由需要本地路由服務。現在啟動本地路由並切換到模型層級路由嗎？",
+      "confirmAction": "啟用並切換",
+      "active": "已啟用",
+      "enableProvider": "啟用 Provider 路由",
+      "enableTier": "啟用模型層級路由"
+    },
+    "modelTierRouting": {
+      "editorDescription": "把每個 Claude 層級路由到不同 provider。代理會把層級別名改寫成真實上游模型，展示名會寫入模型選單。",
+      "listDescription": "點擊方案即可設為目前路由方案；需要修改映射時點擊編輯按鈕。",
+      "profile": "路由方案",
+      "profileName": "方案名稱",
+      "profileFallbackName": "方案 {{index}}",
+      "profileNewName": "方案 {{index}}",
+      "profileCopyName": "{{name}} 副本",
+      "activeProfile": "當前",
+      "useProfile": "使用",
+      "editProfile": "編輯方案",
+      "addProfile": "新增方案",
+      "copyProfile": "複製方案",
+      "deleteProfile": "刪除方案",
+      "deleteProfileTitle": "刪除路由方案",
+      "deleteProfileConfirm": "刪除路由方案「{{name}}」？",
+      "backToProfiles": "返回方案列表",
+      "configuredTiers": "已配置 {{count}}/{{total}} 個層級",
+      "tier": "層級",
+      "provider": "供應商",
+      "modelName": "模型名",
+      "displayName": "展示名",
+      "displayNamePlaceholder": "選單顯示名，如 GLM-5.2"
+    }
   }
 }

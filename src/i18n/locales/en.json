@@ -421,6 +421,22 @@
           "debug": "Detailed info including SSE stream and request/response",
           "trace": "All logs, most verbose"
         }
+      },
+      "modelTierRouting": {
+        "title": "Model Tier Routing",
+        "description": "Route requests to different providers based on the Claude model tier (Opus/Sonnet/Haiku/Fable)",
+        "enabled": "Enable Model Tier Routing",
+        "enabledDescription": "When on, requests for a configured tier are sent to its target provider with the model name rewritten; other tiers fall back to the normal provider selection",
+        "routesGroup": "Tier Routes (Claude)",
+        "tier": {
+          "opus": "Opus",
+          "sonnet": "Sonnet",
+          "haiku": "Haiku",
+          "fable": "Fable"
+        },
+        "noProvider": "— Use default —",
+        "modelPlaceholder": "Upstream model name, e.g. glm-5.2",
+        "hint": "Leave a tier unset to use the default provider. The target provider's own auth/base URL is used; only the model name is overridden. Routed tier is the primary target, the failover queue still applies if it fails."
       }
     },
     "language": "Language",
@@ -3017,5 +3033,45 @@
     "expiredHint": "Run the {{tool}} command to refresh your login",
     "queryFailed": "Query failed",
     "refresh": "Refresh"
+  },
+  "home": {
+    "routingMode": {
+      "label": "Routing Mode",
+      "provider": "Provider Routing",
+      "providerDesc": "Route all requests to the currently selected provider",
+      "modelTier": "Model Tier Routing",
+      "modelTierDesc": "Distribute each Claude tier to a different provider",
+      "confirmTitle": "Enable Local Proxy",
+      "confirmMessage": "Model tier routing requires the local proxy to distribute each tier to its target provider. Enable proxy takeover for Claude now?",
+      "confirmMessageClaudeDesktop": "Model tier routing for Claude Desktop requires the local routing service. Start it now and switch to model tier routing?",
+      "confirmAction": "Enable & Switch",
+      "active": "Enabled",
+      "enableProvider": "Enable provider routing",
+      "enableTier": "Enable model-tier routing"
+    },
+    "modelTierRouting": {
+      "editorDescription": "Route each Claude tier to a different provider. The proxy rewrites the tier alias to the real upstream model; the display name is written to the model menu.",
+      "listDescription": "Click a profile to select the current routing profile. Use the edit button to change tier mappings.",
+      "profile": "Routing Profile",
+      "profileName": "Profile Name",
+      "profileFallbackName": "Profile {{index}}",
+      "profileNewName": "Profile {{index}}",
+      "profileCopyName": "{{name}} Copy",
+      "activeProfile": "Active",
+      "useProfile": "Use",
+      "editProfile": "Edit profile",
+      "addProfile": "Add profile",
+      "copyProfile": "Copy profile",
+      "deleteProfile": "Delete profile",
+      "deleteProfileTitle": "Delete routing profile",
+      "deleteProfileConfirm": "Delete routing profile \"{{name}}\"?",
+      "backToProfiles": "Back to profiles",
+      "configuredTiers": "{{count}}/{{total}} tiers configured",
+      "tier": "Tier",
+      "provider": "Provider",
+      "modelName": "Model Name",
+      "displayName": "Display Name",
+      "displayNamePlaceholder": "Menu label, e.g. GLM-5.2"
+    }
   }
 }

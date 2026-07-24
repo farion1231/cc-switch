@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// 代理服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +194,175 @@ pub struct AppProxyConfig {
     pub circuit_error_rate_threshold: f64,
     /// 计算错误率的最小请求数
     pub circuit_min_requests: u32,
+}
+
+/// 模型层级路由：按请求的模型层级（opus/sonnet/haiku/fable）把请求分发到不同 Provider，
+/// 并把 `body.model` 改写为该层级的真实上游模型名。
+///
+/// 与每个 Provider 自身的「层级→模型名」env 映射解耦：路由表自包含 providerId + model，
+/// 命中层级的请求会同时换 Provider 与模型名；其余层级/未命中时回退到既有 Provider 选择。
+///
+/// 存于 settings 表（key = `model_tier_routing_config`），沿用 rectifier/optimizer 的 JSON 模式。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTierRoutingConfig {
+    /// 总开关；关闭时完全不介入请求路径。
+    ///
+    /// 兼容旧配置：历史版本只有这个字段，且仅 Claude Code 使用层级路由。
+    #[serde(default)]
+    pub enabled: bool,
+    /// per app_type → 是否启用层级路由。
+    ///
+    /// 缺失时按旧配置解释：`enabled=true` 只代表 `claude` 开启，避免升级后误把
+    /// `claude-desktop` 也切到层级路由。
+    #[serde(default)]
+    pub enabled_apps: HashMap<String, bool>,
+    /// per app_type → tier（"opus"/"sonnet"/"haiku"/"fable"）→ 路由项。
+    ///
+    /// Legacy 字段：单方案版本直接读写此字段。新版本保存到 `profiles`，运行时仍把
+    /// 该字段作为兼容回退，避免旧配置升级后丢失路由。
+    #[serde(default)]
+    pub routes: HashMap<String, HashMap<String, TierRoute>>,
+    /// 多套路由方案。每套方案自包含 app_type → tier → route 的完整映射。
+    #[serde(default)]
+    pub profiles: Vec<ModelTierRoutingProfile>,
+    /// per app_type → 当前使用的 profile id。缺失时回退到第一套 profile；若没有
+    /// profiles，则回退到 legacy `routes`。
+    #[serde(default)]
+    pub active_profile_by_app: HashMap<String, String>,
+}
+
+impl ModelTierRoutingConfig {
+    pub fn is_enabled_for_app(&self, app_type: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        self.enabled_apps
+            .get(app_type)
+            .copied()
+            .unwrap_or(app_type == "claude")
+    }
+
+    pub fn active_profile_id_for_app(&self, app_type: &str) -> Option<&str> {
+        self.active_profile_by_app
+            .get(app_type)
+            .map(String::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .or_else(|| self.profiles.first().map(|profile| profile.id.as_str()))
+    }
+
+    pub fn active_routes_for_app(&self, app_type: &str) -> Option<&HashMap<String, TierRoute>> {
+        if let Some(profile_id) = self.active_profile_id_for_app(app_type) {
+            if let Some(profile) = self
+                .profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+            {
+                if let Some(routes) = profile.routes.get(app_type) {
+                    return Some(routes);
+                }
+            }
+        }
+        if !self.profiles.is_empty() {
+            return None;
+        }
+        self.routes.get(app_type)
+    }
+
+    pub fn active_route_for_tier(&self, app_type: &str, tier: &str) -> Option<&TierRoute> {
+        self.active_routes_for_app(app_type)
+            .and_then(|routes| routes.get(tier))
+    }
+
+    /// Normalize a config before persisting/returning it: migrate legacy `routes`
+    /// into a default profile, repair blank/duplicate profile ids, and ensure
+    /// active profile ids point at an existing profile when possible.
+    pub fn normalized(mut self) -> Self {
+        if self.profiles.is_empty() && !self.routes.is_empty() {
+            self.profiles.push(ModelTierRoutingProfile {
+                id: "default".to_string(),
+                name: "Default".to_string(),
+                routes: self.routes.clone(),
+            });
+            self.routes.clear();
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for (idx, profile) in self.profiles.iter_mut().enumerate() {
+            let id = profile.id.trim();
+            let mut repaired_id = if id.is_empty() {
+                format!("profile-{}", idx + 1)
+            } else {
+                id.to_string()
+            };
+            if !seen.insert(repaired_id.clone()) {
+                let base = repaired_id;
+                let mut suffix = 2;
+                loop {
+                    repaired_id = format!("{base}-{suffix}");
+                    if seen.insert(repaired_id.clone()) {
+                        break;
+                    }
+                    suffix += 1;
+                }
+            }
+            profile.id = repaired_id;
+            if profile.name.trim().is_empty() {
+                profile.name = format!("Profile {}", idx + 1);
+            }
+        }
+
+        if let Some(first_id) = self.profiles.first().map(|profile| profile.id.clone()) {
+            let valid_profile_ids: std::collections::HashSet<String> = self
+                .profiles
+                .iter()
+                .map(|profile| profile.id.clone())
+                .collect();
+            self.active_profile_by_app
+                .retain(|_, profile_id| valid_profile_ids.contains(profile_id));
+            for app in ["claude", "claude-desktop"] {
+                self.active_profile_by_app
+                    .entry(app.to_string())
+                    .or_insert_with(|| first_id.clone());
+            }
+            self.routes.clear();
+        }
+
+        self
+    }
+}
+
+/// 一套路由方案。方案本身可以同时保存 Claude Code / Claude Desktop 的映射，
+/// 当前生效方案由 `active_profile_by_app` 按 app_type 选择。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTierRoutingProfile {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub routes: HashMap<String, HashMap<String, TierRoute>>,
+}
+
+/// 单条层级路由：目标 Provider + 要改写成的上游模型名。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TierRoute {
+    /// 目标 Provider 的 id（必须存在于该 app 的 providers 中）。
+    pub provider_id: String,
+    /// 改写后的上游模型名，如 `glm-5.2`、`kimi-k2.6`。
+    pub model: String,
+    /// 展示名，写入 `ANTHROPIC_DEFAULT_<TIER>_MODEL_NAME`，供 Claude Code 的
+    /// 模型选择菜单显示（如 `GLM-5.2`）。空字符串表示不写该 `_NAME` 变量。
+    #[serde(default)]
+    pub display_name: String,
+    /// 是否向 Claude 声明该层级支持 1M 上下文。
+    ///
+    /// 勾选 → Claude Code 接管时给 `*_MODEL` 别名补 `[1M]`；Claude Desktop profile
+    /// 标 `supports1m=true`。与 `ClaudeDesktopModelRoute.supports_1m` 同义，是 1M
+    /// 能力声明的单一真相源（取代旧版「在 model 名后手敲 `[1m]` 后缀」的隐式约定）。
+    /// 兼容旧数据：未勾选但 `model` 带 `[1m]` 后缀时，各派生点仍按后缀回退生效。
+    #[serde(default)]
+    pub supports_1m: bool,
 }
 
 /// 整流器配置

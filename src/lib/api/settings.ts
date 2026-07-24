@@ -299,6 +299,16 @@ export const settingsApi = {
   async setLogConfig(config: LogConfig): Promise<boolean> {
     return await invoke("set_log_config", { config });
   },
+
+  async getModelTierRoutingConfig(): Promise<ModelTierRoutingConfig> {
+    return await invoke("get_model_tier_routing_config");
+  },
+
+  async setModelTierRoutingConfig(
+    config: ModelTierRoutingConfig,
+  ): Promise<boolean> {
+    return await invoke("set_model_tier_routing_config", { config });
+  },
 };
 
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
@@ -338,6 +348,36 @@ export interface OptimizerConfig {
 export interface LogConfig {
   enabled: boolean;
   level: "error" | "warn" | "info" | "debug" | "trace";
+}
+
+// 模型层级路由：单条路由项 = 目标 Provider + 要改写成的上游模型名
+export interface TierRoute {
+  providerId: string;
+  model: string;
+  displayName?: string;
+  /** 是否向 Claude 声明该层级支持 1M 上下文（与供应商编辑页 supports1m 同义）。 */
+  supports1m?: boolean;
+}
+
+/**
+ * 模型层级路由配置。
+ *
+ * `profiles[].routes` 为 `appType → tier(opus|sonnet|haiku|fable) → TierRoute` 的两层映射。
+ * 层级命名是 Claude 专属；当前支持 Claude Code 与 Claude Desktop。
+ * `routes` 是旧版单方案字段，读取时会迁移到默认 profile。
+ */
+export interface ModelTierRoutingProfile {
+  id: string;
+  name: string;
+  routes: Record<string, Record<string, TierRoute>>;
+}
+
+export interface ModelTierRoutingConfig {
+  enabled: boolean;
+  enabledApps?: Record<string, boolean>;
+  routes?: Record<string, Record<string, TierRoute>>;
+  profiles?: ModelTierRoutingProfile[];
+  activeProfileByApp?: Record<string, string>;
 }
 
 export interface BackupEntry {

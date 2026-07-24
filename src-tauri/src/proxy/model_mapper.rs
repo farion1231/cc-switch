@@ -4,6 +4,7 @@
 
 use crate::claude_desktop_config::ONE_M_CONTEXT_MARKER;
 use crate::provider::Provider;
+use crate::proxy::types::{ModelTierRoutingConfig, TierRoute};
 use serde_json::Value;
 
 /// 模型映射配置
@@ -171,10 +172,190 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
     body
 }
 
+// ============================================================================
+// 模型层级路由（Model Tier Routing）
+// ============================================================================
+
+/// Claude 的模型层级。Claude Code 始终以 opus/sonnet/haiku/fable 之一作为请求模型，
+/// 上游中转常需要把它们分发到不同 Provider 并改写成各自的模型名（如 opus→glm-5.2）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelTier {
+    Opus,
+    Sonnet,
+    Haiku,
+    Fable,
+}
+
+impl ModelTier {
+    /// 路由表里的字符串 key，与 `ModelTierRoutingConfig.routes` 的 tier key 对齐。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelTier::Opus => "opus",
+            ModelTier::Sonnet => "sonnet",
+            ModelTier::Haiku => "haiku",
+            ModelTier::Fable => "fable",
+        }
+    }
+}
+
+/// 把客户端请求模型名归类为 Claude 层级。
+///
+/// 子串匹配顺序与 `ModelMapping::map_model` 一致（fable→haiku→opus→sonnet）。
+/// 大小写不敏感；`[1m]` 等后缀不影响子串判定。Codex/Gemini 的真实模型名
+/// （不含这些关键词）返回 `None`，因此层级路由天然只对 Claude 生效。
+pub fn classify_model_tier(model: &str) -> Option<ModelTier> {
+    let m = model.to_lowercase();
+    if m.contains("fable") {
+        Some(ModelTier::Fable)
+    } else if m.contains("haiku") {
+        Some(ModelTier::Haiku)
+    } else if m.contains("opus") {
+        Some(ModelTier::Opus)
+    } else if m.contains("sonnet") {
+        Some(ModelTier::Sonnet)
+    } else {
+        None
+    }
+}
+
+/// 层级路由解析结果。
+#[derive(Debug, Clone, Default)]
+pub struct TierRoutingOutcome {
+    /// 重排后的 Provider 链（命中时目标 Provider 提到首位，去重）。
+    pub providers: Vec<Provider>,
+    /// 命中的目标 Provider id（仅当发生路由覆写时有值）。
+    pub routed_provider_id: Option<String>,
+    /// 改写后的上游模型名（仅当发生路由覆写时有值）。
+    pub model_override: Option<String>,
+}
+
+/// 已通过配置与 Provider 可路由性校验的层级路由目标。
+#[derive(Debug, Clone)]
+pub struct TierRoutingTarget {
+    /// 应被提升为首选的 Provider。
+    pub provider: Provider,
+    /// 发往该 Provider 的真实上游模型名。
+    pub model_override: String,
+    /// 命中的 Claude 模型层级。
+    pub tier: ModelTier,
+}
+
+/// 解析当前请求的层级路由目标，但不负责选择故障转移链。
+///
+/// ProviderRouter 在基础故障转移队列之外也需要看到这个目标，才能在基础队列
+/// 全部熔断时仍把可用的层级目标纳入同一轮熔断筛选。
+pub fn resolve_tier_routing_target(
+    request_model: &str,
+    app_type: &str,
+    config: &ModelTierRoutingConfig,
+    lookup: impl Fn(&str) -> Option<Provider>,
+) -> Option<TierRoutingTarget> {
+    if !config.is_enabled_for_app(app_type) {
+        return None;
+    }
+
+    let tier = classify_model_tier(request_model)?;
+    let TierRoute {
+        provider_id, model, ..
+    } = config
+        .active_route_for_tier(app_type, tier.as_str())
+        .cloned()
+        .unwrap_or_default();
+
+    if provider_id.is_empty() || model.trim().is_empty() {
+        return None;
+    }
+
+    let Some(provider) = lookup(&provider_id) else {
+        // 路由项指向不存在的 Provider（被删除等），不改，避免把请求送进死路。
+        log::warn!(
+            "[ModelRouter] 层级 {} 路由到不存在的 Provider {provider_id}，回退默认选择",
+            tier.as_str()
+        );
+        return None;
+    };
+
+    if !provider.supports_routing() {
+        // 路由项指向不可路由的 Provider（如官方账号：无可劫持 base_url、认证为 1P
+        // OAuth，代理无法转发）。这是脏数据/旧配置——前端下拉已过滤，但后端是执行点，
+        // 必须同样拦住，否则请求仍会被改写 model 并送进代理无法转发的上游。
+        // 与前端 supportsRouting 同判据（Provider::supports_routing）。
+        log::warn!(
+            "[ModelRouter] 层级 {} 路由到不可路由的 Provider {provider_id}（category={:?}），回退默认选择",
+            tier.as_str(),
+            provider.category
+        );
+        return None;
+    }
+
+    Some(TierRoutingTarget {
+        provider,
+        model_override: model,
+        tier,
+    })
+}
+
+/// 把已解析且通过熔断筛选的层级目标应用到最终 Provider 链。
+pub fn apply_tier_routing_target(
+    request_model: &str,
+    target: TierRoutingTarget,
+    selected: &[Provider],
+) -> TierRoutingOutcome {
+    let TierRoutingTarget {
+        provider: routed,
+        model_override: model,
+        tier,
+    } = target;
+
+    // 去重后把目标 Provider 提到链首：保持故障转移语义（目标失败时仍按原队列降级）。
+    let mut chain: Vec<Provider> = vec![routed.clone()];
+    for p in selected.iter() {
+        if p.id != routed.id {
+            chain.push(p.clone());
+        }
+    }
+    // 若目标 Provider 原本不在 selected 里，chain 会比原链多 1 个——这是预期行为
+    // （路由可以把「未在故障转移队列中」的 Provider 提为首选）。
+
+    log::debug!(
+        "[ModelRouter] {request_model}({}) → Provider {} (model: {model})，链长 {}",
+        tier.as_str(),
+        routed.id,
+        chain.len()
+    );
+
+    TierRoutingOutcome {
+        providers: chain,
+        routed_provider_id: Some(routed.id),
+        model_override: Some(model),
+    }
+}
+
+/// 解析并应用层级路由的纯函数封装，供模型路由单元测试覆盖完整语义。
+#[cfg(test)]
+fn apply_tier_routing(
+    request_model: &str,
+    app_type: &str,
+    config: &ModelTierRoutingConfig,
+    selected: &[Provider],
+    lookup: impl Fn(&str) -> Option<Provider>,
+) -> TierRoutingOutcome {
+    let Some(target) = resolve_tier_routing_target(request_model, app_type, config, lookup) else {
+        return TierRoutingOutcome {
+            providers: selected.to_vec(),
+            routed_provider_id: None,
+            model_override: None,
+        };
+    };
+    apply_tier_routing_target(request_model, target, selected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::types::ModelTierRoutingProfile;
     use serde_json::json;
+    use std::collections::HashMap;
 
     fn create_provider_with_mapping() -> Provider {
         Provider {
@@ -424,5 +605,270 @@ mod tests {
         let body = json!({"model": "deepseek-v4-pro"});
         let result = strip_one_m_suffix_for_upstream_from_body(body);
         assert_eq!(result["model"], "deepseek-v4-pro");
+    }
+
+    // ---- 模型层级路由 (Model Tier Routing) ----
+
+    fn route(provider_id: &str, model: &str) -> TierRoute {
+        TierRoute {
+            provider_id: provider_id.to_string(),
+            model: model.to_string(),
+            display_name: String::new(),
+            ..Default::default()
+        }
+    }
+
+    fn provider_with_id(id: &str) -> Provider {
+        Provider {
+            id: id.to_string(),
+            name: format!("Provider {id}"),
+            settings_config: json!({}),
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn provider_with_category(id: &str, category: &str) -> Provider {
+        let mut p = provider_with_id(id);
+        p.category = Some(category.to_string());
+        p
+    }
+
+    #[test]
+    fn classify_tier_matches_each_level() {
+        assert_eq!(
+            classify_model_tier("claude-opus-4-8"),
+            Some(ModelTier::Opus)
+        );
+        assert_eq!(
+            classify_model_tier("claude-sonnet-4-6"),
+            Some(ModelTier::Sonnet)
+        );
+        assert_eq!(
+            classify_model_tier("claude-haiku-4-5"),
+            Some(ModelTier::Haiku)
+        );
+        assert_eq!(
+            classify_model_tier("claude-fable-5"),
+            Some(ModelTier::Fable)
+        );
+    }
+
+    #[test]
+    fn classify_tier_case_insensitive_and_1m_suffix() {
+        assert_eq!(
+            classify_model_tier("Claude-OPUS-4-8"),
+            Some(ModelTier::Opus)
+        );
+        // [1m] 后缀不影响子串匹配
+        assert_eq!(
+            classify_model_tier("claude-opus-4-8[1m]"),
+            Some(ModelTier::Opus)
+        );
+    }
+
+    #[test]
+    fn classify_tier_unknown_is_none() {
+        // Codex/Gemini 真实模型名不含层级关键词 → 不归类 → 路由不生效
+        assert_eq!(classify_model_tier("glm-5.2"), None);
+        assert_eq!(classify_model_tier("gpt-5"), None);
+        assert_eq!(classify_model_tier("unknown"), None);
+        assert_eq!(classify_model_tier(""), None);
+    }
+
+    fn build_config(routes: &[(&str, &str, TierRoute)]) -> ModelTierRoutingConfig {
+        let mut map: HashMap<String, HashMap<String, TierRoute>> = HashMap::new();
+        for (app, tier, r) in routes {
+            map.entry((*app).to_string())
+                .or_default()
+                .insert((*tier).to_string(), r.clone());
+        }
+        ModelTierRoutingConfig {
+            enabled: true,
+            routes: map,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tier_routing_disabled_passes_through() {
+        let selected = vec![provider_with_id("a"), provider_with_id("b")];
+        let cfg = ModelTierRoutingConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers.len(), 2);
+        assert_eq!(out.providers[0].id, "a");
+        assert!(out.routed_provider_id.is_none());
+        assert!(out.model_override.is_none());
+    }
+
+    #[test]
+    fn tier_routing_hits_moves_target_to_front_and_overrides_model() {
+        let selected = vec![provider_with_id("current"), provider_with_id("backup")];
+        let cfg = build_config(&[("claude", "opus", route("zhipu", "glm-5.2"))]);
+        let out = apply_tier_routing("claude-opus-4-8[1m]", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "zhipu");
+        assert_eq!(out.providers.len(), 3, "目标 provider 加入链首，原链保留");
+        assert_eq!(out.routed_provider_id.as_deref(), Some("zhipu"));
+        assert_eq!(out.model_override.as_deref(), Some("glm-5.2"));
+    }
+
+    #[test]
+    fn tier_routing_uses_active_profile_for_app() {
+        let selected = vec![provider_with_id("current")];
+        let mut cost_routes: HashMap<String, HashMap<String, TierRoute>> = HashMap::new();
+        cost_routes
+            .entry("claude".to_string())
+            .or_default()
+            .insert("opus".to_string(), route("cheap", "cheap-opus"));
+        let mut quality_routes: HashMap<String, HashMap<String, TierRoute>> = HashMap::new();
+        quality_routes
+            .entry("claude".to_string())
+            .or_default()
+            .insert("opus".to_string(), route("quality", "quality-opus"));
+
+        let mut active_profile_by_app = HashMap::new();
+        active_profile_by_app.insert("claude".to_string(), "quality".to_string());
+        let cfg = ModelTierRoutingConfig {
+            enabled: true,
+            profiles: vec![
+                ModelTierRoutingProfile {
+                    id: "cost".to_string(),
+                    name: "Cost".to_string(),
+                    routes: cost_routes,
+                },
+                ModelTierRoutingProfile {
+                    id: "quality".to_string(),
+                    name: "Quality".to_string(),
+                    routes: quality_routes,
+                },
+            ],
+            active_profile_by_app,
+            ..Default::default()
+        };
+
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "quality");
+        assert_eq!(out.model_override.as_deref(), Some("quality-opus"));
+    }
+
+    #[test]
+    fn tier_routing_dedups_when_target_already_in_chain() {
+        let selected = vec![provider_with_id("a"), provider_with_id("zhipu")];
+        let cfg = build_config(&[("claude", "opus", route("zhipu", "glm-5.2"))]);
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "zhipu");
+        assert_eq!(out.providers.len(), 2, "目标已在链中时不重复");
+        assert_eq!(out.providers[1].id, "a");
+    }
+
+    #[test]
+    fn tier_routing_no_route_for_tier_passes_through() {
+        let selected = vec![provider_with_id("a")];
+        // 只配了 opus，发 sonnet 请求不命中
+        let cfg = build_config(&[("claude", "opus", route("zhipu", "glm-5.2"))]);
+        let out = apply_tier_routing("claude-sonnet-4-6", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "a");
+        assert!(out.routed_provider_id.is_none());
+        assert!(out.model_override.is_none());
+    }
+
+    #[test]
+    fn tier_routing_unknown_provider_falls_back() {
+        let selected = vec![provider_with_id("a")];
+        let cfg = build_config(&[("claude", "opus", route("ghost", "glm-5.2"))]);
+        // lookup 对 "ghost" 返回 None（Provider 被删除）
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            if id == "a" {
+                Some(provider_with_id(id))
+            } else {
+                None
+            }
+        });
+        assert_eq!(out.providers[0].id, "a");
+        assert!(out.routed_provider_id.is_none());
+        assert!(out.model_override.is_none());
+    }
+
+    #[test]
+    fn tier_routing_skips_when_app_has_no_routes() {
+        // claude 配了路由，但请求是 codex app（app_type 不匹配）
+        let selected = vec![provider_with_id("a")];
+        let cfg = build_config(&[("claude", "opus", route("zhipu", "glm-5.2"))]);
+        let out = apply_tier_routing("claude-opus-4-8", "codex", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "a");
+        assert!(out.routed_provider_id.is_none());
+    }
+
+    #[test]
+    fn tier_routing_respects_per_app_enabled_for_claude_desktop() {
+        let selected = vec![provider_with_id("current")];
+        let mut cfg = build_config(&[("claude-desktop", "opus", route("zhipu", "glm-5.2"))]);
+        let disabled_out =
+            apply_tier_routing("claude-opus-4-8", "claude-desktop", &cfg, &selected, |id| {
+                Some(provider_with_id(id))
+            });
+        assert_eq!(disabled_out.providers[0].id, "current");
+        assert!(disabled_out.routed_provider_id.is_none());
+
+        cfg.enabled_apps.insert("claude-desktop".to_string(), true);
+        let enabled_out =
+            apply_tier_routing("claude-opus-4-8", "claude-desktop", &cfg, &selected, |id| {
+                Some(provider_with_id(id))
+            });
+        assert_eq!(enabled_out.providers[0].id, "zhipu");
+        assert_eq!(enabled_out.model_override.as_deref(), Some("glm-5.2"));
+    }
+
+    #[test]
+    fn tier_routing_empty_model_is_ignored() {
+        let selected = vec![provider_with_id("a")];
+        let cfg = build_config(&[("claude", "opus", route("zhipu", ""))]);
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            Some(provider_with_id(id))
+        });
+        assert_eq!(out.providers[0].id, "a");
+        assert!(out.routed_provider_id.is_none());
+    }
+
+    #[test]
+    fn tier_routing_skips_non_routable_provider() {
+        // 脏数据/旧配置：opus 路由项指向官方 provider（category == "official"）。
+        // 前端下拉已过滤掉官方项，但若配置已存在，后端执行点必须同样跳过——
+        // 否则请求会被改写 model 并送进代理无法转发的官方上游。
+        let selected = vec![provider_with_id("current")];
+        let cfg = build_config(&[("claude", "opus", route("official-acct", "claude-opus-4-8"))]);
+        let out = apply_tier_routing("claude-opus-4-8", "claude", &cfg, &selected, |id| {
+            if id == "official-acct" {
+                Some(provider_with_category("official-acct", "official"))
+            } else {
+                Some(provider_with_id(id))
+            }
+        });
+        // 回退默认选择：官方 provider 不进链首、不触发 model 覆写
+        assert_eq!(out.providers[0].id, "current");
+        assert!(out.routed_provider_id.is_none());
+        assert!(out.model_override.is_none());
     }
 }
