@@ -1926,6 +1926,7 @@
     "enabled": "Enabled",
     "enable": "Enable",
     "enabledName": "Enabled: {{name}}",
+    "enabledCount": "{{count}} enabled",
     "noneEnabled": "No prompt enabled",
     "currentFile": "Current {{filename}} Content",
     "empty": "No prompts yet",
