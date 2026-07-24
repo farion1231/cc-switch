@@ -7,6 +7,7 @@
 //! this set of events.
 
 use super::codex_responses_sse as sse;
+use super::codex_message_items::indexed_response_message_item_id;
 use super::transform_codex_anthropic::{
     build_responses_usage_from_anthropic, map_anthropic_stop_reason_to_status,
     responses_reasoning_item_from_anthropic_block,
@@ -176,7 +177,8 @@ impl AnthropicToResponsesState {
         match block_type {
             "text" => {
                 let output_index = self.next_output_index();
-                let item_id = format!("{}_msg_{output_index}", self.response_id);
+                let item_id =
+                    indexed_response_message_item_id(&self.response_id, output_index);
                 events.push(sse::message_item_added(output_index, &item_id));
                 events.push(sse::message_content_part_added(output_index, &item_id));
                 self.blocks.insert(
