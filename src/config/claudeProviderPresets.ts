@@ -1186,6 +1186,22 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#6566F1",
   },
   {
+    name: "TokenRouter",
+    websiteUrl: "https://tokenrouter.com",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tokenrouter.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "anthropic/claude-sonnet-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/claude-opus-4.8",
+      },
+    },
+    category: "aggregator",
+    endpointCandidates: ["https://api.tokenrouter.com"],
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

@@ -1590,6 +1590,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     iconColor: "#6566F1",
   },
   {
+    name: "TokenRouter",
+    websiteUrl: "https://tokenrouter.com",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "tokenrouter",
+      "https://api.tokenrouter.com/v1",
+      "gpt-5.5",
+    ),
+    endpointCandidates: ["https://api.tokenrouter.com/v1"],
+    category: "aggregator",
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",

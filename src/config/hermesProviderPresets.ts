@@ -1054,6 +1054,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "TokenRouter",
+    websiteUrl: "https://tokenrouter.com",
+    settingsConfig: {
+      name: "tokenrouter",
+      base_url: "https://api.tokenrouter.com/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          context_length: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-5.5", provider: "tokenrouter" },
+    },
+  },
+  {
     name: "DeepSeek",
     nameKey: "providerForm.presets.deepseek",
     websiteUrl: "https://platform.deepseek.com",

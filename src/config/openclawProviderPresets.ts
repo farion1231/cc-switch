@@ -2227,6 +2227,38 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "TokenRouter",
+    websiteUrl: "https://tokenrouter.com",
+    settingsConfig: {
+      baseUrl: "https://api.tokenrouter.com/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          contextWindow: 400000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "tokenrouter/gpt-5.5",
+      },
+      modelCatalog: {
+        "tokenrouter/gpt-5.5": { alias: "GPT-5.5" },
+      },
+    },
+  },
+  {
     name: "TheRouter",
     websiteUrl: "https://therouter.ai",
     apiKeyUrl: "https://dashboard.therouter.ai",
