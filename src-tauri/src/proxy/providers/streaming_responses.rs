@@ -290,8 +290,18 @@ fn resolve_content_index(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
+#[allow(dead_code)]
 pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_anthropic_sse_stream_from_responses_with_diagnostic(stream, None)
+}
+
+pub fn create_anthropic_sse_stream_from_responses_with_diagnostic<
+    E: std::error::Error + Send + 'static,
+>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    diagnostic: Option<crate::proxy::copilot_diagnostic::StreamDiagnosticContext>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -316,6 +326,12 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
         let mut legacy_reasoning_index: Option<u32> = None;
         let mut has_substantive_output = false;
         let mut terminated = false;
+        let mut upstream_chunks = 0_u64;
+        let mut parse_errors = 0_u64;
+        let mut event_counts: HashMap<String, u64> = HashMap::new();
+        if let Some(diagnostic) = diagnostic.as_ref() {
+            diagnostic.emit("sse_stream_started", json!({"format": "openai_responses"}));
+        }
 
         // Append an EOF sentinel so the same parser handles a final SSE event that
         // omitted its trailing blank line. The boolean distinguishes the sentinel
@@ -330,6 +346,9 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
         while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
+                    if !is_eof {
+                        upstream_chunks += 1;
+                    }
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     // A few compatible gateways ignore stream:true and return one
@@ -354,6 +373,17 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                                 terminated = true;
                             }
                             Err(error) => {
+                                parse_errors += 1;
+                                if let Some(diagnostic) = diagnostic.as_ref() {
+                                    diagnostic.emit(
+                                        "sse_parse_error",
+                                        json!({
+                                            "error": error.to_string(),
+                                            "failure": crate::proxy::copilot_diagnostic::failure_snippet(&buffer),
+                                            "document_mode": true,
+                                        }),
+                                    );
+                                }
                                 yield Ok(anthropic_error_sse(
                                     &format!("Invalid JSON response from Responses upstream: {error}"),
                                     "response_parse_error",
@@ -396,7 +426,20 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                         // 解析 JSON 数据
                         let data: Value = match serde_json::from_str(&data_str) {
                             Ok(v) => v,
-                            Err(_) => continue,
+                            Err(error) => {
+                                parse_errors += 1;
+                                if let Some(diagnostic) = diagnostic.as_ref() {
+                                    diagnostic.emit(
+                                        "sse_parse_error",
+                                        json!({
+                                            "error": error.to_string(),
+                                            "named_event": event_type,
+                                            "failure": crate::proxy::copilot_diagnostic::failure_snippet(&data_str),
+                                        }),
+                                    );
+                                }
+                                continue;
+                            }
                         };
 
                         // Official streams use both a named SSE event and `type` in
@@ -409,6 +452,18 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             .unwrap_or("");
 
                         log::debug!("[Claude/Responses] <<< SSE event: {event_name}");
+                        *event_counts.entry(event_name.to_string()).or_default() += 1;
+                        if matches!(event_name, "response.failed" | "error") {
+                            if let Some(diagnostic) = diagnostic.as_ref() {
+                                diagnostic.emit(
+                                    "sse_upstream_error",
+                                    json!({
+                                        "event_name": event_name,
+                                        "failure": crate::proxy::copilot_diagnostic::failure_snippet(&data_str),
+                                    }),
+                                );
+                            }
+                        }
 
                         // Ignore every event after a terminal response. In particular,
                         // do not synthesize message_start if a broken gateway emits a
@@ -1455,13 +1510,23 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                             | "response.reasoning_summary_part.done"
                             | "response.in_progress" => {}
 
-                            // Any other unknown/future events — silently skip.
-                            _ => {}
+                            // Any other unknown/future events — record the type, then skip.
+                            _ => {
+                                if let Some(diagnostic) = diagnostic.as_ref() {
+                                    diagnostic.emit(
+                                        "sse_unknown_event",
+                                        json!({"event_name": event_name}),
+                                    );
+                                }
+                            }
                         }
                     }
                 }
                 Err(e) => {
                     log::error!("Responses stream error: {e}");
+                    if let Some(diagnostic) = diagnostic.as_ref() {
+                        diagnostic.emit("sse_transport_error", json!({"error": e.to_string()}));
+                    }
                     let error_event = json!({
                         "type": "error",
                         "error": {
@@ -1478,6 +1543,8 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
             }
         }
 
+        let open_content_blocks_at_upstream_end = open_indices.len();
+        let required_terminal_repair = !terminated;
         if !terminated {
             let has_open_tool = open_indices.iter().any(|index| {
                 tool_name_by_index.contains_key(index) || tool_args_by_index.contains_key(index)
@@ -1531,6 +1598,22 @@ pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 
                     "stream_truncated",
                 ));
             }
+        }
+
+        if let Some(diagnostic) = diagnostic.as_ref() {
+            diagnostic.emit(
+                "sse_stream_finished",
+                json!({
+                    "format": "openai_responses",
+                    "upstream_chunks": upstream_chunks,
+                    "parse_errors": parse_errors,
+                    "event_counts": event_counts,
+                    "terminated": terminated,
+                    "has_substantive_output": has_substantive_output,
+                    "open_content_blocks_at_upstream_end": open_content_blocks_at_upstream_end,
+                    "required_terminal_repair": required_terminal_repair,
+                }),
+            );
         }
     }
 }

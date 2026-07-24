@@ -157,6 +157,7 @@ export function resolveCopilotOneMToggle(
 }
 
 interface CodexFormFieldsProps {
+  appId?: "codex" | "grokbuild";
   providerId?: string;
   // API Key
   codexApiKey: string;
@@ -269,6 +270,7 @@ function catalogRowsMatchModels(
 }
 
 export function CodexFormFields({
+  appId = "codex",
   providerId,
   codexApiKey,
   onApiKeyChange,
@@ -1276,7 +1278,7 @@ export function CodexFormFields({
       {/* 端点测速弹窗 - Codex */}
       {shouldShowSpeedTest && isEndpointModalOpen && (
         <EndpointSpeedTest
-          appId="codex"
+          appId={appId}
           providerId={providerId}
           value={codexBaseUrl}
           onChange={onBaseUrlChange}

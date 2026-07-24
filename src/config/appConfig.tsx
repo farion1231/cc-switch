@@ -20,6 +20,7 @@ export const APP_IDS: AppId[] = [
   "claude-desktop",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
   "openclaw",
   "hermes",
@@ -30,6 +31,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "claude",
   "codex",
   "gemini",
+  "grokbuild",
   "opencode",
   "hermes",
 ];
@@ -69,6 +71,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
+  },
+  grokbuild: {
+    label: "Grok Build",
+    icon: (
+      <ProviderIcon
+        icon="grok"
+        name="Grok Build"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300",
+    badgeClass:
+      "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
   },
   opencode: {
     label: "OpenCode",

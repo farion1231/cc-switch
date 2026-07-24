@@ -214,6 +214,12 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         && provider.category.as_deref() == Some("official")
 }
 
+/// Native Responses requests sent to xAI need Codex's private namespace tool
+/// carriers flattened before they reach xAI's strict schema parser.
+pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
+    provider.is_xai_oauth()
+}
+
 /// Resolve the model-catalog tool profile for a Codex provider using the SAME
 /// Anthropic detection as the proxy router ([`codex_provider_uses_anthropic`]), so the
 /// generated catalog never disagrees with the routed transform. A provider whose

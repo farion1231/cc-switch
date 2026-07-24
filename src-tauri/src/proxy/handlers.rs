@@ -13,26 +13,27 @@ use super::{
     forwarder::ActiveConnectionGuard,
     handler_config::{
         claude_stream_usage_event_filter, codex_stream_usage_event_filter, CLAUDE_PARSER_CONFIG,
-        CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
+        CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, GROKBUILD_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
         get_adapter, get_claude_api_format,
-        streaming::create_anthropic_sse_stream,
+        streaming::create_anthropic_sse_stream_with_diagnostic,
         streaming_codex_anthropic::{
             create_responses_sse_stream_from_anthropic_with_context,
             responses_sse_events_from_anthropic_message,
         },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::create_anthropic_sse_stream_from_responses,
+        streaming_responses::create_anthropic_sse_stream_from_responses_with_diagnostic,
         transform, transform_codex_anthropic, transform_codex_chat, transform_gemini,
         transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, process_response, read_decoded_body,
+        create_logged_passthrough_stream, process_response,
+        process_response_with_namespace_restore, read_decoded_body,
         strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
         usage_logging_enabled, SseUsageCollector,
     },
@@ -402,6 +403,20 @@ async fn handle_claude_transform(
     };
     let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
     let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
+    let copilot_diagnostic = if super::copilot_diagnostic::is_copilot_provider(&ctx.provider) {
+        ctx.copilot_diagnostic_id.as_deref().map(|request_id| {
+            super::copilot_diagnostic::StreamDiagnosticContext::new(
+                request_id,
+                if api_format == "openai_responses" {
+                    "responses"
+                } else {
+                    "chat"
+                },
+            )
+        })
+    } else {
+        None
+    };
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
@@ -409,7 +424,12 @@ async fn handle_claude_transform(
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
-            Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
+            Box::new(Box::pin(
+                create_anthropic_sse_stream_from_responses_with_diagnostic(
+                    stream,
+                    copilot_diagnostic.clone(),
+                ),
+            ))
         } else if api_format == "gemini_native" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
                 stream,
@@ -419,7 +439,10 @@ async fn handle_claude_transform(
                 tool_schema_hints.clone(),
             )))
         } else {
-            Box::new(Box::pin(create_anthropic_sse_stream(stream)))
+            Box::new(Box::pin(create_anthropic_sse_stream_with_diagnostic(
+                stream,
+                copilot_diagnostic.clone(),
+            )))
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
@@ -543,11 +566,31 @@ async fn handle_claude_transform(
                 // 裸聚合错误、丢失非嗅探臂已有的诊断增强（C7）
                 aggregated.map_err(|e| {
                     log::error!("[Claude] SSE 聚合兜底失败: {e}, body: {body_str}");
+                    if let Some(diagnostic) = copilot_diagnostic.as_ref() {
+                        diagnostic.emit(
+                            "response_parse_error",
+                            json!({
+                                "stage": "aggregate_unmarked_sse",
+                                "error": e.to_string(),
+                                "failure": super::copilot_diagnostic::failure_snippet(&body_str),
+                            }),
+                        );
+                    }
                     aggregate_fallback_error(e, &response_headers, &body_str)
                 })?
             }
             Err(e) => {
                 log::error!("[Claude] 解析上游响应失败: {e}, body: {body_str}");
+                if let Some(diagnostic) = copilot_diagnostic.as_ref() {
+                    diagnostic.emit(
+                        "response_parse_error",
+                        json!({
+                            "stage": "decode_json",
+                            "error": e.to_string(),
+                            "failure": super::copilot_diagnostic::failure_snippet(&body_str),
+                        }),
+                    );
+                }
                 return Err(upstream_body_parse_error(
                     "Failed to parse upstream response",
                     &e,
@@ -557,6 +600,10 @@ async fn handle_claude_transform(
             }
         }
     };
+
+    let diagnostic_upstream_summary = copilot_diagnostic
+        .as_ref()
+        .map(|_| super::copilot_diagnostic::summarize_body(&upstream_response));
 
     // Preserve raw Responses usage so a post-upstream conversion failure still
     // records the tokens already consumed by the successful upstream request.
@@ -588,6 +635,16 @@ async fn handle_claude_transform(
         Ok(response) => response,
         Err(error) => {
             log::error!("[Claude] 转换响应失败: {error}");
+            if let Some(diagnostic) = copilot_diagnostic.as_ref() {
+                diagnostic.emit(
+                    "response_transform_error",
+                    json!({
+                        "api_format": api_format,
+                        "error": error.to_string(),
+                        "upstream_body": diagnostic_upstream_summary,
+                    }),
+                );
+            }
             if usage_logging_enabled(state) {
                 if let Some(log) = raw_usage_response.as_ref().and_then(|response| {
                     prepare_claude_usage_log(ctx, response, status.as_u16(), false)
@@ -600,6 +657,18 @@ async fn handle_claude_transform(
             return Err(error);
         }
     };
+
+    if let Some(diagnostic) = copilot_diagnostic.as_ref() {
+        diagnostic.emit(
+            "response_transform_completed",
+            json!({
+                "api_format": api_format,
+                "status": status.as_u16(),
+                "upstream_response": diagnostic_upstream_summary,
+                "response": super::copilot_diagnostic::summarize_body(&anthropic_response),
+            }),
+        );
+    }
 
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
@@ -759,91 +828,29 @@ pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    let (parts, req_body) = request.into_parts();
-    let method = parts.method.clone();
-    let uri = parts.uri;
-    let mut headers = parts.headers;
-    let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
-    let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        "/responses",
+    )
+    .await
+}
 
-    let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/responses");
-
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-
-    let forwarder = ctx.create_forwarder(&state);
-    let mut result = match forwarder
-        .forward_with_retry(
-            &AppType::Codex,
-            method,
-            &endpoint,
-            body,
-            headers,
-            extensions,
-            ctx.get_providers(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(mut err) => {
-            if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
-            }
-            log_forward_error(&state, &ctx, is_stream, &err.error);
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
-        }
-    };
-
-    let connection_guard = result.connection_guard.take();
-    ctx.outbound_model = result.outbound_model.take();
-    let copilot_protocol = result.copilot_protocol;
-    ctx.provider = result.provider;
-    let response = result.response;
-
-    let response_protocol =
-        resolve_codex_response_protocol(&ctx.provider, &endpoint, copilot_protocol);
-    if response_protocol == CodexResponseProtocol::Anthropic {
-        return handle_codex_anthropic_to_responses_transform(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-            codex_tool_context,
-        )
-        .await;
-    }
-
-    if response_protocol == CodexResponseProtocol::Chat {
-        return handle_codex_chat_to_responses_transform(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-            codex_tool_context,
-        )
-        .await;
-    }
-
-    process_response(
-        response,
-        &ctx,
-        &state,
-        &CODEX_PARSER_CONFIG,
-        connection_guard,
+/// Grok Build 使用独立 provider namespace，但复用 Responses 协议处理链。
+pub async fn handle_grokbuild_responses(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::GrokBuild,
+        "GrokBuild",
+        "grokbuild",
+        "/responses",
     )
     .await
 }
@@ -852,6 +859,40 @@ pub async fn handle_responses(
 pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        "/responses/compact",
+    )
+    .await
+}
+
+pub async fn handle_grokbuild_responses_compact(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::GrokBuild,
+        "GrokBuild",
+        "grokbuild",
+        "/responses/compact",
+    )
+    .await
+}
+
+async fn handle_responses_for_app(
+    state: ProxyState,
+    request: axum::extract::Request,
+    app_type: AppType,
+    tag: &'static str,
+    app_type_str: &'static str,
+    endpoint_path: &'static str,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
@@ -868,8 +909,8 @@ pub async fn handle_responses_compact(
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
 
     let mut ctx =
-        RequestContext::new(&state, &body, &headers, AppType::Codex, "Codex", "codex").await?;
-    let endpoint = endpoint_with_query(&uri, "/responses/compact");
+        RequestContext::new(&state, &body, &headers, app_type.clone(), tag, app_type_str).await?;
+    let endpoint = endpoint_with_query(&uri, endpoint_path);
 
     let is_stream = body
         .get("stream")
@@ -880,7 +921,7 @@ pub async fn handle_responses_compact(
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
         .forward_with_retry(
-            &AppType::Codex,
+            &app_type,
             method,
             &endpoint,
             body,
@@ -903,6 +944,7 @@ pub async fn handle_responses_compact(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     let copilot_protocol = result.copilot_protocol;
+    let codex_namespace_restore_map = result.codex_namespace_restore_map.take();
     ctx.provider = result.provider;
     let response = result.response;
 
@@ -932,12 +974,18 @@ pub async fn handle_responses_compact(
         .await;
     }
 
-    process_response(
+    let parser_config = if matches!(app_type, AppType::GrokBuild) {
+        &GROKBUILD_PARSER_CONFIG
+    } else {
+        &CODEX_PARSER_CONFIG
+    };
+    process_response_with_namespace_restore(
         response,
         &ctx,
         &state,
-        &CODEX_PARSER_CONFIG,
+        parser_config,
         connection_guard,
+        codex_namespace_restore_map,
     )
     .await
 }
@@ -2405,7 +2453,8 @@ async fn log_usage(
         model
     };
 
-    let request_id = usage.dedup_request_id();
+    let dedup_scope = (app_type != "claude").then_some((app_type, provider_id));
+    let request_id = usage.dedup_request_id(dedup_scope);
 
     if let Err(e) = logger.log_with_calculation(
         request_id,

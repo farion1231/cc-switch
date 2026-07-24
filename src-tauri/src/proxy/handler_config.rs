@@ -162,6 +162,16 @@ pub const CODEX_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     app_type_str: "codex",
 };
 
+/// Grok Build uses the Responses wire protocol but keeps independent usage
+/// attribution from Codex.
+pub const GROKBUILD_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
+    stream_parser: TokenUsage::from_codex_stream_events_auto,
+    response_parser: TokenUsage::from_codex_response_auto,
+    model_extractor: codex_auto_model_extractor,
+    stream_event_filter: Some(codex_stream_usage_event_filter),
+    app_type_str: "grokbuild",
+};
+
 /// Gemini API 解析配置
 pub const GEMINI_PARSER_CONFIG: UsageParserConfig = UsageParserConfig {
     stream_parser: TokenUsage::from_gemini_stream_chunks,

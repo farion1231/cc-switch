@@ -66,6 +66,13 @@ pub struct ForwardResult {
     pub outbound_model: Option<String>,
     /// 本次 Codex + Copilot 请求实际使用的上游协议。
     pub copilot_protocol: Option<super::providers::copilot_model_map::CopilotProtocol>,
+    /// Native Responses namespace tool restore map, used after strict-upstream flattening.
+    pub codex_namespace_restore_map: Option<
+        std::collections::HashMap<
+            String,
+            super::providers::transform_codex_responses_namespace::NamespacedName,
+        >,
+    >,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
@@ -137,6 +144,8 @@ pub struct RequestForwarder {
     optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 独立 Copilot 诊断请求 ID。
+    copilot_diagnostic_id: Option<String>,
     /// 非流式请求超时（秒）
     non_streaming_timeout: std::time::Duration,
     /// 流式请求响应头等待超时（秒）
@@ -150,6 +159,26 @@ pub struct RequestForwarder {
 }
 
 impl RequestForwarder {
+    fn emit_copilot_diagnostic(&self, event: &str, fields: Value) {
+        let Some(request_id) = self.copilot_diagnostic_id.as_deref() else {
+            return;
+        };
+        let mut fields = match fields {
+            Value::Object(map) => map,
+            other => {
+                let mut map = serde_json::Map::new();
+                map.insert("value".to_string(), other);
+                map
+            }
+        };
+        fields.insert("request_id".to_string(), serde_json::json!(request_id));
+        fields.insert(
+            "session_hash".to_string(),
+            serde_json::json!(super::copilot_diagnostic::hash_identifier(&self.session_id)),
+        );
+        super::copilot_diagnostic::emit(event, Value::Object(fields));
+    }
+
     /// 预防式 media 降级：发送前对 text-only 模型把图片块替换为标记。
     ///
     /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
@@ -213,6 +242,7 @@ impl RequestForwarder {
         rectifier_config: RectifierConfig,
         optimizer_config: OptimizerConfig,
         copilot_optimizer_config: CopilotOptimizerConfig,
+        copilot_diagnostic_id: Option<String>,
         max_retries: u32,
     ) -> Self {
         // max_retries 是「失败后重试次数」语义，attempt 上限 = retries + 1。
@@ -232,6 +262,7 @@ impl RequestForwarder {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            copilot_diagnostic_id,
             non_streaming_timeout: std::time::Duration::from_secs(non_streaming_timeout),
             streaming_first_byte_timeout: std::time::Duration::from_secs(
                 streaming_first_byte_timeout,
@@ -491,7 +522,13 @@ impl RequestForwarder {
                 )
                 .await
             {
-                Ok((response, claude_api_format, outbound_model, copilot_protocol)) => {
+                Ok((
+                    response,
+                    claude_api_format,
+                    outbound_model,
+                    copilot_protocol,
+                    codex_namespace_restore_map,
+                )) => {
                     // 成功：普通闭合熔断状态异步记录，避免阻塞流式首包返回；
                     // HalfOpen 探测仍同步等待，保证 permit 与熔断状态及时释放。
                     self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
@@ -541,10 +578,22 @@ impl RequestForwarder {
                         claude_api_format,
                         outbound_model,
                         copilot_protocol,
+                        codex_namespace_restore_map,
                         connection_guard: None,
                     });
                 }
                 Err(e) => {
+                    if super::copilot_diagnostic::is_copilot_provider(provider) {
+                        self.emit_copilot_diagnostic(
+                            "request_attempt_error",
+                            serde_json::json!({
+                                "provider_id_hash": super::copilot_diagnostic::hash_identifier(&provider.id),
+                                "provider_name": provider.name,
+                                "attempt": attempted_providers,
+                                "error": super::copilot_diagnostic::failure_snippet(&e.to_string()),
+                            }),
+                        );
+                    }
                     // 检测是否需要触发整流器（仅 Claude/ClaudeAuth 供应商）
                     let provider_type = ProviderType::from_app_type_and_config(app_type, provider);
                     let is_anthropic_provider = matches!(
@@ -596,6 +645,7 @@ impl RequestForwarder {
                                     claude_api_format,
                                     outbound_model,
                                     copilot_protocol,
+                                    codex_namespace_restore_map,
                                 )) => {
                                     log::info!(
                                         "[{app_type_str}] [Media] Unsupported-image retry succeeded"
@@ -650,6 +700,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         copilot_protocol,
+                                        codex_namespace_restore_map,
                                         connection_guard: None,
                                     });
                                 }
@@ -748,6 +799,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         copilot_protocol,
+                                        codex_namespace_restore_map,
                                     )) => {
                                         log::info!("[{app_type_str}] [RECT-002] 整流重试成功");
                                         self.record_success_result(
@@ -805,6 +857,7 @@ impl RequestForwarder {
                                             claude_api_format,
                                             outbound_model,
                                             copilot_protocol,
+                                            codex_namespace_restore_map,
                                             connection_guard: None,
                                         });
                                     }
@@ -920,6 +973,7 @@ impl RequestForwarder {
                                     claude_api_format,
                                     outbound_model,
                                     copilot_protocol,
+                                    codex_namespace_restore_map,
                                 )) => {
                                     log::info!("[{app_type_str}] [RECT-011] budget 整流重试成功");
                                     self.record_success_result(
@@ -971,6 +1025,7 @@ impl RequestForwarder {
                                         claude_api_format,
                                         outbound_model,
                                         copilot_protocol,
+                                        codex_namespace_restore_map,
                                         connection_guard: None,
                                     });
                                 }
@@ -1148,6 +1203,12 @@ impl RequestForwarder {
             Option<String>,
             Option<String>,
             Option<super::providers::copilot_model_map::CopilotProtocol>,
+            Option<
+                std::collections::HashMap<
+                    String,
+                    super::providers::transform_codex_responses_namespace::NamespacedName,
+                >,
+            >,
         ),
         ProxyError,
     > {
@@ -1167,6 +1228,22 @@ impl RequestForwarder {
             .and_then(|m| m.provider_type.as_deref())
             == Some("github_copilot")
             || base_url.contains("githubcopilot.com");
+
+        if is_copilot {
+            self.emit_copilot_diagnostic(
+                "request_received",
+                serde_json::json!({
+                    "app_type": app_type.as_str(),
+                    "method": method.as_str(),
+                    "endpoint": endpoint.split('?').next().unwrap_or(endpoint),
+                    "provider_id_hash": super::copilot_diagnostic::hash_identifier(&provider.id),
+                    "provider_name": provider.name,
+                    "base_url": super::copilot_diagnostic::sanitize_url(&base_url),
+                    "body": super::copilot_diagnostic::summarize_body(body),
+                    "optimizer_enabled": self.copilot_optimizer_config.enabled,
+                }),
+            );
+        }
 
         let static_codex_responses_to_anthropic = matches!(app_type, AppType::Codex)
             && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
@@ -1284,6 +1361,20 @@ impl RequestForwarder {
                 classification.is_compact,
                 classification.is_subagent
             );
+
+                self.emit_copilot_diagnostic(
+                    "optimizer_classification",
+                    serde_json::json!({
+                        "initiator": classification.initiator,
+                        "is_warmup": classification.is_warmup,
+                        "is_compact": classification.is_compact,
+                        "is_subagent": classification.is_subagent,
+                        "tool_result_merging": self.copilot_optimizer_config.tool_result_merging,
+                        "strip_thinking": self.copilot_optimizer_config.strip_thinking,
+                        "warmup_downgrade": self.copilot_optimizer_config.warmup_downgrade,
+                        "before": super::copilot_diagnostic::summarize_body(&mapped_body),
+                    }),
+                );
 
                 // 2. 孤立 tool_result 清理 — 分类完成后再清洗
                 //    防止上游 API 因不匹配的 tool_result 报错导致重试/重复计费
@@ -1598,6 +1689,35 @@ impl RequestForwarder {
             mapped_body
         };
 
+        let mut codex_namespace_restore_map = None;
+        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::provider_needs_responses_namespace_flatten(provider)
+            && is_codex_responses_endpoint_path(&effective_endpoint)
+        {
+            let restore_map =
+                super::providers::transform_codex_responses_namespace::namespace_restore_map(
+                    &request_body,
+                );
+            let flattened =
+                super::providers::transform_codex_responses_namespace::flatten_request_namespaces(
+                    &mut request_body,
+                )?;
+            let sanitized =
+                super::providers::transform_codex_responses_xai_sanitize::sanitize_xai_responses_request(
+                    &mut request_body,
+                );
+            if flattened || sanitized {
+                log::debug!(
+                    "[Codex] Native Responses xAI compatibility applied: flattened_namespaces={flattened}, sanitized={sanitized}"
+                );
+            }
+            if !restore_map.is_empty() {
+                codex_namespace_restore_map = Some(restore_map);
+            }
+        }
+
         if matches!(app_type, AppType::Codex) {
             self.apply_media_prevention(&mut request_body, provider);
         }
@@ -1634,6 +1754,30 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
+
+        if is_copilot {
+            let protocol = match copilot_protocol {
+                Some(super::providers::copilot_model_map::CopilotProtocol::Messages) => "messages",
+                Some(super::providers::copilot_model_map::CopilotProtocol::Responses) => {
+                    "responses"
+                }
+                Some(super::providers::copilot_model_map::CopilotProtocol::Chat) => "chat",
+                None => "unknown",
+            };
+            self.emit_copilot_diagnostic(
+                "routing_decision",
+                serde_json::json!({
+                    "requested_model": body.get("model").and_then(Value::as_str),
+                    "outbound_model": outbound_model,
+                    "protocol": protocol,
+                    "api_format": resolved_claude_api_format,
+                    "effective_endpoint": effective_endpoint.split('?').next().unwrap_or(&effective_endpoint),
+                    "url": super::copilot_diagnostic::sanitize_url(&url),
+                    "streaming": request_is_streaming,
+                    "transformed_body": super::copilot_diagnostic::summarize_body(&filtered_body),
+                }),
+            );
+        }
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
             || codex_responses_to_anthropic
@@ -2195,6 +2339,7 @@ impl RequestForwarder {
         );
 
         // 发送请求
+        let upstream_started = std::time::Instant::now();
         let response = if is_socks_proxy || !preserve_exact_header_case {
             // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
             // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
@@ -2239,8 +2384,10 @@ impl RequestForwarder {
             let uri: http::Uri = url
                 .parse()
                 .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+            let log_display = super::http_client::mask_url(&url);
             super::hyper_client::send_request(
                 uri,
+                &log_display,
                 method.clone(),
                 ordered_headers,
                 extensions.clone(),
@@ -2253,6 +2400,26 @@ impl RequestForwarder {
 
         // 检查响应状态
         let status = response.status();
+        if is_copilot {
+            self.emit_copilot_diagnostic(
+                "upstream_response",
+                serde_json::json!({
+                    "status": status.as_u16(),
+                    "success": status.is_success(),
+                    "latency_ms": upstream_started.elapsed().as_millis() as u64,
+                    "content_type": response
+                        .headers()
+                        .get(http::header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok()),
+                    "content_encoding": response
+                        .headers()
+                        .get(http::header::CONTENT_ENCODING)
+                        .and_then(|value| value.to_str().ok()),
+                    "is_sse": response.is_sse(),
+                    "is_json": response.is_json(),
+                }),
+            );
+        }
 
         if status.is_success() {
             let mut response = self
@@ -2287,6 +2454,7 @@ impl RequestForwarder {
                 resolved_claude_api_format,
                 outbound_model,
                 copilot_protocol,
+                codex_namespace_restore_map,
             ))
         } else {
             let status_code = status.as_u16();
@@ -3652,6 +3820,7 @@ mod tests {
             rectifier_config: RectifierConfig::default(),
             optimizer_config: OptimizerConfig::default(),
             copilot_optimizer_config: CopilotOptimizerConfig::default(),
+            copilot_diagnostic_id: None,
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,

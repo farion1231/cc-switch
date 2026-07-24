@@ -70,6 +70,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 独立 Copilot 诊断请求 ID；仅在启动参数启用时生成。
+    pub copilot_diagnostic_id: Option<String>,
 }
 
 impl RequestContext {
@@ -106,6 +108,7 @@ impl RequestContext {
         let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
         let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
         let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let copilot_diagnostic_id = crate::proxy::copilot_diagnostic::new_request_id();
 
         let current_provider_id =
             crate::settings::get_current_provider(&app_type).unwrap_or_default();
@@ -173,6 +176,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            copilot_diagnostic_id,
         })
     }
 
@@ -240,6 +244,7 @@ impl RequestContext {
             self.rectifier_config.clone(),
             self.optimizer_config.clone(),
             self.copilot_optimizer_config.clone(),
+            self.copilot_diagnostic_id.clone(),
             max_retries,
         )
     }

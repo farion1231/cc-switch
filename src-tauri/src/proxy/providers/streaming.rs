@@ -146,8 +146,16 @@ fn build_message_delta_event(stop_reason: Option<String>, usage_json: Option<Val
 }
 
 /// 创建 Anthropic SSE 流
+#[allow(dead_code)]
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_anthropic_sse_stream_with_diagnostic(stream, None)
+}
+
+pub fn create_anthropic_sse_stream_with_diagnostic<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    diagnostic: Option<crate::proxy::copilot_diagnostic::StreamDiagnosticContext>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut buffer = String::new();
@@ -170,12 +178,19 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut current_non_tool_block_index: Option<u32> = None;
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
+        let mut upstream_chunks = 0_u64;
+        let mut parsed_events = 0_u64;
+        let mut parse_errors = 0_u64;
+        if let Some(diagnostic) = diagnostic.as_ref() {
+            diagnostic.emit("sse_stream_started", json!({"format": "openai_chat"}));
+        }
 
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
+                    upstream_chunks += 1;
                     crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                     while let Some(line) = take_sse_block(&mut buffer) {
@@ -206,7 +221,21 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                     continue;
                                 }
 
-                                if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
+                                let parsed = serde_json::from_str::<OpenAIStreamChunk>(data);
+                                if let Err(error) = parsed.as_ref() {
+                                    parse_errors += 1;
+                                    if let Some(diagnostic) = diagnostic.as_ref() {
+                                        diagnostic.emit(
+                                            "sse_parse_error",
+                                            json!({
+                                                "error": error.to_string(),
+                                                "failure": crate::proxy::copilot_diagnostic::failure_snippet(data),
+                                            }),
+                                        );
+                                    }
+                                }
+                                if let Ok(chunk) = parsed {
+                                    parsed_events += 1;
                                     log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
 
                                     if message_id.is_none() && !chunk.id.is_empty() {
@@ -629,6 +658,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                 Err(e) => {
                     log::error!("Stream error: {e}");
                     stream_ended_with_error = true;
+                    if let Some(diagnostic) = diagnostic.as_ref() {
+                        diagnostic.emit("sse_transport_error", json!({"error": e.to_string()}));
+                    }
                     let error_event = json!({
                         "type": "error",
                         "error": {
@@ -666,7 +698,22 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                     serde_json::to_string(&event).unwrap_or_default());
                 log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_stop (at stream end)");
                 yield Ok(Bytes::from(sse_data));
+                has_sent_message_stop = true;
             }
+        }
+
+        if let Some(diagnostic) = diagnostic.as_ref() {
+            diagnostic.emit(
+                "sse_stream_finished",
+                json!({
+                    "format": "openai_chat",
+                    "upstream_chunks": upstream_chunks,
+                    "parsed_events": parsed_events,
+                    "parse_errors": parse_errors,
+                    "ended_with_error": stream_ended_with_error,
+                    "message_stop_emitted": has_sent_message_stop,
+                }),
+            );
         }
     }
 }

@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -225,9 +226,9 @@ pub async fn handle_non_streaming(
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(
-        "[{}] 上游响应体内容: {}",
+        "[{}] 上游响应体已接收: bytes={} (content omitted)",
         ctx.tag,
-        String::from_utf8_lossy(&body_bytes)
+        body_bytes.len()
     );
 
     // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
@@ -313,6 +314,72 @@ pub async fn handle_non_streaming(
         log::error!("[{}] 构建响应失败: {e}", ctx.tag);
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+type NamespaceRestoreMap =
+    HashMap<String, super::providers::transform_codex_responses_namespace::NamespacedName>;
+
+/// 通用响应处理入口，可选恢复被 strict Responses upstream flatten 的 namespace tool call。
+pub async fn process_response_with_namespace_restore(
+    response: ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    parser_config: &UsageParserConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    namespace_restore_map: Option<NamespaceRestoreMap>,
+) -> Result<Response, ProxyError> {
+    let Some(namespace_restore_map) = namespace_restore_map.filter(|map| !map.is_empty()) else {
+        return process_response(response, ctx, state, parser_config, connection_guard).await;
+    };
+
+    if is_sse_response(&response) {
+        let status = response.status();
+        let headers = response.headers().clone();
+        let restored = super::providers::transform_codex_responses_namespace::create_namespace_restore_sse_stream(
+            response.bytes_stream(),
+            namespace_restore_map,
+        );
+        return process_response(
+            ProxyResponse::streamed(status, headers, restored),
+            ctx,
+            state,
+            parser_config,
+            connection_guard,
+        )
+        .await;
+    }
+
+    let body_timeout =
+        if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
+            Duration::from_secs(ctx.app_config.non_streaming_timeout as u64)
+        } else {
+            Duration::ZERO
+        };
+    let (mut headers, status, body_bytes) =
+        read_decoded_body(response, ctx.tag, body_timeout).await?;
+    let mut body_bytes = body_bytes;
+    if let Ok(mut json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+        if super::providers::transform_codex_responses_namespace::restore_response_namespaces(
+            &mut json_value,
+            &namespace_restore_map,
+        ) {
+            body_bytes = Bytes::from(serde_json::to_vec(&json_value).map_err(|e| {
+                ProxyError::Internal(format!(
+                    "Failed to serialize namespace-restored response: {e}"
+                ))
+            })?);
+            strip_entity_headers_for_rebuilt_body(&mut headers);
+        }
+    }
+
+    process_response(
+        ProxyResponse::buffered(status, headers, body_bytes),
+        ctx,
+        state,
+        parser_config,
+        connection_guard,
+    )
+    .await
 }
 
 /// 通用响应处理入口
@@ -456,7 +523,7 @@ impl Drop for SseUsageFinishGuard {
 // ============================================================================
 
 /// 创建使用量收集器
-fn create_usage_collector(
+pub(crate) fn create_usage_collector(
     ctx: &RequestContext,
     state: &ProxyState,
     status_code: u16,
@@ -642,7 +709,8 @@ async fn log_usage_internal(
         model
     };
 
-    let request_id = usage.dedup_request_id();
+    let dedup_scope = (app_type != "claude").then_some((app_type, provider_id));
+    let request_id = usage.dedup_request_id(dedup_scope);
 
     log::debug!(
         "[{app_type}] 记录请求日志: id={request_id}, provider={provider_id}, model={model}, streaming={is_streaming}, status={status_code}, latency_ms={latency_ms}, first_token_ms={first_token_ms:?}, session={}, input={}, output={}, cache_read={}, cache_creation={}",
@@ -761,11 +829,10 @@ pub fn create_logged_passthrough_stream(
                                                 }
                                                 _ => false,
                                             };
-                                            if collected {
-                                                log::debug!("[{tag}] <<< SSE 事件: {data}");
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE 数据: {data}");
-                                            }
+                                            log::trace!(
+                                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                                data.len()
+                                            );
                                         } else {
                                             log::debug!("[{tag}] <<< SSE: [DONE]");
                                         }
@@ -798,15 +865,53 @@ pub fn create_logged_passthrough_stream(
     }
 }
 
+fn is_safe_diagnostic_header(name: &str) -> bool {
+    matches!(
+        name,
+        "content-type"
+            | "content-encoding"
+            | "content-length"
+            | "retry-after"
+            | "cf-ray"
+            | "x-request-id"
+            | "request-id"
+            | "x-correlation-id"
+    ) || name.starts_with("x-ratelimit-")
+        || name.starts_with("ratelimit-")
+}
+
+fn bounded_header_value(value: &axum::http::HeaderValue) -> Option<String> {
+    let value = value.to_str().ok()?;
+    let mut bounded = value.chars().take(160).collect::<String>();
+    if value.chars().count() > 160 {
+        bounded.push('…');
+    }
+    Some(bounded)
+}
+
 fn format_headers(headers: &HeaderMap) -> String {
-    headers
-        .iter()
-        .map(|(key, value)| {
-            let value_str = value.to_str().unwrap_or("<non-utf8>");
-            format!("{key}={value_str}")
+    let mut entries = headers
+        .keys()
+        .map(|key| {
+            let name = key.as_str();
+            if !is_safe_diagnostic_header(name) {
+                return name.to_string();
+            }
+
+            let values = headers
+                .get_all(key)
+                .iter()
+                .filter_map(bounded_header_value)
+                .collect::<Vec<_>>();
+            if values.is_empty() {
+                name.to_string()
+            } else {
+                format!("{name}={}", values.join("|"))
+            }
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect::<Vec<_>>();
+    entries.sort();
+    format!("[{}]", entries.join(", "))
 }
 
 #[cfg(test)]
@@ -826,6 +931,25 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    #[test]
+    fn format_headers_keeps_only_allowlisted_diagnostic_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer super-secret".parse().unwrap());
+        headers.insert("set-cookie", "session=cookie-secret".parse().unwrap());
+        headers.insert("retry-after", "30".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "2".parse().unwrap());
+        headers.insert("cf-ray", "abc123-SJC".parse().unwrap());
+
+        let formatted = format_headers(&headers);
+        assert!(formatted.contains("authorization"), "{formatted}");
+        assert!(formatted.contains("set-cookie"), "{formatted}");
+        assert!(formatted.contains("retry-after=30"), "{formatted}");
+        assert!(formatted.contains("x-ratelimit-remaining=2"), "{formatted}");
+        assert!(formatted.contains("cf-ray=abc123-SJC"), "{formatted}");
+        assert!(!formatted.contains("super-secret"), "{formatted}");
+        assert!(!formatted.contains("cookie-secret"), "{formatted}");
+    }
 
     #[test]
     fn test_strip_sse_field_accepts_optional_space() {
