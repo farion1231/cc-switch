@@ -1116,7 +1116,7 @@
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
     "modelNoDisplayName": "不顯示於 /model 選單",
     "requestModelLabel": "實際請求模型",
-    "modelOneMHeader": "聲明支援 1M",
+    "modelOneMHeader": "上下文長度",
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "備用模型",
     "fallbackModelHint": "用於未明確落到 Sonnet、Opus、Fable、Haiku 角色的請求。使用第三方/中轉端點時建議填寫：否則這些請求（含 Haiku 背景子任務）會以原始 Claude 模型名透傳給上游，可能因上游無此模型而報錯。官方端點可留空。",
@@ -1139,7 +1139,12 @@
     "fetchModelsAuthFailed": "API Key 無效或無權限",
     "fetchModelsNotSupported": "該供應商不支援取得模型清單",
     "fetchModelsEndpointNotFound": "未找到可用的模型清單端點，請檢查 Base URL 或確認供應商是否開放該 API",
-    "fetchModelsTimeout": "請求逾時，請檢查網路連線"
+    "fetchModelsTimeout": "請求逾時，請檢查網路連線",
+    "modelContextWindowLabel": "上下文長度",
+    "modelContextWindowPlaceholder": "1M / 200K",
+    "modelContextWindowHint": "聲明模型上下文視窗大小，留空使用預設 200K",
+    "autoSyncContextWindow": "自動同步模型上下文長度",
+    "autoSyncContextWindowTooltip": "終端內切換模型時，上下文長度和壓縮閾值按切換的模型更新設定 json。多 claude 終端使用不同模型，以最後切換模型時的上下文長度作為全域變數。切換後需重啟 Claude Code（退出後用 claude --resume 恢復會話）才生效。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 驗證",

@@ -1133,7 +1133,7 @@
     "haikuModelPlaceholder": "",
     "modelHelper": "可选：指定默认使用的 Claude 模型，留空则使用系统默认。",
     "modelMappingLabel": "模型映射",
-    "modelMappingHint": "显示名称只影响 /model 菜单；1M 只是给 Claude Code 的上下文能力声明。",
+    "modelMappingHint": "显示名称只影响 /model 菜单；上下文长度声明模型支持的最大上下文窗口（如 1M、200K、500000 等），留空使用默认值。",
     "modelRoleLabel": "模型角色",
     "modelRoleSonnet": "Sonnet",
     "modelRoleOpus": "Opus",
@@ -1144,7 +1144,7 @@
     "modelDisplayNamePlaceholder": "例如 DeepSeek V4 Pro",
     "modelNoDisplayName": "不显示在 /model 菜单",
     "requestModelLabel": "实际请求模型",
-    "modelOneMHeader": "声明支持 1M",
+    "modelOneMHeader": "上下文长度",
     "modelOneMLabel": "1M",
     "fallbackModelLabel": "默认兜底模型",
     "fallbackModelHint": "用于未明确落到 Sonnet、Opus、Fable、Haiku 角色的请求。使用第三方/中转端点时建议填写：否则这些请求（含 Haiku 后台子任务）会以原始 Claude 模型名透传给上游，可能因上游无此模型而报错。官方端点可留空。",
@@ -1167,7 +1167,12 @@
     "fetchModelsAuthFailed": "API Key 无效或无权限",
     "fetchModelsNotSupported": "该供应商不支持获取模型列表",
     "fetchModelsEndpointNotFound": "未找到可用的模型列表端点，请检查 Base URL 或确认供应商是否开放该接口",
-    "fetchModelsTimeout": "请求超时，请检查网络连接"
+    "fetchModelsTimeout": "请求超时，请检查网络连接",
+    "modelContextWindowLabel": "上下文长度",
+    "modelContextWindowPlaceholder": "1M / 200K",
+    "modelContextWindowHint": "声明模型上下文窗口大小，留空使用默认 200K",
+    "autoSyncContextWindow": "自动同步模型上下文长度",
+    "autoSyncContextWindowTooltip": "终端内切换模型时，上下文长度和压缩阈值按切换的模型更新配置 json。多 claude 终端使用不同模型，以最后切换模型时的上下文长度作为全局变量。切换后需重启 Claude Code（退出后用 claude --resume 恢复会话）才生效。"
   },
   "copilot": {
     "authSection": "GitHub Copilot 认证",

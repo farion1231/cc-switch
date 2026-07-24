@@ -46,7 +46,7 @@ const CLAUDE_TAKEOVER_SONNET_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_TAKEOVER_OPUS_MODEL: &str = "claude-opus-4-8";
 const CLAUDE_TAKEOVER_FABLE_MODEL: &str = "claude-fable-5";
 // 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+const CLAUDE_ONE_M_MARKER_FOR_CLIENT: &str = "[1m]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClaudeTakeoverAuthPolicy {
@@ -312,10 +312,9 @@ impl ProxyService {
     }
 
     fn has_claude_one_m_marker(model: &str) -> bool {
-        model
-            .trim_end()
-            .to_ascii_lowercase()
-            .ends_with(crate::claude_desktop_config::ONE_M_CONTEXT_MARKER)
+        crate::claude_desktop_config::parse_context_window_suffix(model)
+            .1
+            .is_some()
     }
 
     fn strip_claude_one_m_marker(model: &str) -> String {
@@ -5534,7 +5533,7 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-sonnet-4-6[1M]"),
+            Some("claude-sonnet-4-6[1m]"),
             "Sonnet role should carry the local 1M declaration for Claude Code"
         );
         assert_eq!(
@@ -5548,7 +5547,7 @@ model = "gpt-5.1-codex"
             live_env
                 .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
                 .and_then(|v| v.as_str()),
-            Some("claude-opus-4-8[1M]"),
+            Some("claude-opus-4-8[1m]"),
             "Opus role should preserve the current provider 1M capability marker"
         );
         assert_eq!(
@@ -5571,7 +5570,19 @@ model = "gpt-5.1-codex"
             .await
             .expect("get live backup")
             .expect("backup exists");
-        let expected = serde_json::to_string(&provider_b.settings_config).expect("serialize");
+        // apply_context_window_defaults injects ACW from the [1M]/[1m] suffixes
+        let mut expected = provider_b.settings_config.clone();
+        if let Some(env) = expected.get_mut("env").and_then(|v| v.as_object_mut()) {
+            env.insert(
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS".to_string(),
+                json!("1000000"),
+            );
+            env.insert(
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW".to_string(),
+                json!("1000000"),
+            );
+        }
+        let expected = serde_json::to_string(&expected).expect("serialize");
         assert_eq!(backup.original_config, expected);
     }
 

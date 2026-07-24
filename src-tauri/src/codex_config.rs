@@ -437,7 +437,14 @@ pub fn should_restore_codex_provider_token_for_backfill(
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     match value {
         Some(Value::Number(n)) => n.as_u64().filter(|v| *v > 0),
-        Some(Value::String(s)) => s.trim().parse::<u64>().ok().filter(|v| *v > 0),
+        Some(Value::String(s)) => {
+            let trimmed = s.trim();
+            // Try multi-format (1M / 200K) first, then fall back to pure number
+            if let Some(w) = crate::claude_desktop_config::parse_window_token(trimmed) {
+                return Some(w);
+            }
+            trimmed.parse::<u64>().ok().filter(|v| *v > 0)
+        }
         _ => None,
     }
 }
@@ -477,6 +484,31 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(spec.display_name));
     entry_obj.insert("context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    entry_obj.insert("effective_context_window_percent".to_string(), json!(100));
+    entry_obj.insert("auto_compact_token_limit".to_string(), Value::Null);
+
+    // truncation_policy.limit follows context_window (issue #4832/#5110)
+    // context_window 的单位是 token，写入时必须同时设 mode="tokens" 确保
+    // limit 与 mode 单位一致。codex_native_responses 模板默认 mode="bytes"，
+    // 若保留 bytes 却写入 token 值，128K-token 模型会被截断在 128K bytes
+    //（≈32K tokens，仅 1/4 容量）。
+    let truncation_limit = if spec.context_window > 0 {
+        spec.context_window
+    } else {
+        10_000
+    };
+    if let Some(tp) = entry_obj
+        .get_mut("truncation_policy")
+        .and_then(|v| v.as_object_mut())
+    {
+        tp.insert("mode".to_string(), json!("tokens"));
+        tp.insert("limit".to_string(), json!(truncation_limit));
+    } else {
+        entry_obj.insert(
+            "truncation_policy".to_string(),
+            json!({ "mode": "tokens", "limit": truncation_limit }),
+        );
+    }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -1017,7 +1049,20 @@ fn set_codex_model_catalog_json_field(
 
     match catalog_path {
         Some(_) => {
-            doc["model_catalog_json"] = toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            // User-written pointer to a custom catalog must NOT be overwritten
+            // by regeneration; symmetric with the None arm's file_name check.
+            let user_owned = doc
+                .get("model_catalog_json")
+                .and_then(|item| item.as_str())
+                .map(|path| {
+                    Path::new(path).file_name().and_then(|name| name.to_str())
+                        != Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME)
+                })
+                .unwrap_or(false);
+            if !user_owned {
+                doc["model_catalog_json"] =
+                    toml_edit::value(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME);
+            }
         }
         None => {
             let should_remove = doc
@@ -3661,6 +3706,54 @@ model = "glm-5"
             "None arm should NOT remove user-owned catalog"
         );
     }
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_catalog() {
+        // User-written pointer to a custom catalog must NOT be overwritten
+        // by the Some arm (regeneration); symmetric with the None arm's
+        // file_name protection in set_catalog_json_none_preserves_user_owned_catalog.
+        let input = r#"model_catalog_json = "/Users/me/.codex/my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("/Users/me/.codex/my-custom-catalog.json"),
+            "Some arm should NOT overwrite a user-owned catalog pointer"
+        );
+    }
+    #[test]
+    fn set_catalog_json_some_preserves_user_owned_relative_catalog() {
+        // Relative user-owned pointer (filename differs from cc-switch's)
+        // must also be preserved by the Some arm, matching the None arm.
+        let input = r#"model_catalog_json = "my-custom-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some("my-custom-catalog.json"),
+            "Some arm should NOT overwrite a user-owned relative catalog pointer"
+        );
+    }
+
+    #[test]
+    fn set_catalog_json_some_overwrites_cc_switch_owned_pointer() {
+        // When the existing pointer already points at cc-switch's own file
+        // (by filename), the Some arm must still refresh it to the canonical
+        // relative filename. Guards against over-protection.
+        let input = r#"model_catalog_json = "/abs/path/cc-switch-model-catalog.json"
+"#;
+        let catalog_path = Path::new("/tmp/cc-switch-model-catalog.json");
+        let result = set_codex_model_catalog_json_field(input, Some(catalog_path)).unwrap();
+        let parsed: toml::Value = toml::from_str(&result).unwrap();
+        assert_eq!(
+            parsed.get("model_catalog_json").and_then(|v| v.as_str()),
+            Some(CC_SWITCH_CODEX_MODEL_CATALOG_FILENAME),
+            "Some arm should refresh a cc-switch-owned pointer to the canonical filename"
+        );
+    }
 
     #[test]
     fn resolve_catalog_finds_relative_filename() {
@@ -3698,5 +3791,137 @@ model_catalog_json = "cc-switch-model-catalog.json"
             parsed.get("model_catalog_json").is_none(),
             "None arm should remove relative cc-switch-owned field"
         );
+    }
+    #[test]
+    fn catalog_entry_has_auto_compact_token_limit_null() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "1000000" }
+                ]
+            }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["effective_context_window_percent"], json!(100));
+        assert_eq!(entry["auto_compact_token_limit"], json!(null));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_follows_context_window() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "1000000" }
+                ]
+            }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
+        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
+    }
+    #[test]
+    fn catalog_entry_truncation_preserves_template_mode_tokens() {
+        // ProxyChat 用 gpt5_5_template（mode=tokens）。
+        // 修复后统一设 mode="tokens"，确保 limit（token 值）与 mode 单位一致。
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "128000" }
+                ]
+            }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(128000));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_forces_tokens_mode_for_native_responses() {
+        // NativeResponses 用 codex_native_responses_template（默认 mode=bytes）。
+        // context_window 单位是 token，若保留 bytes 模式却写入 token 值，
+        // 128K-token 模型会被截断在 128K bytes（≈32K tokens，1/4 容量）。
+        // 修复后应强制 mode="tokens"，与 limit 单位一致。
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "128000" }
+                ]
+            }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation")
+        .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(128000));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_follows_default_context_window() {
+        // When no explicit contextWindow is set, the default (128000) is used
+        // and truncation_policy.limit should follow it.
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro" }
+                ]
+            }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        let cw = entry["context_window"].as_u64().expect("context_window");
+        assert_eq!(entry["truncation_policy"]["limit"].as_u64(), Some(cw));
+    }
+
+    #[test]
+    fn parse_codex_positive_u64_accepts_multi_format() {
+        assert_eq!(parse_codex_positive_u64(Some(&json!("1M"))), Some(1000000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("200K"))), Some(200000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("200k"))), Some(200000));
+        assert_eq!(
+            parse_codex_positive_u64(Some(&json!("128000"))),
+            Some(128000)
+        );
+        assert_eq!(parse_codex_positive_u64(Some(&json!(128000))), Some(128000));
+        assert_eq!(parse_codex_positive_u64(Some(&json!("0"))), None);
+        assert_eq!(parse_codex_positive_u64(Some(&json!("invalid"))), None);
+        assert_eq!(parse_codex_positive_u64(None), None);
+    }
+
+    #[test]
+    fn catalog_entry_context_window_from_multi_format() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "test-model", "contextWindow": "1M" }
+                ]
+            }
+        });
+        let catalog =
+            codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
+                .expect("catalog generation")
+                .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["context_window"], json!(1000000));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(1000000));
     }
 }

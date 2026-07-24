@@ -35,6 +35,96 @@ export function setClaudeOneMMarker(model: string, enabled: boolean): string {
   return enabled ? `${base}${CLAUDE_ONE_M_MARKER}` : base;
 }
 
+// ---- 通用后缀解析器（泛化 [1M] 布尔标记为任意粒度窗口后缀）----
+
+export interface ModelSuffixResult {
+  slug: string;
+  window?: number;
+}
+
+function parseWindowToken(token: string): number | undefined {
+  const trimmed = token.trim();
+  if (!trimmed) return undefined;
+  // 清洗括号、逗号、下划线、空格等装饰字符
+  const cleaned = trimmed.replace(/[[\]()_,\s]/g, "");
+  if (!cleaned) return undefined;
+
+  // 提取末尾单位（K/k/M/m），去掉后得到数字部分
+  const last = cleaned[cleaned.length - 1];
+  let numPart: string;
+  let multiplier: number;
+  if (last === "K" || last === "k") {
+    numPart = cleaned.slice(0, -1);
+    multiplier = 1000;
+  } else if (last === "M" || last === "m") {
+    numPart = cleaned.slice(0, -1);
+    multiplier = 1000000;
+  } else if (last >= "0" && last <= "9") {
+    // 纯数字
+    numPart = cleaned;
+    multiplier = 1;
+  } else {
+    // 未知单位（如 G）→ 不合法
+    return undefined;
+  }
+
+  // 支持小数（如 1.5M → 1.5 × 1000000 = 1500000）
+  const num = numPart.includes(".")
+    ? Number.parseFloat(numPart)
+    : Number.parseInt(numPart, 10);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  return Math.round(num * multiplier);
+}
+
+export function parseModelSuffix(model: string): ModelSuffixResult {
+  const trimmed = model.trim();
+  const close = trimmed.lastIndexOf("]");
+  if (close !== trimmed.length - 1) {
+    return { slug: model, window: undefined };
+  }
+  const open = trimmed.lastIndexOf("[", close);
+  if (open <= 0) return { slug: model, window: undefined };
+  const slug = trimmed.slice(0, open).trim();
+  if (!slug) return { slug: model, window: undefined };
+  const window = parseWindowToken(trimmed.slice(open + 1, close));
+  if (window === undefined) return { slug: model, window: undefined };
+  return { slug, window };
+}
+
+export function stripModelSuffix(model: string): string {
+  return parseModelSuffix(model).slug;
+}
+
+export function setModelSuffix(model: string, windowStr: string): string {
+  const base = stripModelSuffix(model).trim();
+  if (!base) return "";
+  const trimmed = windowStr.trim();
+  if (!trimmed) return base;
+  const cleaned = trimmed.replace(/[[\]()_,\s]/g, "");
+  if (!cleaned) return base;
+  const window = parseWindowToken(cleaned);
+  if (window === undefined) return base;
+  // 小数输入时输出计算结果（如 1.5M → [1500000]），否则保留清洗后的原始格式
+  const suffix = cleaned.includes(".") ? String(window) : cleaned.toLowerCase();
+  return `${base}[${suffix}]`;
+}
+
+/**
+ * 改模型名时保留原 model 的 context window 后缀。
+ * 例如原 model 是 "deepseek[200k]"，用户改成 "glm-5.2"，
+ * 返回 "glm-5.2[200k]"，避免改模型名丢窗口配置。
+ * 若新输入本身带后缀，以原 model 的后缀为准（用户改的是名字不是窗口）。
+ */
+export function reapplySuffix(oldModel: string, newInput: string): string {
+  const suffixResult = parseModelSuffix(oldModel);
+  const oldSuffix = suffixResult.window
+    ? oldModel.slice(oldModel.lastIndexOf("["))
+    : "";
+  const newBase = stripModelSuffix(newInput).trim();
+  if (!newBase) return "";
+  return oldSuffix ? `${newBase}${oldSuffix}` : newBase;
+}
+
 /**
  * Parse model values from settings config JSON
  */
