@@ -36,6 +36,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
@@ -1632,9 +1633,11 @@ impl RequestForwarder {
             && adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"))
             && is_fable_model(&filtered_body);
-        if science_fable_compatibility {
-            prepare_claude_science_fable_request(&mut filtered_body);
-        }
+        let science_tool_aliases = if science_fable_compatibility {
+            prepare_claude_science_fable_request(&mut filtered_body)
+        } else {
+            BTreeMap::new()
+        };
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -1656,6 +1659,7 @@ impl RequestForwarder {
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
             || codex_responses_to_anthropic
+            || !science_tool_aliases.is_empty()
             || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
@@ -2350,6 +2354,11 @@ impl RequestForwarder {
                     response = self.validate_responses_stream_start(response).await?;
                 }
             }
+            if !science_tool_aliases.is_empty() {
+                response =
+                    rewrite_claude_science_tool_alias_response(response, science_tool_aliases)
+                        .await?;
+            }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
             let status_code = status.as_u16();
@@ -2995,10 +3004,10 @@ fn is_fable_model(body: &Value) -> bool {
         .is_some_and(|model| model.to_ascii_lowercase().contains("fable"))
 }
 
-fn prepare_claude_science_fable_request(body: &mut Value) {
+fn prepare_claude_science_fable_request(body: &mut Value) -> BTreeMap<String, String> {
     prepend_claude_agent_sdk_system_prompt(body);
     ensure_claude_science_device_id(body);
-    append_claude_science_tool_aliases(body);
+    append_claude_science_tool_aliases(body)
 }
 
 fn prepend_claude_agent_sdk_system_prompt(body: &mut Value) {
@@ -3051,14 +3060,15 @@ fn ensure_claude_science_device_id(body: &mut Value) {
     }
 }
 
-fn append_claude_science_tool_aliases(body: &mut Value) {
+fn append_claude_science_tool_aliases(body: &mut Value) -> BTreeMap<String, String> {
     const ALIASES: &[(&str, &str)] = &[
         ("bash", "Bash"),
         ("edit_file", "Edit"),
         ("read_file", "Read"),
     ];
+    let mut injected = BTreeMap::new();
     let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
-        return;
+        return injected;
     };
     for (source_name, alias_name) in ALIASES {
         if tools
@@ -3079,7 +3089,172 @@ fn append_claude_science_tool_aliases(body: &mut Value) {
             "Compatibility alias for {source_name}; prefer the original {source_name} tool."
         ));
         tools.push(alias);
+        injected.insert((*alias_name).to_string(), (*source_name).to_string());
     }
+    injected
+}
+
+fn remap_claude_science_tool_aliases(
+    value: &mut Value,
+    aliases: &BTreeMap<String, String>,
+) -> usize {
+    match value {
+        Value::Array(values) => values
+            .iter_mut()
+            .map(|value| remap_claude_science_tool_aliases(value, aliases))
+            .sum(),
+        Value::Object(object) => {
+            let mut remapped = 0;
+            if object.get("type").and_then(Value::as_str) == Some("tool_use") {
+                if let Some(name) = object.get_mut("name") {
+                    if let Some(source_name) =
+                        name.as_str().and_then(|alias_name| aliases.get(alias_name))
+                    {
+                        *name = Value::String(source_name.clone());
+                        remapped += 1;
+                    }
+                }
+            }
+            remapped
+                + object
+                    .values_mut()
+                    .map(|value| remap_claude_science_tool_aliases(value, aliases))
+                    .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+fn rewrite_claude_science_sse_block(block: &str, aliases: &BTreeMap<String, String>) -> String {
+    block
+        .lines()
+        .map(|line| {
+            let Some(data) = super::sse::strip_sse_field(line, "data") else {
+                return line.to_string();
+            };
+            if data.trim() == "[DONE]" {
+                return line.to_string();
+            }
+            let Ok(mut event) = serde_json::from_str::<Value>(data) else {
+                return line.to_string();
+            };
+            if remap_claude_science_tool_aliases(&mut event, aliases) == 0 {
+                return line.to_string();
+            }
+            format!("data: {event}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn rewrite_claude_science_sse_document(
+    document: &str,
+    aliases: &BTreeMap<String, String>,
+) -> String {
+    let mut buffer = document.to_string();
+    let mut rewritten = String::with_capacity(document.len());
+    while let Some(block) = super::sse::take_sse_block(&mut buffer) {
+        rewritten.push_str(&rewrite_claude_science_sse_block(&block, aliases));
+        rewritten.push_str("\n\n");
+    }
+    if !buffer.is_empty() {
+        rewritten.push_str(&rewrite_claude_science_sse_block(&buffer, aliases));
+    }
+    rewritten
+}
+
+async fn rewrite_claude_science_tool_alias_response(
+    response: ProxyResponse,
+    aliases: BTreeMap<String, String>,
+) -> Result<ProxyResponse, ProxyError> {
+    let status = response.status();
+    let mut headers = response.headers().clone();
+    let is_sse = response.is_sse();
+    let encoding = get_content_encoding(&headers);
+
+    if is_sse && encoding.is_none() {
+        let stream = response.bytes_stream();
+        let rewritten = async_stream::stream! {
+            let mut buffer = String::new();
+            let mut utf8_remainder = Vec::new();
+            tokio::pin!(stream);
+
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        super::sse::append_utf8_safe(
+                            &mut buffer,
+                            &mut utf8_remainder,
+                            &bytes,
+                        );
+                        while let Some(block) = super::sse::take_sse_block(&mut buffer) {
+                            let block =
+                                rewrite_claude_science_sse_block(&block, &aliases);
+                            yield Ok(Bytes::from(format!("{block}\n\n")));
+                        }
+                    }
+                    Err(error) => {
+                        yield Err(error);
+                        return;
+                    }
+                }
+            }
+
+            if !utf8_remainder.is_empty() {
+                buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+            }
+            if !buffer.is_empty() {
+                yield Ok(Bytes::from(rewrite_claude_science_sse_block(
+                    &buffer,
+                    &aliases,
+                )));
+            }
+        };
+        headers.remove(http::header::CONTENT_LENGTH);
+        return Ok(ProxyResponse::streamed(status, headers, rewritten));
+    }
+
+    let raw = response.bytes().await?;
+    let decoded = match encoding.as_deref() {
+        Some(encoding) => decompress_body(encoding, &raw)
+            .map_err(|error| {
+                ProxyError::TransformError(format!(
+                    "Failed to decode Claude Science response before tool alias remapping: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                ProxyError::TransformError(format!(
+                    "Unsupported Claude Science response content-encoding: {encoding}"
+                ))
+            })?,
+        None => raw.to_vec(),
+    };
+
+    let body = if is_sse {
+        let document = String::from_utf8(decoded).map_err(|error| {
+            ProxyError::TransformError(format!(
+                "Claude Science SSE response is not valid UTF-8: {error}"
+            ))
+        })?;
+        rewrite_claude_science_sse_document(&document, &aliases).into_bytes()
+    } else {
+        let mut body: Value = serde_json::from_slice(&decoded).map_err(|error| {
+            ProxyError::TransformError(format!(
+                "Failed to parse Claude Science response before tool alias remapping: {error}"
+            ))
+        })?;
+        remap_claude_science_tool_aliases(&mut body, &aliases);
+        serde_json::to_vec(&body).map_err(|error| {
+            ProxyError::TransformError(format!(
+                "Failed to serialize Claude Science response after tool alias remapping: {error}"
+            ))
+        })?
+    };
+
+    headers.remove(http::header::CONTENT_ENCODING);
+    headers.remove(http::header::CONTENT_LENGTH);
+    headers.remove(http::header::TRANSFER_ENCODING);
+    Ok(ProxyResponse::buffered(status, headers, Bytes::from(body)))
 }
 
 /// Headers a native Claude Code client never sends but the Codex/OpenAI CLI (and its
@@ -3950,8 +4125,8 @@ mod tests {
             ]
         });
 
-        prepare_claude_science_fable_request(&mut body);
-        prepare_claude_science_fable_request(&mut body);
+        let aliases = prepare_claude_science_fable_request(&mut body);
+        let repeated_aliases = prepare_claude_science_fable_request(&mut body);
 
         assert_eq!(
             body.pointer("/system/0/text").and_then(Value::as_str),
@@ -3987,6 +4162,66 @@ mod tests {
             );
         }
         assert_eq!(tools.len(), 6);
+        assert_eq!(
+            aliases,
+            BTreeMap::from([
+                ("Bash".to_string(), "bash".to_string()),
+                ("Edit".to_string(), "edit_file".to_string()),
+                ("Read".to_string(), "read_file".to_string()),
+            ])
+        );
+        assert!(repeated_aliases.is_empty());
+    }
+
+    #[test]
+    fn science_tool_alias_response_remap_is_scoped_to_injected_aliases() {
+        let aliases = BTreeMap::from([
+            ("Bash".to_string(), "bash".to_string()),
+            ("Edit".to_string(), "edit_file".to_string()),
+        ]);
+        let mut response = json!({
+            "type": "message",
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {}},
+                {"type": "tool_use", "id": "toolu_2", "name": "Edit", "input": {}},
+                {"type": "tool_use", "id": "toolu_3", "name": "Read", "input": {}}
+            ]
+        });
+
+        assert_eq!(
+            remap_claude_science_tool_aliases(&mut response, &aliases),
+            2
+        );
+        assert_eq!(response["content"][0]["name"], "bash");
+        assert_eq!(response["content"][1]["name"], "edit_file");
+        assert_eq!(response["content"][2]["name"], "Read");
+    }
+
+    #[tokio::test]
+    async fn science_tool_alias_stream_remap_handles_split_sse_chunks() {
+        let aliases = BTreeMap::from([("Read".to_string(), "read_file".to_string())]);
+        let headers = http::HeaderMap::from_iter([(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("text/event-stream"),
+        )]);
+        let chunks = futures::stream::iter([
+            Ok(Bytes::from_static(
+                b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Re",
+            )),
+            Ok(Bytes::from_static(b"ad\",\"input\":{}}}\n\n")),
+        ]);
+        let response = ProxyResponse::streamed(http::StatusCode::OK, headers, chunks);
+
+        let rewritten = rewrite_claude_science_tool_alias_response(response, aliases)
+            .await
+            .expect("rewrite Science stream")
+            .bytes()
+            .await
+            .expect("collect rewritten stream");
+        let rewritten = String::from_utf8(rewritten.to_vec()).expect("utf8 SSE");
+
+        assert!(rewritten.contains("\"name\":\"read_file\""), "{rewritten}");
+        assert!(!rewritten.contains("\"name\":\"Read\""), "{rewritten}");
     }
 
     #[test]

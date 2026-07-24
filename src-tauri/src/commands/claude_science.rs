@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -34,15 +34,15 @@ const MANAGED_PROFILE_DIR: &str = "claude-science-proxy";
 const PROXY_TOKEN_PLACEHOLDER: &str = CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER;
 const PROXY_REFRESH_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED_CLAUDE_SCIENCE_REFRESH";
 const MANAGED_BIN_DIR: &str = "bin";
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 const MANAGED_BIN_STAMP: &str = "claude-science-patch.stamp";
-#[cfg(target_os = "macos")]
-const MANAGED_BIN_PATCH_VERSION: u8 = 3;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MANAGED_BIN_PATCH_VERSION: u8 = 4;
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 const ANTHROPIC_API_ORIGIN: &str = "https://api.anthropic.com";
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 const CLAUDE_AI_ORIGIN: &str = "https://claude.ai";
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 const ANTHROPIC_OAUTH_PATHS: &[&str] = &[
     "/api/oauth/profile",
     "/api/oauth/account",
@@ -228,9 +228,30 @@ pub async fn launch_claude_science_with_proxy(
     };
 
     if let Some(url) = launch_outcome.url.as_deref() {
-        app.opener()
-            .open_url(url, None::<String>)
-            .map_err(|e| format!("Failed to open Claude Science URL: {e}"))?;
+        if let Err(open_error) = app.opener().open_url(url, None::<String>) {
+            let mut cleanup_errors = Vec::new();
+            match tokio::task::spawn_blocking(stop_science).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    cleanup_errors.push(format!("failed to stop Claude Science: {error}"))
+                }
+                Err(error) => {
+                    cleanup_errors.push(format!("Claude Science stop task failed: {error}"))
+                }
+            }
+            if !proxy_was_running {
+                if let Err(error) = state.proxy_service.stop().await {
+                    cleanup_errors.push(format!("failed to stop local proxy: {error}"));
+                }
+            }
+
+            let mut error = format!("Failed to open Claude Science URL: {open_error}");
+            if !cleanup_errors.is_empty() {
+                error.push_str("; cleanup failed: ");
+                error.push_str(&cleanup_errors.join("; "));
+            }
+            return Err(error);
+        }
     }
 
     Ok(launch_outcome.public_result)
@@ -460,7 +481,7 @@ fn existing_managed_binary(profile: &ScienceProfilePaths) -> Option<PathBuf> {
     is_executable_file(&path).then_some(path)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn prepare_managed_science_binary(
     source: &Path,
     profile: &ScienceProfilePaths,
@@ -530,18 +551,21 @@ fn prepare_managed_science_binary(
         })?;
         set_private_executable_permissions(&temp)?;
 
-        let codesign = Command::new("/usr/bin/codesign")
-            .args(["--force", "--sign", "-"])
-            .arg(&temp)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| format!("Failed to ad-hoc sign Claude Science managed binary: {e}"))?;
-        if !codesign.status.success() {
-            return Err(format_cli_failure(
-                "Claude Science managed binary signing failed",
-                &codesign,
-            ));
+        #[cfg(target_os = "macos")]
+        {
+            let codesign = Command::new("/usr/bin/codesign")
+                .args(["--force", "--sign", "-"])
+                .arg(&temp)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| format!("Failed to ad-hoc sign Claude Science managed binary: {e}"))?;
+            if !codesign.status.success() {
+                return Err(format_cli_failure(
+                    "Claude Science managed binary signing failed",
+                    &codesign,
+                ));
+            }
         }
 
         let check = Command::new(&temp)
@@ -573,34 +597,30 @@ fn prepare_managed_science_binary(
     result
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn prepare_managed_science_binary(
-    source: &Path,
+    _source: &Path,
     _profile: &ScienceProfilePaths,
     _proxy_base_url: &str,
 ) -> Result<PathBuf, String> {
-    Ok(source.to_path_buf())
+    Err("Claude Science managed bridge is supported only on macOS and Linux".to_string())
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn loopback_proxy_port(proxy_base_url: &str) -> Result<u16, String> {
     let url = url::Url::parse(proxy_base_url)
         .map_err(|e| format!("Claude Science proxy URL is invalid: {e}"))?;
-    if url.scheme() != "http"
-        || !matches!(
-            url.host_str(),
-            Some("127.0.0.1" | "localhost" | "::1" | "[::1]")
-        )
-    {
+    if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
         return Err(
-            "Claude Science managed OAuth bridge requires a loopback HTTP proxy URL".to_string(),
+            "Claude Science managed OAuth bridge requires the proxy listen address to be 127.0.0.1 (0.0.0.0 is normalized automatically); localhost and IPv6-only listeners are not supported"
+                .to_string(),
         );
     }
     url.port()
         .ok_or_else(|| "Claude Science proxy URL must include a port".to_string())
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn padded_anthropic_loopback_origin(proxy_base_url: &str) -> Result<String, String> {
     let port = loopback_proxy_port(proxy_base_url)?;
     let padded_host = match port.to_string().len() {
@@ -621,7 +641,7 @@ fn padded_anthropic_loopback_origin(proxy_base_url: &str) -> Result<String, Stri
     Ok(origin)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn padded_claude_ai_loopback_origin(proxy_base_url: &str) -> Result<String, String> {
     let port = loopback_proxy_port(proxy_base_url)?;
     let port_digits = port.to_string().len();
@@ -643,7 +663,7 @@ fn padded_claude_ai_loopback_origin(proxy_base_url: &str) -> Result<String, Stri
     Ok(origin)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn replace_binary_origin(binary: &mut [u8], old: &str, new: &str) -> usize {
     let old = old.as_bytes();
     let new = new.as_bytes();
@@ -665,7 +685,7 @@ fn replace_binary_origin(binary: &mut [u8], old: &str, new: &str) -> usize {
     patched
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn patch_science_api_origins(
     binary: &mut [u8],
     anthropic_origin: &str,
@@ -1050,7 +1070,7 @@ fn set_private_file_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn set_private_executable_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -1384,34 +1404,18 @@ mod tests {
 
     #[test]
     fn loopback_origins_preserve_binary_url_lengths() {
-        for (url, expected_anthropic, expected_claude_ai) in [
-            (
-                "http://127.0.0.1:15721",
-                "http://127.00.00.01:15721",
-                "http://0000:15721",
-            ),
-            (
-                "http://localhost:9876",
-                "http://127.000.00.01:9876",
-                "http://00000:9876",
-            ),
-            (
-                "http://[::1]:321",
-                "http://127.000.000.01:321",
-                "http://000000:321",
-            ),
-        ] {
-            let anthropic =
-                padded_anthropic_loopback_origin(url).expect("Anthropic loopback origin");
-            let claude_ai =
-                padded_claude_ai_loopback_origin(url).expect("Claude.ai loopback origin");
-            assert_eq!(anthropic, expected_anthropic);
-            assert_eq!(claude_ai, expected_claude_ai);
-            assert_eq!(anthropic.len(), ANTHROPIC_API_ORIGIN.len());
-            assert_eq!(claude_ai.len(), CLAUDE_AI_ORIGIN.len());
-        }
+        let anthropic = padded_anthropic_loopback_origin("http://127.0.0.1:15721")
+            .expect("Anthropic loopback origin");
+        let claude_ai = padded_claude_ai_loopback_origin("http://127.0.0.1:15721")
+            .expect("Claude.ai loopback origin");
+        assert_eq!(anthropic, "http://127.00.00.01:15721");
+        assert_eq!(claude_ai, "http://0000:15721");
+        assert_eq!(anthropic.len(), ANTHROPIC_API_ORIGIN.len());
+        assert_eq!(claude_ai.len(), CLAUDE_AI_ORIGIN.len());
         assert!(padded_anthropic_loopback_origin("https://127.0.0.1:15721").is_err());
         assert!(padded_claude_ai_loopback_origin("http://example.com:15721").is_err());
+        assert!(padded_anthropic_loopback_origin("http://localhost:15721").is_err());
+        assert!(padded_anthropic_loopback_origin("http://[::1]:15721").is_err());
     }
 
     #[test]
