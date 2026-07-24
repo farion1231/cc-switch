@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 7] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 8] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "codefree",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -428,6 +428,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
+        "codefree" => "CodeFree-O",
         _ => "Unknown",
     }
 }
@@ -508,6 +509,9 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "grok" => Some("npm i -g @xai-official/grok@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
+        "codefree" => {
+            Some("npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/")
+        }
         _ => None,
     }
 }
@@ -517,6 +521,7 @@ fn official_update_args(tool: &str) -> Option<&'static str> {
         "claude" | "codex" | "grok" | "hermes" => Some("update"),
         "openclaw" => Some("update --yes"),
         "opencode" => Some("upgrade"),
+        "codefree" => Some("upgrade"),
         _ => None,
     }
 }
@@ -802,6 +807,7 @@ async fn get_single_tool_version_impl(
         }
         "openclaw" => fetch_npm_latest_for_tool(&client, "openclaw", tool, local).await,
         "hermes" => fetch_pypi_latest_version(&client, "hermes-agent").await,
+        "codefree" => fetch_npm_latest_for_tool(&client, "@srdcloud/codefree-o", tool, local).await,
         _ => None,
     };
 
@@ -1507,13 +1513,31 @@ fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf>
         if windows_runnable_sibling_for_extensionless_tool(&extensionless).is_none() {
             candidates.push(extensionless);
         }
+        if tool == "codefree" {
+            candidates.push(dir.join("codefree-o.cmd"));
+            candidates.push(dir.join("codefree-o.exe"));
+        }
         candidates
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        vec![dir.join(tool)]
+        let mut candidates = vec![dir.join(tool)];
+        if tool == "codefree" {
+            candidates.push(dir.join("codefree-o"));
+        }
+        candidates
     }
+}
+
+fn codefree_extra_search_paths(home: &Path) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+
+    if !home.as_os_str().is_empty() {
+        push_unique_path(&mut paths, home.join(".codefree-o").join("bin"));
+    }
+
+    paths
 }
 
 fn extend_mise_node_search_paths(paths: &mut Vec<std::path::PathBuf>, home: &Path) {
@@ -1664,6 +1688,14 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             std::env::var_os("XDG_BIN_DIR"),
             std::env::var_os("GOPATH"),
         );
+
+        for path in extra_paths {
+            push_unique_path(&mut search_paths, path);
+        }
+    }
+
+    if tool == "codefree" {
+        let extra_paths = codefree_extra_search_paths(&home);
 
         for path in extra_paths {
             push_unique_path(&mut search_paths, path);
@@ -1999,6 +2031,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "grok" => Some("@xai-official/grok"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
+        "codefree" => Some("@srdcloud/codefree-o"),
         _ => None,
     }
 }

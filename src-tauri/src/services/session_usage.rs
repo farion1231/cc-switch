@@ -91,6 +91,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         "Grok Build",
         crate::services::session_usage_grokbuild::sync_grokbuild_usage(db),
     );
+    merge_sync_step(
+        &mut result,
+        "CodeFree",
+        crate::services::session_usage_codefree::sync_codefree_usage(db),
+    );
     notify_sync_result(&result);
     result
 }

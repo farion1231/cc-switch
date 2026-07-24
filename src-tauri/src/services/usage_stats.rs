@@ -375,7 +375,8 @@ pub(crate) fn has_matching_proxy_usage_log(
     key: &DedupKey,
 ) -> Result<bool, AppError> {
     let allow_missing_cache_creation =
-        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+        matches!(key.app_type, "codex" | "gemini" | "opencode" | "codefree")
+            && key.cache_creation_tokens == 0;
 
     let l_data_source = data_source_expr("l");
     let sql = format!(

@@ -873,7 +873,10 @@
       "defaultCostMultiplierRequired": "默认倍率不能为空",
       "defaultCostMultiplierInvalid": "默认倍率格式不正确"
     },
-    "saveFailedGeneric": "保存失败，请重试"
+    "saveFailedGeneric": "保存失败，请重试",
+    "codefreeConfigDir": "CodeFree 配置目录",
+    "codefreeConfigDirDescription": "覆盖 CodeFree 配置目录。",
+    "browsePlaceholderCodefree": "例如：C:\\\\Users\\\\<你的用户名>\\\\.codefree-o"
   },
   "apps": {
     "claude": "Claude",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "codefree": "CodeFree"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -897,7 +901,7 @@
   },
   "sessionManager": {
     "title": "会话管理",
-    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 会话记录",
+    "subtitle": "管理 Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、OpenClaw、CodeFree 与 Hermes 会话记录",
     "searchPlaceholder": "搜索会话内容、目录或 ID",
     "searchSessions": "搜索会话",
     "providerFilterAll": "全部",
@@ -1502,7 +1506,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "grokbuild": "Grok Build"
+      "grokbuild": "Grok Build",
+      "codefree": "CodeFree"
     },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
@@ -1513,7 +1518,8 @@
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
       "opencode_session": "OpenCode 会话日志",
-      "grok_session": "Grok Build 会话日志"
+      "grok_session": "Grok Build 会话日志",
+      "codefree_session": "CodeFree 会话日志"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
@@ -1780,7 +1786,8 @@
         "grokbuild": "Grok Build",
         "opencode": "OpenCode",
         "openclaw": "OpenClaw",
-        "hermes": "Hermes"
+        "hermes": "Hermes",
+        "codefree": "CodeFree"
       }
     },
     "userLevelPath": "用户级 MCP 配置路径",
@@ -2388,7 +2395,8 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
-      "openclaw": "OpenClaw"
+      "openclaw": "OpenClaw",
+      "codefree": "CodeFree"
     },
     "installFromZip": {
       "button": "从 ZIP 安装",

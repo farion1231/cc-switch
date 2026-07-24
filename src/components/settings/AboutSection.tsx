@@ -67,6 +67,7 @@ const TOOL_NAMES = [
   "opencode",
   "openclaw",
   "hermes",
+  "codefree",
 ] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
 type ToolLifecycleAction = "install" | "update";
@@ -138,7 +139,9 @@ ${posixScriptInstallCommand("https://opencode.ai/install")} || npm i -g opencode
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
-${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}`;
+${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
+# CodeFree-O
+npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 npm i -g @anthropic-ai/claude-code@latest
@@ -153,7 +156,9 @@ npm i -g opencode-ai@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Hermes
-${HERMES_WINDOWS_INSTALL_COMMAND}`;
+${HERMES_WINDOWS_INSTALL_COMMAND}
+# CodeFree-O
+npm i -g @srdcloud/codefree-o@latest --registry=https://registry.npmjs.org/`;
 
 const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -167,6 +172,7 @@ const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   opencode: "OpenCode",
   openclaw: "OpenClaw",
   hermes: "Hermes",
+  codefree: "CodeFree-O",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -183,6 +189,7 @@ const TOOL_APP_IDS: Record<ToolName, AppId> = {
   opencode: "opencode",
   openclaw: "openclaw",
   hermes: "hermes",
+  codefree: "codefree",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。

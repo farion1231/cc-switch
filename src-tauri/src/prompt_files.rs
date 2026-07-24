@@ -17,6 +17,13 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
             "This app does not support Prompts",
         ));
     }
+    if matches!(app, AppType::Codefree) {
+        return Err(AppError::localized(
+            "codefree.prompts_unsupported",
+            "CodeFree 暂不支持 Prompts",
+            "CodeFree does not support Prompts",
+        ));
+    }
 
     let base_dir: PathBuf = match app {
         AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
@@ -26,6 +33,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
+        AppType::Codefree => unreachable!("handled above"),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -33,7 +41,11 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Claude => "CLAUDE.md",
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
-        AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
+        AppType::GrokBuild
+        | AppType::OpenCode
+        | AppType::Codefree
+        | AppType::OpenClaw
+        | AppType::Hermes => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
