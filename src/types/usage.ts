@@ -67,6 +67,20 @@ export interface ModelPricing {
   cacheCreationCostPerMillion: string;
 }
 
+export interface ModelsDevSyncConfig {
+  autoSyncEnabled: boolean;
+  includeCommonModels: boolean;
+  selectedModelKeys: string[];
+  excludedCommonModelKeys: string[];
+  lastSyncAt: number | null;
+  lastSyncError: string | null;
+}
+
+export interface ModelsDevSyncState {
+  config: ModelsDevSyncConfig;
+  configPath: string;
+}
+
 export interface UsageSummary {
   totalRequests: number;
   totalCost: string;

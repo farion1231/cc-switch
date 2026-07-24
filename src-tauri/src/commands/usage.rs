@@ -1,10 +1,9 @@
 //! 使用统计相关命令
 
 use crate::error::AppError;
+use crate::services::model_pricing::{ModelPricingInfo, ModelsDevSyncConfig, ModelsDevSyncState};
 use crate::services::usage_stats::*;
 use crate::store::AppState;
-use rust_decimal::Decimal;
-use std::str::FromStr;
 use tauri::State;
 
 /// 获取使用量汇总
@@ -125,6 +124,7 @@ pub fn get_request_detail(
 pub fn get_model_pricing(state: State<'_, AppState>) -> Result<Vec<ModelPricingInfo>, AppError> {
     log::info!("获取模型定价列表");
     state.db.ensure_model_pricing_seeded()?;
+    crate::services::model_pricing::sync_local_model_pricing(&state.db)?;
 
     let db = state.db.clone();
     let conn = crate::database::lock_conn!(db.conn);
@@ -181,70 +181,51 @@ pub fn update_model_pricing(
     cache_read_cost: String,
     cache_creation_cost: String,
 ) -> Result<(), AppError> {
-    let db = state.db.clone();
-    let model_id = model_id.trim().to_string();
-    let display_name = display_name.trim().to_string();
-    if model_id.is_empty() {
-        return Err(AppError::localized(
-            "usage.modelIdRequired",
-            "模型 ID 不能为空",
-            "Model ID is required",
-        ));
-    }
-    if display_name.is_empty() {
-        return Err(AppError::localized(
-            "usage.displayNameRequired",
-            "显示名称不能为空",
-            "Display name is required",
-        ));
-    }
-
-    for (label, value) in [
-        ("input_cost", &input_cost),
-        ("output_cost", &output_cost),
-        ("cache_read_cost", &cache_read_cost),
-        ("cache_creation_cost", &cache_creation_cost),
-    ] {
-        let parsed = Decimal::from_str(value.trim()).map_err(|e| {
-            AppError::localized(
-                "usage.invalidPrice",
-                format!("{label} 价格无效: {value} - {e}"),
-                format!("{label} price is invalid: {value} - {e}"),
-            )
-        })?;
-        if parsed < Decimal::ZERO {
-            return Err(AppError::localized(
-                "usage.invalidPrice",
-                format!("{label} 价格必须为非负数: {value}"),
-                format!("{label} price must be non-negative: {value}"),
-            ));
-        }
-    }
-
-    {
-        let conn = crate::database::lock_conn!(db.conn);
-        conn.execute(
-            "INSERT OR REPLACE INTO model_pricing (
-                model_id, display_name, input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![
-                model_id,
-                display_name,
-                input_cost.trim(),
-                output_cost.trim(),
-                cache_read_cost.trim(),
-                cache_creation_cost.trim()
-            ],
-        )
-        .map_err(|e| AppError::Database(format!("更新模型定价失败: {e}")))?;
-    }
-
-    if let Err(e) = db.backfill_missing_usage_costs_for_model(&model_id) {
-        log::warn!("模型定价更新后回填历史用量成本失败 (model_id={model_id}): {e}");
-    }
-
+    crate::services::model_pricing::update_model_pricing(
+        &state.db,
+        ModelPricingInfo {
+            model_id,
+            display_name,
+            input_cost_per_million: input_cost,
+            output_cost_per_million: output_cost,
+            cache_read_cost_per_million: cache_read_cost,
+            cache_creation_cost_per_million: cache_creation_cost,
+        },
+    )?;
     Ok(())
+}
+
+/// 批量更新模型定价（models.dev 自动同步仅触发一次历史成本回填）
+#[tauri::command]
+pub fn update_model_pricing_batch(
+    state: State<'_, AppState>,
+    entries: Vec<ModelPricingInfo>,
+) -> Result<usize, AppError> {
+    crate::services::model_pricing::update_model_pricing_batch(&state.db, entries)
+}
+
+#[tauri::command]
+pub fn get_models_dev_sync_config(
+    state: State<'_, AppState>,
+) -> Result<ModelsDevSyncState, AppError> {
+    crate::services::model_pricing::get_models_dev_sync_state(&state.db)
+}
+
+#[tauri::command]
+pub fn save_models_dev_sync_config(
+    state: State<'_, AppState>,
+    config: ModelsDevSyncConfig,
+) -> Result<(), AppError> {
+    crate::services::model_pricing::save_models_dev_sync_config(&state.db, config)
+}
+
+#[tauri::command]
+pub fn record_models_dev_sync_result(
+    state: State<'_, AppState>,
+    synced_at: Option<i64>,
+    error: Option<String>,
+) -> Result<(), AppError> {
+    crate::services::model_pricing::record_models_dev_sync_result(&state.db, synced_at, error)
 }
 
 /// 检查 Provider 使用限额
@@ -260,15 +241,7 @@ pub fn check_provider_limits(
 /// 删除模型定价
 #[tauri::command]
 pub fn delete_model_pricing(state: State<'_, AppState>, model_id: String) -> Result<(), AppError> {
-    let db = state.db.clone();
-    let conn = crate::database::lock_conn!(db.conn);
-
-    conn.execute(
-        "DELETE FROM model_pricing WHERE model_id = ?1",
-        rusqlite::params![model_id],
-    )
-    .map_err(|e| AppError::Database(format!("删除模型定价失败: {e}")))?;
-
+    crate::services::model_pricing::delete_model_pricing(&state.db, &model_id)?;
     log::info!("已删除模型定价: {model_id}");
     Ok(())
 }
@@ -324,18 +297,6 @@ pub fn get_usage_data_sources(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
     crate::services::session_usage::get_data_source_breakdown(&state.db)
-}
-
-/// 模型定价信息
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelPricingInfo {
-    pub model_id: String,
-    pub display_name: String,
-    pub input_cost_per_million: String,
-    pub output_cost_per_million: String,
-    pub cache_read_cost_per_million: String,
-    pub cache_creation_cost_per_million: String,
 }
 
 #[cfg(test)]
