@@ -260,6 +260,9 @@ export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
+  // undefined follows the bundled Codex capability registry; explicit booleans
+  // let custom gateways opt in/out without losing the choice on edit/save.
+  useResponsesLite?: boolean;
   // Hidden provider capability metadata for the generated model catalog.
   // supportsParallelToolCalls is native-profile-only; inputModalities wins over
   // automatic text-only model detection for every profile.
