@@ -3,6 +3,7 @@ use tauri::{Emitter, Manager, State};
 
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
+use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider};
 use crate::services::{
@@ -442,6 +443,7 @@ pub async fn queryProviderUsage(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
+    xai_state: State<'_, XaiOAuthState>,
     #[allow(non_snake_case)] providerId: String, // 使用 camelCase 匹配前端
     app: String,
 ) -> Result<crate::provider::UsageResult, String> {
@@ -454,8 +456,14 @@ pub async fn queryProviderUsage(
     //      不写失败快照、不 emit：保留上一份托盘快照，与前端 react-query reject
     //      保留上次 data 的语义一致；否则失败快照会经 useUsageCacheBridge 盲写
     //      回 query 缓存，抹掉 reject 本该保留的旧值。
-    let inner =
-        query_provider_usage_inner(&state, &copilot_state, app_type.clone(), &providerId).await;
+    let inner = query_provider_usage_inner(
+        &state,
+        &copilot_state,
+        &xai_state,
+        app_type.clone(),
+        &providerId,
+    )
+    .await;
     if let Ok(snapshot) = &inner {
         let payload = serde_json::json!({
             "kind": "script",
@@ -521,6 +529,7 @@ fn resolve_coding_plan_credentials(
 async fn query_provider_usage_inner(
     state: &AppState,
     copilot_state: &CopilotAuthState,
+    xai_state: &XaiOAuthState,
     app_type: AppType,
     provider_id: &str,
 ) -> Result<crate::provider::UsageResult, String> {
@@ -689,9 +698,19 @@ async fn query_provider_usage_inner(
             });
         }
 
-        let quota = crate::services::subscription::get_subscription_quota(app_type.as_str())
-            .await
-            .map_err(|e| format!("Failed to query subscription quota: {e}"))?;
+        // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
+        // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
+        // 订阅体系，查出来的数字张冠李戴）。
+        let quota = if provider.map(Provider::is_xai_oauth).unwrap_or(false) {
+            let account_id = provider
+                .and_then(|p| p.meta.as_ref())
+                .and_then(|m| m.managed_account_id_for("xai_oauth"));
+            crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id).await?
+        } else {
+            crate::services::subscription::get_subscription_quota(app_type.as_str())
+                .await
+                .map_err(|e| format!("Failed to query subscription quota: {e}"))?
+        };
 
         if !quota.success {
             return Ok(crate::provider::UsageResult {

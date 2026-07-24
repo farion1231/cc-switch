@@ -73,6 +73,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
+<td>Unity2.ai のご支援に感謝します！Unity2.ai は個人開発者・チーム・企業向けの高性能 AI モデル API リレープラットフォームです。中国の大手企業に長年利用されており、1 日 300 億トークン以上を処理し、5000 RPM クラスの高並列に対応しています。残高課金、初回チャージボーナス、組み合わせサブスクリプション、企業向け請求書発行、専任サポートを提供。<a href="https://unity2.ai/register?source=ccs">こちらのリンク</a>から登録すると $2 のクレジット、公式グループへの参加でさらに $10、最大 $12 の無料クレジットがもらえます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF"><img src="assets/partners/logos/shengsuanyun.png" alt="Shengsuanyun" width="150"></a></td>
 <td>胜算雲（Shengsuanyun）のご支援に感謝します！胜算雲は AI ネイティブチーム向けのスーパーファクトリーであり、産業グレードの AI タスク並列実行プラットフォームです。モデルマーケットプレイスでは Claude、ChatGPT、Gemini をはじめとする国内外の LLM およびマルチメディアモデルの計算リソースを集約・直接提供。リバースエンジニアリングや品質低下は一切なく、プラットフォーム全体のモデル SLA 可用性は 99.7% に達し、<a href="https://watch.shengsuanyun.com/status/shengsuanyun">監視ダッシュボード</a>は常時グリーン表示です。さらにエンタープライズ向けカスタムゲートウェイを提供し、チームのきめ細かなコスト・権限管理、スマートルーティング、セキュリティ保護、BYOK（自社キー持ち込み）ホスティングを実現します。従量課金およびトークンプラン（近日公開）対応で、請求書発行にも対応。<a href="https://www.shengsuanyun.com/?from=CH_4HHXMRYF">このリンク</a>から新規登録すると 10 元分のクレジットと初回チャージ 10% ボーナスが付与されます。</td>
 </tr>
@@ -107,11 +112,6 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 <td>このプロジェクトをご支援いただいている TeamoRouter に感謝します！TeamoRouter は、開発者、AI チーム、企業向けに構築されたエンタープライズグレードの Agentic LLM ゲートウェイです。サブスクリプション不要で、単一の統合 API を通じて Claude Code、Codex、Gemini CLI、OpenAI Codex、その他の人気 AI エージェントにアクセスでき、API 料金は最大 90% オフで利用できます。
 一般的な API リレーサービスとは異なり、TeamoRouter は OpenAI、Anthropic、Vertex、Azure、AWS Bedrock など、数百の公式モデルプロバイダーと信頼できるインフラパートナーを集約しています。各プロバイダーは、Agent プロトコルとの 100% 互換性、キャッシュ性能、リクエストの追跡可能性について検証されており、リバースエンジニアリングされたものや品質が薄められたエンドポイントではなく、安定した品質を提供します。プラットフォームは公式に近い TTFT、99.6% の SLA、最大 5,000 QPM のエンタープライズ規模のスループット、そして業界トップクラスのキャッシュヒット率を提供し、長時間稼働するエージェントワークフローのトークンコストを大幅に削減します。
 TeamoRouter は、集中請求、チーム管理、BYOK、スマートルーティング、利用状況分析、動的なプロバイダー最適化、専任サポートなどのエンタープライズ機能も提供しています。さらにシンプルな体験を求める場合は、Teamo Desktop を使うことで、Claude Code、Codex、Gemini CLI、その他の人気 AI エージェントをワンクリックで利用できます。API キー管理や手動のゲートウェイ設定は不要です。新規ユーザーとして<a href="https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory">こちらのリンク</a>から登録すると、初回チャージが 10% オフになります。</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://unity2.ai/register?source=ccs"><img src="assets/partners/logos/unity2.jpg" alt="Unity2.ai" width="150"></a></td>
-<td>Unity2.ai のご支援に感謝します！Unity2.ai は個人開発者・チーム・企業向けの高性能 AI モデル API リレープラットフォームです。中国の大手企業に長年利用されており、1 日 300 億トークン以上を処理し、5000 RPM クラスの高並列に対応しています。残高課金、初回チャージボーナス、組み合わせサブスクリプション、企業向け請求書発行、専任サポートを提供。<a href="https://unity2.ai/register?source=ccs">こちらのリンク</a>から登録すると $2 のクレジット、公式グループへの参加でさらに $10、最大 $12 の無料クレジットがもらえます！</td>
 </tr>
 
 <tr>
