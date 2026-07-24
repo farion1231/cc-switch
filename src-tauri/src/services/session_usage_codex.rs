@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 const CODEX_THREAD_REQUEST_ID_PREFIX: &str = "codex_session:thread-v1";
@@ -70,6 +70,28 @@ struct TokenCountersSignature {
 struct TokenUsageSignature {
     total: Option<TokenCountersSignature>,
     last: Option<TokenCountersSignature>,
+}
+
+#[derive(Debug)]
+struct TimestampedTokenSignature {
+    timestamp: DateTime<Utc>,
+    signature: TokenUsageSignature,
+}
+
+#[derive(Debug)]
+struct ParentTokenTimeline {
+    events: Vec<TimestampedTokenSignature>,
+    max_timestamp: Option<DateTime<Utc>>,
+}
+
+impl ParentTokenTimeline {
+    fn signatures_before(&self, cutoff: DateTime<Utc>) -> Vec<TokenUsageSignature> {
+        self.events
+            .iter()
+            .filter(|event| event.timestamp <= cutoff)
+            .map(|event| event.signature.clone())
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -116,7 +138,7 @@ struct PendingEntry {
 
 #[derive(Debug, Default)]
 struct CodexReplayCaches {
-    parent_signatures: HashMap<(PathBuf, i64), Vec<TokenUsageSignature>>,
+    parent_timelines: HashMap<(PathBuf, i64, u64), Arc<ParentTokenTimeline>>,
     replay_prefixes: HashMap<(PathBuf, i64, u64), usize>,
     pending: HashMap<PathBuf, PendingEntry>,
 }
@@ -757,20 +779,41 @@ fn parent_signatures_before(
     parent_path: &Path,
     cutoff: DateTime<Utc>,
 ) -> Result<Vec<TokenUsageSignature>, String> {
-    let cache_key = (parent_path.to_path_buf(), cutoff.timestamp_micros());
-    if let Ok(caches) = replay_caches().lock() {
-        if let Some(signatures) = caches.parent_signatures.get(&cache_key) {
-            return Ok(signatures.clone());
+    let metadata = fs::metadata(parent_path).map_err(|error| {
+        format!(
+            "无法读取父 rollout 元数据 {}: {error}",
+            parent_path.display()
+        )
+    })?;
+    let cache_key = (
+        parent_path.to_path_buf(),
+        metadata_modified_nanos(&metadata),
+        metadata.len(),
+    );
+    let cached_timeline = replay_caches()
+        .lock()
+        .ok()
+        .and_then(|caches| caches.parent_timelines.get(&cache_key).cloned());
+    if let Some(timeline) = cached_timeline {
+        if timeline
+            .max_timestamp
+            .is_none_or(|timestamp| timestamp < cutoff)
+        {
+            return Err(format!(
+                "父 rollout {} 尚未写到 child fork 时刻",
+                parent_path.display()
+            ));
         }
+        return Ok(timeline.signatures_before(cutoff));
     }
 
     let file = fs::File::open(parent_path)
         .map_err(|error| format!("无法打开父 rollout {}: {error}", parent_path.display()))?;
-    let mut signatures = Vec::new();
+    let mut events = Vec::new();
     let mut max_timestamp: Option<DateTime<Utc>> = None;
 
-    // 必须扫描完整父文件并逐行应用 cutoff，不能在首个未来时间戳处 break：
-    // rollout 写入顺序不承诺时间戳严格单调。
+    // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
+    // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
     for line in BufReader::new(file).lines() {
         let Ok(line) = line else {
             continue;
@@ -807,9 +850,10 @@ fn parent_signatures_before(
                 parent_path.display()
             ));
         };
-        if timestamp <= cutoff {
-            signatures.push(signature);
-        }
+        events.push(TimestampedTokenSignature {
+            timestamp,
+            signature,
+        });
     }
 
     if max_timestamp.is_none_or(|timestamp| timestamp < cutoff) {
@@ -819,12 +863,19 @@ fn parent_signatures_before(
         ));
     }
 
+    let timeline = Arc::new(ParentTokenTimeline {
+        events,
+        max_timestamp,
+    });
     if let Ok(mut caches) = replay_caches().lock() {
         caches
-            .parent_signatures
-            .insert(cache_key, signatures.clone());
+            .parent_timelines
+            .retain(|(path, _, _), _| path != parent_path);
+        caches
+            .parent_timelines
+            .insert(cache_key, Arc::clone(&timeline));
     }
-    Ok(signatures)
+    Ok(timeline.signatures_before(cutoff))
 }
 
 fn resolve_parent_signatures(
@@ -1018,6 +1069,9 @@ fn sync_single_codex_file(
                         };
                     let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
                     if let Ok(mut caches) = replay_caches().lock() {
+                        caches
+                            .replay_prefixes
+                            .retain(|(path, _, _), _| path != file_path);
                         caches.replay_prefixes.insert(cache_key, prefix);
                     }
                     prefix
@@ -1477,6 +1531,65 @@ mod tests {
 
         let result = sync_test_file(&db, &child, &[&parent, &child])?;
         assert_eq!((result.imported, result.skipped), (1, 2));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parent_rollout_is_cached_once_across_fork_cutoffs() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                token_count_at(200, 100, 20, "2026-07-10T03:00:10Z"),
+                turn_context_at("2026-07-10T03:00:20Z"),
+            ],
+        );
+
+        let early = "2026-07-10T03:00:05Z".parse::<DateTime<Utc>>().unwrap();
+        let late = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
+        assert_eq!(parent_signatures_before(&parent, early).unwrap().len(), 1);
+        assert_eq!(parent_signatures_before(&parent, late).unwrap().len(), 2);
+
+        let caches = replay_caches().lock().unwrap();
+        assert_eq!(caches.parent_timelines.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_parent_rollout_cache_invalidates_after_append() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let temp = tempdir().unwrap();
+        let parent = rollout_path(temp.path(), PARENT_ID);
+        let cutoff = "2026-07-10T03:00:15Z".parse::<DateTime<Utc>>().unwrap();
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                turn_context_at("2026-07-10T03:00:20Z"),
+            ],
+        );
+        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 1);
+
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_at(100, 50, 10, "2026-07-10T03:00:01Z"),
+                token_count_at(200, 100, 20, "2026-07-10T03:00:10Z"),
+                turn_context_at("2026-07-10T03:00:20Z"),
+            ],
+        );
+        assert_eq!(parent_signatures_before(&parent, cutoff).unwrap().len(), 2);
+
+        let caches = replay_caches().lock().unwrap();
+        assert_eq!(caches.parent_timelines.len(), 1);
         Ok(())
     }
 
