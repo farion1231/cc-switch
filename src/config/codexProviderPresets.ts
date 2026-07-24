@@ -33,8 +33,9 @@ export interface CodexProviderPreset {
   iconColor?: string; // 图标颜色
   // Codex API 格式
   apiFormat?: CodexApiFormat;
-  // 托管账号预设：目前仅 xAI OAuth（Grok 订阅经本地代理注入 token 直连 api.x.ai）
-  providerType?: "xai_oauth";
+  // 托管账号预设：xAI OAuth（Grok 订阅经本地代理注入 token 直连 api.x.ai）
+  // 或 GitHub Copilot（认证由后端动态换取 token）
+  providerType?: "xai_oauth" | "github_copilot";
   // OAuth 预设：隐藏 API Key 输入，保存前要求已登录托管账号
   requiresOAuth?: boolean;
   // Codex Chat 本地路由模式下的模型目录
@@ -74,6 +75,25 @@ name = ${tomlString(providerName)}
 base_url = ${tomlString(baseUrl)}
 wire_api = "responses"
 requires_openai_auth = true`;
+}
+
+/**
+ * 生成 GitHub Copilot 供应商的 config.toml。
+ * 认证走托管账号（后端动态注入 Copilot token），base_url 在代理接管时被改写为
+ * 本地代理地址；此处保留 api.githubcopilot.com 仅作展示与非接管兜底。
+ */
+export function generateCopilotConfig(modelName = "gpt-5"): string {
+  const tomlString = (value: string) => JSON.stringify(value);
+
+  return `model_provider = "github-copilot"
+model = ${tomlString(modelName)}
+model_reasoning_effort = "high"
+disable_response_storage = true
+
+[model_providers.github-copilot]
+name = "GitHub Copilot"
+base_url = "https://api.githubcopilot.com"
+wire_api = "responses"`;
 }
 
 function modelCatalog(
@@ -334,6 +354,18 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "unity2",
     icon: "unity2",
+  },
+  {
+    name: "GitHub Copilot",
+    websiteUrl: "https://github.com/features/copilot",
+    auth: {},
+    config: generateCopilotConfig("gpt-5"),
+    category: "third_party",
+    apiFormat: "openai_responses",
+    providerType: "github_copilot",
+    requiresOAuth: true,
+    icon: "github",
+    iconColor: "#000000",
   },
   {
     name: "Shengsuanyun",

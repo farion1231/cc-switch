@@ -198,6 +198,20 @@ pub struct CopilotModel {
     pub vendor: String,
     /// 是否在模型选择器中显示
     pub model_picker_enabled: bool,
+    /// 该模型 ID 的真实上下文窗口（tokens），来自
+    /// `capabilities.limits.max_context_window_tokens`。
+    ///
+    /// GitHub Copilot 把「1M 扩展上下文」发布为独立的 model id（例如
+    /// `claude-opus-4.7-1m-internal`），而非同一 id 上的请求时选项——该 id
+    /// 的 `max_context_window_tokens` 就是 1_000_000，普通变体则是各自的
+    /// 常规值（如 200_000/400_000）。这个字段就是判断某个 model id 是否
+    /// 为 1M 变体、以及该声明多大 contextWindow 的唯一权威来源；解析失败
+    /// 或字段缺失时为 `None`，调用方应回退到不声明/使用已有默认值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    /// 该模型在 Copilot 上声明支持的推理端点。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_endpoints: Vec<String>,
 }
 
 /// Copilot Models API 响应
@@ -213,6 +227,26 @@ struct CopilotModelsResponseItem {
     name: String,
     vendor: String,
     model_picker_enabled: bool,
+    #[serde(default)]
+    supported_endpoints: Vec<String>,
+    /// 原样保留为 `Value`（而非强类型 struct），任何字段缺失/形状变化都
+    /// 不应导致整条模型记录反序列化失败——真实响应里的 capabilities 结构
+    /// 在不同 vendor/model 间并不完全一致（参见 zed-industries/zed 与
+    /// openclaw/openclaw 对同一端点的抓包差异）。
+    #[serde(default)]
+    capabilities: Option<serde_json::Value>,
+}
+
+/// 从 `/models` 响应项的 `capabilities.limits.max_context_window_tokens`
+/// 提取真实上下文窗口。任何缺失/类型不符/非正数都返回 `None`，让调用方
+/// 安全回退，而不是让整条模型记录解析失败。
+fn extract_copilot_context_window(capabilities: &Option<serde_json::Value>) -> Option<u64> {
+    capabilities
+        .as_ref()?
+        .get("limits")?
+        .get("max_context_window_tokens")?
+        .as_u64()
+        .filter(|tokens| *tokens > 0)
 }
 
 /// Copilot 认证错误
@@ -859,6 +893,8 @@ impl CopilotAuthManager {
                 name: m.name,
                 vendor: m.vendor,
                 model_picker_enabled: m.model_picker_enabled,
+                context_window: extract_copilot_context_window(&m.capabilities),
+                supported_endpoints: m.supported_endpoints,
             })
             .collect();
 
@@ -873,10 +909,7 @@ impl CopilotAuthManager {
         model_id: &str,
     ) -> Result<Option<String>, CopilotAuthError> {
         let models = self.fetch_models_for_account(account_id).await?;
-        Ok(models
-            .into_iter()
-            .find(|model| model.id == model_id)
-            .map(|model| model.vendor))
+        Ok(super::copilot_model_map::vendor_for(model_id, &models).map(str::to_string))
     }
 
     /// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
@@ -1538,6 +1571,96 @@ mod tests {
     }
 
     #[test]
+    fn extract_copilot_context_window_reads_real_shape() {
+        // 真实 /models 抓包形状（openclaw/openclaw、zed-industries/zed 均一致）：
+        // capabilities.limits.max_context_window_tokens 是每个 model id 的
+        // 权威上下文窗口值；1M 变体（如 claude-opus-4.7-1m-internal）在这个
+        // 字段上直接就是 1_000_000。
+        let capabilities = serde_json::json!({
+            "type": "chat",
+            "limits": {
+                "max_context_window_tokens": 1_000_000,
+                "max_output_tokens": 64_000
+            }
+        });
+        assert_eq!(
+            extract_copilot_context_window(&Some(capabilities)),
+            Some(1_000_000)
+        );
+    }
+
+    #[test]
+    fn extract_copilot_context_window_none_when_missing_or_malformed() {
+        assert_eq!(extract_copilot_context_window(&None), None);
+
+        let no_limits = serde_json::json!({ "type": "chat" });
+        assert_eq!(extract_copilot_context_window(&Some(no_limits)), None);
+
+        let wrong_type = serde_json::json!({ "limits": { "max_context_window_tokens": "big" } });
+        assert_eq!(extract_copilot_context_window(&Some(wrong_type)), None);
+
+        let non_positive = serde_json::json!({ "limits": { "max_context_window_tokens": 0 } });
+        assert_eq!(extract_copilot_context_window(&Some(non_positive)), None);
+    }
+
+    #[test]
+    fn copilot_models_response_deserializes_real_sample_and_keeps_context_window() {
+        // Trimmed sample mirroring a real api.githubcopilot.com /models capture
+        // (matches the shape independently captured by openclaw/openclaw and
+        // zed-industries/zed): a regular GPT chat model, and an internal 1M
+        // Claude variant exposed as its own model id.
+        let json = r#"{
+            "data": [
+                {
+                    "id": "gpt-5.5",
+                    "name": "GPT-5.5",
+                    "vendor": "OpenAI",
+                    "model_picker_enabled": true,
+                    "supported_endpoints": ["/responses", "/chat/completions"],
+                    "capabilities": {
+                        "type": "chat",
+                        "limits": { "max_context_window_tokens": 400000, "max_output_tokens": 128000 }
+                    }
+                },
+                {
+                    "id": "claude-opus-4.7-1m-internal",
+                    "name": "Claude Opus 4.7 (1M context)(Internal only)",
+                    "vendor": "Anthropic",
+                    "model_picker_enabled": true,
+                    "supported_endpoints": ["/v1/messages"],
+                    "capabilities": {
+                        "type": "chat",
+                        "limits": { "max_context_window_tokens": 1000000, "max_output_tokens": 64000 }
+                    }
+                }
+            ]
+        }"#;
+
+        let parsed: CopilotModelsResponse = serde_json::from_str(json).unwrap();
+        let models: Vec<CopilotModel> = parsed
+            .data
+            .into_iter()
+            .map(|m| CopilotModel {
+                id: m.id,
+                name: m.name,
+                vendor: m.vendor,
+                model_picker_enabled: m.model_picker_enabled,
+                context_window: extract_copilot_context_window(&m.capabilities),
+                supported_endpoints: m.supported_endpoints,
+            })
+            .collect();
+
+        assert_eq!(models[0].id, "gpt-5.5");
+        assert_eq!(models[0].context_window, Some(400_000));
+        assert_eq!(models[1].id, "claude-opus-4.7-1m-internal");
+        assert_eq!(models[1].context_window, Some(1_000_000));
+        assert_eq!(
+            models[1].supported_endpoints,
+            vec!["/v1/messages".to_string()]
+        );
+    }
+
+    #[test]
     fn test_auth_status_serialization() {
         let status = CopilotAuthStatus {
             accounts: vec![GitHubAccount {
@@ -1724,12 +1847,16 @@ mod tests {
                         name: "GPT-5.4".to_string(),
                         vendor: "OpenAI".to_string(),
                         model_picker_enabled: true,
+                        context_window: None,
+                        supported_endpoints: vec![],
                     },
                     CopilotModel {
                         id: "claude-sonnet-4".to_string(),
                         name: "Claude Sonnet 4".to_string(),
                         vendor: "Anthropic".to_string(),
                         model_picker_enabled: true,
+                        context_window: None,
+                        supported_endpoints: vec![],
                     },
                 ],
             );

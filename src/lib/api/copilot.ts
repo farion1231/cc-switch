@@ -108,6 +108,16 @@ export interface CopilotModel {
   name: string;
   vendor: string;
   model_picker_enabled: boolean;
+  /**
+   * 该 model id 的真实上下文窗口（tokens），来自 Copilot `/models` 的
+   * `capabilities.limits.max_context_window_tokens`。GitHub Copilot 把
+   * 「1M 扩展上下文」发布为独立的 model id（而非同一 id 上的请求时选项），
+   * 该字段就是判断某个 id 是否为 1M 变体、以及该声明多大 contextWindow 的
+   * 权威来源。未知/解析失败时为 undefined。
+   */
+  context_window?: number;
+  /** 该模型在 Copilot `/models` 中声明支持的推理端点。 */
+  supported_endpoints?: string[];
 }
 
 /**
