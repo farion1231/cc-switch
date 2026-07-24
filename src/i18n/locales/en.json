@@ -1288,7 +1288,14 @@
     "pricingModelSourceInherit": "Inherit global default",
     "pricingModelSourceRequest": "Request model",
     "pricingModelSourceResponse": "Response model",
-    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model"
+    "pricingModelSourceHint": "Choose whether to match pricing by request model or response model",
+    "testConfig": "Connectivity & Availability Test Configuration",
+    "useCustomTestConfig": "Use Custom Config",
+    "testConfigDesc": "Configure separate testing parameters for this provider. Once enabled, these will override global testing model and prompt settings.",
+    "testModelLabel": "Test Model Name",
+    "testModelHint": "Input specific model name (e.g. deepseek-chat or qwen-max). Set to auto or leave empty for adaptive discovery.",
+    "testPromptLabel": "Test Prompt",
+    "testPromptHint": "The handshake request text sent to this provider during speed tests (like hi or ping)."
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -2714,7 +2721,18 @@
     "timeout": "Timeout (seconds)",
     "maxRetries": "Max Retries",
     "degradedThreshold": "Slow-response threshold (ms)",
-    "error": "{{providerName}} check error: {{error}}"
+    "error": "{{providerName}} check error: {{error}}",
+    "enableModelCheck": "Enable Real Model Availability Check",
+    "enableModelCheckHint": "When enabled, the system will perform a lightweight real API call during check to verify API key and model permissions.",
+    "modelCheckNote": "Real availability check sends a minimal request to verify the API key and model validity. This may consume 1-2 tokens.",
+    "authErrorHint": "Authentication failed. Please check your API Key configuration.",
+    "quotaErrorHint": "Rate limit exceeded or quota exhausted. Please check your account balance.",
+    "modelErrorHint": "The requested model does not exist, or you lack access permissions.",
+    "apiErrorHint": "API call failed. Please troubleshoot based on the HTTP status code returned.",
+    "testModel": "Test Model Name",
+    "testModelHint": "Leave empty or set to auto to request and parse the /models list (only for supported providers) to dynamically test available models.",
+    "testPrompt": "Test Prompt",
+    "testPromptHint": "The real input text sent to the model for test. A brief word (like 'hi' or 'ping') is recommended to minimize token consumption."
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",

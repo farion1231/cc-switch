@@ -1288,7 +1288,14 @@
     "pricingModelSourceInherit": "グローバル設定を継承",
     "pricingModelSourceRequest": "リクエストモデル",
     "pricingModelSourceResponse": "レスポンスモデル",
-    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択"
+    "pricingModelSourceHint": "リクエストモデルまたはレスポンスモデルで価格を照合するかを選択",
+    "testConfig": "接続性と可用性のテスト設定",
+    "useCustomTestConfig": "専用設定を使用",
+    "testConfigDesc": "このプロバイダー専用のテストパラメータを設定します。有効にすると、グローバルなテストモデルとプロンプトの設定が上書きされます。",
+    "testModelLabel": "テスト対象モデル名",
+    "testModelHint": "特定のモデル名（例：deepseek-chat、qwen-max）を入力します。auto に設定するか空にすると、自動検出を試みます。",
+    "testPromptLabel": "テストプロンプト",
+    "testPromptHint": "速度テスト中にこのプロバイダーに送信されるハンドシェイク要求テキスト（例：hi、ping）。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -2714,7 +2721,18 @@
     "timeout": "タイムアウト（秒）",
     "maxRetries": "最大リトライ回数",
     "degradedThreshold": "低速判定しきい値（ミリ秒）",
-    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
+    "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}",
+    "enableModelCheck": "モデルの可用性リアルチェックを有効化",
+    "enableModelCheckHint": "有効にすると、チェック中に軽量なリアルAPIコールを送信し、APIキーとモデル権限を自動的に検証します。",
+    "modelCheckNote": "リアル可用性チェックは、最小限のリクエストを送信してAPIキーとモデルの有効性を検証します。1〜2トークンを消費する場合があります。",
+    "authErrorHint": "認証に失敗しました。APIキーの設定を確認してください。",
+    "quotaErrorHint": "レート制限を超過したか、または残高が不足しています。",
+    "modelErrorHint": "要求されたモデルが存在しないか、アクセス権限がありません。",
+    "apiErrorHint": "API呼び出しに失敗しました。返されたHTTPステータスコードに基づいてトラブルシューティングを行ってください。",
+    "testModel": "テスト対象モデル名",
+    "testModelHint": "空にするか auto に設定すると、/models リストを要求（サポートされているプロバイダーのみ）して利用可能なモデルを動的にテストします。",
+    "testPrompt": "テストプロンプト",
+    "testPromptHint": "テスト用にモデルに送信される実際の入力テキスト。トークン消費を最小限に抑えるために、短い言葉（'hi' や 'ping' など）を推奨します。"
   },
   "proxyConfig": {
     "proxyEnabled": "ルーティング総スイッチ",

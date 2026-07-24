@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Save, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +23,9 @@ export function ConnectivityCheckConfigPanel() {
     timeoutSecs: "8",
     maxRetries: "1",
     degradedThresholdMs: "6000",
+    enableModelCheck: false,
+    testModel: "",
+    testPrompt: "",
   });
 
   useEffect(() => {
@@ -37,6 +41,9 @@ export function ConnectivityCheckConfigPanel() {
         timeoutSecs: String(data.timeoutSecs),
         maxRetries: String(data.maxRetries),
         degradedThresholdMs: String(data.degradedThresholdMs),
+        enableModelCheck: !!data.enableModelCheck,
+        testModel: data.testModel || "",
+        testPrompt: data.testPrompt || "",
       });
     } catch (e) {
       setError(String(e));
@@ -57,6 +64,9 @@ export function ConnectivityCheckConfigPanel() {
         timeoutSecs: parseNum(config.timeoutSecs, 8),
         maxRetries: parseNum(config.maxRetries, 1),
         degradedThresholdMs: parseNum(config.degradedThresholdMs, 6000),
+        enableModelCheck: config.enableModelCheck,
+        testModel: config.testModel || undefined,
+        testPrompt: config.testPrompt || undefined,
       };
       await saveStreamCheckConfig(parsed);
       toast.success(t("streamCheck.configSaved"), {
@@ -89,12 +99,92 @@ export function ConnectivityCheckConfigPanel() {
       <Alert>
         <Info className="h-4 w-4" />
         <AlertDescription>
-          {t("streamCheck.connectivityNote", {
-            defaultValue:
-              "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
-          })}
+          {config.enableModelCheck
+            ? t("streamCheck.modelCheckNote", {
+                defaultValue:
+                  "真实可用性检测会向供应商发送极小的数据包，以验证 API 密钥与模型本身的有效性。这可能会消耗 1~2 个 Token 额度。",
+              })
+            : t("streamCheck.connectivityNote", {
+                defaultValue:
+                  "连通检测仅探测供应商地址是否可达，不发送真实模型请求。收到任意响应即视为“可达”——这不代表鉴权或模型配置一定正确。",
+              })}
         </AlertDescription>
       </Alert>
+
+      {/* 模型真实可用性检测开关 */}
+      <div className="rounded-lg border border-border/50 bg-muted/20 p-4">
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <Label htmlFor="enableModelCheck" className="text-base font-medium">
+              {t("streamCheck.enableModelCheck", {
+                defaultValue: "启用大模型可用性真实调用检测",
+              })}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {t("streamCheck.enableModelCheckHint", {
+                defaultValue:
+                  "开启后，系统在测速时会发起极轻量的 API 真实调用，自动验证 API 密钥与模型权限（仅推荐中转或自定义 API 开启）。",
+              })}
+            </p>
+          </div>
+          <Switch
+            id="enableModelCheck"
+            checked={config.enableModelCheck}
+            onCheckedChange={(checked) =>
+              setConfig({ ...config, enableModelCheck: checked })
+            }
+          />
+        </div>
+      </div>
+
+      {/* 真实的可用性测试配置参数（如果开启了 model check 才会显示出来） */}
+      {config.enableModelCheck && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 rounded-lg border border-border/50 bg-muted/10 p-4 transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="space-y-2">
+            <Label htmlFor="testModel">
+              {t("streamCheck.testModel", { defaultValue: "测试的模型名称" })}
+            </Label>
+            <Input
+              id="testModel"
+              type="text"
+              placeholder="auto (自动从 /models 获取或使用默认模型)"
+              value={config.testModel}
+              onChange={(e) =>
+                setConfig({ ...config, testModel: e.target.value })
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {t("streamCheck.testModelHint", {
+                defaultValue:
+                  "留空或填入 auto 时，测试程序会向供应商请求并解析 /models 可用列表（仅限支持模型查询的渠道），自适应测试可用模型名称。",
+              })}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="testPrompt">
+              {t("streamCheck.testPrompt", {
+                defaultValue: "测试提示词 (Prompt)",
+              })}
+            </Label>
+            <Input
+              id="testPrompt"
+              type="text"
+              placeholder="hi (默认发送 hi 进行握手)"
+              value={config.testPrompt}
+              onChange={(e) =>
+                setConfig({ ...config, testPrompt: e.target.value })
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {t("streamCheck.testPromptHint", {
+                defaultValue:
+                  "发送给模型的真实测试输入文本。建议填入极简词汇，以尽量减少测试所消耗的 Token 额度（1~2 个 Token）。",
+              })}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 检查参数配置 */}
       <div className="space-y-4">

@@ -1260,7 +1260,14 @@
     "pricingModelSourceInherit": "繼承全域預設",
     "pricingModelSourceRequest": "請求模型",
     "pricingModelSourceResponse": "回傳模型",
-    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對"
+    "pricingModelSourceHint": "選擇依請求模型還是回傳模型進行定價比對",
+    "testConfig": "連通性與可用性測試配置",
+    "useCustomTestConfig": "使用專屬配置",
+    "testConfigDesc": "為此供應商配置單獨的測速測試參數，啟用後將覆蓋全局的測速模型和提示詞。",
+    "testModelLabel": "測試模型名稱",
+    "testModelHint": "支援輸入特定模型（如 deepseek-chat 或 qwen-max）。設為 auto 或留空將嘗試自適應探測。",
+    "testPromptLabel": "測試提示詞 (Prompt)",
+    "testPromptHint": "測試時發給該提供商的握手請求文本（如 hi 或 ping）。"
   },
   "codexConfig": {
     "authJson": "auth.json (JSON) *",
@@ -2686,7 +2693,18 @@
     "timeout": "逾時時間（秒）",
     "maxRetries": "最大重試次數",
     "degradedThreshold": "緩慢閾值（毫秒）",
-    "error": "{{providerName}} 檢查出錯：{{error}}"
+    "error": "{{providerName}} 檢查出錯：{{error}}",
+    "enableModelCheck": "啟用大模型可用性真實調用檢測",
+    "enableModelCheckHint": "開啟後，系統在檢測時會發起極輕量的 API 真實調用，自動驗證 API 金鑰與模型權限（僅推薦中轉或自定義 API 開啟）。",
+    "modelCheckNote": "真實可用性檢測會向供應商發送極小的數據包，以驗證 API 金鑰與模型本身的有效性。這可能會消耗 1~2 個 Token 額度。",
+    "authErrorHint": "認證失敗，請檢查您的 API 金鑰 (API Key) 配置。",
+    "quotaErrorHint": "頻控受限或額度用盡，請檢查帳戶可用額度。",
+    "modelErrorHint": "請求模型不存在，或當前渠道未開通該模型訪問權限。",
+    "apiErrorHint": "大模型接口調用失敗，請根據具體返回的 HTTP 錯誤進行排查。",
+    "testModel": "測試的模型名稱",
+    "testModelHint": "留空或填入 auto 時，測試程序會向供應商請求並解析 /models 可用列表（僅限支援模型查詢的渠道），自適應測試可用模型名稱。",
+    "testPrompt": "測試提示詞 (Prompt)",
+    "testPromptHint": "發送給模型的真實測試輸入文本。建議填入極簡詞彙，以儘量減少測試所消耗的 Token 額度（1~2 個 Token）。"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",
