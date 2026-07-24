@@ -18,7 +18,24 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { DailyStats, UsageRangeSelection } from "@/types/usage";
+
+export function calculateTokensProcessed(
+  stat: Pick<
+    DailyStats,
+    | "totalInputTokens"
+    | "totalOutputTokens"
+    | "totalCacheCreationTokens"
+    | "totalCacheReadTokens"
+  >,
+): number {
+  return (
+    stat.totalInputTokens +
+    stat.totalOutputTokens +
+    stat.totalCacheCreationTokens +
+    stat.totalCacheReadTokens
+  );
+}
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
@@ -81,6 +98,7 @@ export function UsageTrendChart({
         outputTokens: stat.totalOutputTokens,
         cacheCreationTokens: stat.totalCacheCreationTokens,
         cacheReadTokens: stat.totalCacheReadTokens,
+        tokensProcessed: calculateTokensProcessed(stat),
         cost: cost ?? null,
       };
     }) || [];
@@ -89,9 +107,19 @@ export function UsageTrendChart({
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      const tokensProcessed = payload[0]?.payload?.tokensProcessed;
+
       return (
         <div className="rounded-lg border bg-background/95 p-3 shadow-lg backdrop-blur-md">
           <p className="mb-2 font-medium">{label}</p>
+          <div className="mb-2 flex items-center justify-between gap-4 border-b border-border/60 pb-2 text-sm">
+            <span className="font-semibold">
+              {t("usage.realTotal", "真实消耗 Tokens")}:
+            </span>
+            <span className="font-semibold tabular-nums">
+              {fmtInt(tokensProcessed, dateLocale)}
+            </span>
+          </div>
           {payload.map((entry: any, index: number) => (
             <div
               key={index}
