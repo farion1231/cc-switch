@@ -106,7 +106,9 @@ impl PromptService {
                         enabled_prompt.updated_at = Some(timestamp);
                         log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
                         state.db.save_prompt(app.as_str(), enabled_prompt)?;
-                    } else if enabled_count == 0 {
+                    } else if enabled_count == 0
+                        || live_content.trim() != enabled_prompt_content(&prompts).trim()
+                    {
                         // 没有已启用的提示词，则创建一次备份（避免重复备份）
                         let content_exists = prompts
                             .values()
