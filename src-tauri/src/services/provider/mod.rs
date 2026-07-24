@@ -1237,6 +1237,175 @@ requires_openai_auth = true
             .expect("stop proxy service");
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    #[serial]
+    #[allow(
+        clippy::await_holding_lock,
+        reason = "reproduces takeover/update interleaving while holding the shared switch lock"
+    )]
+    async fn update_current_codex_provider_does_not_overwrite_proxy_live_when_takeover_activates_concurrently(
+    ) {
+        // SaladDay race: update samples "backup exists, live not taken over" before the
+        // switch lock, waits for takeover to finish writing proxy live, then overwrites
+        // it with normal provider config. Holding the lock for the whole
+        // sample→mutate path and re-checking state under the lock must prevent that.
+        let _home = TempHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let mut settings = crate::settings::get_settings();
+        settings.preserve_codex_official_auth_on_switch = true;
+        crate::settings::update_settings(settings).expect("enable official auth preservation");
+
+        let db = Arc::new(Database::memory().expect("init db"));
+        let state = AppState::new(db.clone());
+
+        let provider_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+        let edited_config = r#"model_provider = "deepseek"
+model = "deepseek-reasoner"
+
+[model_providers.deepseek]
+name = "DeepSeek Edited"
+base_url = "https://api.deepseek.com/v1"
+wire_api = "responses"
+"#;
+        let proxy_live_config = r#"model_provider = "deepseek"
+model = "deepseek-chat"
+
+[model_providers.deepseek]
+name = "DeepSeek"
+base_url = "http://127.0.0.1:15721/v1"
+wire_api = "responses"
+experimental_bearer_token = "PROXY_MANAGED"
+"#;
+        let oauth_auth = json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "oauth-access",
+                "id_token": "oauth-id"
+            }
+        });
+
+        let mut original = Provider::with_id(
+            "deepseek".into(),
+            "DeepSeek".into(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "old-key" },
+                "config": provider_config
+            }),
+            None,
+        );
+        original.category = Some("custom".into());
+        db.save_provider("codex", &original).expect("save provider");
+        db.set_current_provider("codex", "deepseek")
+            .expect("set current provider");
+        crate::settings::set_current_provider(&AppType::Codex, Some("deepseek"))
+            .expect("set local current provider");
+
+        // Normal (non-proxy) live so a pre-lock snapshot would see live_taken_over=false.
+        crate::write_codex_live_atomic(&oauth_auth, Some(provider_config))
+            .expect("seed normal Codex live");
+
+        let mut updated = original.clone();
+        updated.name = "DeepSeek Edited".into();
+        updated.settings_config = json!({
+            "auth": { "OPENAI_API_KEY": "new-key" },
+            "config": edited_config
+        });
+
+        // Hold the shared per-app lock that takeover and update must serialize on.
+        let switch_guard = state.proxy_service.lock_switch_for_app("codex").await;
+
+        // Same ProxyService (same switch_locks) must be used on the update thread.
+        let update_state = AppState {
+            db: state.db.clone(),
+            proxy_service: state.proxy_service.clone(),
+            usage_cache: state.usage_cache.clone(),
+        };
+        let update_handle = std::thread::spawn(move || {
+            ProviderService::update(&update_state, AppType::Codex, Some("deepseek"), updated)
+        });
+
+        // Let the update thread finish the DB save and block on the switch lock.
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        // Finish takeover activation under the lock (backup → proxy live → enabled).
+        db.save_live_backup(
+            "codex",
+            &serde_json::to_string(&json!({
+                "auth": oauth_auth,
+                "config": provider_config
+            }))
+            .expect("serialize backup"),
+        )
+        .await
+        .expect("seed live backup during takeover");
+        crate::write_codex_live_atomic(&oauth_auth, Some(proxy_live_config))
+            .expect("write proxy-owned live under switch lock");
+        let mut proxy_config = db
+            .get_proxy_config_for_app("codex")
+            .await
+            .expect("get proxy config");
+        proxy_config.enabled = true;
+        db.update_proxy_config_for_app(proxy_config)
+            .await
+            .expect("enable codex takeover");
+
+        drop(switch_guard);
+        let update_result = update_handle
+            .join()
+            .expect("update thread should not panic");
+        update_result.expect("update after concurrent takeover activation");
+
+        let live_config = fs::read_to_string(crate::codex_config::get_codex_config_path())
+            .expect("read config.toml");
+        assert!(
+            live_config.contains("127.0.0.1")
+                && live_config.contains("/v1")
+                && live_config.contains("PROXY_MANAGED"),
+            "concurrent update must not clobber proxy-owned live; got:\n{live_config}"
+        );
+        assert!(
+            !live_config.contains("https://api.deepseek.com/v1"),
+            "normal provider base_url must not overwrite taken-over live; got:\n{live_config}"
+        );
+
+        let stored = db
+            .get_provider_by_id("deepseek", "codex")
+            .expect("reload")
+            .expect("exists");
+        assert_eq!(
+            stored
+                .settings_config
+                .get("auth")
+                .and_then(|v| v.get("OPENAI_API_KEY"))
+                .and_then(|v| v.as_str()),
+            Some("new-key")
+        );
+        let backup = db
+            .get_live_backup("codex")
+            .await
+            .expect("get backup")
+            .expect("backup exists");
+        let backup_value: Value =
+            serde_json::from_str(&backup.original_config).expect("parse backup");
+        let backup_config = backup_value
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            backup_config.contains("deepseek-reasoner")
+                && backup_config.contains("DeepSeek Edited")
+                && backup_config.contains("new-key"),
+            "under lock, update should still refresh restore backup; got:\n{backup_config}"
+        );
+    }
+
     #[cfg(any(target_os = "macos", windows))]
     #[tokio::test]
     #[serial]
@@ -2292,73 +2461,121 @@ impl ProviderService {
         let is_current = effective_current.as_deref() == Some(provider.id.as_str());
 
         if is_current {
-            // 如果 Claude 代理接管处于激活状态，并且代理服务正在运行：
-            // - 不直接走普通 Live 写入逻辑
-            // - 改为更新 Live 备份，并在 Claude 下同步代理安全的 Live 配置
-            let has_live_backup =
-                futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
-                    .ok()
-                    .flatten()
-                    .is_some();
-            let live_taken_over = state
-                .proxy_service
-                .detect_takeover_in_live_config_for_app(&app_type);
-            // Backup or live placeholders mean the live file is currently owned
-            // by proxy takeover, including the short activation window before
-            // proxy_config.enabled is committed.
-            let should_sync_via_proxy = has_live_backup || live_taken_over;
+            // 当前供应商的 backup/live 决策与写入必须与 takeover 启停共用
+            // per-app switch lock，并在持锁后重新采样状态。否则会出现：
+            // update 先看到「有 backup、live 未接管」→ 等待锁 → takeover 写完
+            // 代理 live 并释放锁 → update 用过期快照把代理 live 覆盖成普通配置。
+            Self::sync_current_provider_live_after_update(state, &app_type, &provider)?;
+        }
 
-            if should_sync_via_proxy {
-                if matches!(app_type, AppType::ClaudeDesktop) {
-                    write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                } else {
+        Ok(true)
+    }
+
+    /// Sync live (and restore backup when needed) after saving the current provider.
+    ///
+    /// Holds the per-app switch lock for the whole sample → mutate sequence so
+    /// concurrent takeover enable/disable cannot interleave with a stale snapshot.
+    ///
+    /// Important: acquire the lock with a *discrete* `block_on`, then run the
+    /// body with discrete `block_on`s as well. Wrapping the whole body in
+    /// `block_on(async { ... })` nests executors when `write_live_with_common_config`
+    /// (Claude Desktop) itself calls `block_on` — that panics with EnterError
+    /// and is what broke the Windows/macOS-only Claude Desktop update test.
+    fn sync_current_provider_live_after_update(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        let _guard =
+            futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+        Self::sync_current_provider_live_after_update_locked(state, app_type, provider)
+    }
+
+    /// Caller must already hold the per-app switch lock for `app_type`.
+    fn sync_current_provider_live_after_update_locked(
+        state: &AppState,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        // 代理接管 / 残留 live 备份时：
+        // - 先更新 Live 备份（关闭接管后恢复到最新供应商配置）
+        // - Claude / Codex：代理运行中且 live 被接管时，同步代理安全的 live
+        // - Codex：仅有备份残留（live 已不在接管态）时仍应写入 config.toml，
+        //   否则会出现“保存成功但 live 仍是旧值”
+        //
+        // 必须在持锁后采样：takeover 启停与 hot_switch 共用同一把锁，
+        // 持锁前的 has_live_backup / live_taken_over 快照可能已过期。
+        let has_live_backup =
+            futures::executor::block_on(state.db.get_live_backup(app_type.as_str()))
+                .ok()
+                .flatten()
+                .is_some();
+        let live_taken_over = state
+            .proxy_service
+            .detect_takeover_in_live_config_for_app(app_type);
+        // Backup or live placeholders mean the live file is currently owned
+        // by proxy takeover, including the short activation window before
+        // proxy_config.enabled is committed.
+        let should_sync_via_proxy = has_live_backup || live_taken_over;
+
+        if should_sync_via_proxy {
+            if matches!(app_type, AppType::ClaudeDesktop) {
+                write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            } else {
+                // 已持锁：走 inner，避免 update_live_backup_from_provider 再次拿锁死锁。
+                futures::executor::block_on(
+                    state
+                        .proxy_service
+                        .update_live_backup_from_provider_inner(app_type.as_str(), provider),
+                )
+                .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+            }
+
+            if futures::executor::block_on(state.proxy_service.is_running()) {
+                if matches!(app_type, AppType::Claude) {
                     futures::executor::block_on(
                         state
                             .proxy_service
-                            .update_live_backup_from_provider(app_type.as_str(), &provider),
+                            .sync_claude_live_from_provider_while_proxy_active(provider),
                     )
-                    .map_err(|e| AppError::Message(format!("更新 Live 备份失败: {e}")))?;
+                    .map_err(|e| AppError::Message(format!("同步 Claude Live 配置失败: {e}")))?;
+                } else if live_taken_over && matches!(app_type, AppType::Codex) {
+                    // Codex model mappings are projected into a generated
+                    // model_catalog_json file. Refresh takeover-owned Live
+                    // immediately so adding/removing mappings cannot leave
+                    // the previous catalog pointer and capabilities active.
+                    futures::executor::block_on(
+                        state
+                            .proxy_service
+                            .sync_codex_live_from_provider_while_proxy_active(provider),
+                    )
+                    .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
                 }
+            }
 
-                if futures::executor::block_on(state.proxy_service.is_running()) {
-                    if matches!(app_type, AppType::Claude) {
-                        futures::executor::block_on(
-                            state
-                                .proxy_service
-                                .sync_claude_live_from_provider_while_proxy_active(&provider),
-                        )
-                        .map_err(|e| {
-                            AppError::Message(format!("同步 Claude Live 配置失败: {e}"))
-                        })?;
-                    } else if live_taken_over && matches!(app_type, AppType::Codex) {
-                        // Codex model mappings are projected into a generated
-                        // model_catalog_json file. Refresh takeover-owned Live
-                        // immediately so adding/removing mappings cannot leave
-                        // the previous catalog pointer and capabilities active.
-                        futures::executor::block_on(
-                            state
-                                .proxy_service
-                                .sync_codex_live_from_provider_while_proxy_active(&provider),
-                        )
-                        .map_err(|e| AppError::Message(format!("同步 Codex Live 配置失败: {e}")))?;
-                    }
-                }
-            } else {
-                write_live_with_common_config(state.db.as_ref(), &app_type, &provider)?;
-                // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
-                // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
-                // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
-                // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
-                // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
-                if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+            // 备份残留但 live 已不在接管态：按普通路径写 live。
+            // 只重投影本应用 MCP，避免无关应用 live 损坏把成功的 Codex 保存变成失败。
+            if matches!(app_type, AppType::Codex) && has_live_backup && !live_taken_over {
+                write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+                if let Err(err) = McpService::sync_enabled_for_app(state, app_type) {
                     log::warn!(
                         "保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}"
                     );
                 }
             }
+        } else {
+            write_live_with_common_config(state.db.as_ref(), app_type, provider)?;
+            // 重写 live 后只重投影本应用的 MCP：全量 sync_all_enabled 会把
+            // 无关应用的 live 损坏（如 ~/.claude.json 坏 JSON）牵连进保存
+            // 流程。走到这里 DB 与 live 都已按新配置落盘，保存事实上已
+            // 成功；投影失败降级为警告，避免制造"保存失败"假象（MCP
+            // 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
+            if let Err(err) = McpService::sync_enabled_for_app(state, app_type) {
+                log::warn!("保存供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+            }
         }
 
-        Ok(true)
+        Ok(())
     }
 
     /// Delete a provider
