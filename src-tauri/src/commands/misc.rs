@@ -271,7 +271,7 @@ fn last_lines(text: &str, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-fn decode_command_output(bytes: &[u8]) -> String {
+pub(crate) fn decode_command_output(bytes: &[u8]) -> String {
     #[cfg(target_os = "windows")]
     {
         decode_windows_command_output(bytes)
@@ -1696,15 +1696,29 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
 }
 
 #[cfg(target_os = "windows")]
-fn run_windows_tool_version_command(
+fn run_windows_tool_command(
     tool_path: &Path,
+    args: &[&str],
     new_path: &str,
 ) -> std::io::Result<std::process::Output> {
     use std::process::Command;
 
     if is_windows_command_script(tool_path) {
         let path = tool_path.to_string_lossy();
-        let command = format!("call {} --version", win_quote_path_for_batch(&path));
+        let args = args
+            .iter()
+            .map(|arg| windows_cmd_double_quote_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = format!(
+            "call {}{}",
+            win_quote_path_for_batch(&path),
+            if args.is_empty() {
+                String::new()
+            } else {
+                format!(" {args}")
+            }
+        );
         let mut cmd = Command::new("cmd");
         return cmd
             .args(["/D", "/S", "/C"])
@@ -1715,10 +1729,18 @@ fn run_windows_tool_version_command(
     }
 
     Command::new(tool_path)
-        .arg("--version")
+        .args(args)
         .env("PATH", new_path)
         .creation_flags(CREATE_NO_WINDOW)
         .output()
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_version_command(
+    tool_path: &Path,
+    new_path: &str,
+) -> std::io::Result<std::process::Output> {
+    run_windows_tool_command(tool_path, &["--version"], new_path)
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
@@ -1858,49 +1880,67 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
 /// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
 /// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]
-fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
-    use std::process::Command;
+fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    use std::process::{Command, Stdio};
+
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|s| is_valid_shell(s))
         .unwrap_or_else(|| "sh".to_string());
     let flag = default_flag_for_shell(&shell);
-    let out = Command::new(shell)
+    let child = Command::new(shell)
         .arg(flag)
         .arg(format!("command -v {tool}"))
-        .output()
-        .ok()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
+    let out = wait_child_output(child, deadline)?;
     if !out.status.success() {
-        return None;
+        return Ok(None);
     }
     let raw = decode_command_output(&out.stdout);
     // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
     // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let first = first_abs_path_line(&raw)?;
-    std::fs::canonicalize(first).ok()
+    let Some(first) = first_abs_path_line(&raw) else {
+        return Ok(None);
+    };
+    Ok(std::fs::canonicalize(first).ok())
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_path_default(tool: &str) -> Option<std::path::PathBuf> {
+fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
     use std::os::windows::process::CommandExt;
-    use std::process::Command;
-    let out = Command::new("cmd")
+    use std::process::{Command, Stdio};
+
+    let child = Command::new("cmd")
         .args(["/C", &format!("where {tool}")])
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
+    let out = wait_child_output(child, deadline)?;
     if !out.status.success() {
-        return None;
+        return Ok(None);
     }
     let raw = decode_command_output(&out.stdout);
-    let first = raw.lines().next()?.trim();
+    let Some(first) = raw.lines().next().map(str::trim) else {
+        return Ok(None);
+    };
     if first.is_empty() {
-        return None;
+        return Ok(None);
     }
     let path = Path::new(first);
     let preferred =
         windows_runnable_sibling_for_extensionless_tool(path).unwrap_or_else(|| path.to_path_buf());
-    std::fs::canonicalize(preferred).ok()
+    Ok(std::fs::canonicalize(preferred).ok())
 }
 
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
@@ -1914,7 +1954,7 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
     let current_path = std::env::var_os("PATH")
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let path_default = resolve_path_default(tool);
+    let path_default = resolve_path_default(tool, None).ok().flatten();
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
@@ -2466,6 +2506,411 @@ fn default_install(installs: &[ToolInstallation]) -> Option<&ToolInstallation> {
             None
         }
     })
+}
+
+fn locate_default_tool(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<std::path::PathBuf, String> {
+    let path_default = resolve_path_default(tool, deadline)?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut candidates = Vec::new();
+    for dir in build_tool_search_paths(tool) {
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if !candidate.exists() {
+                continue;
+            }
+            let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+            if path_default.as_ref() == Some(&real) {
+                return Ok(candidate);
+            }
+            if seen.insert(real) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    if let Some(path) = path_default {
+        return Ok(path);
+    }
+
+    match candidates.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err(format!("{tool} is not installed")),
+        _ => Err(format!(
+            "{tool} is installed but its default installation is ambiguous"
+        )),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CommandDeadline {
+    expires_at: std::time::Instant,
+    limit: std::time::Duration,
+}
+
+impl CommandDeadline {
+    fn from_timeout(timeout: Option<std::time::Duration>) -> Option<Self> {
+        timeout.map(|limit| Self {
+            expires_at: std::time::Instant::now() + limit,
+            limit,
+        })
+    }
+
+    fn remaining(self) -> Result<std::time::Duration, String> {
+        self.expires_at
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| self.timeout_error())
+    }
+
+    fn timeout_error(self) -> String {
+        format!("Command timed out after {}s", self.limit.as_secs())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_child_tree(child: &mut std::process::Child) -> bool {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let status = Command::new("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    matches!(status, Ok(status) if status.success()) || child.kill().is_ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn terminate_child_tree(child: &mut std::process::Child) -> bool {
+    child.kill().is_ok()
+}
+
+fn wait_child_output(
+    mut child: std::process::Child,
+    deadline: Option<CommandDeadline>,
+) -> Result<std::process::Output, String> {
+    use std::io::Read;
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_handle = stdout_pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let stderr_handle = stderr_pipe.map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+
+    let status = match deadline {
+        None => child
+            .wait()
+            .map_err(|e| format!("Failed to wait for command: {e}"))?,
+        Some(deadline) => {
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {
+                        let remaining = match deadline.remaining() {
+                            Ok(remaining) => remaining,
+                            Err(error) => {
+                                if terminate_child_tree(&mut child) {
+                                    let _ = child.wait();
+                                }
+                                // Do not join pipe readers on timeout. If tree termination fails,
+                                // a descendant may still own the write handle and never produce EOF.
+                                drop(stdout_handle);
+                                drop(stderr_handle);
+                                return Err(error);
+                            }
+                        };
+                        std::thread::sleep(std::cmp::min(
+                            std::time::Duration::from_millis(50),
+                            remaining,
+                        ));
+                    }
+                    Err(e) => {
+                        if terminate_child_tree(&mut child) {
+                            let _ = child.wait();
+                        }
+                        return Err(format!("Failed to wait for command: {e}"));
+                    }
+                }
+            }
+        }
+    };
+
+    let stdout = stdout_handle
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+    let stderr = stderr_handle
+        .map(|handle| handle.join().unwrap_or_default())
+        .unwrap_or_default();
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn apply_extra_env(cmd: &mut std::process::Command, extra_env: &[(&str, String)]) {
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
+}
+
+pub(crate) fn run_detected_tool_command_with_timeout(
+    tool: &str,
+    args: &[&str],
+    timeout: Option<std::time::Duration>,
+    extra_env: &[(&str, String)],
+) -> Result<std::process::Output, String> {
+    if !VALID_TOOLS.contains(&tool) {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    if args.iter().any(|arg| {
+        arg.is_empty()
+            || !arg
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    }) {
+        return Err("Invalid tool command arguments".to_string());
+    }
+
+    let deadline = CommandDeadline::from_timeout(timeout);
+
+    #[cfg(target_os = "windows")]
+    if let Some(distro) = wsl_distro_for_tool(tool) {
+        return run_wsl_tool_command(tool, args, &distro, deadline, extra_env);
+    }
+
+    // Runtime execution only needs the default entry point. Full installation
+    // enumeration runs `--version` for every candidate and belongs to diagnostics.
+    let tool_path = locate_default_tool(tool, deadline)?;
+    let dir = tool_path
+        .parent()
+        .ok_or_else(|| format!("Invalid {tool} executable path"))?;
+    let current_path = std::env::var_os("PATH")
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    {
+        run_windows_tool_command_capture(
+            &tool_path,
+            args,
+            &format!("{};{current_path}", dir.display()),
+            deadline,
+            extra_env,
+        )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::process::{Command, Stdio};
+
+        let mut cmd = Command::new(&tool_path);
+        cmd.args(args)
+            .env("PATH", format!("{}:{current_path}", dir.display()))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        apply_extra_env(&mut cmd, extra_env);
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to run {tool}: {e}"))?;
+        wait_child_output(child, deadline)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_tool_command_capture(
+    tool_path: &Path,
+    args: &[&str],
+    new_path: &str,
+    deadline: Option<CommandDeadline>,
+    extra_env: &[(&str, String)],
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+
+    let mut cmd = if is_windows_command_script(tool_path) {
+        let path = tool_path.to_string_lossy();
+        let args = args
+            .iter()
+            .map(|arg| windows_cmd_double_quote_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = format!(
+            "call {}{}",
+            win_quote_path_for_batch(&path),
+            if args.is_empty() {
+                String::new()
+            } else {
+                format!(" {args}")
+            }
+        );
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/D", "/S", "/C"])
+            .raw_arg(&command)
+            .env("PATH", new_path)
+            .creation_flags(CREATE_NO_WINDOW);
+        cmd
+    } else {
+        let mut cmd = Command::new(tool_path);
+        cmd.args(args)
+            .env("PATH", new_path)
+            .creation_flags(CREATE_NO_WINDOW);
+        cmd
+    };
+
+    apply_extra_env(&mut cmd, extra_env);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to run tool: {e}"))?;
+    wait_child_output(child, deadline)
+}
+
+/// Convert `\\wsl$\Distro\home\user\...` / `\\wsl.localhost\...` to a Linux path.
+#[cfg(target_os = "windows")]
+fn wsl_unc_path_to_linux(path: &Path) -> Option<String> {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Component::Prefix(prefix) = components.next()? else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::UNC(server, _share) | Prefix::VerbatimUNC(server, _share) => {
+            let server_name = server.to_string_lossy();
+            if !(server_name.eq_ignore_ascii_case("wsl$")
+                || server_name.eq_ignore_ascii_case("wsl.localhost"))
+            {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+
+    let mut linux = String::new();
+    for component in components {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(part) => {
+                linux.push('/');
+                linux.push_str(&part.to_string_lossy());
+            }
+            Component::CurDir | Component::ParentDir | Component::Prefix(_) => return None,
+        }
+    }
+    if linux.is_empty() {
+        None
+    } else {
+        Some(linux)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_wsl_tool_command(
+    tool: &str,
+    args: &[&str],
+    deadline: Option<CommandDeadline>,
+) -> Result<String, String> {
+    let invocation = std::iter::once(tool)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let command = format!(
+        "for flag in -lic -lc -c; do if \"${{SHELL:-sh}}\" \"$flag\" 'command -v {tool}' >/dev/null 2>&1; then exec \"${{SHELL:-sh}}\" \"$flag\" '{invocation}'; fi; done; exit 127"
+    );
+
+    let Some(deadline) = deadline else {
+        return Ok(command);
+    };
+    let remaining = deadline.remaining()?;
+    let timeout_arg = format!("{:.3}s", remaining.as_secs_f64());
+    Ok(format!(
+        "command -v timeout >/dev/null 2>&1 || {{ echo 'timeout is required for bounded CLI execution' >&2; exit 127; }}; exec timeout --signal=TERM --kill-after=1s {timeout_arg} sh -c {}",
+        shell_single_quote(&command)
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn run_wsl_tool_command(
+    tool: &str,
+    args: &[&str],
+    distro: &str,
+    deadline: Option<CommandDeadline>,
+    extra_env: &[(&str, String)],
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+
+    if !is_valid_wsl_distro_name(distro) {
+        return Err(format!("[WSL:{distro}] invalid distro name"));
+    }
+
+    let command = build_wsl_tool_command(tool, args, deadline)?;
+
+    // Translate host-side env values that are WSL UNC paths into Linux paths,
+    // then inject via `env` so they apply inside the distro process.
+    let mut env_argv: Vec<String> = Vec::new();
+    for (key, value) in extra_env {
+        let linux_value = wsl_unc_path_to_linux(Path::new(value)).unwrap_or_else(|| value.clone());
+        // Reject values that would break env KEY=VALUE parsing.
+        if key.is_empty()
+            || key.contains('=')
+            || key.chars().any(|c| c.is_whitespace())
+            || linux_value
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace())
+        {
+            return Err(format!("[WSL:{distro}] invalid env for {key}"));
+        }
+        env_argv.push(format!("{key}={linux_value}"));
+    }
+
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-d").arg(distro).arg("--");
+    if !env_argv.is_empty() {
+        cmd.arg("env");
+        for item in &env_argv {
+            cmd.arg(item);
+        }
+    }
+    cmd.args(["sh", "-c", &command])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("[WSL:{distro}] failed to run {tool}: {e}"))?;
+    let output = wait_child_output(child, deadline).map_err(|e| {
+        if e.starts_with("Command timed out") {
+            format!("[WSL:{distro}] {e}")
+        } else {
+            e
+        }
+    })?;
+    if output.status.code() == Some(124) {
+        return Err(format!(
+            "[WSL:{distro}] {}",
+            deadline
+                .map(CommandDeadline::timeout_error)
+                .unwrap_or_else(|| "Command timed out".to_string())
+        ));
+    }
+    Ok(output)
 }
 
 /// 基于已枚举的安装列表生成锚定升级命令（复用 enumerate 结果，避免二次探测）。

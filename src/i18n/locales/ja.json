@@ -2859,6 +2859,7 @@
     "noEnabledModelsWarning": "利用可能な設定済みモデルがありません。先に OpenCode モデルを設定してください。",
     "modelSourcePartialWarning": "一部プロバイダーのモデル設定が不正なため、候補から除外しました。",
     "modelSourceFallbackWarning": "live プロバイダー状態の取得に失敗したため、設定済みプロバイダーへフォールバックしました。",
+    "runtimeModelsFailedWarning": "OpenCode ランタイムモデルの取得に失敗しました。設定済みプロバイダーのモデルのみ表示します。",
     "importLocalReplaceSuccess": "ローカルファイルから読み込み、Agents/Categories/Other Fields を置き換えました",
     "importLocalFailed": "ローカルファイルの読み込みに失敗しました: {{error}}",
     "agentKeyPlaceholder": "agent キー",
