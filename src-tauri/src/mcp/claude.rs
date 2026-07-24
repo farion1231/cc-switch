@@ -142,7 +142,9 @@ pub fn remove_server_from_claude(id: &str) -> Result<(), AppError> {
     let mut current = crate::claude_mcp::read_mcp_servers_map()?;
 
     // 移除指定服务器
-    current.remove(id);
+    if current.remove(id).is_none() {
+        return Ok(());
+    }
 
     // 写回
     crate::claude_mcp::set_mcp_servers_map(&current)
