@@ -461,8 +461,11 @@ async fn query_claude_quota(access_token: &str) -> Result<SubscriptionQuota, Str
 
 #[derive(Deserialize)]
 struct CodexAuthJson {
+    #[serde(default)]
     auth_mode: Option<String>,
+    #[serde(default)]
     tokens: Option<CodexTokens>,
+    #[serde(default)]
     last_refresh: Option<String>,
 }
 
@@ -480,22 +483,71 @@ type CodexCredentials = (
     Option<String>,
 );
 
-/// 读取 Codex OAuth 凭据
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+enum CodexCredentialsStoreMode {
+    File,
+    Keyring,
+    Auto,
+    Ephemeral,
+}
+
+/// 读取 Codex OAuth 凭据。
 ///
-/// 按优先级尝试以下来源：
-/// 1. macOS Keychain (service: "Codex Auth")
-/// 2. 凭据文件 ~/.codex/auth.json
+/// 在 macOS 上必须遵循 Codex 的 `cli_auth_credentials_store` 配置，不能
+/// 合并或按更新时间猜测两份凭据的优先级：`auto` 由 Codex 本身定义为
+/// Keychain 优先、文件兜底；默认和 `file` 模式只读取 `auth.json`。
 ///
 /// 仅 auth_mode == "chatgpt" (OAuth) 时有效，API key 模式不支持用量查询。
 fn read_codex_credentials() -> CodexCredentials {
     #[cfg(target_os = "macos")]
     {
-        if let Some(result) = read_codex_credentials_from_keychain() {
-            return result;
+        match codex_credentials_store_mode() {
+            CodexCredentialsStoreMode::File => read_codex_credentials_from_file(),
+            CodexCredentialsStoreMode::Keyring => read_codex_credentials_from_keychain()
+                .unwrap_or((None, None, CredentialStatus::NotFound, None)),
+            CodexCredentialsStoreMode::Auto => match read_codex_credentials_from_keychain() {
+                Some(credentials) if !matches!(credentials.2, CredentialStatus::ParseError) => {
+                    credentials
+                }
+                _ => read_codex_credentials_from_file(),
+            },
+            CodexCredentialsStoreMode::Ephemeral => (None, None, CredentialStatus::NotFound, None),
         }
     }
 
-    read_codex_credentials_from_file()
+    #[cfg(not(target_os = "macos"))]
+    {
+        read_codex_credentials_from_file()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn codex_credentials_store_mode() -> CodexCredentialsStoreMode {
+    let config_path = crate::codex_config::get_codex_config_path();
+    let config_text = std::fs::read_to_string(config_path).unwrap_or_default();
+    codex_credentials_store_mode_from_config(&config_text)
+}
+
+#[cfg(target_os = "macos")]
+fn codex_credentials_store_mode_from_config(config_text: &str) -> CodexCredentialsStoreMode {
+    let mode = config_text
+        .parse::<toml::Value>()
+        .ok()
+        .and_then(|config| {
+            config
+                .get("cli_auth_credentials_store")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned)
+        })
+        .map(|mode| mode.trim().to_ascii_lowercase());
+
+    match mode.as_deref() {
+        Some("keyring") => CodexCredentialsStoreMode::Keyring,
+        Some("auto") => CodexCredentialsStoreMode::Auto,
+        Some("ephemeral") => CodexCredentialsStoreMode::Ephemeral,
+        _ => CodexCredentialsStoreMode::File,
+    }
 }
 
 /// 从 macOS Keychain 读取 Codex 凭据
@@ -1279,18 +1331,17 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                     message.unwrap_or_else(|| "Failed to parse credentials".to_string()),
                 )),
                 CredentialStatus::Expired => {
-                    // 即使可能过期也尝试调用 API
+                    // last_refresh 只是本地启发式提示，最终状态由官方 API 决定。
+                    // 无论 API 返回成功还是确定性错误，都把真实结果交给前端；
+                    // 不能把 401、响应解析失败等再次折叠成 stale 提示。
                     if let Some(token) = token {
-                        let result = query_codex_quota(
+                        return query_codex_quota(
                             &token,
                             account_id.as_deref(),
                             "codex",
                             "Authentication failed. Please re-login with Codex CLI.",
                         )
-                        .await?;
-                        if result.success {
-                            return Ok(result);
-                        }
+                        .await;
                     }
                     Ok(SubscriptionQuota::error(
                         "codex",
@@ -1375,5 +1426,39 @@ mod tests {
         // 其他窗口按小时/天回退命名
         assert_eq!(window_seconds_to_tier_name(3600), "1_hour");
         assert_eq!(window_seconds_to_tier_name(86400), "1_day");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_credentials_store_defaults_to_file() {
+        assert_eq!(
+            codex_credentials_store_mode_from_config("model = \"gpt-5\""),
+            CodexCredentialsStoreMode::File
+        );
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"unexpected\""),
+            CodexCredentialsStoreMode::File
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn codex_credentials_store_reads_explicit_mode() {
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"file\""),
+            CodexCredentialsStoreMode::File
+        );
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"auto\""),
+            CodexCredentialsStoreMode::Auto
+        );
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"keyring\""),
+            CodexCredentialsStoreMode::Keyring
+        );
+        assert_eq!(
+            codex_credentials_store_mode_from_config("cli_auth_credentials_store = \"ephemeral\""),
+            CodexCredentialsStoreMode::Ephemeral
+        );
     }
 }
