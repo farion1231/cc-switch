@@ -453,6 +453,85 @@ pub(crate) fn web_search_results_from_action(item: &Value) -> Vec<Value> {
     results
 }
 
+fn responses_web_search_call_from_anthropic_blocks(
+    tool_use: &Value,
+    tool_result: &Value,
+) -> Option<Value> {
+    let id = tool_use
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())?;
+    let input = tool_use.get("input").and_then(Value::as_object);
+
+    // Anthropic omits the Responses action discriminator from server_tool_use
+    // input. Infer it from the action-specific fields while keeping search as
+    // the safe default for current and future hosted WebSearch tool names.
+    let action_type = if input.is_some_and(|input| {
+        input.get("pattern").and_then(Value::as_str).is_some()
+            && input.get("url").and_then(Value::as_str).is_some()
+    }) {
+        "find_in_page"
+    } else if input.is_some_and(|input| {
+        input.get("url").and_then(Value::as_str).is_some()
+            && !input.contains_key("query")
+            && !input.contains_key("queries")
+    }) {
+        "open_page"
+    } else {
+        "search"
+    };
+
+    let mut action = serde_json::Map::new();
+    action.insert("type".to_string(), json!(action_type));
+    if let Some(input) = input {
+        let fields: &[&str] = match action_type {
+            "find_in_page" => &["url", "pattern"],
+            "open_page" => &["url"],
+            _ => &["query", "queries"],
+        };
+        for field in fields {
+            if let Some(value) = input.get(*field) {
+                action.insert((*field).to_string(), value.clone());
+            }
+        }
+    }
+
+    if action_type == "search" {
+        let mut seen_urls = HashSet::new();
+        let sources: Vec<Value> = tool_result
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|result| {
+                let url = result
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .filter(|url| !url.is_empty())?;
+                seen_urls
+                    .insert(url.to_string())
+                    .then(|| json!({"type": "url", "url": url}))
+            })
+            .collect();
+        if !sources.is_empty() {
+            action.insert("sources".to_string(), Value::Array(sources));
+        }
+    }
+
+    let failed = tool_result.get("is_error").and_then(Value::as_bool) == Some(true)
+        || tool_result
+            .pointer("/content/type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.ends_with("_error"));
+
+    Some(json!({
+        "type": "web_search_call",
+        "id": id,
+        "status": if failed { "failed" } else { "completed" },
+        "action": Value::Object(action)
+    }))
+}
+
 /// Anthropic 请求 → OpenAI Responses 请求
 ///
 /// `cache_key`: optional prompt_cache_key to inject for improved cache routing
@@ -884,6 +963,7 @@ pub(crate) fn build_anthropic_usage_from_responses(usage: Option<&Value>) -> Val
 /// - user/assistant 的 text 内容 → 对应 role 的 message item
 /// - tool_use 从 assistant message 中"提升"为独立的 function_call item
 /// - tool_result 从 user message 中"提升"为独立的 function_call_output item
+/// - hosted WebSearch call/result blocks → restore one Responses web_search_call item
 /// - bridge-owned thinking blocks → restore the original Responses reasoning item
 /// - unrelated native thinking blocks → 丢弃
 fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyError> {
@@ -911,6 +991,19 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
             // 数组内容（多模态/工具调用）
             Some(Value::Array(blocks)) => {
                 let mut message_content = Vec::new();
+                let hosted_web_search_results: HashMap<&str, &Value> = blocks
+                    .iter()
+                    .filter(|block| {
+                        block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
+                    })
+                    .filter_map(|block| {
+                        block
+                            .get("tool_use_id")
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .map(|id| (id, block))
+                    })
+                    .collect();
 
                 for block in blocks {
                     let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -996,6 +1089,33 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                             }));
                         }
 
+                        "server_tool_use" => {
+                            let tool_use_id = block
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .filter(|id| !id.is_empty());
+                            let web_search_call = tool_use_id
+                                .and_then(|id| hosted_web_search_results.get(id))
+                                .and_then(|result| {
+                                    responses_web_search_call_from_anthropic_blocks(block, result)
+                                });
+                            if let Some(web_search_call) = web_search_call {
+                                if !message_content.is_empty() {
+                                    input.push(json!({
+                                        "role": role,
+                                        "content": message_content.clone()
+                                    }));
+                                    message_content.clear();
+                                }
+                                input.push(web_search_call);
+                            }
+                        }
+
+                        // A Responses web_search_call embeds the hosted result
+                        // sources in action.sources, so the paired result block
+                        // is consumed together with server_tool_use above.
+                        "web_search_tool_result" => {}
+
                         "thinking" | "redacted_thinking" => {
                             if let Some(reasoning_item) =
                                 openai_reasoning_item_from_anthropic_block(block)
@@ -1044,7 +1164,9 @@ fn convert_messages_to_input(messages: &[Value]) -> Result<Vec<Value>, ProxyErro
                     if !has_generated_follower {
                         input.remove(index);
                     }
-                } else if item_type == Some("function_call") || is_assistant_message {
+                } else if matches!(item_type, Some("function_call" | "web_search_call"))
+                    || is_assistant_message
+                {
                     has_generated_follower = true;
                 }
             }
@@ -1487,6 +1609,90 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"], json!({"type": "web_search"}));
         assert_eq!(result["include"], json!(["web_search_call.action.sources"]));
+    }
+
+    #[test]
+    fn test_anthropic_to_responses_replays_hosted_web_search_context() {
+        let input = json!({
+            "model": "gpt-5.6",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "server_tool_use",
+                            "id": "ws_previous",
+                            "name": "web_search_next_version",
+                            "input": {"queries": ["Rust ownership", "Rust borrowing"]},
+                            "caller": {"type": "direct"}
+                        },
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "ws_previous",
+                            "content": [
+                                {
+                                    "type": "web_search_result",
+                                    "url": "https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html",
+                                    "title": "Understanding Ownership",
+                                    "encrypted_content": "",
+                                    "page_age": null
+                                },
+                                {
+                                    "type": "web_search_result",
+                                    "url": "https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html",
+                                    "title": "Duplicate",
+                                    "encrypted_content": "",
+                                    "page_age": null
+                                }
+                            ],
+                            "caller": {"type": "direct"}
+                        },
+                        {"type": "text", "text": "Rust ownership is documented here."}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": "What did that source say about borrowing?"
+                }
+            ],
+            "tools": [{
+                "type": "web_search_20991231",
+                "name": "web_search_next_version"
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+        let replayed = result["input"].as_array().unwrap();
+
+        assert_eq!(
+            replayed[0],
+            json!({
+                "type": "web_search_call",
+                "id": "ws_previous",
+                "status": "completed",
+                "action": {
+                    "type": "search",
+                    "queries": ["Rust ownership", "Rust borrowing"],
+                    "sources": [{
+                        "type": "url",
+                        "url": "https://doc.rust-lang.org/book/ch04-00-understanding-ownership.html"
+                    }]
+                }
+            })
+        );
+        assert_eq!(replayed[1]["role"], "assistant");
+        assert_eq!(
+            replayed[1]["content"][0],
+            json!({
+                "type": "output_text",
+                "text": "Rust ownership is documented here."
+            })
+        );
+        assert_eq!(replayed[2]["role"], "user");
+        assert_eq!(
+            replayed[2]["content"][0]["text"],
+            "What did that source say about borrowing?"
+        );
     }
 
     #[test]
