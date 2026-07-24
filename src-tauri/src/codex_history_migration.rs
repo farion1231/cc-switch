@@ -743,9 +743,9 @@ pub fn list_codex_history_sessions(
     // Codex Desktop 现在以 state DB 为 thread/list 的主数据源；而 backfill_state=complete
     // 时不会再次全量扫描 JSONL。先以 rollout 为权威重建索引快照，避免旧 CCSM 修复只改
     // provider 后仍留下 has_user_event/preview/recency 缺失的“幽灵历史”。
-    let rollout_metadata = scan_rollout_thread_metadata(codex_dir)?;
+    let rollout_metadata = scan_rollout_thread_metadata(&codex_dir)?;
     let existing_ids: HashSet<String> = rows.iter().map(|row| row.id.clone()).collect();
-    let thread_rows_to_insert = rollout_metadata
+    let _thread_rows_to_insert = rollout_metadata
         .iter()
         .filter(|metadata| !existing_ids.contains(&metadata.id))
         .count();
@@ -892,9 +892,9 @@ pub fn read_codex_history_session(
     let conn = Connection::open(&active_db.path)
         .map_err(|e| AppError::Database(format!("open Codex active state DB failed: {e}")))?;
     let mut rows = load_codex_thread_history_rows(&conn)?;
-    let rollout_metadata = scan_rollout_thread_metadata(codex_dir)?;
+    let rollout_metadata = scan_rollout_thread_metadata(&codex_dir)?;
     let existing_ids: HashSet<String> = rows.iter().map(|row| row.id.clone()).collect();
-    let thread_rows_to_insert = rollout_metadata
+    let _thread_rows_to_insert = rollout_metadata
         .iter()
         .filter(|metadata| !existing_ids.contains(&metadata.id))
         .count();
@@ -1999,7 +1999,7 @@ fn apply_rollout_metadata_to_thread_row(
         .first_user_message
         .or_else(|| row.first_user_message.clone());
     row.has_user_event = Some(metadata.has_user_event as i64);
-    row.updated_at_ms = Some(row_updated_ms(&derived).max(row_updated_ms(row)));
+    row.updated_at_ms = Some(metadata.updated_at_ms.max(row_updated_ms(row)));
     row.updated_at = row.updated_at_ms.map(|value| value / 1000);
     row.archived = Some(metadata.archived as i64);
     before
