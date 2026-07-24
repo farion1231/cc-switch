@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Save } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
 import type { Provider } from "@/types";
@@ -104,8 +104,11 @@ export function EditProviderDialog({
             const live = (await vscodeApi.getLiveProviderSettings(
               appId,
             )) as Record<string, unknown>;
-            if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
+            // live 可能为 null 或非对象（例如 settings 文件内容是合法的 JSON null）。
+            // 这种情况下回退到数据库 SSOT，但仍必须置位 hasLoadedLive——否则表单会
+            // 永远卡在加载态，无法编辑/保存该供应商。
+            if (!cancelled) {
+              setLiveSettings(live && typeof live === "object" ? live : null);
               setHasLoadedLive(true);
             }
           } catch {
@@ -230,7 +233,7 @@ export function EditProviderDialog({
         <Button
           type="submit"
           form="provider-form"
-          disabled={isFormSubmitting}
+          disabled={isFormSubmitting || !hasLoadedLive}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Save className="h-4 w-4 mr-2" />
@@ -238,17 +241,28 @@ export function EditProviderDialog({
         </Button>
       }
     >
-      <ProviderForm
-        appId={appId}
-        providerId={provider.id}
-        submitLabel={t("common.save")}
-        onSubmit={handleSubmit}
-        onCancel={() => onOpenChange(false)}
-        onSubmittingChange={setIsFormSubmitting}
-        initialData={initialData}
-        showButtons={false}
-        isProxyTakeover={isProxyTakeover}
-      />
+      {/*
+        只在实时配置（live settings）解析完成后再挂载表单。
+        否则表单会先用数据库配置初始化，待 live 异步到达后再次触发 form.reset，
+        导致 API Key 等字段在打开瞬间闪烁/跳变（#4110）。
+      */}
+      {hasLoadedLive ? (
+        <ProviderForm
+          appId={appId}
+          providerId={provider.id}
+          submitLabel={t("common.save")}
+          onSubmit={handleSubmit}
+          onCancel={() => onOpenChange(false)}
+          onSubmittingChange={setIsFormSubmitting}
+          initialData={initialData}
+          showButtons={false}
+          isProxyTakeover={isProxyTakeover}
+        />
+      ) : (
+        <div className="flex items-center justify-center py-24">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
     </FullScreenPanel>
   );
 }
