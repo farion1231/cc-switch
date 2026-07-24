@@ -6,3 +6,9 @@ onlyBuiltDependencies:
 
 ignoredBuiltDependencies:
   - msw
+
+# pnpm 11+ build-script policy. Keep in sync with onlyBuiltDependencies /
+# ignoredBuiltDependencies above (esbuild is required for vite/vitest).
+allowBuilds:
+  esbuild: true
+  msw: false

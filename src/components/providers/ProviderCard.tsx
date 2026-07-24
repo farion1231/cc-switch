@@ -559,6 +559,7 @@ export function ProviderCard({
           <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
             <ProviderActions
               appId={appId}
+              providerId={provider.id}
               isCurrent={isCurrent}
               isInConfig={isInConfig}
               isTesting={isTesting}

@@ -6,6 +6,24 @@ use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, grokbuild, hermes, openclaw, opencode};
 
+use crate::app_config::AppType;
+use crate::codex_config::CodexTargetContext;
+use crate::settings::{get_managed_targets, ManagedTarget, ManagementState, TargetKind};
+use crate::target_inspection::WslTargetAdapter;
+
+/// Read-only access to sessions belonging to an explicit managed environment.
+pub struct SessionCatalog;
+
+impl SessionCatalog {
+    pub fn scan_target(target: &CodexTargetContext) -> Vec<SessionMeta> {
+        codex::scan_sessions_for_target(target)
+    }
+}
+
+/// Prefix for Codex session files that live inside WSL and are not mounted on
+/// the Windows host filesystem. Format: `wsl:{distro}:{user}:{absolute_path}`.
+pub const WSL_SESSION_SOURCE_PREFIX: &str = "wsl:";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -25,6 +43,11 @@ pub struct SessionMeta {
     pub source_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
+    /// Managed Target that owns this session when listed via target-aware APIs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,13 +107,103 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r6);
     sessions.extend(r7);
 
+    sort_sessions_by_activity(&mut sessions);
+    sessions
+}
+
+/// List Codex sessions for one Managed Target (Windows host path or WSL).
+/// Non-Codex apps are intentionally omitted: the Target selector is Codex-only.
+pub fn scan_sessions_for_managed_target(target_id: &str) -> Result<Vec<SessionMeta>, String> {
+    let target = managed_codex_target(target_id)?;
+    let mut sessions = match &target.kind {
+        TargetKind::LocalWindows => scan_local_codex_target(&target)?,
+        TargetKind::Wsl { .. } => scan_wsl_or_visible_codex_target(&target)?,
+    };
+    for session in &mut sessions {
+        session.target_id = Some(target.id.clone());
+        session.environment_label = Some(target.name.clone());
+    }
+    sort_sessions_by_activity(&mut sessions);
+    Ok(sessions)
+}
+
+fn managed_codex_target(target_id: &str) -> Result<ManagedTarget, String> {
+    let target = get_managed_targets()
+        .into_iter()
+        .find(|target| target.id == target_id)
+        .ok_or_else(|| format!("Managed Target '{target_id}' was not found"))?;
+    if target.app != AppType::Codex {
+        return Err("Session Target filtering currently supports Codex only".to_string());
+    }
+    if target.management_state != ManagementState::Managed {
+        return Err(format!(
+            "Managed Target '{}' is not currently managed",
+            target.id
+        ));
+    }
+    Ok(target)
+}
+
+fn scan_local_codex_target(target: &ManagedTarget) -> Result<Vec<SessionMeta>, String> {
+    let context = CodexTargetContext::new(&target.config_location.path);
+    Ok(SessionCatalog::scan_target(&context))
+}
+
+fn scan_wsl_or_visible_codex_target(target: &ManagedTarget) -> Result<Vec<SessionMeta>, String> {
+    if let Some(host_dir) = host_visible_codex_dir(target) {
+        return Ok(SessionCatalog::scan_target(&CodexTargetContext::new(
+            host_dir,
+        )));
+    }
+    WslTargetAdapter::default()
+        .scan_codex_sessions(target)
+        .map_err(|error| error.to_string())
+}
+
+/// Resolve a filesystem path the host process can open for a Managed Target.
+/// WSL targets prefer a directly visible Linux path (tests / nested mounts),
+/// then `\\wsl$\...` on Windows.
+fn host_visible_codex_dir(target: &ManagedTarget) -> Option<PathBuf> {
+    match &target.kind {
+        TargetKind::LocalWindows => {
+            let path = PathBuf::from(&target.config_location.path);
+            path.is_dir().then_some(path)
+        }
+        TargetKind::Wsl { distro, .. } => {
+            let linux = PathBuf::from(&target.config_location.path);
+            if linux.is_absolute() && linux.is_dir() {
+                return Some(linux);
+            }
+            #[cfg(windows)]
+            {
+                let unc = wsl_unc_path(distro, &target.config_location.path);
+                if unc.is_dir() {
+                    return Some(unc);
+                }
+            }
+            let _ = distro;
+            None
+        }
+    }
+}
+
+#[cfg(windows)]
+fn wsl_unc_path(distro: &str, linux_path: &str) -> PathBuf {
+    let relative = linux_path
+        .trim_start_matches('/')
+        .replace('/', std::path::MAIN_SEPARATOR_STR);
+    PathBuf::from(format!(
+        r"\\wsl$\{distro}{}{relative}",
+        std::path::MAIN_SEPARATOR
+    ))
+}
+
+fn sort_sessions_by_activity(sessions: &mut [SessionMeta]) {
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
-
-    sessions
 }
 
 pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<SessionMessage>, String> {
@@ -100,6 +213,15 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
     }
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::load_messages_sqlite(source_path);
+    }
+    if provider_id == "codex" {
+        if let Some((distro, user, linux_path)) = parse_wsl_session_source(source_path) {
+            let bytes = WslTargetAdapter::default()
+                .read_file_bytes(&distro, &user, &linux_path)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("WSL session file not found: {linux_path}"))?;
+            return codex::load_messages_from_bytes(&bytes);
+        }
     }
 
     let path = Path::new(source_path);
@@ -127,9 +249,32 @@ pub fn delete_session(
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::delete_session_sqlite(session_id, source_path);
     }
+    if provider_id == "codex" {
+        if let Some((distro, user, linux_path)) = parse_wsl_session_source(source_path) {
+            return WslTargetAdapter::default()
+                .delete_codex_session_file(&distro, &user, &linux_path, session_id)
+                .map_err(|error| error.to_string());
+        }
+    }
 
     let roots = provider_roots(provider_id)?;
     delete_session_with_roots(provider_id, session_id, Path::new(source_path), &roots)
+}
+
+pub fn parse_wsl_session_source(source_path: &str) -> Option<(String, String, String)> {
+    let rest = source_path.strip_prefix(WSL_SESSION_SOURCE_PREFIX)?;
+    let mut parts = rest.splitn(3, ':');
+    let distro = parts.next()?.to_string();
+    let user = parts.next()?.to_string();
+    let path = parts.next()?.to_string();
+    if distro.is_empty() || user.is_empty() || !path.starts_with('/') {
+        return None;
+    }
+    Some((distro, user, path))
+}
+
+pub fn encode_wsl_session_source(distro: &str, user: &str, linux_path: &str) -> String {
+    format!("{WSL_SESSION_SOURCE_PREFIX}{distro}:{user}:{linux_path}")
 }
 
 pub fn delete_sessions(requests: &[DeleteSessionRequest]) -> Vec<DeleteSessionOutcome> {
@@ -196,7 +341,27 @@ fn delete_session_with_roots(
 
 fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
     let roots = match provider_id {
-        "codex" => codex::session_roots(),
+        "codex" => {
+            let mut roots = codex::session_roots();
+            // Allow deletes against any Managed Target directory currently
+            // visible to the host (Windows paths and mounted WSL UNC paths).
+            for target in get_managed_targets() {
+                if target.app != AppType::Codex
+                    || target.management_state != ManagementState::Managed
+                {
+                    continue;
+                }
+                if let Some(dir) = host_visible_codex_dir(&target) {
+                    let context = CodexTargetContext::new(dir);
+                    for root in context.session_roots() {
+                        if !roots.iter().any(|existing| existing == &root) {
+                            roots.push(root);
+                        }
+                    }
+                }
+            }
+            roots
+        }
         "claude" => vec![crate::config::get_claude_config_dir().join("projects")],
         "opencode" => vec![opencode::get_opencode_data_dir()],
         "openclaw" => vec![crate::openclaw_config::get_openclaw_dir().join("agents")],

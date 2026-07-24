@@ -10,6 +10,19 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
     Ok(sessions)
 }
 
+/// List Codex sessions for one Managed Target (Windows or WSL).
+#[tauri::command]
+pub async fn list_sessions_for_managed_target(
+    targetId: String,
+) -> Result<Vec<session_manager::SessionMeta>, String> {
+    let target_id = targetId;
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::scan_sessions_for_managed_target(&target_id)
+    })
+    .await
+    .map_err(|e| format!("Failed to scan target sessions: {e}"))?
+}
+
 #[tauri::command]
 pub async fn get_session_messages(
     providerId: String,

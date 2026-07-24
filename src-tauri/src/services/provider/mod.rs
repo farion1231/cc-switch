@@ -13,11 +13,12 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::codex_config::{CodexTargetContext, CodexTargetLiveSnapshot};
 use crate::database::{validate_cost_multiplier, validate_pricing_source};
 use crate::error::AppError;
 use crate::provider::{Provider, UsageResult};
 use crate::services::mcp::McpService;
-use crate::settings::CustomEndpoint;
+use crate::settings::{CustomEndpoint, ManagedTarget, ManagementState};
 use crate::store::AppState;
 
 // Re-export sub-module functions for external access
@@ -2415,6 +2416,15 @@ impl ProviderService {
         }
 
         // For other apps: Check both local settings and database
+        if crate::settings::get_managed_targets().iter().any(|target| {
+            target.app == app_type && target.current_provider_id.as_deref() == Some(id)
+        }) {
+            return Err(AppError::localized(
+                "error.providerUsedByManagedTarget",
+                "无法删除仍被受管环境使用的供应商",
+                "Cannot delete a provider that is still used by a managed target",
+            ));
+        }
         let local_current = crate::settings::get_current_provider(&app_type);
         let db_current = state.db.get_current_provider(app_type.as_str())?;
 
@@ -2589,6 +2599,242 @@ impl ProviderService {
 
         // Normal mode: full switch with Live config write
         Self::switch_normal(state, app_type, id, &providers)
+    }
+
+    /// Apply a Provider to one explicit Codex target without changing the
+    /// process-global current Provider. Target-level current state is persisted
+    /// by the managed-target layer introduced separately from this write seam.
+    pub fn switch_target(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+        target: &CodexTargetContext,
+    ) -> Result<SwitchResult, AppError> {
+        if !matches!(app_type, AppType::Codex) {
+            return Err(AppError::Message(
+                "Explicit target switching currently supports Codex only".to_string(),
+            ));
+        }
+
+        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let provider = providers
+            .get(id)
+            .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+
+        live::write_codex_target_with_common_config(state.db.as_ref(), provider, target)?;
+        Ok(SwitchResult::default())
+    }
+
+    pub fn switch_managed_target(
+        state: &AppState,
+        provider_id: &str,
+        target: &ManagedTarget,
+    ) -> Result<SwitchResult, AppError> {
+        let registered_target = crate::settings::get_managed_targets()
+            .into_iter()
+            .find(|registered| registered.id == target.id)
+            .ok_or_else(|| {
+                AppError::Message(format!("Managed Target '{}' is not registered", target.id))
+            })?;
+
+        if registered_target.app != AppType::Codex {
+            return Err(AppError::Message(
+                "Managed Target switching currently supports Codex only".to_string(),
+            ));
+        }
+        if registered_target.management_state != ManagementState::Managed {
+            return Err(AppError::Message(format!(
+                "Managed Target '{}' is not currently managed",
+                registered_target.id
+            )));
+        }
+
+        if matches!(
+            registered_target.kind,
+            crate::settings::TargetKind::Wsl { .. }
+        ) {
+            Self::switch_wsl_managed_target_with_adapter(
+                state,
+                provider_id,
+                &registered_target.id,
+                &crate::target_inspection::WslTargetAdapter::default(),
+            )?;
+            return Ok(SwitchResult::default());
+        }
+
+        let context = CodexTargetContext::new(&registered_target.config_location.path);
+        let snapshot = CodexTargetLiveSnapshot::capture(&context)?;
+        let provider = state
+            .db
+            .get_provider_by_id(provider_id, AppType::Codex.as_str())?
+            .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+        let desired = live::build_codex_target_provider_projection(state.db.as_ref(), &provider)?;
+        let live_config = match std::fs::read_to_string(context.config_path()) {
+            Ok(config) => config,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(AppError::io(context.config_path(), error)),
+        };
+        let projected =
+            crate::codex_config::project_codex_provider_config(&live_config, &desired.config_text)?;
+        let apply_result = match desired.model_catalog.as_deref() {
+            Some(catalog) => crate::config::atomic_write(&context.model_catalog_path(), catalog)
+                .and_then(|_| {
+                    crate::codex_config::write_codex_live_config_atomic_for_target(
+                        &context,
+                        Some(&projected),
+                    )
+                }),
+            None => crate::codex_config::write_codex_live_config_atomic_for_target(
+                &context,
+                Some(&projected),
+            )
+            .and_then(|_| {
+                let path = context.model_catalog_path();
+                if path.exists() {
+                    crate::config::delete_file(&path)
+                } else {
+                    Ok(())
+                }
+            }),
+        };
+        if let Err(error) = apply_result {
+            if let Err(rollback_error) = snapshot.restore() {
+                log::error!(
+                    "Managed Target '{}' live write failed and rollback also failed: {rollback_error}",
+                    registered_target.id
+                );
+            }
+            return Err(error);
+        }
+        if let Err(error) = crate::settings::set_managed_target_current_provider(
+            &registered_target.id,
+            Some(provider_id),
+        ) {
+            snapshot.restore().map_err(|rollback_error| {
+                AppError::Message(format!(
+                    "Target state commit failed: {error}; live rollback failed: {rollback_error}"
+                ))
+            })?;
+            return Err(error);
+        }
+        Ok(SwitchResult::default())
+    }
+
+    pub fn switch_wsl_managed_target_with_adapter(
+        state: &AppState,
+        provider_id: &str,
+        target_id: &str,
+        adapter: &crate::target_inspection::WslTargetAdapter,
+    ) -> Result<ManagedTarget, AppError> {
+        let target = crate::settings::get_managed_targets()
+            .into_iter()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| {
+                AppError::Message(format!("Managed Target '{target_id}' is not registered"))
+            })?;
+        if target.app != AppType::Codex
+            || !matches!(target.kind, crate::settings::TargetKind::Wsl { .. })
+        {
+            return Err(AppError::Message(
+                "WSL Provider switching requires a Codex WSL Target".to_string(),
+            ));
+        }
+        if target.management_state != ManagementState::Managed {
+            return Err(AppError::Message(format!(
+                "Managed Target '{}' is not currently managed",
+                target.id
+            )));
+        }
+        let provider = state
+            .db
+            .get_provider_by_id(provider_id, AppType::Codex.as_str())?
+            .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+        let desired = live::build_codex_target_provider_projection(state.db.as_ref(), &provider)?;
+        let snapshot = adapter.apply_provider_config(
+            &target,
+            &desired.config_text,
+            desired.model_catalog.as_deref(),
+        )?;
+        if let Err(error) =
+            crate::settings::set_managed_target_current_provider(&target.id, Some(provider_id))
+        {
+            adapter
+                .restore_provider_config(&target, &snapshot)
+                .map_err(|rollback_error| {
+                    AppError::Message(format!(
+                        "Target state commit failed: {error}; WSL live rollback failed: {rollback_error}"
+                    ))
+                })?;
+            return Err(error);
+        }
+        crate::settings::get_managed_targets()
+            .into_iter()
+            .find(|candidate| candidate.id == target.id)
+            .ok_or_else(|| {
+                AppError::Message(format!(
+                    "Managed Target '{}' disappeared after state commit",
+                    target.id
+                ))
+            })
+    }
+
+    /// Perform the explicit first activation of an Unmanaged WSL Target.
+    /// Live config is projected before local state becomes Managed; a failed
+    /// state commit restores the exact previous WSL config bytes.
+    pub fn activate_wsl_managed_target_with_adapter(
+        state: &AppState,
+        target_id: &str,
+        adapter: &crate::target_inspection::WslTargetAdapter,
+    ) -> Result<ManagedTarget, AppError> {
+        let target = crate::settings::get_managed_targets()
+            .into_iter()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| {
+                AppError::Message(format!("Managed Target '{target_id}' is not registered"))
+            })?;
+        if target.app != AppType::Codex
+            || !matches!(target.kind, crate::settings::TargetKind::Wsl { .. })
+        {
+            return Err(AppError::Message(
+                "First WSL activation requires a Codex WSL Target".to_string(),
+            ));
+        }
+        if target.management_state != ManagementState::Unmanaged {
+            return Err(AppError::Message(format!(
+                "Managed Target '{}' is not Unmanaged",
+                target.id
+            )));
+        }
+        let provider_id = target.current_provider_id.as_deref().ok_or_else(|| {
+            AppError::Message(format!(
+                "Managed Target '{}' has no linked Provider",
+                target.id
+            ))
+        })?;
+        let provider = state
+            .db
+            .get_provider_by_id(provider_id, AppType::Codex.as_str())?
+            .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
+        let desired = live::build_codex_target_provider_projection(state.db.as_ref(), &provider)?;
+        let snapshot = adapter.apply_provider_config(
+            &target,
+            &desired.config_text,
+            desired.model_catalog.as_deref(),
+        )?;
+
+        match crate::settings::activate_managed_target(&target.id, provider_id) {
+            Ok(activated) => Ok(activated),
+            Err(error) => {
+                adapter
+                    .restore_provider_config(&target, &snapshot)
+                    .map_err(|rollback_error| {
+                        AppError::Message(format!(
+                            "Target state commit failed: {error}; WSL live rollback failed: {rollback_error}"
+                        ))
+                    })?;
+                Err(error)
+            }
+        }
     }
 
     /// Normal switch flow (non-proxy mode)

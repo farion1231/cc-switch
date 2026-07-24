@@ -34,13 +34,18 @@ mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod target_history_migration;
+mod target_inspection;
 
 mod tray;
 mod usage_events;
 mod usage_script;
 
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
-pub use codex_config::{get_codex_auth_path, get_codex_config_path, write_codex_live_atomic};
+pub use codex_config::{
+    get_codex_auth_path, get_codex_config_path, project_codex_provider_config,
+    write_codex_live_atomic, CodexTargetContext,
+};
 pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
@@ -64,8 +69,19 @@ pub use services::{
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
-pub use settings::{update_settings, AppSettings};
+pub use session_manager::{scan_sessions_for_managed_target, SessionCatalog, SessionMeta};
+pub use settings::{
+    activate_managed_target, get_current_provider as get_local_current_provider,
+    get_managed_targets, register_managed_target, set_managed_target_provider_link,
+    update_settings, AppSettings, ConfigLocation, ManagedTarget, ManagementState, TargetKind,
+    TargetOverride,
+};
 pub use store::AppState;
+pub use target_history_migration::{CodexTargetHistoryManager, TargetHistoryMigrationResult};
+pub use target_inspection::{
+    TargetArtifactState, TargetInspection, WindowsTargetInspector, WslConfigSnapshot,
+    WslTargetAdapter, WslTargetDiscovery,
+};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -464,7 +480,12 @@ pub fn run() {
             let _ = app_store::refresh_app_config_dir_override(app.handle());
 
             #[cfg(target_os = "windows")]
-            set_windows_app_user_model_id(app.handle());
+            {
+                set_windows_app_user_model_id(app.handle());
+                if let Err(error) = crate::settings::migrate_legacy_codex_target_if_needed() {
+                    log::warn!("迁移旧 Codex 配置目录为 Managed Target 失败: {error}");
+                }
+            }
 
             // 注册 Updater 插件（桌面端）；放在 logger 之后，确保失败可诊断。
             #[cfg(desktop)]
@@ -1338,6 +1359,15 @@ pub fn run() {
             commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
+            commands::listManagedTargets,
+            commands::inspectManagedTarget,
+            commands::discoverWslTargets,
+            commands::registerDiscoveredWslTarget,
+            commands::linkManagedTargetProvider,
+            commands::activateWslManagedTarget,
+            commands::switchManagedTargetProvider,
+            commands::migrateManagedTargetCodexHistory,
+            commands::restoreManagedTargetCodexHistory,
             commands::save_settings,
             commands::has_codex_unify_history_backup,
             commands::restore_codex_unified_history,
@@ -1534,6 +1564,7 @@ pub fn run() {
             commands::save_stream_check_config,
             // Session manager
             commands::list_sessions,
+            commands::list_sessions_for_managed_target,
             commands::get_session_messages,
             commands::delete_session,
             commands::delete_sessions,

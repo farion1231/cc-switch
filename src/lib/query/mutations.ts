@@ -275,16 +275,30 @@ export const useDeleteProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useSwitchProviderMutation = (appId: AppId) => {
+export const useSwitchProviderMutation = (
+  appId: AppId,
+  managedTargetId?: string,
+) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   return useMutation({
+    mutationKey: ["switch-provider", appId],
     mutationFn: async (providerId: string): Promise<SwitchResult> => {
+      if (appId === "codex" && managedTargetId) {
+        await settingsApi.switchManagedTargetProvider(
+          managedTargetId,
+          providerId,
+        );
+        return { warnings: [] };
+      }
       return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "codex" && managedTargetId) {
+        await queryClient.invalidateQueries({ queryKey: ["managed-targets"] });
+      }
       if (appId === "claude-desktop") {
         await queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
         await queryClient.invalidateQueries({

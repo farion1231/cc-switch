@@ -48,6 +48,9 @@ fn merge_settings_for_save(
     // 开关）后、前端 query 缓存刷新前的一次全量保存会把旧 marker 重放回来，
     // 重新开启时被"复活"的标记挡住而漏迁。
     incoming.local_migrations = existing.local_migrations.clone();
+    // Managed Targets 由独立的 Environment 管理接口维护。旧前端的通用
+    // settings payload 不包含该字段，不能用反序列化后的空数组覆盖本地状态。
+    incoming.managed_targets = existing.managed_targets.clone();
     incoming
 }
 
@@ -55,6 +58,232 @@ fn merge_settings_for_save(
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
+}
+
+/// List device-local Managed Targets. Target state is intentionally exposed by
+/// a dedicated command so the generic settings save path cannot mutate it.
+#[tauri::command]
+pub async fn listManagedTargets() -> Result<Vec<crate::settings::ManagedTarget>, String> {
+    Ok(crate::settings::get_managed_targets())
+}
+
+fn managed_target_by_id(target_id: &str) -> Result<crate::settings::ManagedTarget, String> {
+    crate::settings::get_managed_targets()
+        .into_iter()
+        .find(|target| target.id == target_id)
+        .ok_or_else(|| format!("Managed Target '{target_id}' not found"))
+}
+
+/// Inspect a registered Target by stable ID. The caller cannot supply or
+/// override the filesystem path; it is always resolved from local settings.
+#[tauri::command]
+pub async fn inspectManagedTarget(
+    target_id: String,
+) -> Result<crate::target_inspection::TargetInspection, String> {
+    let target = managed_target_by_id(&target_id)?;
+
+    match target.kind {
+        crate::settings::TargetKind::LocalWindows => {
+            crate::target_inspection::WindowsTargetInspector::inspect(&target)
+                .map_err(|error| error.to_string())
+        }
+        crate::settings::TargetKind::Wsl { .. } => {
+            crate::target_inspection::WslTargetAdapter::default()
+                .inspect(&target)
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
+/// Discover WSL distributions and their default user's Codex directory.
+/// Discovery is read-only and is intentionally available only on Windows.
+#[tauri::command]
+pub async fn discoverWslTargets(
+) -> Result<Vec<crate::target_inspection::WslTargetDiscovery>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return tauri::async_runtime::spawn_blocking(|| {
+            crate::target_inspection::WslTargetAdapter::default().discover()
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("WSL discovery is only available in the Windows build".to_string())
+    }
+}
+
+/// Register one freshly discovered WSL environment as Unmanaged. Only the
+/// distro name crosses the frontend seam; user and path are re-discovered here.
+#[tauri::command]
+pub async fn registerDiscoveredWslTarget(
+    distro: String,
+) -> Result<crate::settings::ManagedTarget, String> {
+    let distro = distro.trim().to_string();
+    if distro.is_empty() {
+        return Err("WSL distro must not be empty".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let requested_distro = distro.clone();
+        let discoveries = tauri::async_runtime::spawn_blocking(|| {
+            crate::target_inspection::WslTargetAdapter::default().discover()
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+        let discovery = discoveries
+            .into_iter()
+            .find(|candidate| candidate.distro == requested_distro)
+            .ok_or_else(|| format!("WSL distro '{requested_distro}' was not discovered"))?;
+        if !discovery.reachable || !discovery.codex_config_present {
+            return Err(format!(
+                "WSL distro '{requested_distro}' is offline or has no Codex config directory"
+            ));
+        }
+        let user = discovery
+            .user
+            .ok_or_else(|| format!("Cannot resolve default user for '{requested_distro}'"))?;
+        let config_path = discovery
+            .config_path
+            .ok_or_else(|| format!("Cannot resolve Codex config path for '{requested_distro}'"))?;
+        let target = crate::settings::ManagedTarget {
+            id: format!("codex-wsl-{}", uuid::Uuid::new_v4()),
+            app: crate::app_config::AppType::Codex,
+            name: format!("{requested_distro} · {user}"),
+            kind: crate::settings::TargetKind::Wsl {
+                distro: requested_distro,
+                user,
+            },
+            config_location: crate::settings::ConfigLocation { path: config_path },
+            current_provider_id: None,
+            management_state: crate::settings::ManagementState::Unmanaged,
+            provider_overrides: Default::default(),
+            last_viewed_at: None,
+        };
+        return crate::settings::register_managed_target(target).map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = distro;
+        Err("WSL Target registration is only available in the Windows build".to_string())
+    }
+}
+
+/// Link a registered Target to an existing shared Provider definition without
+/// taking over the Target or writing live configuration.
+#[tauri::command]
+pub async fn linkManagedTargetProvider(
+    state: tauri::State<'_, crate::store::AppState>,
+    target_id: String,
+    provider_id: Option<String>,
+) -> Result<crate::settings::ManagedTarget, String> {
+    let target = managed_target_by_id(&target_id)?;
+    if target.app != crate::app_config::AppType::Codex {
+        return Err("Provider linking currently supports Codex Targets only".to_string());
+    }
+
+    let provider_id = provider_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|provider_id| !provider_id.is_empty())
+        .map(str::to_string);
+    if let Some(provider_id) = &provider_id {
+        let exists = state
+            .db
+            .get_provider_by_id(provider_id, target.app.as_str())
+            .map_err(|error| error.to_string())?
+            .is_some();
+        if !exists {
+            return Err(format!(
+                "Provider '{provider_id}' does not exist for {}",
+                target.app.as_str()
+            ));
+        }
+    }
+
+    crate::settings::set_managed_target_provider_link(&target_id, provider_id.as_deref())
+        .map_err(|error| error.to_string())
+}
+
+/// Explicitly take over a linked WSL Target after projecting the Provider-owned
+/// fields. Session history, auth.json and Target-owned config fields are not
+/// modified.
+#[tauri::command]
+pub async fn activateWslManagedTarget(
+    state: tauri::State<'_, crate::store::AppState>,
+    target_id: String,
+) -> Result<crate::settings::ManagedTarget, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return crate::services::ProviderService::activate_wsl_managed_target_with_adapter(
+            state.inner(),
+            &target_id,
+            &crate::target_inspection::WslTargetAdapter::default(),
+        )
+        .map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (state, target_id);
+        Err("WSL Target activation is only available in the Windows build".to_string())
+    }
+}
+
+/// Switch exactly one registered Managed Target. The process-global Provider
+/// and every other Target remain unchanged.
+#[tauri::command]
+pub async fn switchManagedTargetProvider(
+    state: tauri::State<'_, crate::store::AppState>,
+    target_id: String,
+    provider_id: String,
+) -> Result<crate::settings::ManagedTarget, String> {
+    let target = managed_target_by_id(&target_id)?;
+    crate::services::ProviderService::switch_managed_target(
+        state.inner(),
+        provider_id.trim(),
+        &target,
+    )
+    .map_err(|error| error.to_string())?;
+    crate::settings::get_managed_targets()
+        .into_iter()
+        .find(|candidate| candidate.id == target_id)
+        .ok_or_else(|| format!("Managed Target '{target_id}' disappeared after switching"))
+}
+
+/// Normalize one selected Target's existing Codex history into the shared
+/// `custom` session bucket. The Target path is resolved from local settings;
+/// callers cannot inject an arbitrary filesystem location.
+#[tauri::command]
+pub async fn migrateManagedTargetCodexHistory(
+    target_id: String,
+) -> Result<crate::target_history_migration::TargetHistoryMigrationResult, String> {
+    let target = managed_target_by_id(&target_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::target_history_migration::CodexTargetHistoryManager::default().migrate(&target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
+}
+
+/// Precisely restore labels changed by the selected Target's explicit history
+/// migration. Sessions created in `custom` have no ledger entry and remain
+/// untouched.
+#[tauri::command]
+pub async fn restoreManagedTargetCodexHistory(
+    target_id: String,
+) -> Result<crate::target_history_migration::TargetHistoryMigrationResult, String> {
+    let target = managed_target_by_id(&target_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::target_history_migration::CodexTargetHistoryManager::default().restore(&target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
 }
 
 /// 保存设置
@@ -317,9 +546,10 @@ mod tests {
     use super::merge_settings_for_save;
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
-        CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
-        WebDavSyncSettings,
+        CodexThirdPartyHistoryProviderBucketMigration, ConfigLocation, LocalMigrations,
+        ManagedTarget, ManagementState, S3SyncSettings, TargetKind, WebDavSyncSettings,
     };
+    use crate::AppType;
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -341,6 +571,31 @@ mod tests {
             merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
             Some("https://dav.example.com")
         );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_backend_managed_targets() {
+        let target = ManagedTarget {
+            id: "windows-codex".to_string(),
+            app: AppType::Codex,
+            name: "Windows Codex".to_string(),
+            kind: TargetKind::LocalWindows,
+            config_location: ConfigLocation {
+                path: r"C:\Users\M1kasa\.codex".to_string(),
+            },
+            current_provider_id: Some("provider-a".to_string()),
+            management_state: ManagementState::Managed,
+            provider_overrides: Default::default(),
+            last_viewed_at: None,
+        };
+        let existing = AppSettings {
+            managed_targets: vec![target],
+            ..AppSettings::default()
+        };
+
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+
+        assert_eq!(merged.managed_targets, existing.managed_targets);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::app_config::AppType;
-use crate::codex_config::{get_codex_auth_path, get_codex_config_path};
+use crate::codex_config::{get_codex_auth_path, get_codex_config_path, CodexTargetContext};
 use crate::config::{delete_file, get_claude_settings_path, read_json_file, write_json_file};
 use crate::database::Database;
 use crate::error::AppError;
@@ -715,6 +715,71 @@ pub(crate) fn write_live_with_common_config(
     }
 
     write_live_snapshot(app_type, &effective_provider)
+}
+
+pub(crate) fn write_codex_target_with_common_config(
+    db: &Database,
+    provider: &Provider,
+    target: &CodexTargetContext,
+) -> Result<(), AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, &AppType::Codex, provider)?;
+
+    let settings = effective_provider
+        .settings_config
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+    let auth = settings
+        .get("auth")
+        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+    let config_text = settings.get("config").and_then(Value::as_str);
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&effective_provider);
+
+    crate::codex_config::write_codex_provider_live_with_catalog_for_target(
+        target,
+        &effective_provider.settings_config,
+        effective_provider.category.as_deref(),
+        auth,
+        config_text,
+        profile,
+    )
+}
+
+pub(crate) fn build_codex_target_provider_projection(
+    db: &Database,
+    provider: &Provider,
+) -> Result<crate::codex_config::CodexProviderProjection, AppError> {
+    let mut effective_provider = provider.clone();
+    effective_provider.settings_config =
+        build_effective_settings_with_common_config(db, &AppType::Codex, provider)?;
+    let settings = effective_provider
+        .settings_config
+        .as_object()
+        .ok_or_else(|| AppError::Config("Codex 供应商配置必须是 JSON 对象".to_string()))?;
+    let auth = settings
+        .get("auth")
+        .ok_or_else(|| AppError::Config("Codex 供应商配置缺少 'auth' 字段".to_string()))?;
+    let config_text = settings.get("config").and_then(Value::as_str).unwrap_or("");
+    let config_text = crate::codex_config::normalize_codex_managed_provider_config(
+        &effective_provider.name,
+        effective_provider.category.as_deref(),
+        config_text,
+    )?;
+    let config_text = if effective_provider.category.as_deref() == Some("official")
+        && crate::settings::unify_codex_session_history()
+    {
+        crate::codex_config::inject_codex_unified_session_bucket(&config_text)?
+    } else {
+        config_text
+    };
+    let profile = crate::proxy::providers::resolve_codex_catalog_tool_profile(&effective_provider);
+    crate::codex_config::prepare_codex_provider_projection(
+        &effective_provider.settings_config,
+        auth,
+        &config_text,
+        profile,
+    )
 }
 
 pub(crate) fn strip_common_config_from_live_settings(

@@ -71,6 +71,11 @@ export function SessionItem({
         className="min-w-0 flex-1 text-left"
       >
         <div className="flex items-center gap-2 mb-1">
+          {session.environmentLabel ? (
+            <span className="shrink-0 rounded border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {session.environmentLabel}
+            </span>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="shrink-0">
