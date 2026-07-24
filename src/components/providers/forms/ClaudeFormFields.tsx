@@ -152,6 +152,10 @@ interface ClaudeFormFieldsProps {
   isFullUrl: boolean;
   onFullUrlChange: (value: boolean) => void;
 
+  // Skip reasoning_effort injection (for upstreams rejecting it with tools)
+  suppressReasoningEffort: boolean;
+  onSuppressReasoningEffortChange: (value: boolean) => void;
+
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
@@ -218,6 +222,8 @@ export function ClaudeFormFields({
   onApiKeyFieldChange,
   isFullUrl,
   onFullUrlChange,
+  suppressReasoningEffort,
+  onSuppressReasoningEffortChange,
   customUserAgent,
   onCustomUserAgentChange,
   localProxyHeadersOverride,
@@ -857,6 +863,27 @@ export function ClaudeFormFields({
                     defaultValue: "选择供应商 API 的输入格式",
                   })}
                 </p>
+                {apiFormat === "openai_chat" && (
+                  <div className="space-y-1 pt-1">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={suppressReasoningEffort}
+                        onCheckedChange={(checked) =>
+                          onSuppressReasoningEffortChange(checked === true)
+                        }
+                      />
+                      {t("providerForm.suppressReasoningEffort", {
+                        defaultValue: "不注入 reasoning_effort",
+                      })}
+                    </label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("providerForm.suppressReasoningEffortHint", {
+                        defaultValue:
+                          "部分端点（如 Azure gpt-5.5/5.6）拒绝 reasoning_effort 与 tools 同时使用，开启后转换时跳过注入该字段",
+                      })}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

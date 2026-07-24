@@ -1097,6 +1097,8 @@
     "anthropicSmallFastModel": "Fast Model",
     "apiFormat": "API Format",
     "apiFormatHint": "Select the input format for the provider's API",
+    "suppressReasoningEffort": "Do not inject reasoning_effort",
+    "suppressReasoningEffortHint": "Some endpoints (e.g. Azure gpt-5.5/5.6) reject reasoning_effort together with tools; when enabled, the conversion skips injecting this field",
     "customUserAgent": "Custom User-Agent",
     "customUserAgentHint": "Only takes effect when local routing/proxy takeover is enabled; replaces the User-Agent in requests forwarded to the provider API.",
     "customUserAgentInvalid": "User-Agent must not contain control characters (e.g. line breaks); otherwise it will be ignored.",

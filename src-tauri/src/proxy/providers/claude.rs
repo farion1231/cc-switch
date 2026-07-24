@@ -431,9 +431,18 @@ pub fn transform_claude_request_for_api_format(
         "openai_chat" => {
             let preserve_reasoning_content =
                 should_preserve_reasoning_content_for_openai_chat(provider, &body);
+            // Some upstreams (e.g. Azure OpenAI gpt-5.5 / gpt-5.6-*) reject
+            // reasoning_effort together with tools on Chat Completions;
+            // the per-provider flag lets users skip the injection.
+            let suppress_reasoning_effort = provider
+                .meta
+                .as_ref()
+                .and_then(|m| m.suppress_reasoning_effort)
+                .unwrap_or(false);
             let mut result = super::transform::anthropic_to_openai_with_reasoning_content(
                 body,
                 preserve_reasoning_content,
+                suppress_reasoning_effort,
             )?;
             // Inject prompt_cache_key only if explicitly configured in meta
             if let Some(key) = provider
