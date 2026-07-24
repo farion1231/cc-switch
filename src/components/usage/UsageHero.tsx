@@ -29,6 +29,7 @@ import {
   type UsageSummary,
   type UsageSummaryByApp,
 } from "@/types/usage";
+import { UsageHeatmap } from "./UsageHeatmap";
 
 interface UsageHeroProps {
   range: UsageRangeSelection;
@@ -224,16 +225,6 @@ export function UsageHero({
           : undefined,
   };
 
-  if (isLoading) {
-    return (
-      <Card className="border border-border/50 bg-card/40 backdrop-blur-sm">
-        <CardContent className="flex items-center justify-center min-h-[200px]">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
-        </CardContent>
-      </Card>
-    );
-  }
-
   const hitPercent = Math.max(0, Math.min(100, hitRate * 100));
   const hitPercentLabel = hitPercent.toFixed(hitPercent >= 99.95 ? 0 : 1);
 
@@ -245,117 +236,133 @@ export function UsageHero({
     >
       <Card className="relative overflow-hidden border border-border/50 bg-card/60 backdrop-blur-xl shadow-sm">
         <CardContent className="p-4 md:p-5">
-          <div className="flex flex-col gap-4">
-            {/* Top row: Main Token Count, Requests, Cost */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className={cn(
-                    "p-2.5 rounded-xl bg-gradient-to-br shadow-sm",
-                    titleTheme.iconBg,
-                  )}
-                >
-                  <AppGlyph appType={appType} accentClass={titleTheme.accent} />
-                </div>
-                <div>
-                  <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-0.5">
-                    {appLabel && (
-                      <>
-                        <span
-                          className={cn("font-semibold", titleTheme.accent)}
-                        >
-                          {appLabel}
-                        </span>
-                        <span className="text-muted-foreground/30">•</span>
-                      </>
+          {isLoading ? (
+            <div className="flex min-h-[200px] items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/50" />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4 pb-4">
+              {/* Top row: Main Token Count, Requests, Cost */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className={cn(
+                      "p-2.5 rounded-xl bg-gradient-to-br shadow-sm",
+                      titleTheme.iconBg,
                     )}
-                    {t("usage.realTotal", "真实消耗 Tokens")}
+                  >
+                    <AppGlyph
+                      appType={appType}
+                      accentClass={titleTheme.accent}
+                    />
                   </div>
-                  <div className="flex items-baseline gap-2">
-                    <span
-                      className="text-2xl md:text-3xl font-bold tabular-nums tracking-tight leading-none"
-                      title={realTotal.toLocaleString()}
-                    >
-                      {realTotal.toLocaleString()}
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mb-0.5">
+                      {appLabel && (
+                        <>
+                          <span
+                            className={cn("font-semibold", titleTheme.accent)}
+                          >
+                            {appLabel}
+                          </span>
+                          <span className="text-muted-foreground/30">•</span>
+                        </>
+                      )}
+                      {t("usage.realTotal", "真实消耗 Tokens")}
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className="text-2xl md:text-3xl font-bold tabular-nums tracking-tight leading-none"
+                        title={realTotal.toLocaleString()}
+                      >
+                        {realTotal.toLocaleString()}
+                      </span>
+                      <span className="text-xs text-muted-foreground font-medium bg-muted/40 px-1.5 py-0.5 rounded-md">
+                        ≈ {formatTokensShort(realTotal, lang, 2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-5 bg-background/50 px-4 py-2.5 rounded-xl border border-border/40 shadow-sm">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+                      {t("usage.totalRequests")}
                     </span>
-                    <span className="text-xs text-muted-foreground font-medium bg-muted/40 px-1.5 py-0.5 rounded-md">
-                      ≈ {formatTokensShort(realTotal, lang, 2)}
+                    <span className="font-semibold flex items-center gap-1.5 text-sm tabular-nums">
+                      <Activity className="h-3.5 w-3.5 text-blue-500" />
+                      {requests.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="w-px h-8 bg-border/60" />
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+                      {t("usage.totalCost")}
+                    </span>
+                    <span className="font-semibold text-green-500 text-sm tabular-nums">
+                      {totalCost == null ? "--" : fmtUsd(totalCost, 4)}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-5 bg-background/50 px-4 py-2.5 rounded-xl border border-border/40 shadow-sm">
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                    {t("usage.totalRequests")}
-                  </span>
-                  <span className="font-semibold flex items-center gap-1.5 text-sm tabular-nums">
-                    <Activity className="h-3.5 w-3.5 text-blue-500" />
-                    {requests.toLocaleString()}
-                  </span>
-                </div>
-                <div className="w-px h-8 bg-border/60" />
-                <div className="flex flex-col">
-                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
-                    {t("usage.totalCost")}
-                  </span>
-                  <span className="font-semibold text-green-500 text-sm tabular-nums">
-                    {totalCost == null ? "--" : fmtUsd(totalCost, 4)}
-                  </span>
+              {/* Bottom row: Breakdown and Hit Rate */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                <MiniStat
+                  icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
+                  label={t("usage.freshInput", "新增输入")}
+                  value={formatTokensShort(input, lang)}
+                  accent="text-blue-500"
+                />
+                <MiniStat
+                  icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
+                  label={t("usage.output")}
+                  value={formatTokensShort(output, lang)}
+                  accent="text-purple-500"
+                />
+                <MiniStat
+                  icon={<Database className="h-3.5 w-3.5" />}
+                  label={t("usage.cacheWrite", "缓存写入")}
+                  value={cacheWriteDisplay.value}
+                  accent="text-amber-500"
+                  muted={cacheWriteDisplay.muted}
+                  tooltip={cacheWriteDisplay.tooltip}
+                />
+                <MiniStat
+                  icon={<Sparkles className="h-3.5 w-3.5" />}
+                  label={t("usage.cacheRead", "缓存命中")}
+                  value={formatTokensShort(cacheRead, lang)}
+                  accent="text-emerald-500"
+                />
+
+                <div className="col-span-2 lg:col-span-1 flex flex-col justify-center rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm">
+                  <div className="flex items-center justify-between text-[11px] mb-2">
+                    <span className="text-muted-foreground font-medium">
+                      {t("usage.cacheHitRate", "缓存命中率")}
+                    </span>
+                    <span className="font-bold text-emerald-500 tabular-nums">
+                      {hitPercentLabel}%
+                    </span>
+                  </div>
+                  <div className="relative h-1.5 rounded-full bg-muted/60 overflow-hidden">
+                    <motion.div
+                      className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${hitPercent}%` }}
+                      transition={{ duration: 0.8, ease: "easeOut" }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
-
-            {/* Bottom row: Breakdown and Hit Rate */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <MiniStat
-                icon={<ArrowDownToLine className="h-3.5 w-3.5" />}
-                label={t("usage.freshInput", "新增输入")}
-                value={formatTokensShort(input, lang)}
-                accent="text-blue-500"
-              />
-              <MiniStat
-                icon={<ArrowUpFromLine className="h-3.5 w-3.5" />}
-                label={t("usage.output")}
-                value={formatTokensShort(output, lang)}
-                accent="text-purple-500"
-              />
-              <MiniStat
-                icon={<Database className="h-3.5 w-3.5" />}
-                label={t("usage.cacheWrite", "缓存写入")}
-                value={cacheWriteDisplay.value}
-                accent="text-amber-500"
-                muted={cacheWriteDisplay.muted}
-                tooltip={cacheWriteDisplay.tooltip}
-              />
-              <MiniStat
-                icon={<Sparkles className="h-3.5 w-3.5" />}
-                label={t("usage.cacheRead", "缓存命中")}
-                value={formatTokensShort(cacheRead, lang)}
-                accent="text-emerald-500"
-              />
-
-              <div className="col-span-2 lg:col-span-1 flex flex-col justify-center rounded-xl border border-border/40 bg-background/40 p-3 shadow-sm">
-                <div className="flex items-center justify-between text-[11px] mb-2">
-                  <span className="text-muted-foreground font-medium">
-                    {t("usage.cacheHitRate", "缓存命中率")}
-                  </span>
-                  <span className="font-bold text-emerald-500 tabular-nums">
-                    {hitPercentLabel}%
-                  </span>
-                </div>
-                <div className="relative h-1.5 rounded-full bg-muted/60 overflow-hidden">
-                  <motion.div
-                    className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${hitPercent}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
+          <UsageHeatmap
+            range={range}
+            appType={appType}
+            providerName={providerName}
+            model={model}
+            refreshIntervalMs={refreshIntervalMs}
+          />
         </CardContent>
       </Card>
     </motion.div>

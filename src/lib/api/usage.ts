@@ -3,6 +3,7 @@ import type {
   UsageSummary,
   UsageSummaryByApp,
   DailyStats,
+  UsageHeatmapResult,
   ProviderStats,
   ModelStats,
   RequestLog,
@@ -86,6 +87,22 @@ export const usageApi = {
     model?: string,
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
+      startDate,
+      endDate,
+      appType,
+      providerName,
+      model,
+    });
+  },
+
+  getUsageHeatmap: async (
+    startDate: number,
+    endDate: number,
+    appType?: string,
+    providerName?: string,
+    model?: string,
+  ): Promise<UsageHeatmapResult> => {
+    return invoke("get_usage_heatmap", {
       startDate,
       endDate,
       appType,

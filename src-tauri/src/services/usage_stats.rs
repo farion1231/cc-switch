@@ -2,7 +2,7 @@
 //!
 //! 提供使用量数据的聚合查询功能
 
-use crate::database::{lock_conn, Database};
+use crate::database::{compute_local_midnight_cutoff, lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::ModelPricing;
 use crate::services::sql_helpers::{
@@ -72,6 +72,41 @@ pub struct DailyStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+}
+
+const USAGE_DETAIL_RETENTION_DAYS: i64 = 30;
+const MAX_HEATMAP_BUCKETS: i64 = 360;
+const HEATMAP_BUCKET_MINUTES: [u32; 9] = [15, 30, 60, 120, 240, 360, 480, 720, 1440];
+
+/// Aggregated activity for one exact heatmap time interval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageHeatmapPoint {
+    pub bucket_start: i64,
+    pub bucket_end: i64,
+    pub request_count: u64,
+    pub successful_requests: u64,
+    pub failed_requests: u64,
+    pub requests_with_usage: u64,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageHeatmapStatus {
+    Available,
+    DetailUnavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageHeatmapResult {
+    pub status: UsageHeatmapStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_from: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket_minutes: Option<u32>,
+    pub points: Vec<UsageHeatmapPoint>,
 }
 
 /// Provider 统计
@@ -575,6 +610,26 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
         .unwrap_or_else(Local::now);
 
     local_midnight.to_rfc3339()
+}
+
+fn select_heatmap_bucket_minutes(duration_seconds: i64) -> Result<u32, AppError> {
+    if duration_seconds <= 0 {
+        return Err(AppError::InvalidInput(
+            "heatmap start date must be earlier than end date".to_string(),
+        ));
+    }
+
+    for minutes in HEATMAP_BUCKET_MINUTES {
+        let bucket_seconds = i64::from(minutes) * 60;
+        let bucket_count = (duration_seconds + bucket_seconds - 1) / bucket_seconds;
+        if bucket_count <= MAX_HEATMAP_BUCKETS {
+            return Ok(minutes);
+        }
+    }
+
+    Err(AppError::InvalidInput(
+        "heatmap time range is too large".to_string(),
+    ))
 }
 
 impl Database {
@@ -1240,6 +1295,143 @@ impl Database {
         }
 
         Ok(stats)
+    }
+
+    /// Return dense, adaptively sized buckets for the selected usage range.
+    pub fn get_usage_heatmap(
+        &self,
+        start_date: i64,
+        end_date: i64,
+        app_type: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<UsageHeatmapResult, AppError> {
+        if start_date >= end_date {
+            return Err(AppError::InvalidInput(
+                "heatmap start date must be earlier than end date".to_string(),
+            ));
+        }
+
+        let now = Local::now();
+        let available_from = compute_local_midnight_cutoff(now, USAGE_DETAIL_RETENTION_DAYS)?;
+        if start_date < available_from || end_date > now.timestamp() {
+            return Ok(UsageHeatmapResult {
+                status: UsageHeatmapStatus::DetailUnavailable,
+                available_from: Some(available_from),
+                bucket_minutes: None,
+                points: Vec::new(),
+            });
+        }
+
+        let bucket_minutes = select_heatmap_bucket_minutes(end_date - start_date)?;
+        let bucket_seconds = i64::from(bucket_minutes) * 60;
+        let bucket_count = (end_date - start_date + bucket_seconds - 1) / bucket_seconds;
+        let last_bucket_index = bucket_count - 1;
+        let conn = lock_conn!(self.conn);
+
+        let mut extra_conditions = Vec::new();
+        let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = vec![
+            Box::new(start_date),
+            Box::new(end_date),
+            Box::new(bucket_seconds),
+            Box::new(last_bucket_index),
+        ];
+        if let Some(at) = app_type {
+            extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
+            query_params.push(Box::new(at.to_string()));
+        }
+        push_provider_model_filters(
+            &mut extra_conditions,
+            &mut query_params,
+            "l",
+            "p",
+            provider_name,
+            model,
+        );
+
+        let provider_join = if provider_name.is_some() {
+            providers_join("l", "p")
+        } else {
+            String::new()
+        };
+        let extra_filter = extra_conditions
+            .iter()
+            .map(|condition| format!("AND {condition}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let effective_filter = effective_usage_log_filter("l");
+        let fresh_input = fresh_input_sql("l");
+        let sql = format!(
+            "SELECT
+                MIN(CAST((l.created_at - ?1) / ?3 AS INTEGER), ?4) AS bucket_index,
+                COUNT(*) AS request_count,
+                COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0) AS successful_requests,
+                COALESCE(SUM(CASE WHEN l.status_code < 200 OR l.status_code >= 300 THEN 1 ELSE 0 END), 0) AS failed_requests,
+                COALESCE(SUM(CASE WHEN
+                    l.input_tokens > 0 OR l.output_tokens > 0 OR
+                    l.cache_read_tokens > 0 OR l.cache_creation_tokens > 0
+                    THEN 1 ELSE 0 END), 0) AS requests_with_usage,
+                COALESCE(SUM(
+                    {fresh_input} + l.output_tokens +
+                    l.cache_creation_tokens + l.cache_read_tokens
+                ), 0) AS total_tokens
+             FROM proxy_request_logs l {provider_join}
+             WHERE l.created_at >= ?1 AND l.created_at <= ?2
+               AND {effective_filter} {extra_filter}
+             GROUP BY bucket_index
+             ORDER BY bucket_index ASC"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            query_params.iter().map(|param| param.as_ref()).collect();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                (
+                    row.get::<_, i64>(1)? as u64,
+                    row.get::<_, i64>(2)? as u64,
+                    row.get::<_, i64>(3)? as u64,
+                    row.get::<_, i64>(4)? as u64,
+                    row.get::<_, i64>(5)? as u64,
+                ),
+            ))
+        })?;
+
+        let mut values_by_bucket = HashMap::new();
+        for row in rows {
+            let (bucket_index, values) = row?;
+            values_by_bucket.insert(bucket_index, values);
+        }
+
+        let mut points = Vec::with_capacity(bucket_count as usize);
+        for bucket_index in 0..bucket_count {
+            let bucket_start = start_date + bucket_index * bucket_seconds;
+            let bucket_end = (bucket_start + bucket_seconds).min(end_date);
+            let (
+                request_count,
+                successful_requests,
+                failed_requests,
+                requests_with_usage,
+                total_tokens,
+            ) = values_by_bucket.remove(&bucket_index).unwrap_or_default();
+            points.push(UsageHeatmapPoint {
+                bucket_start,
+                bucket_end,
+                request_count,
+                successful_requests,
+                failed_requests,
+                requests_with_usage,
+                total_tokens,
+            });
+        }
+
+        Ok(UsageHeatmapResult {
+            status: UsageHeatmapStatus::Available,
+            available_from: None,
+            bucket_minutes: Some(bucket_minutes),
+            points,
+        })
     }
 
     /// 获取 Provider 统计
@@ -2395,6 +2587,170 @@ mod tests {
                 data_source
             ],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_usage_heatmap_selects_high_density_bucket_sizes() -> Result<(), AppError> {
+        assert_eq!(select_heatmap_bucket_minutes(24 * 60 * 60)?, 15);
+        assert_eq!(select_heatmap_bucket_minutes(7 * 24 * 60 * 60)?, 30);
+        assert_eq!(select_heatmap_bucket_minutes(14 * 24 * 60 * 60)?, 60);
+        assert_eq!(select_heatmap_bucket_minutes(30 * 24 * 60 * 60)?, 120);
+        assert!(matches!(
+            select_heatmap_bucket_minutes(0),
+            Err(AppError::InvalidInput(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_usage_heatmap_validates_range_and_reports_retention() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let now = Local::now();
+        assert!(matches!(
+            db.get_usage_heatmap(now.timestamp(), now.timestamp(), None, None, None),
+            Err(AppError::InvalidInput(_))
+        ));
+
+        let available_from = compute_local_midnight_cutoff(now, USAGE_DETAIL_RETENTION_DAYS)?;
+        let unavailable =
+            db.get_usage_heatmap(available_from - 1, available_from + 60, None, None, None)?;
+        assert_eq!(unavailable.status, UsageHeatmapStatus::DetailUnavailable);
+        assert_eq!(unavailable.available_from, Some(available_from));
+        assert!(unavailable.points.is_empty());
+
+        let future =
+            db.get_usage_heatmap(now.timestamp() - 60, now.timestamp() + 60, None, None, None)?;
+        assert_eq!(future.status, UsageHeatmapStatus::DetailUnavailable);
+        Ok(())
+    }
+
+    #[test]
+    fn test_usage_heatmap_aggregates_dense_buckets_and_filters() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let end = Local::now().timestamp();
+        let start = end - 60 * 60;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+                 ('desktop-provider', 'claude-desktop', 'Packy', '{}')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-proxy",
+                "codex",
+                "codex-provider",
+                "gpt-5",
+                "proxy",
+                start,
+                100,
+                20,
+                40,
+                0,
+                200,
+                "0.1",
+            )?;
+            insert_usage_log(
+                &conn,
+                "codex-session-duplicate",
+                "codex",
+                "_codex_session",
+                "gpt-5",
+                "codex_session",
+                start + 30,
+                100,
+                20,
+                40,
+                0,
+                200,
+                "0.1",
+            )?;
+            insert_usage_log(
+                &conn,
+                "desktop-failure",
+                "claude-desktop",
+                "desktop-provider",
+                "alias-model",
+                "proxy",
+                end,
+                50,
+                10,
+                5,
+                7,
+                500,
+                "0.2",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET pricing_model = 'real-model'
+                 WHERE request_id = 'desktop-failure'",
+                [],
+            )?;
+        }
+
+        let all = db.get_usage_heatmap(start, end, None, None, None)?;
+        assert_eq!(all.status, UsageHeatmapStatus::Available);
+        assert_eq!(all.bucket_minutes, Some(15));
+        assert_eq!(all.points.len(), 4);
+        assert_eq!(all.points[0].bucket_start, start);
+        assert_eq!(all.points[3].bucket_end, end);
+        assert_eq!(
+            all.points
+                .iter()
+                .map(|point| point.request_count)
+                .sum::<u64>(),
+            2
+        );
+        assert_eq!(
+            all.points
+                .iter()
+                .map(|point| point.successful_requests)
+                .sum::<u64>(),
+            1
+        );
+        assert_eq!(
+            all.points
+                .iter()
+                .map(|point| point.failed_requests)
+                .sum::<u64>(),
+            1
+        );
+        assert_eq!(
+            all.points
+                .iter()
+                .map(|point| point.requests_with_usage)
+                .sum::<u64>(),
+            2
+        );
+        // Codex: (100 - 40) + 20 + 40. Claude Desktop: 50 + 10 + 5 + 7.
+        assert_eq!(
+            all.points
+                .iter()
+                .map(|point| point.total_tokens)
+                .sum::<u64>(),
+            192
+        );
+
+        let filtered = db.get_usage_heatmap(
+            start,
+            end,
+            Some("claude"),
+            Some("Packy"),
+            Some("real-model"),
+        )?;
+        assert_eq!(filtered.points.len(), 4);
+        assert_eq!(
+            filtered
+                .points
+                .iter()
+                .map(|point| point.request_count)
+                .sum::<u64>(),
+            1
+        );
+        assert_eq!(filtered.points[3].failed_requests, 1);
+
         Ok(())
     }
 

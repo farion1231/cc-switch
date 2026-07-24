@@ -97,6 +97,23 @@ export interface DailyStats {
   totalCacheReadTokens: number;
 }
 
+export interface UsageHeatmapPoint {
+  bucketStart: number;
+  bucketEnd: number;
+  requestCount: number;
+  successfulRequests: number;
+  failedRequests: number;
+  requestsWithUsage: number;
+  totalTokens: number;
+}
+
+export interface UsageHeatmapResult {
+  status: "available" | "detailUnavailable";
+  availableFrom?: number;
+  bucketMinutes?: number;
+  points: UsageHeatmapPoint[];
+}
+
 export interface ProviderStats {
   providerId: string;
   providerName: string;

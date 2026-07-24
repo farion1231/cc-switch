@@ -62,6 +62,25 @@ pub fn get_usage_trends(
     )
 }
 
+/// Get adaptively bucketed activity for the selected usage range.
+#[tauri::command]
+pub fn get_usage_heatmap(
+    state: State<'_, AppState>,
+    start_date: i64,
+    end_date: i64,
+    app_type: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+) -> Result<UsageHeatmapResult, AppError> {
+    state.db.get_usage_heatmap(
+        start_date,
+        end_date,
+        app_type.as_deref(),
+        provider_name.as_deref(),
+        model.as_deref(),
+    )
+}
+
 /// 获取 Provider 统计
 #[tauri::command]
 pub fn get_provider_stats(
