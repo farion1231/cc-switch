@@ -24,6 +24,7 @@ use rust_decimal::Decimal;
 use std::fs;
 use std::time::SystemTime;
 
+#[allow(dead_code)]
 struct CodefreeMessageData {
     input_tokens: u32,
     output_tokens: u32,
@@ -35,11 +36,13 @@ struct CodefreeMessageData {
     timestamp_ms: i64,
 }
 
+#[allow(dead_code)]
 struct CodefreeMessageQueryResult {
     messages: Vec<(String, CodefreeMessageData)>,
     has_incomplete_usage: bool,
 }
 
+#[allow(dead_code)]
 pub fn sync_codefree_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_codefree_db_path();
 
@@ -164,6 +167,7 @@ pub fn sync_codefree_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     Ok(result)
 }
 
+#[allow(dead_code)]
 fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, AppError> {
     let mut stmt = conn
         .prepare(
@@ -190,6 +194,7 @@ fn query_sessions(conn: &rusqlite::Connection) -> Result<Vec<(String, i64)>, App
     Ok(sessions)
 }
 
+#[allow(dead_code)]
 fn query_assistant_messages(
     conn: &rusqlite::Connection,
     session_id: &str,
@@ -239,6 +244,7 @@ fn query_assistant_messages(
     })
 }
 
+#[allow(dead_code)]
 fn parse_message_data(value: &serde_json::Value) -> Option<CodefreeMessageData> {
     let tokens = value.get("tokens")?;
 
@@ -294,6 +300,7 @@ fn parse_message_data(value: &serde_json::Value) -> Option<CodefreeMessageData> 
     })
 }
 
+#[allow(dead_code)]
 fn insert_codefree_message(
     db: &Database,
     request_id: &str,
