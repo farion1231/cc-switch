@@ -45,8 +45,14 @@ pub(crate) fn image_input_capability_from_settings(
     )
 }
 
-/// Convert a catalog row's explicit modality list into the shared capability
-/// representation, falling back to the text-only registry when omitted.
+/// Convert a Codex catalog row's explicit modality list into the shared
+/// capability representation, falling back to the text-only registry when
+/// omitted.
+///
+/// Some built-in ChatGPT/Codex provider presets have historically carried
+/// conservative `inputModalities: ["text"]` metadata for GPT aliases even
+/// though the upstream models accept images. Treat those aliases as
+/// image-capable so cc-switch does not make Codex disable image uploads.
 pub(crate) fn image_input_capability_from_modalities(
     model: &str,
     modalities: Option<&[String]>,
@@ -56,7 +62,22 @@ pub(crate) fn image_input_capability_from_modalities(
             .iter()
             .any(|item| item.trim().eq_ignore_ascii_case("image"))
     });
+
+    if declared_support == Some(false) && is_codex_gpt_image_input_alias(model) {
+        return ImageInputCapability::Supported;
+    }
+
     resolve_image_input_capability(model, declared_support, true)
+}
+
+fn is_codex_gpt_image_input_alias(model: &str) -> bool {
+    let normalized = normalize_model_id(model);
+    let tail = normalized.rsplit('/').next().unwrap_or(normalized.as_str());
+
+    tail == "gpt-5.5"
+        || tail.starts_with("gpt-5.5-")
+        || tail == "gpt-5.6"
+        || tail.starts_with("gpt-5.6-")
 }
 
 /// Models that CC Switch is willing to advertise to clients as text-only.
