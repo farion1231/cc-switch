@@ -102,7 +102,29 @@ pub async fn handle_models() -> Result<Json<Value>, ProxyError> {
         }
         json!({"models": []})
     };
-    Ok(Json(catalog))
+    // 同时返回两种格式：原始 catalog 格式（Codex 使用）+ data 格式（fetchModelsForConfig 使用）
+    let mut resp = catalog;
+    let models = resp
+        .get("models")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|m| {
+            let id = m
+                .get("id")
+                .or_else(|| m.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            json!({"id": id, "owned_by": null})
+        })
+        .collect();
+    if let Some(obj) = resp.as_object_mut() {
+        obj.insert("data".to_string(), json!(data));
+    }
+    Ok(Json(resp))
 }
 
 // ============================================================================
@@ -1943,7 +1965,16 @@ pub async fn handle_gemini(
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
 
-    // Gemini 的模型名称在 URI 中
+    // Gemini 的模型名在 URI 中，提前注入 body 以便路由匹配能读到
+    let gemini_model = crate::proxy::handler_context::extract_gemini_model_from_path(uri.path());
+    let mut body = body;
+    if let Some(ref model) = gemini_model {
+        if let serde_json::Value::Object(ref mut map) = body {
+            map.entry("model")
+                .or_insert_with(|| serde_json::Value::String(model.clone()));
+        }
+    }
+
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
         .await?
         .with_model_from_uri(&uri);

@@ -29,3 +29,18 @@ pub async fn fetch_models_for_config(
     )
     .await
 }
+
+/// 获取上游路由目标的模型列表（协议感知）
+///
+/// 根据协议类型使用不同的认证和端点：
+/// - anthropic: GET /v1/models (x-api-key)
+/// - openai:    GET /v1/models (Bearer)
+/// - gemini:    GET /v1beta/models (?key=)
+#[tauri::command(rename_all = "camelCase")]
+pub async fn fetch_upstream_models(
+    protocol: String,
+    base_url: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    model_fetch::fetch_upstream_route_models(&protocol, &base_url, &api_key).await
+}

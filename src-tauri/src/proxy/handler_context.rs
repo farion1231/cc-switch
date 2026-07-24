@@ -3,15 +3,17 @@
 //! 提供请求生命周期的上下文管理，封装通用初始化逻辑
 
 use crate::app_config::AppType;
-use crate::provider::Provider;
+use crate::provider::{Provider, ProviderMeta};
 use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
+    model_router::ModelRouter,
     server::ProxyState,
     types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
     ProxyError,
 };
 use axum::http::HeaderMap;
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// 流式超时配置
@@ -129,24 +131,106 @@ impl RequestContext {
             session_result.client_provided
         );
 
-        // 使用共享的 ProviderRouter 选择 Provider（熔断器状态跨请求保持）
-        // 注意：只在这里调用一次，结果传递给 forwarder，避免重复消耗 HalfOpen 名额
-        let providers = state
-            .provider_router
-            .select_providers(app_type_str)
-            .await
-            .map_err(|e| match e {
-                crate::error::AppError::AllProvidersCircuitOpen => {
-                    ProxyError::AllProvidersCircuitOpen
-                }
-                crate::error::AppError::NoProvidersConfigured => ProxyError::NoProvidersConfigured,
-                _ => ProxyError::DatabaseError(e.to_string()),
-            })?;
+        // ─── Step 1: 尝试 UniversalProvider 路由 ───
+        let universal_providers = state.db.get_all_universal_providers().unwrap_or_default();
+        // 只取已启用的 UniversalProvider
+        let enabled_providers: HashMap<_, _> = universal_providers
+            .into_iter()
+            .filter(|(_, up)| up.enabled)
+            .collect();
+        let universal_selected: Option<Provider> = if !enabled_providers.is_empty() {
+            // 检查首页选中的供应商是否为有 routes 的 UP 同步来的
+            let current_up_id = current_provider_id
+                .strip_prefix("universal-claude-")
+                .or_else(|| current_provider_id.strip_prefix("universal-codex-"))
+                .or_else(|| current_provider_id.strip_prefix("universal-gemini-"));
+            let current_up_has_routes = current_up_id
+                .and_then(|up_id| enabled_providers.get(up_id))
+                .is_some_and(|up| !up.routes.is_empty());
 
-        let provider = providers
-            .first()
-            .cloned()
-            .ok_or(ProxyError::NoAvailableProvider)?;
+            // 首页选中了有 routes 的 UP 时，只查该 UP 的 routes，避免交叉匹配
+            let from_routes = if current_up_has_routes {
+                let selected_up_id = current_up_id.unwrap();
+                find_matching_route(
+                    &request_model,
+                    &enabled_providers,
+                    selected_up_id,
+                    app_type_str,
+                    tag,
+                )
+            } else {
+                None
+            };
+
+            if from_routes.is_some() {
+                from_routes
+            } else if !current_up_has_routes {
+                // 没有选中有 routes 的 UP，才退到 models 匹配普通 UP
+                // （避免 CC Switch 代理的 models 匹配自身造成请求循环）
+                ModelRouter::match_model(&request_model, &enabled_providers, app_type_str).and_then(
+                    |matched_up| {
+                        let converted = match app_type_str {
+                            "claude" => matched_up.to_claude_provider(),
+                            "codex" => matched_up.to_codex_provider(),
+                            "gemini" => matched_up.to_gemini_provider(),
+                            _ => None,
+                        };
+                        if converted.is_some() {
+                            log::info!(
+                                "[{tag}] Universal route: {model} → {name} ({id})",
+                                tag = tag,
+                                model = request_model,
+                                name = matched_up.name,
+                                id = matched_up.id,
+                            );
+                        }
+                        converted
+                    },
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // ─── Step 2: 选择 provider（UniversalProvider > per-app）───
+        let (provider, providers) = if let Some(up_provider) = universal_selected {
+            let per_app_providers = state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .unwrap_or_default();
+            let mut chain = vec![up_provider.clone()];
+            chain.extend(
+                per_app_providers
+                    .iter()
+                    .filter(|p| p.id != up_provider.id)
+                    .cloned(),
+            );
+            (up_provider, chain)
+        } else {
+            // 走现有 per-app 逻辑
+            let providers = state
+                .provider_router
+                .select_providers(app_type_str)
+                .await
+                .map_err(|e| match e {
+                    crate::error::AppError::AllProvidersCircuitOpen => {
+                        ProxyError::AllProvidersCircuitOpen
+                    }
+                    crate::error::AppError::NoProvidersConfigured => {
+                        ProxyError::NoProvidersConfigured
+                    }
+                    _ => ProxyError::DatabaseError(e.to_string()),
+                })?;
+
+            let provider = providers
+                .first()
+                .cloned()
+                .ok_or(ProxyError::NoAvailableProvider)?;
+            (provider, providers)
+        };
 
         log::debug!(
             "[{}] Provider: {}, model: {}, failover chain: {} providers, session: {}",
@@ -278,6 +362,89 @@ impl RequestContext {
             }
         }
     }
+}
+
+/// 查找当前选中 UP 的 routes 中匹配 model 的那条
+fn find_matching_route(
+    model: &str,
+    providers: &HashMap<String, crate::provider::UniversalProvider>,
+    selected_up_id: &str,
+    app_type: &str,
+    tag: &str,
+) -> Option<crate::provider::Provider> {
+    let up = providers.get(selected_up_id)?;
+    for route in &up.routes {
+        if !route.enabled {
+            continue;
+        }
+        // Codex 请求跳过 gemini 协议路由（CodexAdapter 不支持 Gemini 格式转换）
+        if app_type == "codex" && route.protocol == "gemini" {
+            continue;
+        }
+        if ModelRouter::match_route(model, route) {
+            log::info!(
+                "[{tag}] Route match: {model} → {route_name} via {up_name} ({up_id})",
+                tag = tag,
+                model = model,
+                route_name = route.name,
+                up_name = up.name,
+                up_id = up.id,
+            );
+            let key_len = route.api_key.len();
+            log::info!(
+                "[{tag}] Route provider: protocol={protocol} baseURL={baseUrl} apiKey_len={key_len}",
+                tag = tag,
+                protocol = route.protocol,
+                baseUrl = route.base_url,
+                key_len = key_len,
+            );
+            let (api_format, auth_var) = match route.protocol.as_str() {
+                "anthropic" => ("anthropic", "ANTHROPIC_API_KEY"),
+                "openai_chat" => ("openai_chat", "ANTHROPIC_AUTH_TOKEN"),
+                "openai_responses" => ("openai_responses", "ANTHROPIC_AUTH_TOKEN"),
+                "gemini" => ("gemini_native", "GEMINI_API_KEY"),
+                _ => ("anthropic", "ANTHROPIC_AUTH_TOKEN"),
+            };
+            let mut env = serde_json::Map::new();
+            env.insert(
+                "ANTHROPIC_BASE_URL".into(),
+                serde_json::Value::String(route.base_url.clone()),
+            );
+            env.insert(
+                auth_var.into(),
+                serde_json::Value::String(route.api_key.clone()),
+            );
+            let sync_id = format!("universal-{}-{}", app_type, up.id);
+            let p = crate::provider::Provider {
+                id: sync_id,
+                name: route.name.clone(),
+                settings_config: serde_json::json!({
+                    "baseURL": route.base_url,
+                    "apiKey": route.api_key,
+                    "env": env,
+                }),
+                website_url: None,
+                category: Some("custom".to_string()),
+                created_at: None,
+                sort_index: None,
+                notes: None,
+                icon: up.icon.clone(),
+                icon_color: up.icon_color.clone(),
+                meta: Some(ProviderMeta {
+                    api_format: Some(api_format.to_string()),
+                    api_key_field: route
+                        .protocol
+                        .as_str()
+                        .eq("anthropic")
+                        .then(|| "ANTHROPIC_API_KEY".to_string()),
+                    ..Default::default()
+                }),
+                in_failover_queue: false,
+            };
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// Pull the Gemini model name out of an API path.

@@ -29,6 +29,28 @@ struct ModelEntry {
     owned_by: Option<String>,
 }
 
+/// Anthropic /v1/models 响应格式
+#[derive(Debug, Deserialize)]
+struct AnthropicModelsResponse {
+    data: Option<Vec<AnthropicModelEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicModelEntry {
+    id: String,
+}
+
+/// Gemini /v1beta/models 响应格式
+#[derive(Debug, Deserialize)]
+struct GeminiModelsResponse {
+    models: Option<Vec<GeminiModelEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiModelEntry {
+    name: String,
+}
+
 const FETCH_TIMEOUT_SECS: u64 = 15;
 
 /// 404/405 响应体截断长度：避免把几十 KB HTML 404 页整页保留到错误串里。
@@ -210,6 +232,117 @@ fn truncate_body(body: String) -> String {
         let mut s: String = body.chars().take(ERROR_BODY_MAX_CHARS).collect();
         s.push('…');
         s
+    }
+}
+
+/// 获取上游模型列表（协议感知）
+///
+/// 根据协议类型使用不同的端点和认证方式：
+/// - anthropic:          GET /v1/models (x-api-key)
+/// - openai_chat:        GET /v1/models (Bearer)
+/// - openai_responses:   GET /v1/models (Bearer)
+/// - gemini:             GET /v1beta/models (?key=)
+pub async fn fetch_upstream_route_models(
+    protocol: &str,
+    base_url: &str,
+    api_key: &str,
+) -> Result<Vec<String>, String> {
+    let client = crate::proxy::http_client::get();
+    let trimmed = base_url.trim().trim_end_matches('/');
+
+    match protocol {
+        "anthropic" => {
+            let url = if ends_with_version_segment(trimmed) {
+                format!("{trimmed}/models")
+            } else {
+                format!("{trimmed}/v1/models")
+            };
+            let response = client
+                .get(&url)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+                .send()
+                .await
+                .map_err(|e| format!("请求失败: {e}"))?;
+
+            if !response.status().is_success() {
+                return Err(format!("HTTP {}", response.status()));
+            }
+
+            let resp: AnthropicModelsResponse = response
+                .json()
+                .await
+                .map_err(|e| format!("解析响应失败: {e}"))?;
+
+            Ok(resp
+                .data
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| m.id)
+                .collect())
+        }
+        "gemini" => {
+            let url = format!("{trimmed}/v1beta/models?key={api_key}");
+            let response = client
+                .get(&url)
+                .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+                .send()
+                .await
+                .map_err(|e| format!("请求失败: {e}"))?;
+
+            if !response.status().is_success() {
+                return Err(format!("HTTP {}", response.status()));
+            }
+
+            let resp: GeminiModelsResponse = response
+                .json()
+                .await
+                .map_err(|e| format!("解析响应失败: {e}"))?;
+
+            Ok(resp
+                .models
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| {
+                    m.name
+                        .strip_prefix("models/")
+                        .unwrap_or(&m.name)
+                        .to_string()
+                })
+                .collect())
+        }
+        // openai 及默认
+        _ => {
+            let url = if ends_with_version_segment(trimmed) {
+                format!("{trimmed}/models")
+            } else {
+                format!("{trimmed}/v1/models")
+            };
+            let response = client
+                .get(&url)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+                .send()
+                .await
+                .map_err(|e| format!("请求失败: {e}"))?;
+
+            if !response.status().is_success() {
+                return Err(format!("HTTP {}", response.status()));
+            }
+
+            let resp: ModelsResponse = response
+                .json()
+                .await
+                .map_err(|e| format!("解析响应失败: {e}"))?;
+
+            Ok(resp
+                .data
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| m.id)
+                .collect())
+        }
     }
 }
 
