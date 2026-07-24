@@ -113,6 +113,15 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
     // Clean up Claude Code jobs directory entries associated with this
     // session so the built-in agents panel (← key) does not show stale
     // entries after the session has been deleted.
+    //
+    // Guard against path traversal: session_id must be a single safe
+    // component (no separators, not `.` or `..`) before we join it onto
+    // the jobs directory.
+    if !is_safe_path_component(session_id) {
+        return Err(format!(
+            "Refusing to clean up jobs for unsafe session ID: {session_id}"
+        ));
+    }
     let jobs_dir = get_claude_config_dir().join("jobs");
     let jobs_subdir = jobs_dir.join(session_id);
     let jobs_file = jobs_dir.join(format!("{session_id}.json"));
@@ -176,9 +185,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         // Extract custom-title from head region as well; when a session
         // is renamed early and the conversation grows large the entry may
         // be beyond the tail window altogether.
-        if custom_title.is_none()
-            && value.get("type").and_then(Value::as_str) == Some("custom-title")
-        {
+        // NOTE: we intentionally do NOT guard with custom_title.is_none()
+        // here — the head lines are in chronological order, so a later
+        // rename within the head should overwrite an earlier one.  The
+        // tail pass (reverse order, guarded) will still override this
+        // value when a more recent rename falls in the tail window.
+        if value.get("type").and_then(Value::as_str) == Some("custom-title") {
             custom_title = value
                 .get("customTitle")
                 .and_then(Value::as_str)
@@ -207,13 +219,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if session_id.is_some()
-            && project_dir.is_some()
-            && created_at.is_some()
-            && first_user_message.is_some()
-        {
-            break;
-        }
+        // Note: we intentionally do not break early in the head loop even
+        // when all fields are populated — a custom-title rename may appear
+        // after the first user message, and with head_n = 10 the overhead
+        // of scanning a few extra lines is negligible.
     }
 
     // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
@@ -328,6 +337,17 @@ fn remove_path_if_exists(path: &Path) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }
+}
+
+/// Returns true when `component` is a single safe filesystem name — no path
+/// separators, not `.` or `..`, and not empty.  Used to guard against path-
+/// traversal when joining a caller-supplied session id onto a directory.
+fn is_safe_path_component(component: &str) -> bool {
+    !component.is_empty()
+        && component != "."
+        && component != ".."
+        && !component.contains('/')
+        && !component.contains('\\')
 }
 
 #[cfg(test)]
@@ -650,5 +670,83 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("CC_SWITCH_TEST_HOME", v) },
             None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
         }
+    }
+
+    #[test]
+    fn is_safe_path_component_accepts_normal_names() {
+        assert!(is_safe_path_component("abc"));
+        assert!(is_safe_path_component("session-12345"));
+        assert!(is_safe_path_component(
+            "48ed2288-f025-4d54-8b69-10b40d97b006"
+        ));
+        assert!(is_safe_path_component("a"));
+    }
+
+    #[test]
+    fn is_safe_path_component_rejects_traversal() {
+        assert!(!is_safe_path_component(""));
+        assert!(!is_safe_path_component("."));
+        assert!(!is_safe_path_component(".."));
+        assert!(!is_safe_path_component("../etc"));
+        assert!(!is_safe_path_component("a/b"));
+        assert!(!is_safe_path_component("c:\\windows"));
+        assert!(!is_safe_path_component("/etc/passwd"));
+    }
+
+    #[test]
+    fn parse_session_multiple_renames_in_head_uses_latest() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-multi-rename.jsonl");
+
+        // Two custom-title entries in the head region (lines 2 and 4);
+        // line 4 is chronologically later so its title should win.
+        let file = concat!(
+            "{\"sessionId\":\"session-renamed\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"old-name\",\"sessionId\":\"session-renamed\"}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"sessionId\":\"session-renamed\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"new-name\",\"sessionId\":\"session-renamed\"}\n",
+        );
+
+        std::fs::write(&path, file).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("new-name"),
+            "the most recent custom-title (new-name at line 4) should win"
+        );
+    }
+
+    #[test]
+    fn delete_session_rejects_unsafe_session_id() {
+        let temp = tempdir().expect("tempdir");
+        let sessions_dir = temp.path().join("projects");
+        std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+
+        // Create a JSONL whose sessionId contains path traversal.
+        // The file itself has a normal name — the traversal lives in
+        // the JSONL content.
+        let path = sessions_dir.join("safe-name.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"../../etc\",\"cwd\":\"/tmp/project\",",
+                "\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"message\":{\"role\":\"user\",\"content\":\"hello\"},",
+                "\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            ),
+        )
+        .expect("write session");
+
+        let result = delete_session(&sessions_dir, &path, "../../etc");
+        assert!(
+            result.is_err(),
+            "should reject session_id with path traversal"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("unsafe"),
+            "error should mention unsafe session ID, got: {err}"
+        );
     }
 }
