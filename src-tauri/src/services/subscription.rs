@@ -318,6 +318,12 @@ pub const TIER_MONTHLY: &str = "monthly";
 /// 三处共用同一标识。见 #3651。
 pub const TIER_THIRTY_DAY: &str = "30_day";
 
+/// Grok credit 额度窗口的兜底 tier 名。Grok 账单接口只返回一个 credit 用量
+/// 窗口，`subscription_grok::tier_name_for_reset` 按重置距离优先映射到
+/// `weekly_limit` / `monthly`，两者都不匹配时用此标识；前端 `TIER_I18N_KEYS`
+/// 映射到 `subscription.credits`，tray 归入 "c" 分组。
+pub const TIER_CREDITS: &str = "credits";
+
 /// Gemini 用量分组名称（按模型而非时间窗口）。`classify_gemini_model` 输出。
 pub const TIER_GEMINI_PRO: &str = "gemini_pro";
 pub const TIER_GEMINI_FLASH: &str = "gemini_flash";
@@ -1340,6 +1346,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
                 }
             }
         }
+        "grokbuild" => crate::services::subscription_grok::get_grok_subscription_quota().await,
         _ => Ok(SubscriptionQuota::not_found(tool)),
     }
 }
