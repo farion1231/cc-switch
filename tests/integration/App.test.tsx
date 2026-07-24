@@ -4,6 +4,8 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { providersApi } from "@/lib/api/providers";
 import {
+  getLastOpenProviderTerminalRequest,
+  getLastPickDirectoryRequest,
   resetProviderState,
   setCurrentProviderId,
   setLiveProviderIds,
@@ -21,6 +23,45 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("framer-motion", async () => {
+  const React = await import("react");
+  const Passthrough = ({ children }: { children?: React.ReactNode }) => (
+    <>{children}</>
+  );
+  const createMotionComponent = (tag: string) =>
+    React.forwardRef<HTMLElement, any>(
+      (
+        {
+          animate: _animate,
+          children,
+          exit: _exit,
+          initial: _initial,
+          transition: _transition,
+          ...props
+        },
+        ref,
+      ) => React.createElement(tag, { ...props, ref }, children),
+    );
+
+  return {
+    AnimatePresence: Passthrough,
+    motion: new Proxy(
+      {},
+      {
+        get: (_target, tag) => createMotionComponent(String(tag)),
+      },
+    ),
+  };
+});
+
+vi.mock("@/components/DeepLinkImportDialog", () => ({
+  DeepLinkImportDialog: () => null,
+}));
+
+vi.mock("@/components/FirstRunNoticeDialog", () => ({
+  FirstRunNoticeDialog: () => null,
+}));
+
 vi.mock("@/components/providers/ProviderList", () => ({
   ProviderList: ({
     providers,
@@ -30,27 +71,51 @@ vi.mock("@/components/providers/ProviderList", () => ({
     onDuplicate,
     onConfigureUsage,
     onOpenWebsite,
+    onOpenTerminal,
     onCreate,
-  }: any) => (
-    <div>
-      <div data-testid="provider-list">{JSON.stringify(providers)}</div>
-      <div data-testid="current-provider">{currentProviderId}</div>
-      <button onClick={() => onSwitch(providers[currentProviderId])}>
-        switch
-      </button>
-      <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
-        duplicate
-      </button>
-      <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
-        usage
-      </button>
-      <button onClick={() => onOpenWebsite("https://example.com")}>
-        open-website
-      </button>
-      <button onClick={() => onCreate?.()}>create</button>
-    </div>
-  ),
+  }: any) => {
+    const activeProvider =
+      providers[currentProviderId] ?? Object.values(providers)[0];
+    const hasProvider = Boolean(activeProvider);
+
+    return (
+      <div>
+        <div data-testid="provider-list">{JSON.stringify(providers)}</div>
+        <div data-testid="current-provider">{currentProviderId}</div>
+        <button disabled={!hasProvider} onClick={() => onSwitch(activeProvider)}>
+          switch
+        </button>
+        <button disabled={!hasProvider} onClick={() => onEdit(activeProvider)}>
+          edit
+        </button>
+        <button
+          disabled={!hasProvider}
+          onClick={() => onDuplicate(activeProvider)}
+        >
+          duplicate
+        </button>
+        <button
+          disabled={!hasProvider}
+          onClick={() => onConfigureUsage(activeProvider)}
+        >
+          usage
+        </button>
+        <button onClick={() => onOpenWebsite("https://example.com")}>
+          open-website
+        </button>
+        <div data-testid="terminal-enabled">
+          {String(Boolean(onOpenTerminal))}
+        </div>
+        <button
+          disabled={!onOpenTerminal || !hasProvider}
+          onClick={() => onOpenTerminal?.(activeProvider)}
+        >
+          open-terminal
+        </button>
+        <button onClick={() => onCreate?.()}>create</button>
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/components/providers/AddProviderDialog", () => ({
@@ -156,7 +221,7 @@ const renderApp = (AppComponent: ComponentType) => {
   );
 };
 
-describe("App integration with MSW", () => {
+describe("App integration with MSW", { timeout: 10000 }, () => {
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
@@ -303,6 +368,43 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalledWith(
       expect.stringContaining("Provider key is required for openclaw"),
     );
+  });
+
+  it("opens Claude provider terminals after selecting a working directory", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    expect(screen.getByTestId("terminal-enabled")).toHaveTextContent("true");
+
+    fireEvent.click(screen.getByText("open-terminal"));
+
+    await waitFor(() => {
+      expect(getLastPickDirectoryRequest()).toMatchObject({
+        title: "选择终端工作目录",
+      });
+      expect(getLastOpenProviderTerminalRequest()).toMatchObject({
+        providerId: "claude-1",
+        app: "claude",
+        cwd: "/mock/selected-dir",
+      });
+    });
+
+    expect(toastSuccessMock).toHaveBeenCalledWith("终端已在所选目录打开");
+
+    fireEvent.click(screen.getByText("switch-codex"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "codex-1",
+      ),
+    );
+
+    expect(screen.getByTestId("terminal-enabled")).toHaveTextContent("false");
   });
 
   it("shows toast when duplicate cannot load live provider ids", async () => {

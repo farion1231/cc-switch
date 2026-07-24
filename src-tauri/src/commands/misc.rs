@@ -3398,24 +3398,28 @@ fn escape_windows_batch_value(value: &str) -> String {
 /// Windows: Run a start command with common error handling
 #[cfg(target_os = "windows")]
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     let mut full_args = vec!["/C", "start"];
     full_args.extend(args);
 
-    let output = Command::new("cmd")
+    // Do not capture stdout/stderr here. The terminal process launched by
+    // `start` can inherit those pipe handles, which makes `Command::output`
+    // wait until the terminal window exits before returning.
+    let status = Command::new("cmd")
         .args(&full_args)
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .map_err(|e| format!("启动 {} 失败: {e}", terminal_name))?;
 
-    if !output.status.success() {
-        let stderr = decode_command_output(&output.stderr);
+    if !status.success() {
         return Err(format!(
-            "{} 启动失败 (exit code: {:?}): {}",
+            "{} 启动失败 (exit code: {:?})",
             terminal_name,
-            output.status.code(),
-            stderr
+            status.code(),
         ));
     }
 
