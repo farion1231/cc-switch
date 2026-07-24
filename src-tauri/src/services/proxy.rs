@@ -931,8 +931,7 @@ impl ProxyService {
             if let Ok(Some(current_id)) =
                 crate::settings::get_effective_current_provider(&self.db, &app)
             {
-                if let Ok(Some(provider)) = self.db.get_provider_by_id(&current_id, app_type_str)
-                {
+                if let Ok(Some(provider)) = self.db.get_provider_by_id(&current_id, app_type_str) {
                     if provider.is_aggregate() {
                         return Err(
                             "当前供应商为聚合供应商，请先切换到常规供应商后再关闭代理接管 (An aggregate provider is current; switch to a regular provider before disabling proxy takeover)"
@@ -3595,12 +3594,8 @@ mod tests {
         db.save_provider("claude", &target)
             .expect("save target provider");
 
-        let mut aggregate = Provider::with_id(
-            "agg".to_string(),
-            "Aggregate".to_string(),
-            json!({}),
-            None,
-        );
+        let mut aggregate =
+            Provider::with_id("agg".to_string(), "Aggregate".to_string(), json!({}), None);
         aggregate.meta = Some(ProviderMeta {
             aggregate_routes: Some(AggregateRoutes {
                 sonnet: Some(AggregateRoute {
@@ -3639,11 +3634,12 @@ mod tests {
         assert!(err.contains("聚合"), "got {err}");
 
         // 接管状态与备份保持不变
-        assert!(db
-            .get_proxy_config_for_app("claude")
-            .await
-            .expect("read app proxy config")
-            .enabled);
+        assert!(
+            db.get_proxy_config_for_app("claude")
+                .await
+                .expect("read app proxy config")
+                .enabled
+        );
         assert!(db
             .get_live_backup("claude")
             .await

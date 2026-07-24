@@ -2906,10 +2906,7 @@ mod tests {
         // text + server_tool_use→text + web_search_tool_result→text + tool_use
         assert_eq!(content.len(), 4);
         assert_eq!(content[1]["type"], "text");
-        assert!(content[1]["text"]
-            .as_str()
-            .unwrap()
-            .contains("web_search"));
+        assert!(content[1]["text"].as_str().unwrap().contains("web_search"));
         assert_eq!(content[2]["type"], "text");
         assert_eq!(
             content[2]["text"],
@@ -2941,11 +2938,8 @@ mod tests {
             let mut body = server_tool_history_body();
             let original = body.clone();
 
-            let changed = normalize_server_tool_blocks_for_non_official(
-                &mut body,
-                &provider,
-                "anthropic",
-            );
+            let changed =
+                normalize_server_tool_blocks_for_non_official(&mut body, &provider, "anthropic");
 
             assert!(!changed);
             assert_eq!(body, original);
