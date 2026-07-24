@@ -1589,6 +1589,57 @@ impl RequestForwarder {
         {
             outbound_model = Some(m.to_string());
         }
+
+        // System Prompt 注入：根据 app_type 读取配置并注入
+        let injection_extra = {
+            let toggle = crate::settings::get_injection_toggle(app_type.as_str());
+            if toggle.enabled {
+                let mut parts = Vec::new();
+                // 优先使用自定义路径
+                if let Some(ref custom_path) = toggle.custom_file_path {
+                    let p = std::path::PathBuf::from(custom_path);
+                    if p.exists() {
+                        match std::fs::read_to_string(&p) {
+                            Ok(content) => {
+                                let t = content.trim();
+                                if !t.is_empty() { parts.push(t.to_string()); }
+                            }
+                            Err(e) => log::warn!("[{}] 读取自定义规则文件失败: {} {}", app_type.as_str(), custom_path, e),
+                        }
+                    } else {
+                        log::warn!("[{}] 自定义规则文件不存在: {}", app_type.as_str(), custom_path);
+                    }
+                } else if let Ok(path) = crate::prompt_files::prompt_file_path(app_type) {
+                    if path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            let t = content.trim();
+                            if !t.is_empty() { parts.push(t.to_string()); }
+                        }
+                    }
+                }
+                if toggle.receive_shared {
+                    let shared = crate::settings::load_shared_prompt();
+                    let t = shared.trim();
+                    if !t.is_empty() { parts.push(t.to_string()); }
+                }
+                if parts.is_empty() { None } else { Some(parts.join("\n\n---\n\n")) }
+            } else { None }
+        };
+        if let Some(ref extra) = injection_extra {
+            log::info!("[{}] System 注入已生效, 内容长度: {} chars", app_type.as_str(), extra.len());
+            if let Some(system) = filtered_body.get("system") {
+                let mut val = system.clone();
+                match &mut val {
+                    serde_json::Value::String(s) => { s.push_str("\n\n---\n\n"); s.push_str(extra); }
+                    serde_json::Value::Array(arr) => { arr.push(serde_json::json!({"type":"text","text":extra})); }
+                    _ => { val = serde_json::Value::String(extra.clone()); }
+                }
+                filtered_body.as_object_mut().map(|o| o.insert("system".into(), val));
+            } else {
+                filtered_body.as_object_mut().map(|o| o.insert("system".into(), serde_json::Value::String(extra.clone())));
+            }
+        }
+
         log_prompt_cache_trace(
             app_type,
             provider,

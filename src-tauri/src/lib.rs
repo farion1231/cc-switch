@@ -1395,6 +1395,14 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            // System Prompt injection
+            commands::get_system_prompt_file,
+            commands::save_system_prompt_file,
+            commands::get_injection_toggle,
+            commands::set_injection_toggle,
+            commands::get_shared_prompt,
+            commands::save_shared_prompt,
+            commands::pick_system_prompt_file,
             // Profile management (项目配置方案)
             commands::list_profiles,
             commands::create_profile,
