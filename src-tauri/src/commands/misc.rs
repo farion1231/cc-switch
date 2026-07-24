@@ -1094,7 +1094,11 @@ fn default_flag_for_shell(shell: &str) -> &'static str {
     match shell.rsplit('/').next().unwrap_or(shell) {
         "dash" | "sh" => "-c",
         "fish" => "-lc",
-        _ => "-lic",
+        _ => "-lc", // was "-lic": interactive flag sources .zshrc and may trigger
+                    // startup scripts like `neofetch` whose output pollutes stdout,
+                    // causing `extract_version` to return the wrong version number.
+                    // Login shell (-l) + command (-c) suffices to get the user's
+                    // PATH from .profile / .zprofile without side effects.
     }
 }
 
@@ -5230,9 +5234,9 @@ mod tests {
             assert_eq!(default_flag_for_shell("dash"), "-c");
             assert_eq!(default_flag_for_shell("/bin/dash"), "-c");
             assert_eq!(default_flag_for_shell("fish"), "-lc");
-            assert_eq!(default_flag_for_shell("bash"), "-lic");
-            assert_eq!(default_flag_for_shell("zsh"), "-lic");
-            assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lic");
+            assert_eq!(default_flag_for_shell("bash"), "-lc");
+            assert_eq!(default_flag_for_shell("zsh"), "-lc");
+            assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lc");
         }
 
         #[test]
