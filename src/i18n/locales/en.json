@@ -254,6 +254,7 @@
     "settingsSaved": "Settings saved",
     "settingsSaveFailed": "Failed to save settings: {{error}}",
     "proxyRequiredForSwitch": "This provider {{reason}}, requires the routing service to work properly. Start routing first.",
+    "aggregateRequiresTakeover": "Aggregate providers require proxy takeover mode. Enable proxy takeover before switching.",
     "proxyReasonCopilot": "uses GitHub Copilot as a Claude provider",
     "proxyReasonOpenAIChat": "uses OpenAI Chat API format",
     "proxyReasonOpenAIResponses": "uses OpenAI Responses API format",
@@ -997,6 +998,25 @@
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
+    "aggregate": {
+      "title": "Aggregate provider",
+      "hint": "Route Haiku, Sonnet, Opus, and Fable requests to models from different providers. Proxy takeover is required.",
+      "tier": "Model tier",
+      "targetProvider": "Target provider",
+      "targetModel": "Upstream model",
+      "selectProvider": "Select provider",
+      "notConfigured": "Not configured",
+      "modelPlaceholder": "e.g. kimi-k3",
+      "noTargets": "Add at least one eligible third-party Claude provider before configuring aggregate routes.",
+      "empty": "Configure at least one aggregate route.",
+      "incomplete": "The {{tier}} route requires both a provider and a model.",
+      "tiers": {
+        "haiku": "Haiku",
+        "sonnet": "Sonnet",
+        "opus": "Opus",
+        "fable": "Fable"
+      }
+    },
     "supplierName": "Provider Name",
     "supplierNameRequired": "Provider Name *",
     "supplierNamePlaceholder": "e.g., Anthropic Official",

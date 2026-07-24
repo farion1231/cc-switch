@@ -80,6 +80,20 @@ impl Provider {
             || self.claude_base_url_contains("githubcopilot.com")
     }
 
+    /// 是否为聚合供应商（meta 中配置了至少一档模型路由）
+    pub fn is_aggregate(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.aggregate_routes.as_ref())
+            .map(AggregateRoutes::has_any_route)
+            .unwrap_or(false)
+    }
+
+    /// 读取聚合路由表（仅聚合供应商有意义）
+    pub fn aggregate_routes(&self) -> Option<&AggregateRoutes> {
+        self.meta.as_ref().and_then(|m| m.aggregate_routes.as_ref())
+    }
+
     pub fn uses_managed_account_auth(&self) -> bool {
         self.is_github_copilot()
             || self.is_codex_oauth()
@@ -395,6 +409,53 @@ impl LocalProxyRequestOverrides {
     }
 }
 
+/// 聚合供应商的单档路由：将某个 Claude 模型档映射到指定 provider 的指定模型。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateRoute {
+    /// 目标 provider ID（必须属于同一 app，且不能是聚合供应商）
+    pub provider_id: String,
+    /// 发往目标 provider 上游的模型名
+    pub model: String,
+}
+
+/// 聚合供应商的模型分层路由表。
+///
+/// 聚合供应商自身没有端点；代理模式下按请求模型的档位
+/// （Haiku/Sonnet/Opus/Fable）分流到各档指定的 provider。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregateRoutes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub haiku: Option<AggregateRoute>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sonnet: Option<AggregateRoute>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opus: Option<AggregateRoute>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fable: Option<AggregateRoute>,
+}
+
+impl AggregateRoutes {
+    /// 是否配置了至少一档路由
+    pub fn has_any_route(&self) -> bool {
+        self.haiku.is_some() || self.sonnet.is_some() || self.opus.is_some() || self.fable.is_some()
+    }
+
+    /// 是否有任一档引用指定 provider。
+    pub fn references_provider(&self, provider_id: &str) -> bool {
+        [
+            self.haiku.as_ref(),
+            self.sonnet.as_ref(),
+            self.opus.as_ref(),
+            self.fable.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|route| route.provider_id == provider_id)
+    }
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -518,6 +579,9 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// 聚合供应商的模型分层路由表；非空即视为聚合供应商。
+    #[serde(rename = "aggregateRoutes", skip_serializing_if = "Option::is_none")]
+    pub aggregate_routes: Option<AggregateRoutes>,
 }
 
 /// 解析 Provider 级自定义 User-Agent 字符串（单一真理来源）。

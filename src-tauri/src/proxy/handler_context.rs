@@ -64,6 +64,9 @@ pub struct RequestContext {
     pub session_id: String,
     /// Session ID 是否由客户端提供。生成的 UUID 不能作为上游缓存 key，否则每个请求都会换 key。
     pub session_client_provided: bool,
+    /// 聚合路由合成的 provider id → 来源聚合供应商 (id, name)
+    /// （供 forwarder 决定"当前供应商"切换目标）
+    pub routed_provider_sources: std::collections::HashMap<String, (String, String)>,
     /// 整流器配置
     pub rectifier_config: RectifierConfig,
     /// 优化器配置
@@ -143,6 +146,27 @@ impl RequestContext {
                 _ => ProxyError::DatabaseError(e.to_string()),
             })?;
 
+        // 聚合供应商：按请求模型的档位，把链上的聚合供应商替换为其路由目标 provider。
+        // 展开后目标 provider 复用自身端点/认证，模型 env 已被覆写为路由模型名；
+        // 未覆盖该档的聚合供应商被丢弃，由链上后续 provider 自动回退。
+        let mut routed_provider_sources = std::collections::HashMap::new();
+        let providers = if app_type_str == "claude" {
+            let tier = crate::proxy::model_mapper::classify_claude_tier(&request_model);
+            let expansion = state
+                .provider_router
+                .expand_aggregate_routes(
+                    providers,
+                    tier,
+                    app_type_str,
+                    app_config.auto_failover_enabled,
+                )
+                .await;
+            routed_provider_sources = expansion.routed_provider_sources;
+            expansion.providers
+        } else {
+            providers
+        };
+
         let provider = providers
             .first()
             .cloned()
@@ -170,6 +194,7 @@ impl RequestContext {
             app_type,
             session_id,
             session_client_provided: session_result.client_provided,
+            routed_provider_sources,
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
@@ -233,6 +258,7 @@ impl RequestContext {
             state.failover_manager.clone(),
             state.app_handle.clone(),
             self.current_provider_id.clone(),
+            self.routed_provider_sources.clone(),
             self.session_id.clone(),
             self.session_client_provided,
             first_byte_timeout,

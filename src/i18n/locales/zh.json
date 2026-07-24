@@ -254,6 +254,7 @@
     "settingsSaved": "设置已保存",
     "settingsSaveFailed": "保存设置失败：{{error}}",
     "proxyRequiredForSwitch": "此供应商{{reason}}，需要路由服务才能正常使用，请先启动路由",
+    "aggregateRequiresTakeover": "聚合供应商需要代理接管模式。请先开启代理接管，再进行切换。",
     "proxyReasonCopilot": "使用 GitHub Copilot 作为 Claude 供应商",
     "proxyReasonOpenAIChat": "使用 OpenAI Chat 接口格式",
     "proxyReasonOpenAIResponses": "使用 OpenAI Responses 接口格式",
@@ -997,6 +998,25 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
+    "aggregate": {
+      "title": "聚合供应商",
+      "hint": "将 Haiku、Sonnet、Opus、Fable 请求分别路由到不同供应商的模型。使用时必须开启代理接管。",
+      "tier": "模型档位",
+      "targetProvider": "目标供应商",
+      "targetModel": "实际请求模型",
+      "selectProvider": "选择供应商",
+      "notConfigured": "不配置",
+      "modelPlaceholder": "例如：kimi-k3",
+      "noTargets": "请先添加至少一个可用于本地路由的第三方 Claude 供应商，再配置聚合路由。",
+      "empty": "请至少配置一条聚合路由。",
+      "incomplete": "{{tier}} 档必须同时选择供应商并填写模型。",
+      "tiers": {
+        "haiku": "Haiku",
+        "sonnet": "Sonnet",
+        "opus": "Opus",
+        "fable": "Fable"
+      }
+    },
     "supplierName": "供应商名称",
     "supplierNameRequired": "供应商名称 *",
     "supplierNamePlaceholder": "例如：Anthropic 官方",

@@ -239,8 +239,171 @@ pub fn normalize_anthropic_messages_for_provider(
 
     let mut changed =
         normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
+    changed |= normalize_server_tool_blocks_for_non_official(body, provider, api_format);
     changed |= normalize_deepseek_thinking_disabled_strip_effort(body, provider);
     changed
+}
+
+/// Anthropic's official API accepts server-side tool blocks in message history
+/// (`server_tool_use`, `web_search_tool_result`, ...), but stricter
+/// Anthropic-compatible gateways (e.g. Kimi for Coding) internally map them to
+/// OpenAI tool messages whose `tool_call_id` has no matching tool call — often
+/// an empty id because `web_search_tool_result` carries no `tool_use_id` —
+/// and reject the request with `tool_call_id  is not found`.
+///
+/// For non-official endpoints, downgrade these history blocks to plain text so
+/// retrieved content stays visible to the model; empty blocks are dropped.
+/// Official `api.anthropic.com` traffic passes through untouched.
+pub fn normalize_server_tool_blocks_for_non_official(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if api_format.trim() != "anthropic" || is_anthropic_official_endpoint(provider) {
+        return false;
+    }
+
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    for message in messages {
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+
+        let mut message_changed = false;
+        let mut rewritten = Vec::with_capacity(content.len());
+        for block in std::mem::take(content) {
+            let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
+            if block_type == "server_tool_use" {
+                if let Some(text) = server_tool_use_text(&block) {
+                    rewritten.push(json!({ "type": "text", "text": text }));
+                }
+                message_changed = true;
+            } else if block_type.ends_with("_tool_result") {
+                // Plain client-side `tool_result` does NOT match this suffix
+                // (no second underscore) and stays untouched.
+                if let Some(text) = server_tool_result_text(&block) {
+                    rewritten.push(json!({ "type": "text", "text": text }));
+                }
+                message_changed = true;
+            } else {
+                rewritten.push(block);
+            }
+        }
+
+        if message_changed {
+            // Anthropic requires a non-empty content array; keep a placeholder
+            // when every block of the message was dropped.
+            if rewritten.is_empty() {
+                rewritten.push(json!({ "type": "text", "text": "(omitted server tool exchange)" }));
+            }
+            changed = true;
+        }
+        *content = rewritten;
+    }
+
+    changed
+}
+
+/// Anthropic official endpoint detection; requests without an explicit
+/// base_url also default to the official API.
+fn is_anthropic_official_endpoint(provider: &Provider) -> bool {
+    let settings = &provider.settings_config;
+    let base_url = settings
+        .get("env")
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(|v| v.as_str())
+        .or_else(|| settings.get("base_url").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("baseURL").and_then(|v| v.as_str()))
+        .or_else(|| settings.get("apiEndpoint").and_then(|v| v.as_str()));
+
+    let Some(url) = base_url else {
+        return true;
+    };
+
+    let host = url
+        .trim()
+        .split("://")
+        .nth(1)
+        .unwrap_or_else(|| url.trim())
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+
+    host.eq_ignore_ascii_case("api.anthropic.com")
+}
+
+fn server_tool_use_text(block: &Value) -> Option<String> {
+    let name = block.get("name").and_then(Value::as_str)?;
+    let input = block
+        .get("input")
+        .filter(|v| !v.is_null())
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    Some(if input.is_empty() {
+        format!("[{name}]")
+    } else {
+        format!("[{name}] {input}")
+    })
+}
+
+fn server_tool_result_text(block: &Value) -> Option<String> {
+    let content = block.get("content")?;
+    let mut parts: Vec<String> = Vec::new();
+    match content {
+        Value::Array(items) => {
+            for item in items {
+                let before = parts.len();
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    parts.push(text.to_string());
+                    continue;
+                }
+                let title = item.get("title").and_then(Value::as_str);
+                let url = item.get("url").and_then(Value::as_str);
+                // title/url 摘要只适用于 web_search_result；其它带 url 的对象
+                // （如 web_fetch_result）正文在嵌套字段里，走下面的整体序列化
+                if item.get("type").and_then(Value::as_str) == Some("web_search_result") {
+                    match (title, url) {
+                        (Some(t), Some(u)) => parts.push(format!("{t} ({u})")),
+                        (Some(t), None) => parts.push(t.to_string()),
+                        (None, Some(u)) => parts.push(u.to_string()),
+                        (None, None) => {}
+                    }
+                }
+                if let Some(code) = item.get("error_code").and_then(Value::as_str) {
+                    parts.push(format!("[error: {code}]"));
+                }
+                // 未识别的对象形结果项（如 code_execution_output、嵌套的
+                // web_fetch_result）：整体序列化保留，避免工具输出被静默丢弃
+                if parts.len() == before && item.is_object() {
+                    parts.push(item.to_string());
+                }
+            }
+        }
+        Value::String(text) => parts.push(text.clone()),
+        // 对象形 content：错误形态（如 web_search_tool_result_error）提取
+        // error_code，其余（如 code_execution_tool_result 的对象 content）
+        // 序列化保留
+        Value::Object(_) => {
+            if let Some(code) = content.get("error_code").and_then(Value::as_str) {
+                parts.push(format!("[error: {code}]"));
+            } else {
+                parts.push(content.to_string());
+            }
+        }
+        _ => {}
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
 }
 
 fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
@@ -2677,5 +2840,227 @@ mod tests {
         assert!(changed);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("output_config").is_none());
+    }
+
+    fn kimi_for_coding_provider() -> Provider {
+        create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }))
+    }
+
+    fn server_tool_history_body() -> serde_json::Value {
+        json!({
+            "model": "k3",
+            "messages": [
+                { "role": "user", "content": "search something" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "text", "text": "Search results for query: " },
+                        {
+                            "type": "server_tool_use",
+                            "id": "srvtoolu_1",
+                            "name": "web_search",
+                            "input": { "query": "rust async" }
+                        },
+                        { "type": "web_search_tool_result", "content": [] },
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srvtoolu_1",
+                            "content": [
+                                {
+                                    "type": "web_search_result",
+                                    "title": "Async Book",
+                                    "url": "https://rust-lang.github.io/async-book/"
+                                }
+                            ]
+                        },
+                        { "type": "tool_use", "id": "tool_xxx", "name": "list_compute", "input": {} }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "tool_xxx", "content": "ok" }
+                    ]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn test_server_tool_blocks_rewritten_for_non_official_endpoint() {
+        let mut body = server_tool_history_body();
+
+        let changed = normalize_server_tool_blocks_for_non_official(
+            &mut body,
+            &kimi_for_coding_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][1]["content"].as_array().unwrap();
+        // text + server_tool_use→text + web_search_tool_result→text + tool_use
+        assert_eq!(content.len(), 4);
+        assert_eq!(content[1]["type"], "text");
+        assert!(content[1]["text"].as_str().unwrap().contains("web_search"));
+        assert_eq!(content[2]["type"], "text");
+        assert_eq!(
+            content[2]["text"],
+            "Async Book (https://rust-lang.github.io/async-book/)"
+        );
+        // Client-side tool_use / tool_result stay untouched.
+        assert_eq!(content[3]["type"], "tool_use");
+        assert_eq!(content[3]["id"], "tool_xxx");
+        assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
+        // No *_tool_result / server_tool_use blocks remain anywhere.
+        let remaining = serde_json::to_string(&body).unwrap();
+        assert!(!remaining.contains("server_tool_use"));
+        assert!(!remaining.contains("web_search_tool_result"));
+    }
+
+    #[test]
+    fn test_server_tool_blocks_preserved_for_official_endpoint() {
+        let providers = vec![
+            create_provider(json!({
+                "env": { "ANTHROPIC_BASE_URL": "https://api.anthropic.com", "ANTHROPIC_API_KEY": "test-key" }
+            })),
+            // No base_url configured → defaults to the official API.
+            create_provider(json!({
+                "env": { "ANTHROPIC_API_KEY": "test-key" }
+            })),
+        ];
+
+        for provider in providers {
+            let mut body = server_tool_history_body();
+            let original = body.clone();
+
+            let changed =
+                normalize_server_tool_blocks_for_non_official(&mut body, &provider, "anthropic");
+
+            assert!(!changed);
+            assert_eq!(body, original);
+        }
+    }
+
+    #[test]
+    fn test_server_tool_blocks_skipped_for_non_anthropic_format() {
+        let mut body = server_tool_history_body();
+        let original = body.clone();
+
+        let changed = normalize_server_tool_blocks_for_non_official(
+            &mut body,
+            &kimi_for_coding_provider(),
+            "openai_chat",
+        );
+
+        assert!(!changed);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn test_empty_server_tool_blocks_leave_placeholder() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{ "type": "web_search_tool_result", "content": [] }]
+                }
+            ]
+        });
+
+        let changed = normalize_server_tool_blocks_for_non_official(
+            &mut body,
+            &kimi_for_coding_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+    }
+
+    #[test]
+    fn test_object_shaped_server_tool_results_are_preserved() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "code_execution_tool_result",
+                            "tool_use_id": "srvtoolu_2",
+                            "content": { "type": "code_execution_output", "stdout": "42" }
+                        },
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srvtoolu_3",
+                            "content": { "type": "web_search_tool_result_error", "error_code": "max_uses_exceeded" }
+                        },
+                        {
+                            "type": "web_fetch_tool_result",
+                            "tool_use_id": "srvtoolu_4",
+                            "content": [
+                                { "type": "web_fetch_result", "url": "https://example.com", "content": { "type": "document", "title": "Doc" } }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let changed = normalize_server_tool_blocks_for_non_official(
+            &mut body,
+            &kimi_for_coding_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        // 对象形 content：序列化保留，工具输出不丢失
+        assert_eq!(content[0]["type"], "text");
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("code_execution_output")
+                && content[0]["text"].as_str().unwrap().contains("42"),
+            "object-shaped result should be serialized, got {:?}",
+            content[0]["text"]
+        );
+        // 错误形态：提取 error_code
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "[error: max_uses_exceeded]");
+        // 数组内未识别的对象项：序列化保留而不是丢弃
+        assert_eq!(content[2]["type"], "text");
+        assert!(
+            content[2]["text"]
+                .as_str()
+                .unwrap()
+                .contains("web_fetch_result"),
+            "unrecognized object item should be serialized, got {:?}",
+            content[2]["text"]
+        );
+    }
+
+    #[test]
+    fn test_normalize_messages_pipeline_rewrites_server_tools_for_kimi() {
+        let mut body = server_tool_history_body();
+
+        let changed = normalize_anthropic_messages_for_provider(
+            &mut body,
+            &kimi_for_coding_provider(),
+            "anthropic",
+        );
+
+        assert!(changed);
+        let remaining = serde_json::to_string(&body).unwrap();
+        assert!(!remaining.contains("server_tool_use"));
+        assert!(!remaining.contains("web_search_tool_result"));
     }
 }

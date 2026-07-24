@@ -20,6 +20,7 @@ interface EditProviderDialogProps {
   }) => Promise<void> | void;
   appId: AppId;
   isProxyTakeover?: boolean; // 代理接管模式下不读取 live（避免显示被接管后的代理配置）
+  availableProviders?: Provider[];
 }
 
 export function EditProviderDialog({
@@ -29,6 +30,7 @@ export function EditProviderDialog({
   onSubmit,
   appId,
   isProxyTakeover = false,
+  availableProviders = [],
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
@@ -248,6 +250,7 @@ export function EditProviderDialog({
         initialData={initialData}
         showButtons={false}
         isProxyTakeover={isProxyTakeover}
+        availableProviders={availableProviders}
       />
     </FullScreenPanel>
   );

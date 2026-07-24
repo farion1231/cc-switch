@@ -7,7 +7,8 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::proxy::circuit_breaker::{AllowResult, CircuitBreaker, CircuitBreakerConfig};
-use std::collections::HashMap;
+use crate::proxy::model_mapper::ClaudeTier;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -18,6 +19,16 @@ pub struct ProviderRouter {
     db: Arc<Database>,
     /// 熔断器管理器 - key 格式: "app_type:provider_id"
     circuit_breakers: Arc<RwLock<HashMap<String, Arc<CircuitBreaker>>>>,
+}
+
+/// 聚合供应商路由展开结果
+pub struct AggregateExpansion {
+    /// 展开后的 provider 链（聚合供应商按档位替换为目标 provider）
+    pub providers: Vec<Provider>,
+    /// 由聚合路由合成的 provider id → 来源聚合供应商 (id, name)。
+    /// 供 forwarder 决定“当前供应商”切换目标：同一聚合的各档目标之间不切换，
+    /// 但故障转移首次命中聚合时，把当前供应商同步到该聚合供应商。
+    pub routed_provider_sources: HashMap<String, (String, String)>,
 }
 
 impl ProviderRouter {
@@ -106,6 +117,170 @@ impl ProviderRouter {
         }
 
         Ok(result)
+    }
+
+    /// 展开链上的聚合供应商：按请求模型的档位（tier）将其替换为目标 provider。
+    ///
+    /// - 非聚合 provider 原样保留；
+    /// - 聚合 provider 在以下情况从链上丢弃（并 log）：模型无法分类 / 该档未配置路由、
+    ///   目标 provider 已删除、目标也是聚合供应商（禁止嵌套）；
+    /// - `check_breaker` 为 true（故障转移开启）时，目标熔断中同样丢弃，
+    ///   由链上后续 provider 自动回退。
+    ///
+    /// 命中路由时克隆目标 provider 并改写其模型 env（见
+    /// [`Self::synthesize_routed_provider`]），目标 id → 来源聚合供应商记入返回的
+    /// `routed_provider_sources`，供 forwarder 决定"当前供应商"切换目标。
+    /// 同一 id 只保留首次出现（去重）。
+    pub async fn expand_aggregate_routes(
+        &self,
+        providers: Vec<Provider>,
+        tier: Option<ClaudeTier>,
+        app_type: &str,
+        check_breaker: bool,
+    ) -> AggregateExpansion {
+        let mut result: Vec<Provider> = Vec::with_capacity(providers.len());
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        let mut routed_sources: HashMap<String, (String, String)> = HashMap::new();
+
+        for provider in providers {
+            let Some(routes) = provider.aggregate_routes() else {
+                if seen_ids.insert(provider.id.clone()) {
+                    result.push(provider);
+                }
+                continue;
+            };
+
+            let route = tier.and_then(|t| match t {
+                ClaudeTier::Haiku => routes.haiku.as_ref(),
+                ClaudeTier::Sonnet => routes.sonnet.as_ref(),
+                ClaudeTier::Opus => routes.opus.as_ref(),
+                ClaudeTier::Fable => routes.fable.as_ref(),
+            });
+
+            let Some(route) = route else {
+                log::warn!(
+                    "[{app_type}] 聚合供应商 {} 未配置 {:?} 档路由，跳过",
+                    provider.name,
+                    tier
+                );
+                continue;
+            };
+
+            let target_id = route.provider_id.trim();
+            let target_model = route.model.trim();
+            if target_id.is_empty() || target_model.is_empty() {
+                log::warn!(
+                    "[{app_type}] 聚合供应商 {} 的 {:?} 档路由不完整，跳过",
+                    provider.name,
+                    tier
+                );
+                continue;
+            }
+
+            let target = match self.db.get_provider_by_id(target_id, app_type) {
+                Ok(Some(p)) => p,
+                Ok(None) => {
+                    log::warn!(
+                        "[{app_type}] 聚合供应商 {} 的 {:?} 档目标 provider {} 已删除，跳过",
+                        provider.name,
+                        tier,
+                        target_id
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    log::error!(
+                        "[{app_type}] 读取聚合路由目标 provider {} 失败: {e}，跳过",
+                        target_id
+                    );
+                    continue;
+                }
+            };
+
+            if target.is_aggregate() {
+                log::warn!(
+                    "[{app_type}] 聚合供应商 {} 的 {:?} 档目标 {} 也是聚合供应商，跳过（禁止嵌套）",
+                    provider.name,
+                    tier,
+                    target.name
+                );
+                continue;
+            }
+
+            if check_breaker {
+                let circuit_key = format!("{app_type}:{}", target.id);
+                let breaker = self.get_or_create_circuit_breaker(&circuit_key).await;
+                if !breaker.is_available().await {
+                    log::warn!(
+                        "[{app_type}] 聚合路由目标 {} 熔断中，跳过（自动回退到链上后续 provider）",
+                        target.name
+                    );
+                    continue;
+                }
+            }
+
+            log::debug!(
+                "[{app_type}] 聚合路由: {} {:?} 档 → {} (model={})",
+                provider.name,
+                tier,
+                target.name,
+                target_model
+            );
+            let routed = Self::synthesize_routed_provider(&target, target_model);
+            if seen_ids.insert(routed.id.clone()) {
+                routed_sources.insert(
+                    routed.id.clone(),
+                    (provider.id.clone(), provider.name.clone()),
+                );
+                result.push(routed);
+            }
+        }
+
+        AggregateExpansion {
+            providers: result,
+            routed_provider_sources: routed_sources,
+        }
+    }
+
+    /// 克隆目标 provider 并覆写模型 env：清除分层/子代理模型键，将
+    /// `ANTHROPIC_MODEL` 设为路由模型名。下游 model_mapper 因此会把任意档别名
+    /// 统一映射到该模型，目标 provider 的端点/认证/归一化逻辑全部复用。
+    fn synthesize_routed_provider(target: &Provider, model: &str) -> Provider {
+        const TIER_MODEL_KEYS: [&str; 6] = [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_SMALL_FAST_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+        ];
+
+        let mut routed = target.clone();
+        if !routed.settings_config.is_object() {
+            routed.settings_config = serde_json::json!({});
+        }
+        let root = routed
+            .settings_config
+            .as_object_mut()
+            .expect("settings_config normalized to object");
+        let env_value = root
+            .entry("env".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if !env_value.is_object() {
+            *env_value = serde_json::json!({});
+        }
+        let env = env_value
+            .as_object_mut()
+            .expect("settings_config.env normalized to object");
+
+        for key in TIER_MODEL_KEYS {
+            env.remove(key);
+        }
+        env.insert(
+            "ANTHROPIC_MODEL".to_string(),
+            serde_json::Value::String(model.to_string()),
+        );
+        routed
     }
 
     /// 请求执行前获取熔断器“放行许可”
@@ -273,6 +448,7 @@ impl ProviderRouter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::provider::{AggregateRoute, AggregateRoutes, ProviderMeta};
     use serde_json::json;
     use serial_test::serial;
     use std::env;
@@ -519,5 +695,244 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    // ==================== 聚合供应商路由展开 ====================
+
+    fn make_aggregate_provider(id: &str, routes: AggregateRoutes) -> Provider {
+        let mut provider =
+            Provider::with_id(id.to_string(), format!("Aggregate {id}"), json!({}), None);
+        let mut meta = ProviderMeta::default();
+        meta.aggregate_routes = Some(routes);
+        provider.meta = Some(meta);
+        provider
+    }
+
+    fn single_fable_route(target_id: &str, model: &str) -> AggregateRoutes {
+        let mut routes = AggregateRoutes::default();
+        routes.fable = Some(AggregateRoute {
+            provider_id: target_id.to_string(),
+            model: model.to_string(),
+        });
+        routes
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_hits_target_and_overrides_model_env() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let kimi = Provider::with_id(
+            "kimi".to_string(),
+            "Kimi".to_string(),
+            json!({
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-kimi",
+                    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+                    "ANTHROPIC_MODEL": "k2",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3-fable",
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "k3-haiku",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "k3-sub"
+                }
+            }),
+            None,
+        );
+        db.save_provider("claude", &kimi).unwrap();
+
+        let agg = make_aggregate_provider("agg", single_fable_route("kimi", "k3"));
+
+        let router = ProviderRouter::new(db.clone());
+        let expansion = router
+            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Fable), "claude", false)
+            .await;
+
+        assert_eq!(expansion.providers.len(), 1);
+        let routed = &expansion.providers[0];
+        assert_eq!(routed.id, "kimi");
+        assert_eq!(
+            expansion.routed_provider_sources.get("kimi"),
+            Some(&("agg".to_string(), "Aggregate agg".to_string())),
+            "routed target should record its source aggregate provider"
+        );
+
+        let env = routed.settings_config.get("env").unwrap();
+        assert_eq!(env.get("ANTHROPIC_MODEL").unwrap(), "k3");
+        // 分层/子代理键被清除，避免目标 provider 自身的档配置覆盖路由模型
+        assert!(env.get("ANTHROPIC_DEFAULT_FABLE_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL").is_none());
+        assert!(env.get("CLAUDE_CODE_SUBAGENT_MODEL").is_none());
+        assert!(env.get("ANTHROPIC_SMALL_FAST_MODEL").is_none());
+        // 端点与密钥原样保留
+        assert_eq!(env.get("ANTHROPIC_AUTH_TOKEN").unwrap(), "sk-kimi");
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL").unwrap(),
+            "https://api.kimi.com/coding"
+        );
+
+        // 合成后的 provider 经 model_mapper 会把任意档别名映射到路由模型
+        let (mapped, _, _) = crate::proxy::model_mapper::apply_model_mapping(
+            json!({"model": "claude-fable-5"}),
+            routed,
+        );
+        assert_eq!(mapped["model"], "k3");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_drops_unconfigured_tier() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let kimi = Provider::with_id("kimi".to_string(), "Kimi".to_string(), json!({}), None);
+        db.save_provider("claude", &kimi).unwrap();
+
+        let agg = make_aggregate_provider("agg", single_fable_route("kimi", "k3"));
+
+        let router = ProviderRouter::new(db.clone());
+        // 只配置了 Fable 档，Haiku 档请求 → 聚合供应商被丢弃
+        let expansion = router
+            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Haiku), "claude", false)
+            .await;
+
+        assert!(expansion.providers.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_drops_unclassifiable_model() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let kimi = Provider::with_id("kimi".to_string(), "Kimi".to_string(), json!({}), None);
+        db.save_provider("claude", &kimi).unwrap();
+
+        let agg = make_aggregate_provider("agg", single_fable_route("kimi", "k3"));
+
+        let router = ProviderRouter::new(db.clone());
+        let expansion = router
+            .expand_aggregate_routes(vec![agg], None, "claude", false)
+            .await;
+
+        assert!(expansion.providers.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_drops_missing_target() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let agg = make_aggregate_provider("agg", single_fable_route("ghost", "k3"));
+
+        let router = ProviderRouter::new(db.clone());
+        let expansion = router
+            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Fable), "claude", false)
+            .await;
+
+        assert!(expansion.providers.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_rejects_nested_aggregate() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        // 目标自身也是聚合供应商 → 禁止嵌套，丢弃
+        let inner = make_aggregate_provider("inner", single_fable_route("ghost", "k3"));
+        db.save_provider("claude", &inner).unwrap();
+
+        let agg = make_aggregate_provider("agg", single_fable_route("inner", "k3"));
+
+        let router = ProviderRouter::new(db.clone());
+        let expansion = router
+            .expand_aggregate_routes(vec![agg], Some(ClaudeTier::Fable), "claude", false)
+            .await;
+
+        assert!(expansion.providers.is_empty());
+        assert!(expansion.routed_provider_sources.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_keeps_plain_providers_and_dedupes() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let kimi = Provider::with_id("kimi".to_string(), "Kimi".to_string(), json!({}), None);
+        db.save_provider("claude", &kimi).unwrap();
+
+        let plain = Provider::with_id("plain".to_string(), "Plain".to_string(), json!({}), None);
+        let agg = make_aggregate_provider("agg", single_fable_route("kimi", "k3"));
+
+        let router = ProviderRouter::new(db.clone());
+        // 链：[普通 provider, 聚合(→kimi), kimi] → kimi 只保留首次出现（来自路由合成）
+        let expansion = router
+            .expand_aggregate_routes(
+                vec![plain, agg, kimi],
+                Some(ClaudeTier::Fable),
+                "claude",
+                false,
+            )
+            .await;
+
+        let ids: Vec<&str> = expansion.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["plain", "kimi"]);
+        assert!(expansion.routed_provider_sources.contains_key("kimi"));
+        assert!(!expansion.routed_provider_sources.contains_key("plain"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_expand_aggregate_routes_skips_circuit_open_target_only_when_checking() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let kimi = Provider::with_id("kimi".to_string(), "Kimi".to_string(), json!({}), None);
+        db.save_provider("claude", &kimi).unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+
+        // 连续失败触发熔断（claude 默认 circuit_failure_threshold = 8）
+        for _ in 0..8 {
+            router
+                .record_result("kimi", "claude", false, false, Some("fail".to_string()))
+                .await
+                .unwrap();
+        }
+        let breaker = router.get_or_create_circuit_breaker("claude:kimi").await;
+        assert!(!breaker.is_available().await);
+
+        // check_breaker = true（故障转移开启）：熔断目标被丢弃
+        let expansion = router
+            .expand_aggregate_routes(
+                vec![make_aggregate_provider(
+                    "agg",
+                    single_fable_route("kimi", "k3"),
+                )],
+                Some(ClaudeTier::Fable),
+                "claude",
+                true,
+            )
+            .await;
+        assert!(expansion.providers.is_empty());
+
+        // check_breaker = false（故障转移关闭）：不查熔断，目标保留
+        let expansion = router
+            .expand_aggregate_routes(
+                vec![make_aggregate_provider(
+                    "agg",
+                    single_fable_route("kimi", "k3"),
+                )],
+                Some(ClaudeTier::Fable),
+                "claude",
+                false,
+            )
+            .await;
+        assert_eq!(expansion.providers.len(), 1);
+        assert_eq!(expansion.providers[0].id, "kimi");
     }
 }
