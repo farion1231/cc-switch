@@ -18,6 +18,120 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Normalize newlines to CRLF so `cmd.exe` never glues lines together.
+///
+/// Rust multiline string literals use LF only. Mixing those with a few `\r\n`
+/// fragments (e.g. `cd /d ...\r\n`) makes cmd treat `@echo off` + `cd /d` as
+/// one line. With CJK paths that then surfaces as `'/d' is not recognized...`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn normalize_windows_batch_newlines(content: &str) -> String {
+    content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', "\r\n")
+}
+
+/// Encode batch-file text with the system ANSI code page (CP_ACP).
+///
+/// `std::fs::write` emits UTF-8. On Chinese Windows, `cmd.exe` still opens
+/// `.bat` files as GBK/ANSI by default, so UTF-8 CJK paths become mojibake and
+/// `cd /d` fails with "not recognized as an internal or external command".
+///
+/// Characters that cannot be represented in the current ACP (e.g. emoji on a
+/// GBK system) must not be silently substituted with `?` — that would make
+/// `cd` / `del` target the wrong path. Reject lossy conversions instead.
+///
+/// When the system locale beta "use Unicode UTF-8" is on (`GetACP() == 65001`),
+/// ACP is already UTF-8 and fully lossless; `WC_NO_BEST_FIT_CHARS` /
+/// `lpUsedDefaultChar` are also invalid for that code page, so they are skipped.
+#[cfg(target_os = "windows")]
+fn encode_windows_batch_bytes(content: &str) -> Result<Vec<u8>, String> {
+    use windows_sys::Win32::Globalization::{
+        GetACP, WideCharToMultiByte, CP_ACP, WC_NO_BEST_FIT_CHARS,
+    };
+
+    let wide: Vec<u16> = content.encode_utf16().collect();
+    if wide.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let wide_len = i32::try_from(wide.len()).map_err(|_| "batch content too large".to_string())?;
+
+    // UTF-8 ACP (65001): conversion is lossless; used-default-char flags are invalid.
+    let acp = unsafe { GetACP() };
+    let flags = if acp == 65001 {
+        0
+    } else {
+        WC_NO_BEST_FIT_CHARS
+    };
+
+    unsafe {
+        let mut used_default: i32 = 0;
+        let used_default_ptr: *mut i32 = if acp == 65001 {
+            std::ptr::null_mut()
+        } else {
+            &mut used_default
+        };
+
+        let needed = WideCharToMultiByte(
+            CP_ACP,
+            flags,
+            wide.as_ptr(),
+            wide_len,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+            used_default_ptr,
+        );
+        if needed <= 0 {
+            return Err("failed to measure system ANSI size for batch content".to_string());
+        }
+        if used_default != 0 {
+            return Err(
+                "batch content contains characters that cannot be represented in the system ANSI code page; \
+                 rename the path or enable the Windows UTF-8 system locale"
+                    .to_string(),
+            );
+        }
+
+        let mut buf = vec![0u8; needed as usize];
+        used_default = 0;
+        let written = WideCharToMultiByte(
+            CP_ACP,
+            flags,
+            wide.as_ptr(),
+            wide_len,
+            buf.as_mut_ptr(),
+            needed,
+            std::ptr::null(),
+            used_default_ptr,
+        );
+        if written <= 0 {
+            return Err("failed to encode batch content to system ANSI code page".to_string());
+        }
+        if used_default != 0 {
+            return Err(
+                "batch content contains characters that cannot be represented in the system ANSI code page; \
+                 rename the path or enable the Windows UTF-8 system locale"
+                    .to_string(),
+            );
+        }
+        buf.truncate(written as usize);
+        Ok(buf)
+    }
+}
+
+/// Write a `.bat` that `cmd.exe` can parse: CRLF line endings + system ACP bytes.
+#[cfg(target_os = "windows")]
+fn write_windows_batch_file(path: &Path, content: &str) -> Result<(), String> {
+    let mut normalized = normalize_windows_batch_newlines(content);
+    if !normalized.ends_with("\r\n") {
+        normalized.push_str("\r\n");
+    }
+    let bytes = encode_windows_batch_bytes(&normalized)?;
+    std::fs::write(path, bytes).map_err(|e| format!("写入批处理文件失败: {e}"))
+}
+
 /// 打开外部链接
 #[tauri::command]
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
@@ -231,7 +345,8 @@ fn run_tool_lifecycle_silently(command_line: &str, label: &str) -> Result<(), St
 
     let bat_file =
         std::env::temp_dir().join(format!("cc_switch_{}_{}.bat", label, std::process::id()));
-    std::fs::write(&bat_file, command_line).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    // Must use ACP + CRLF: UTF-8 / bare LF breaks CJK paths under cmd.exe.
+    write_windows_batch_file(&bat_file, command_line)?;
 
     let output = Command::new("cmd")
         .arg("/C")
@@ -3312,22 +3427,22 @@ fn launch_windows_terminal(
     let config_path_for_batch = escape_windows_batch_value(&config_file.to_string_lossy());
     let cwd_command = build_windows_cwd_command(cwd);
 
+    // Explicit CRLF only — never use a multiline string literal (LF) here.
+    // Mixed LF/CRLF makes cmd glue `@echo off` onto `cd /d`, which with CJK
+    // paths surfaces as: `'/d' 不是内部或外部命令`.
     let content = format!(
-        "@echo off
-{cwd_command}
-echo Using provider-specific claude config:
-echo {}
-claude --settings \"{}\"
-del \"{}\" >nul 2>&1
-del \"%~f0\" >nul 2>&1
-",
-        config_path_for_batch,
-        config_path_for_batch,
-        config_path_for_batch,
+        "@echo off\r\n\
+{cwd_command}\
+echo Using provider-specific claude config:\r\n\
+echo {config}\r\n\
+claude --settings \"{config}\"\r\n\
+del \"{config}\" >nul 2>&1\r\n\
+del \"%~f0\" >nul 2>&1\r\n",
+        config = config_path_for_batch,
         cwd_command = cwd_command,
     );
 
-    std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+    write_windows_batch_file(&bat_file, &content)?;
 
     let bat_path = bat_file.to_string_lossy();
     let ps_cmd = format!("& '{}'", bat_path);
@@ -3400,7 +3515,9 @@ fn escape_windows_batch_value(value: &str) -> String {
 fn run_windows_start_command(args: &[&str], terminal_name: &str) -> Result<(), String> {
     use std::process::Command;
 
-    let mut full_args = vec!["/C", "start"];
+    // `start`'s first quoted argument is the window title. Pass an explicit
+    // empty title so a quoted path (spaces / CJK) is never mistaken for it.
+    let mut full_args = vec!["/C", "start", ""];
     full_args.extend(args);
 
     let output = Command::new("cmd")
@@ -3566,7 +3683,8 @@ read -r _
             label = label,
             cmd = command_line,
         );
-        std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
+        // ACP + CRLF so CJK characters in `command_line` survive cmd parsing.
+        write_windows_batch_file(&bat_file, &content)?;
 
         let bat_path = bat_file.to_string_lossy();
         let ps_cmd = format!("& '{}'", bat_path);
@@ -5649,6 +5767,164 @@ mod tests {
         assert_eq!(
             command,
             "pushd \"\\\\server\\share\\100%%^&^(test^)\" || exit /b 1\r\n"
+        );
+    }
+
+    #[test]
+    fn build_windows_cwd_command_str_preserves_cjk_path_and_crlf() {
+        // CJK cwd must stay as real Unicode in the command text; encoding to ACP
+        // happens later in write_windows_batch_file. Mixed LF/CRLF is what used
+        // to make cmd glue `@echo off` onto this line (issue #5479 / #3150).
+        let command = build_windows_cwd_command_str(r"D:\zhuomian\2026测试\ccswitch");
+
+        assert_eq!(
+            command,
+            "cd /d \"D:\\zhuomian\\2026测试\\ccswitch\" || exit /b 1\r\n"
+        );
+        // Every LF must be part of CRLF.
+        for (i, b) in command.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                assert_eq!(
+                    command.as_bytes().get(i.wrapping_sub(1)),
+                    Some(&b'\r'),
+                    "found bare LF at index {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn normalize_windows_batch_newlines_collapses_mixed_endings_to_crlf() {
+        // Reproduce the exact bug shape from launch_windows_terminal before the fix:
+        // LF-only template body + one CRLF cwd fragment.
+        let mixed = "@echo off\ncd /d \"D:\\测试\" || exit /b 1\r\necho hi\n";
+        let normalized = normalize_windows_batch_newlines(mixed);
+
+        assert_eq!(
+            normalized,
+            "@echo off\r\ncd /d \"D:\\测试\" || exit /b 1\r\necho hi\r\n"
+        );
+        assert!(!normalized.contains("offcd"), "lines must not be glued");
+        for (i, b) in normalized.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                assert_eq!(
+                    normalized.as_bytes().get(i.wrapping_sub(1)),
+                    Some(&b'\r'),
+                    "found bare LF at index {i}"
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn write_windows_batch_file_uses_acp_and_crlf_for_cjk_cd() {
+        use windows_sys::Win32::Globalization::GetACP;
+
+        let temp = tempfile::tempdir().expect("temp dir");
+        let bat = temp.path().join("cjk_cd.bat");
+        let target = r"D:\zhuomian\2026测试\ccswitch";
+        let content =
+            format!("@echo off\ncd /d \"{target}\" || exit /b 1\necho CWD=%CD%\necho OK\n");
+
+        // GitHub Actions windows-latest is usually ACP 1252, which cannot encode CJK.
+        // There the write must reject lossy conversion; still verify CRLF/ACP for ASCII.
+        // On Chinese/Japanese Windows (or UTF-8 system locale), full CJK coverage applies.
+        match write_windows_batch_file(&bat, &content) {
+            Err(err) => {
+                assert!(
+                    err.contains("cannot be represented"),
+                    "when ACP cannot encode CJK, write must reject lossy conversion, got: {err}"
+                );
+
+                let ascii_bat = temp.path().join("ascii_cd.bat");
+                let ascii_content =
+                    "@echo off\ncd /d \"D:\\project\" || exit /b 1\necho CWD=%CD%\necho OK\n";
+                write_windows_batch_file(&ascii_bat, ascii_content).expect("write ascii batch");
+
+                let bytes = std::fs::read(&ascii_bat).expect("read ascii batch");
+                for i in 0..bytes.len() {
+                    if bytes[i] == b'\n' {
+                        assert_eq!(
+                            bytes.get(i.wrapping_sub(1)),
+                            Some(&b'\r'),
+                            "found bare LF at index {i}"
+                        );
+                    }
+                }
+                assert!(
+                    bytes.windows(b"cd /d".len()).any(|w| w == b"cd /d"),
+                    "ascii batch must contain cd /d command"
+                );
+                return;
+            }
+            Ok(()) => {}
+        }
+
+        let bytes = std::fs::read(&bat).expect("read batch");
+        for i in 0..bytes.len() {
+            if bytes[i] == b'\n' {
+                assert_eq!(
+                    bytes.get(i.wrapping_sub(1)),
+                    Some(&b'\r'),
+                    "found bare LF at index {i}"
+                );
+            }
+        }
+
+        // On classic Chinese Windows (ACP=936), CJK must not remain as UTF-8.
+        // Skip when the system is already UTF-8 (beta "use Unicode UTF-8" locale).
+        let acp = unsafe { GetACP() };
+        if acp != 65001 {
+            let utf8_ce = "测试".as_bytes();
+            assert!(
+                !bytes.windows(utf8_ce.len()).any(|w| w == utf8_ce),
+                "batch must not store CJK as UTF-8 when ACP={acp}"
+            );
+        }
+
+        // Round-trip through cmd when the directory exists.
+        if std::path::Path::new(target).is_dir() {
+            use std::process::Command;
+            let output = Command::new("cmd")
+                .arg("/C")
+                .arg(&bat)
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+                .expect("run batch");
+            assert!(
+                output.status.success(),
+                "cmd failed: stdout={} stderr={}",
+                decode_command_output(&output.stdout),
+                decode_command_output(&output.stderr)
+            );
+            let stdout = decode_command_output(&output.stdout);
+            assert!(
+                stdout.contains("OK"),
+                "expected OK in stdout, got: {stdout}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn encode_windows_batch_bytes_rejects_chars_outside_acp() {
+        use windows_sys::Win32::Globalization::GetACP;
+
+        // When the system ACP is already UTF-8, every Unicode scalar maps losslessly.
+        let acp = unsafe { GetACP() };
+        if acp == 65001 {
+            let ok = encode_windows_batch_bytes("cd /d \"D:\\😀\\project\"\r\n");
+            assert!(ok.is_ok(), "UTF-8 ACP must accept emoji paths: {ok:?}");
+            return;
+        }
+
+        // U+1F600 is outside GBK / CP1252 / etc. Must fail instead of writing `?`.
+        let err = encode_windows_batch_bytes("cd /d \"D:\\😀\\project\"\r\n")
+            .expect_err("unmappable emoji must be rejected when ACP is not UTF-8");
+        assert!(
+            err.contains("cannot be represented"),
+            "unexpected error text: {err}"
         );
     }
 }
