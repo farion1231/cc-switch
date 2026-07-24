@@ -2281,6 +2281,10 @@ impl Database {
             ("qwen3-32b", "Qwen3 32B", "0.16", "0.64", "0", "0"),
             // Grok 系列 (xAI)
             ("grok-4.5", "Grok 4.5", "2", "6", "0.50", "0"),
+            // Grok CLI 官方 OAuth 态 modelUsage 上报的内部别名。定价由
+            // costUsdTicks（1 tick = 1e-10 USD）双轮实测反推：input/output 与
+            // grok-4.5 同为 2/6，cache read 实际按 0.30 计（非 API 挂牌的 0.50）
+            ("grok-4.5-build", "Grok 4.5 Build", "2", "6", "0.30", "0"),
             ("grok-4.3", "Grok 4.3", "1.25", "2.50", "0.20", "0"),
             (
                 "grok-4.20-0309-reasoning",

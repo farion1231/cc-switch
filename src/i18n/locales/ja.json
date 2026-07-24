@@ -1506,6 +1506,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
+      "grokbuild": "Grok Build",
       "codefree": "CodeFree"
     },
     "rawInputLabel": "原始",
@@ -1517,6 +1518,7 @@
       "codex_session": "Codex セッション",
       "gemini_session": "Gemini セッション",
       "opencode_session": "OpenCode セッション",
+      "grok_session": "Grok Build セッション",
       "codefree_session": "CodeFree セッション"
     },
     "sessionSync": {
@@ -3014,6 +3016,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "週間",
     "monthly": "月間",
+    "credits": "クレジット",
     "copilotPremium": "プレミアム",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}後にリセット",

@@ -1478,6 +1478,7 @@
       "codex": "Codex",
       "gemini": "Gemini",
       "opencode": "OpenCode",
+      "grokbuild": "Grok Build",
       "codefree": "CodeFree"
     },
     "rawInputLabel": "原始",
@@ -1489,6 +1490,7 @@
       "codex_session": "Codex 工作階段日誌",
       "gemini_session": "Gemini 工作階段日誌",
       "opencode_session": "OpenCode 工作階段日誌",
+      "grok_session": "Grok Build 工作階段日誌",
       "codefree_session": "CodeFree 工作階段日誌"
     },
     "sessionSync": {
@@ -2986,6 +2988,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "每週",
     "monthly": "每月",
+    "credits": "額度",
     "copilotPremium": "進階請求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}} 後重設",
