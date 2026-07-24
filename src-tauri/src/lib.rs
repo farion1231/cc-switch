@@ -30,6 +30,8 @@ mod prompt_files;
 mod provider;
 mod provider_defaults;
 mod proxy;
+// [cc-switch-proxy] exposed for standalone binary; see docs/superpowers/specs/2026-07-07-cc-switch-proxy-standalone-cli-design.md
+pub mod standalone;
 mod services;
 mod session_manager;
 mod settings;

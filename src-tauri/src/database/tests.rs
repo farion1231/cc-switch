@@ -919,3 +919,23 @@ fn ensure_incremental_auto_vacuum_rebuilds_existing_file_db() {
         "file db should persist INCREMENTAL auto_vacuum after VACUUM rebuild"
     );
 }
+
+#[test]
+fn open_at_creates_tables_at_custom_path() {
+    // standalone CLI 用：open_at 应在任意路径建好全部表，且不依赖 GUI 配置目录
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let path = dir.path().join("cli-proxy-test.db");
+    let db = Database::open_at(&path).expect("open_at should succeed");
+
+    let conn = db.conn.lock().expect("lock conn");
+    for table in ["providers", "model_pricing", "proxy_config", "settings"] {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                params![table],
+                |row| row.get(0),
+            )
+            .expect("query table");
+        assert_eq!(count, 1, "表 {table} 应已创建");
+    }
+}
