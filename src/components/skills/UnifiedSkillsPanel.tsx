@@ -36,6 +36,10 @@ import { AppCountBar } from "@/components/common/AppCountBar";
 import { AppToggleGroup } from "@/components/common/AppToggleGroup";
 import { ListItemRow } from "@/components/common/ListItemRow";
 import {
+  filterInstalledSkills,
+  type SkillsAppFilter,
+} from "@/components/skills/skillsFilter";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -79,6 +83,7 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [selectedApp, setSelectedApp] = useState<SkillsAppFilter>("all");
 
   const { data: skills, isLoading } = useInstalledSkills();
   const {
@@ -132,6 +137,11 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  const filteredSkills = useMemo(
+    () => filterInstalledSkills(skills ?? [], selectedApp),
+    [skills, selectedApp],
+  );
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -350,9 +360,11 @@ const UnifiedSkillsPanel = React.forwardRef<
     <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
       <div className="flex items-center justify-between">
         <AppCountBar
-          totalLabel={t("skills.installed", { count: skills?.length || 0 })}
+          totalLabel={t("skills.all")}
           counts={enabledCounts}
           appIds={SKILLS_APP_IDS}
+          selectedApp={selectedApp}
+          onAppSelect={setSelectedApp}
         />
         <div className="flex items-center gap-1.5">
           <div
@@ -418,10 +430,22 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-muted rounded-full flex items-center justify-center">
+              <Sparkles size={24} className="text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium text-foreground mb-2">
+              {t("skills.noMatchingInstalled")}
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {t("skills.noMatchingInstalledDescription")}
+            </p>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -433,7 +457,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>
