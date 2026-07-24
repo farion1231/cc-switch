@@ -1,15 +1,19 @@
-//! Shared media handling for Codex tool outputs.
+//! Shared media handling for tool outputs.
 //!
-//! Responses tool outputs may carry structured media blocks. Chat Completions
-//! tool messages are text-only, so the Responses→Chat bridge extracts those
-//! blocks and re-emits them in a synthetic user message. The media sanitizer
-//! reuses the same recognition and traversal rules when it needs to remove
-//! images for a text-only upstream.
+//! Responses and Anthropic tool outputs may carry structured media blocks.
+//! Chat Completions tool messages are text-only, so protocol bridges extract
+//! those blocks and re-emit them in a synthetic user message. The media
+//! sanitizer reuses the same recognition and traversal rules when it needs to
+//! remove images for a text-only upstream.
 
 use crate::proxy::json_canonical::canonical_json_string;
 use serde_json::{json, Map, Value};
 
 pub(crate) const WHOLE_DATA_URL_MIN_BYTES: usize = 8 * 1024;
+pub(crate) const TOOL_RESULT_MEDIA_MOVED_MARKER: &str =
+    "[cc-switch: tool result media moved to the following user message]";
+pub(crate) const TOOL_RESULT_MEDIA_ATTACHED_MARKER: &str =
+    "[cc-switch: tool result media attached as native media]";
 const BASE64ISH_MIN_BYTES: usize = 16 * 1024;
 const MAX_MEDIA_TRAVERSAL_DEPTH: usize = 32;
 
@@ -17,7 +21,11 @@ const MAX_MEDIA_TRAVERSAL_DEPTH: usize = 32;
 pub(crate) enum ToolMediaScope {
     /// Used by the existing image-capability sanitizer and its retry path.
     ImagesOnly,
-    /// Used by Responses→Chat conversion, where user messages can carry all
+    /// Used by Gemini Native `generateContent`, whose existing bridge only
+    /// promises inline base64 image input. Remote URLs and malformed data URLs
+    /// must stay in the legacy tool-result representation.
+    InlineImagesOnly,
+    /// Used by Chat conversion bridges, where user messages can carry all
     /// currently mapped Chat input modalities.
     AllSupported,
 }
@@ -29,21 +37,95 @@ enum ToolMediaKind {
     Audio,
 }
 
+pub(crate) struct ChatToolOutputMediaPlan {
+    pub(crate) tool_content: String,
+    pub(crate) media_parts: Vec<Value>,
+}
+
 impl ToolMediaScope {
     fn allows(self, kind: ToolMediaKind) -> bool {
         matches!(kind, ToolMediaKind::Image) || matches!(self, Self::AllSupported)
     }
+
+    fn accepts_chat_part(self, part: &Value) -> bool {
+        !matches!(self, Self::InlineImagesOnly) || chat_image_part_has_inline_data(part)
+    }
 }
 
-/// Convert one recognized Responses/tool media block to a Chat user content
-/// part. This is the single shape-recognition entry point used by extraction.
+/// Build a Chat-compatible tool-output plan without changing no-media output.
+///
+/// Scalar strings remain scalar strings after replacement. This matters for a
+/// raw image data URL and for JSON encoded inside a tool-output string: adding
+/// another layer of JSON string quotes would change what the model sees.
+pub(crate) fn plan_chat_tool_output_media(mut output: Value) -> Option<ChatToolOutputMediaPlan> {
+    let output_was_string = output.is_string();
+    let replacement_block = json!({
+        "type": "text",
+        "text": TOOL_RESULT_MEDIA_MOVED_MARKER
+    });
+    let mut media_parts = Vec::new();
+    let replaced = strip_and_clamp_media_from_tool_value(
+        &mut output,
+        &mut media_parts,
+        ToolMediaScope::AllSupported,
+        &replacement_block,
+        TOOL_RESULT_MEDIA_MOVED_MARKER,
+    );
+    if replaced == 0 {
+        return None;
+    }
+
+    let tool_content = if output_was_string {
+        output.as_str().unwrap_or_default().to_string()
+    } else {
+        canonical_json_string(&output)
+    };
+
+    Some(ChatToolOutputMediaPlan {
+        tool_content,
+        media_parts,
+    })
+}
+
+pub(crate) fn queue_chat_tool_output_media(
+    pending_media: &mut Vec<Value>,
+    call_id: &str,
+    media_parts: Vec<Value>,
+) {
+    if media_parts.is_empty() {
+        return;
+    }
+
+    pending_media.push(json!({
+        "type": "text",
+        "text": format!("[cc-switch: media output of tool call {call_id}]")
+    }));
+    pending_media.extend(media_parts);
+}
+
+pub(crate) fn flush_pending_chat_tool_media(
+    messages: &mut Vec<Value>,
+    pending_media: &mut Vec<Value>,
+) {
+    if pending_media.is_empty() {
+        return;
+    }
+
+    messages.push(json!({
+        "role": "user",
+        "content": std::mem::take(pending_media)
+    }));
+}
+
+/// Convert one recognized tool media block to a Chat user content part. This
+/// is the single shape-recognition entry point used by extraction.
 pub(crate) fn chat_media_part_from_tool_part(part: &Value, scope: ToolMediaScope) -> Option<Value> {
     let kind = tool_media_kind(part)?;
     if !scope.allows(kind) {
         return None;
     }
 
-    match kind {
+    let chat_part = match kind {
         ToolMediaKind::Image => chat_image_part(part),
         ToolMediaKind::File => chat_file_from_input_file(part).map(|file| {
             json!({
@@ -57,7 +139,9 @@ pub(crate) fn chat_media_part_from_tool_part(part: &Value, scope: ToolMediaScope
                 "input_audio": input_audio.clone()
             })
         }),
-    }
+    }?;
+
+    scope.accepts_chat_part(&chat_part).then_some(chat_part)
 }
 
 /// Map a Responses `input_file` block to the Chat file payload. Kept here so
@@ -122,8 +206,35 @@ pub(crate) fn strip_media_from_tool_value(
         scope,
         replacement_block,
         replacement_text,
+        false,
         0,
     )
+}
+
+/// Extract media and clamp residual large data/base64 scalars on media-bearing
+/// outputs. Parseable JSON strings are clamped while still represented as a
+/// JSON tree, before they are canonicalized back into their original string
+/// container.
+pub(crate) fn strip_and_clamp_media_from_tool_value(
+    value: &mut Value,
+    media_parts: &mut Vec<Value>,
+    scope: ToolMediaScope,
+    replacement_block: &Value,
+    replacement_text: &str,
+) -> usize {
+    let replaced = strip_media_from_tool_value_at_depth(
+        value,
+        media_parts,
+        scope,
+        replacement_block,
+        replacement_text,
+        true,
+        0,
+    );
+    if replaced > 0 {
+        clamp_base64ish_strings(value);
+    }
+    replaced
 }
 
 /// Remove residual data/base64 payloads only after a tool output has already
@@ -181,7 +292,7 @@ fn tool_output_contains_media_at_depth(value: &Value, scope: ToolMediaScope, dep
             .iter()
             .any(|item| tool_output_contains_media_at_depth(item, scope, depth + 1)),
         Value::Object(object) => {
-            if tool_media_kind(value).is_some_and(|kind| scope.allows(kind)) {
+            if chat_media_part_from_tool_part(value, scope).is_some() {
                 return true;
             }
 
@@ -199,6 +310,7 @@ fn strip_media_from_tool_value_at_depth(
     scope: ToolMediaScope,
     replacement_block: &Value,
     replacement_text: &str,
+    clamp_parsed_strings: bool,
     depth: usize,
 ) -> usize {
     if depth > MAX_MEDIA_TRAVERSAL_DEPTH {
@@ -228,9 +340,13 @@ fn strip_media_from_tool_value_at_depth(
                 scope,
                 replacement_block,
                 replacement_text,
+                clamp_parsed_strings,
                 depth + 1,
             );
             if replaced > 0 {
+                if clamp_parsed_strings {
+                    clamp_base64ish_strings(&mut parsed);
+                }
                 *text = canonical_json_string(&parsed);
             }
             replaced
@@ -244,6 +360,7 @@ fn strip_media_from_tool_value_at_depth(
                     scope,
                     replacement_block,
                     replacement_text,
+                    clamp_parsed_strings,
                     depth + 1,
                 )
             })
@@ -266,6 +383,7 @@ fn strip_media_from_tool_value_at_depth(
                         scope,
                         replacement_block,
                         replacement_text,
+                        clamp_parsed_strings,
                         depth + 1,
                     )
                 })
@@ -297,13 +415,9 @@ fn tool_media_kind(part: &Value) -> Option<ToolMediaKind> {
 
 fn chat_image_part(part: &Value) -> Option<Value> {
     match part.get("type").and_then(Value::as_str) {
-        Some("input_image" | "image_url") => {
-            normalized_image_url(part).map(|image_url| image_url_content_part(part, image_url))
-        }
-        Some("image") => {
-            typed_image_url(part).map(|image_url| image_url_content_part(part, image_url))
-        }
-        None => loose_data_image_url(part).map(|image_url| image_url_content_part(part, image_url)),
+        Some("input_image" | "image_url") => normalized_image_url(part).map(image_url_content_part),
+        Some("image") => typed_image_url(part).map(image_url_content_part),
+        None => loose_data_image_url(part).map(image_url_content_part),
         _ => None,
     }
 }
@@ -440,17 +554,23 @@ fn typed_image_url(part: &Value) -> Option<Value> {
     Some(Value::Object(image_url))
 }
 
-fn image_url_content_part(source_part: &Value, image_url: Value) -> Value {
+fn image_url_content_part(image_url: Value) -> Value {
     let mut content_part = Map::new();
     content_part.insert("type".to_string(), Value::String("image_url".to_string()));
     content_part.insert("image_url".to_string(), image_url);
-
-    for key in ["cache_control", "prompt_cache_breakpoint"] {
-        if let Some(value) = source_part.get(key) {
-            content_part.insert(key.to_string(), value.clone());
-        }
-    }
     Value::Object(content_part)
+}
+
+fn chat_image_part_has_inline_data(part: &Value) -> bool {
+    part.pointer("/image_url/url")
+        .and_then(Value::as_str)
+        .is_some_and(|url| {
+            let trimmed = url.trim();
+            let Some(comma_index) = trimmed.find(',') else {
+                return false;
+            };
+            comma_index + 1 < trimmed.len() && is_image_base64_data_url(trimmed)
+        })
 }
 
 fn merge_top_level_detail(part: &Value, image_url: &mut Map<String, Value>) {
@@ -529,12 +649,23 @@ mod tests {
             "image_url": {
                 "url": "https://example.com/image.png",
                 "detail": "low"
-            }
+            },
+            "cache_control": {"type": "ephemeral"},
+            "prompt_cache_breakpoint": true
         });
 
         let mapped = chat_media_part_from_tool_part(&part, ToolMediaScope::AllSupported).unwrap();
 
-        assert_eq!(mapped, part);
+        assert_eq!(
+            mapped,
+            json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://example.com/image.png",
+                    "detail": "low"
+                }
+            })
+        );
     }
 
     #[test]
@@ -626,6 +757,43 @@ mod tests {
     }
 
     #[test]
+    fn inline_image_scope_rejects_remote_and_malformed_data_urls() {
+        let inline = json!({
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,YWJj"}
+        });
+        let remote = json!({
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/image.png"}
+        });
+        let missing_base64 = json!({
+            "type": "image_url",
+            "image_url": {"url": "data:image/png,YWJj"}
+        });
+        let empty_data = json!({
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,"}
+        });
+
+        assert!(tool_output_contains_media(
+            &inline,
+            ToolMediaScope::InlineImagesOnly
+        ));
+        assert!(!tool_output_contains_media(
+            &remote,
+            ToolMediaScope::InlineImagesOnly
+        ));
+        assert!(!tool_output_contains_media(
+            &missing_base64,
+            ToolMediaScope::InlineImagesOnly
+        ));
+        assert!(!tool_output_contains_media(
+            &empty_data,
+            ToolMediaScope::InlineImagesOnly
+        ));
+    }
+
+    #[test]
     fn does_not_scan_embedded_data_urls_inside_plain_text() {
         let data_url = large_image_data_url();
         let mut value = json!(format!("<html><img src=\"{data_url}\"></html>"));
@@ -691,6 +859,55 @@ mod tests {
         let serialized = value.as_str().unwrap();
         assert!(serialized.contains("\"text\":\"moved\""));
         assert!(!serialized.contains("iVBORw0KGgo"));
+    }
+
+    #[test]
+    fn chat_plan_keeps_scalar_tool_strings_unquoted() {
+        let raw_data_url = large_image_data_url();
+        let raw_plan = plan_chat_tool_output_media(Value::String(raw_data_url.clone())).unwrap();
+        assert_eq!(raw_plan.tool_content, TOOL_RESULT_MEDIA_MOVED_MARKER);
+        assert_eq!(raw_plan.media_parts[0]["image_url"]["url"], raw_data_url);
+
+        let encoded = json!({
+            "content": [{
+                "type": "input_image",
+                "image_url": raw_data_url
+            }]
+        })
+        .to_string();
+        let encoded_plan = plan_chat_tool_output_media(Value::String(encoded)).unwrap();
+        assert!(encoded_plan.tool_content.starts_with('{'));
+        assert!(encoded_plan
+            .tool_content
+            .contains(TOOL_RESULT_MEDIA_MOVED_MARKER));
+        assert!(!encoded_plan.tool_content.starts_with('"'));
+    }
+
+    #[test]
+    fn chat_plan_clamps_residual_base64_inside_json_string_before_serializing() {
+        let residual_base64 = "A".repeat(20_000);
+        let encoded = json!({
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,IMAGE_SENTINEL"
+                },
+                {
+                    "type": "video",
+                    "data": residual_base64
+                }
+            ]
+        })
+        .to_string();
+
+        let plan = plan_chat_tool_output_media(Value::String(encoded)).unwrap();
+
+        assert!(plan
+            .tool_content
+            .contains("[cc-switch: omitted 20000 bytes]"));
+        assert!(!plan.tool_content.contains(&"A".repeat(64)));
+        assert!(!plan.tool_content.contains("IMAGE_SENTINEL"));
+        assert_eq!(plan.media_parts.len(), 1);
     }
 
     #[test]

@@ -17,8 +17,9 @@ use crate::proxy::{
         short_sha256_hex,
     },
     tool_media::{
-        chat_file_from_input_file, clamp_base64ish_strings, strip_media_from_tool_value,
-        whole_string_image_data_url, ToolMediaScope,
+        chat_file_from_input_file, flush_pending_chat_tool_media, plan_chat_tool_output_media,
+        queue_chat_tool_output_media, strip_and_clamp_media_from_tool_value, ToolMediaScope,
+        TOOL_RESULT_MEDIA_MOVED_MARKER,
     },
 };
 use serde_json::{json, Value};
@@ -46,9 +47,6 @@ const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
-const TOOL_RESULT_MEDIA_MOVED_MARKER: &str =
-    "[cc-switch: tool result media moved to the following user message]";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
     Function,
@@ -545,70 +543,6 @@ fn instruction_text(value: &Value) -> String {
     }
 }
 
-struct ToolOutputMediaPlan {
-    tool_content: String,
-    media_parts: Vec<Value>,
-}
-
-fn plan_tool_output_media(mut output: Value) -> Option<ToolOutputMediaPlan> {
-    let replacement_block = json!({
-        "type": "text",
-        "text": TOOL_RESULT_MEDIA_MOVED_MARKER
-    });
-    let mut media_parts = Vec::new();
-    let replaced = strip_media_from_tool_value(
-        &mut output,
-        &mut media_parts,
-        ToolMediaScope::AllSupported,
-        &replacement_block,
-        TOOL_RESULT_MEDIA_MOVED_MARKER,
-    );
-    if replaced == 0 {
-        return None;
-    }
-
-    // Only media-bearing outputs enter this path. Remove any residual large
-    // data/base64 scalar that was not itself a recognized content block while
-    // preserving ordinary long OCR/log/source text.
-    clamp_base64ish_strings(&mut output);
-    Some(ToolOutputMediaPlan {
-        tool_content: canonical_json_string(&output),
-        media_parts,
-    })
-}
-
-fn plan_raw_tool_output_data_url(output: &str) -> Option<ToolOutputMediaPlan> {
-    whole_string_image_data_url(output).map(|media_part| ToolOutputMediaPlan {
-        // A raw tool-output string remains a raw tool-output string. Do not add
-        // JSON string-literal quotes around the replacement marker.
-        tool_content: TOOL_RESULT_MEDIA_MOVED_MARKER.to_string(),
-        media_parts: vec![media_part],
-    })
-}
-
-fn queue_tool_output_media(pending_media: &mut Vec<Value>, call_id: &str, media_parts: Vec<Value>) {
-    if media_parts.is_empty() {
-        return;
-    }
-
-    pending_media.push(json!({
-        "type": "text",
-        "text": format!("[cc-switch: media output of tool call {call_id}]")
-    }));
-    pending_media.extend(media_parts);
-}
-
-fn flush_pending_media(messages: &mut Vec<Value>, pending_media: &mut Vec<Value>) {
-    if pending_media.is_empty() {
-        return;
-    }
-
-    messages.push(json!({
-        "role": "user",
-        "content": std::mem::take(pending_media)
-    }));
-}
-
 fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
@@ -656,7 +590,7 @@ fn append_responses_input_as_chat_messages(
     // If a later assistant tool-call batch was accumulated after an earlier
     // media-bearing result, the synthetic user media belongs before that next
     // assistant turn.
-    flush_pending_media(messages, &mut pending_media);
+    flush_pending_chat_tool_media(messages, &mut pending_media);
     flush_pending_tool_calls(
         messages,
         &mut pending_tool_calls,
@@ -712,21 +646,12 @@ fn append_responses_item_as_chat_message(
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let media_plan = match item.get("output") {
-                Some(Value::String(output)) => {
-                    plan_raw_tool_output_data_url(output).or_else(|| {
-                        serde_json::from_str::<Value>(output.trim())
-                            .ok()
-                            .and_then(plan_tool_output_media)
-                    })
-                }
-                Some(output @ (Value::Array(_) | Value::Object(_))) => {
-                    plan_tool_output_media(output.clone())
-                }
-                _ => None,
-            };
+            let media_plan = item
+                .get("output")
+                .cloned()
+                .and_then(plan_chat_tool_output_media);
             let output = if let Some(media_plan) = media_plan {
-                queue_tool_output_media(pending_media, call_id, media_plan.media_parts);
+                queue_chat_tool_output_media(pending_media, call_id, media_plan.media_parts);
                 media_plan.tool_content
             } else {
                 // Cache-sensitive no-media fallback: keep these expressions
@@ -761,7 +686,7 @@ fn append_responses_item_as_chat_message(
             let replaced = transformed_item
                 .get_mut("output")
                 .map(|output| {
-                    strip_media_from_tool_value(
+                    strip_and_clamp_media_from_tool_value(
                         output,
                         &mut media_parts,
                         ToolMediaScope::AllSupported,
@@ -771,10 +696,7 @@ fn append_responses_item_as_chat_message(
                 })
                 .unwrap_or(0);
             let output = if replaced > 0 {
-                if let Some(output) = transformed_item.get_mut("output") {
-                    clamp_base64ish_strings(output);
-                }
-                queue_tool_output_media(pending_media, call_id, media_parts);
+                queue_chat_tool_output_media(pending_media, call_id, media_parts);
                 canonical_json_string(&transformed_item)
             } else {
                 // Preserve the legacy whole-item representation exactly.
@@ -807,7 +729,7 @@ fn append_responses_item_as_chat_message(
             // `flush_pending_tool_calls` intentionally returns early when
             // there is no new assistant batch. A previous tool result may
             // still have media waiting, so flush it before this new message.
-            flush_pending_media(messages, pending_media);
+            flush_pending_chat_tool_media(messages, pending_media);
             let role = item
                 .get("role")
                 .and_then(|v| v.as_str())
@@ -846,7 +768,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     last_assistant_index,
                 );
-                flush_pending_media(messages, pending_media);
+                flush_pending_chat_tool_media(messages, pending_media);
                 let message = responses_message_item_to_chat_message(
                     item,
                     pending_reasoning,
@@ -876,7 +798,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     last_assistant_index,
                 );
-                flush_pending_media(messages, pending_media);
+                flush_pending_chat_tool_media(messages, pending_media);
                 let message = responses_message_item_to_chat_message(
                     item,
                     pending_reasoning,
@@ -916,7 +838,7 @@ fn flush_pending_tool_calls(
     // Media from the preceding tool-result batch must be presented before a
     // new assistant tool-call turn. Consecutive outputs do not enter here
     // because `pending_tool_calls` is empty after the first output.
-    flush_pending_media(messages, pending_media);
+    flush_pending_chat_tool_media(messages, pending_media);
     let mut message = json!({
         "role": "assistant",
         "content": null,
@@ -3626,6 +3548,46 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_clamps_stringified_custom_output_residual_base64() {
+        let encoded_output = json!({
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,CUSTOM_STRING_IMAGE_SENTINEL"
+                },
+                {
+                    "type": "video",
+                    "data": "A".repeat(20_000)
+                }
+            ]
+        })
+        .to_string();
+        let result = convert_test_input(vec![
+            json!({
+                "type": "custom_tool_call",
+                "call_id": "call_custom_string",
+                "name": "render",
+                "input": "draw"
+            }),
+            json!({
+                "type": "custom_tool_call_output",
+                "call_id": "call_custom_string",
+                "status": "completed",
+                "output": encoded_output
+            }),
+        ]);
+        let messages = result_messages(&result);
+        let tool_item: Value =
+            serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+        let rewritten = tool_item["output"].as_str().unwrap();
+
+        assert!(rewritten.contains("[cc-switch: omitted 20000 bytes]"));
+        assert!(!rewritten.contains(&"A".repeat(64)));
+        assert!(!rewritten.contains("CUSTOM_STRING_IMAGE_SENTINEL"));
+        assert_eq!(messages[2]["content"][1]["type"], "image_url");
+    }
+
+    #[test]
     fn responses_request_to_chat_rejects_false_positive_media_shapes() {
         let outputs = [
             json!({"type": "image", "name": "business metadata"}),
@@ -3741,22 +3703,21 @@ mod tests {
         let data_url = large_test_image_data_url();
         let long_text = format!("{}end", "ordinary OCR text with spaces. ".repeat(3_500));
         let residual_base64 = "A".repeat(20_000);
+        let encoded_output = json!([
+            {"type": "input_image", "image_url": data_url.clone()},
+            {"type": "text", "text": long_text.clone()},
+            {"type": "video", "data": residual_base64}
+        ])
+        .to_string();
         let result = convert_test_input(vec![
             test_function_call("call_clamp"),
-            test_function_output(
-                "call_clamp",
-                json!([
-                    {"type": "input_image", "image_url": data_url.clone()},
-                    {"type": "text", "text": long_text.clone()},
-                    {"raw": residual_base64}
-                ]),
-            ),
+            test_function_output("call_clamp", json!(encoded_output)),
         ]);
         let tool_content_text = result["messages"][1]["content"].as_str().unwrap();
         let tool_content: Value = serde_json::from_str(tool_content_text).unwrap();
 
         assert_eq!(tool_content[1]["text"], long_text);
-        assert!(tool_content[2]["raw"]
+        assert!(tool_content[2]["data"]
             .as_str()
             .unwrap()
             .starts_with("[cc-switch: omitted 20000 bytes]"));

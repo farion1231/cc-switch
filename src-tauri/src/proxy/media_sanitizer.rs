@@ -43,7 +43,9 @@ pub fn replace_images_for_text_only_model(
 }
 
 pub fn contains_image_blocks(body: &Value) -> bool {
-    messages_have_image_blocks(body) || responses_input_has_image_blocks(body.get("input"))
+    messages_have_image_blocks(body)
+        || responses_input_has_image_blocks(body.get("input"))
+        || gemini_contents_have_image_blocks(body)
 }
 
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
@@ -122,7 +124,11 @@ fn content_has_image_blocks(content: &Value) -> bool {
 
     blocks.iter().any(|block| {
         is_image_block_type(block.get("type").and_then(Value::as_str))
-            || block.get("content").is_some_and(content_has_image_blocks)
+            || block.get("content").is_some_and(|nested| {
+                content_has_image_blocks(nested)
+                    || (block.get("type").and_then(Value::as_str) == Some("tool_result")
+                        && tool_output_contains_media(nested, ToolMediaScope::ImagesOnly))
+            })
     })
 }
 
@@ -130,13 +136,7 @@ fn replace_images_in_body(body: &mut Value) -> usize {
     let message_replacements = body
         .get_mut("messages")
         .and_then(Value::as_array_mut)
-        .map(|messages| {
-            messages
-                .iter_mut()
-                .filter_map(|message| message.get_mut("content"))
-                .map(replace_images_in_content)
-                .sum()
-        })
+        .map(|messages| messages.iter_mut().map(replace_images_in_message).sum())
         .unwrap_or(0);
 
     message_replacements
@@ -144,6 +144,37 @@ fn replace_images_in_body(body: &mut Value) -> usize {
             .get_mut("input")
             .map(replace_images_in_responses_input)
             .unwrap_or(0)
+        + replace_images_in_gemini_contents(body)
+}
+
+fn replace_images_in_message(message: &mut Value) -> usize {
+    let is_tool_message = message.get("role").and_then(Value::as_str) == Some("tool");
+    let Some(content) = message.get_mut("content") else {
+        return 0;
+    };
+
+    if is_tool_message {
+        // Preserve the legacy typed-image replacement semantics first,
+        // including Anthropic cache_control on the replacement text block.
+        // The shared traversal then handles JSON strings, MCP wrappers, and
+        // loose data-URL shapes that the legacy recursion does not recognize.
+        let mut replaced = replace_images_in_content(content);
+        let replacement_block = json!({
+            "type":"text",
+            "text":UNSUPPORTED_IMAGE_MARKER
+        });
+        let mut discarded_media = Vec::new();
+        replaced += strip_media_from_tool_value(
+            content,
+            &mut discarded_media,
+            ToolMediaScope::ImagesOnly,
+            &replacement_block,
+            UNSUPPORTED_IMAGE_MARKER,
+        );
+        replaced
+    } else {
+        replace_images_in_content(content)
+    }
 }
 
 fn replace_images_in_content(content: &mut Value) -> usize {
@@ -157,14 +188,36 @@ fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str
 
     let mut replaced = 0usize;
     for block in blocks {
-        if is_image_block_type(block.get("type").and_then(Value::as_str)) {
+        let block_type = block.get("type").and_then(Value::as_str);
+        if is_image_block_type(block_type) {
             replace_image_block_with_text_marker(block, text_type);
             replaced += 1;
             continue;
         }
 
+        let is_tool_result = block_type == Some("tool_result");
         if let Some(nested_content) = block.get_mut("content") {
-            replaced += replace_images_in_content_with_text_type(nested_content, text_type);
+            if is_tool_result {
+                // Run the legacy typed-block replacement before the shared
+                // payload-aware traversal. This makes replacement a superset
+                // of detection and preserves cache_control on Anthropic image
+                // blocks, while the second pass covers alternate tool shapes.
+                replaced += replace_images_in_content_with_text_type(nested_content, text_type);
+                let replacement_block = json!({
+                    "type":text_type,
+                    "text":UNSUPPORTED_IMAGE_MARKER
+                });
+                let mut discarded_media = Vec::new();
+                replaced += strip_media_from_tool_value(
+                    nested_content,
+                    &mut discarded_media,
+                    ToolMediaScope::ImagesOnly,
+                    &replacement_block,
+                    UNSUPPORTED_IMAGE_MARKER,
+                );
+            } else {
+                replaced += replace_images_in_content_with_text_type(nested_content, text_type);
+            }
         }
     }
 
@@ -175,11 +228,108 @@ fn messages_have_image_blocks(body: &Value) -> bool {
     body.get("messages")
         .and_then(Value::as_array)
         .is_some_and(|messages| {
-            messages
-                .iter()
-                .filter_map(|message| message.get("content"))
-                .any(content_has_image_blocks)
+            messages.iter().any(|message| {
+                let Some(content) = message.get("content") else {
+                    return false;
+                };
+                content_has_image_blocks(content)
+                    || (message.get("role").and_then(Value::as_str) == Some("tool")
+                        && tool_output_contains_media(content, ToolMediaScope::ImagesOnly))
+            })
         })
+}
+
+fn gemini_contents_have_image_blocks(body: &Value) -> bool {
+    body.get("contents")
+        .and_then(Value::as_array)
+        .is_some_and(|contents| {
+            contents.iter().any(|content| {
+                content
+                    .get("parts")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| parts.iter().any(gemini_part_has_image))
+            })
+        })
+}
+
+fn gemini_part_has_image(part: &Value) -> bool {
+    gemini_media_payload_is_image(part.get("inlineData").or_else(|| part.get("inline_data")))
+        || gemini_media_payload_is_image(part.get("fileData").or_else(|| part.get("file_data")))
+        || part
+            .get("functionResponse")
+            .or_else(|| part.get("function_response"))
+            .and_then(|response| response.get("parts"))
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(gemini_part_has_image))
+}
+
+fn gemini_media_payload_is_image(payload: Option<&Value>) -> bool {
+    payload
+        .and_then(|payload| payload.get("mimeType").or_else(|| payload.get("mime_type")))
+        .and_then(Value::as_str)
+        .is_some_and(|mime_type| {
+            mime_type
+                .get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("image/"))
+        })
+}
+
+fn replace_images_in_gemini_contents(body: &mut Value) -> usize {
+    body.get_mut("contents")
+        .and_then(Value::as_array_mut)
+        .map(|contents| {
+            contents
+                .iter_mut()
+                .filter_map(|content| content.get_mut("parts").and_then(Value::as_array_mut))
+                .map(|parts| {
+                    parts
+                        .iter_mut()
+                        .map(replace_images_in_gemini_part)
+                        .sum::<usize>()
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+fn replace_images_in_gemini_part(part: &mut Value) -> usize {
+    if gemini_media_payload_is_image(part.get("inlineData").or_else(|| part.get("inline_data")))
+        || gemini_media_payload_is_image(part.get("fileData").or_else(|| part.get("file_data")))
+    {
+        *part = json!({"text":UNSUPPORTED_IMAGE_MARKER});
+        return 1;
+    }
+
+    let response_key = if part.get("functionResponse").is_some() {
+        "functionResponse"
+    } else {
+        "function_response"
+    };
+    let Some(function_response) = part.get_mut(response_key) else {
+        return 0;
+    };
+    let Some(media_parts) = function_response
+        .get_mut("parts")
+        .and_then(Value::as_array_mut)
+    else {
+        return 0;
+    };
+
+    let before = media_parts.len();
+    media_parts.retain(|media_part| !gemini_part_has_image(media_part));
+    let replaced = before.saturating_sub(media_parts.len());
+    if replaced > 0 {
+        if let Some(response) = function_response
+            .get_mut("response")
+            .and_then(Value::as_object_mut)
+        {
+            response.insert(
+                "cc_switch_media".to_string(),
+                Value::String(UNSUPPORTED_IMAGE_MARKER.to_string()),
+            );
+        }
+    }
+    replaced
 }
 
 fn responses_input_has_image_blocks(input: Option<&Value>) -> bool {
@@ -634,6 +784,71 @@ mod tests {
     }
 
     #[test]
+    fn replaces_file_backed_tool_result_image_and_preserves_cache_control() {
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_file",
+                    "content": [{
+                        "type": "image",
+                        "source": {
+                            "type": "file",
+                            "file_id": "file_123"
+                        },
+                        "cache_control": {"type": "ephemeral"}
+                    }]
+                }]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_image_blocks_with_marker(&mut body);
+        let replacement = &body["messages"][0]["content"][0]["content"][0];
+
+        assert_eq!(count, 1);
+        assert_eq!(replacement["type"], "text");
+        assert_eq!(replacement["text"], UNSUPPORTED_IMAGE_MARKER);
+        assert_eq!(replacement["cache_control"]["type"], "ephemeral");
+        assert!(!body.to_string().contains("file_123"));
+    }
+
+    #[test]
+    fn replaces_stringified_anthropic_tool_result_image_blocks() {
+        let content = json!({
+            "content": [{
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "ANTHROPIC_STRING_TOOL_SENTINEL"
+            }]
+        })
+        .to_string();
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": content
+                }]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_image_blocks_with_marker(&mut body);
+        let rewritten = body["messages"][0]["content"][0]["content"]
+            .as_str()
+            .unwrap();
+
+        assert_eq!(count, 1);
+        assert!(rewritten.contains(UNSUPPORTED_IMAGE_MARKER));
+        assert!(!rewritten.contains("ANTHROPIC_STRING_TOOL_SENTINEL"));
+    }
+
+    #[test]
     fn detects_and_replaces_responses_function_output_images() {
         let data_url = large_tool_data_url();
         let mut body = json!({
@@ -844,6 +1059,101 @@ mod tests {
         assert_eq!(replaced, 2);
         assert_eq!(body["messages"][0]["content"][1]["type"], "text");
         assert_eq!(body["messages"][1]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn detects_and_replaces_stringified_chat_tool_image() {
+        let content = json!({
+            "content": [{
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "STRINGIFIED_CHAT_TOOL_SENTINEL"
+            }]
+        })
+        .to_string();
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": content
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+        let rewritten = body["messages"][0]["content"].as_str().unwrap();
+
+        assert_eq!(replaced, 1);
+        assert!(rewritten.contains(UNSUPPORTED_IMAGE_MARKER));
+        assert!(!rewritten.contains("STRINGIFIED_CHAT_TOOL_SENTINEL"));
+    }
+
+    #[test]
+    fn detects_and_replaces_gemini_native_image_parts() {
+        let mut body = json!({
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "name": "inspect",
+                            "response": {"content": "done"}
+                        }
+                    },
+                    {
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "GEMINI_INLINE_SENTINEL"
+                        }
+                    }
+                ]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(
+            body["contents"][0]["parts"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+        assert!(!body.to_string().contains("GEMINI_INLINE_SENTINEL"));
+    }
+
+    #[test]
+    fn detects_and_removes_nested_gemini_function_response_media() {
+        let mut body = json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "name": "inspect",
+                        "response": {"content": "done"},
+                        "parts": [{
+                            "inlineData": {
+                                "mimeType": "image/webp",
+                                "data": "GEMINI_FUNCTION_SENTINEL"
+                            }
+                        }]
+                    }
+                }]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        assert!(body["contents"][0]["parts"][0]["functionResponse"]["parts"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            body["contents"][0]["parts"][0]["functionResponse"]["response"]["cc_switch_media"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+        assert!(!body.to_string().contains("GEMINI_FUNCTION_SENTINEL"));
     }
 
     #[test]

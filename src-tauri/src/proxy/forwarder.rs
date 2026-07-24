@@ -4776,6 +4776,39 @@ mod tests {
         })
     }
 
+    fn body_with_stringified_chat_tool_image() -> Value {
+        let content = json!({
+            "content": [{
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "CHAT_TOOL_SENTINEL"
+            }]
+        })
+        .to_string();
+        json!({
+            "model": "any-model",
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": content
+            }]
+        })
+    }
+
+    fn body_with_gemini_image() -> Value {
+        json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": "GEMINI_SENTINEL"
+                    }
+                }]
+            }]
+        })
+    }
+
     fn image_unsupported_error() -> ProxyError {
         ProxyError::UpstreamError {
             status: 400,
@@ -4889,6 +4922,24 @@ mod tests {
                 "tool-output image should trigger retry (stringified={stringified})"
             );
         }
+    }
+
+    #[test]
+    fn reactive_triggers_for_chat_tool_and_gemini_images() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+
+        assert!(fwd.media_retry_should_trigger(
+            "Claude",
+            false,
+            &body_with_stringified_chat_tool_image(),
+            &image_unsupported_error()
+        ));
+        assert!(fwd.media_retry_should_trigger(
+            "Claude",
+            false,
+            &body_with_gemini_image(),
+            &image_unsupported_error()
+        ));
     }
 
     #[test]
