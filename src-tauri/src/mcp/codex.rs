@@ -19,10 +19,19 @@ fn should_sync_codex_mcp() -> bool {
     crate::codex_config::get_codex_config_dir().exists()
 }
 
+/// Codex owns this MCP entry and rewrites its versioned executable path on update.
+fn is_codex_managed_server(id: &str) -> bool {
+    id == "node_repl"
+}
+
 /// 返回已启用的 MCP 服务器（过滤 enabled==true）
 fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     let mut out = HashMap::new();
     for (id, entry) in cfg.servers.iter() {
+        if is_codex_managed_server(id) {
+            log::debug!("跳过 Codex 托管的 MCP 服务器 '{id}'");
+            continue;
+        }
         let enabled = entry
             .get("enabled")
             .and_then(|v| v.as_bool())
@@ -42,6 +51,23 @@ fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
     out
 }
 
+/// Keep the current Codex-managed entries while projecting CC Switch-managed ones.
+fn preserved_codex_managed_servers(doc: &toml_edit::DocumentMut) -> toml_edit::Table {
+    use toml_edit::Table;
+
+    let mut preserved = Table::new();
+    let Some(existing) = doc.get("mcp_servers").and_then(|item| item.as_table()) else {
+        return preserved;
+    };
+
+    for (id, entry) in existing.iter() {
+        if is_codex_managed_server(id) {
+            preserved[id] = entry.clone();
+        }
+    }
+    preserved
+}
+
 /// 从 ~/.codex/config.toml 导入 MCP 到统一结构（v3.7.0+）
 ///
 /// 格式支持：
@@ -55,7 +81,11 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
         return Ok(0);
     }
 
-    let root: toml::Table = toml::from_str(&text)
+    import_from_codex_toml(&text, config)
+}
+
+fn import_from_codex_toml(text: &str, config: &mut MultiAppConfig) -> Result<usize, AppError> {
+    let root: toml::Table = toml::from_str(text)
         .map_err(|e| AppError::McpValidation(format!("解析 ~/.codex/config.toml 失败: {e}")))?;
 
     // 确保新结构存在
@@ -67,6 +97,10 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
     let mut import_servers_tbl = |servers_tbl: &toml::value::Table| {
         let mut changed = 0usize;
         for (id, entry_val) in servers_tbl.iter() {
+            if is_codex_managed_server(id) {
+                log::debug!("跳过 Codex 托管的 MCP 服务器 '{id}'");
+                continue;
+            }
             let Some(entry_tbl) = entry_val.as_table() else {
                 continue;
             };
@@ -287,7 +321,7 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
-    use toml_edit::{Item, Table};
+    use toml_edit::Item;
 
     // 1) 收集启用项（Codex 维度）
     let enabled = collect_enabled_servers(&config.mcp.codex);
@@ -314,13 +348,12 @@ pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
         }
     }
 
-    // 5) 构造目标 servers 表（稳定的键顺序）
-    if enabled.is_empty() {
-        // 无启用项：移除 mcp_servers 表
+    // 5) 构造目标 servers 表（稳定的键顺序），保留 Codex 托管项。
+    let mut servers_tbl = preserved_codex_managed_servers(&doc);
+    if enabled.is_empty() && servers_tbl.is_empty() {
+        // 无 CC Switch 或 Codex 托管项：移除 mcp_servers 表
         doc.as_table_mut().remove("mcp_servers");
     } else {
-        // 构建 servers 表
-        let mut servers_tbl = Table::new();
         let mut ids: Vec<_> = enabled.keys().cloned().collect();
         ids.sort();
         for id in ids {
@@ -354,6 +387,10 @@ pub fn sync_single_server_to_codex(
     server_spec: &Value,
 ) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
+        return Ok(());
+    }
+    if is_codex_managed_server(id) {
+        log::debug!("跳过 Codex 托管的 MCP 服务器 '{id}'");
         return Ok(());
     }
     use toml_edit::Item;
@@ -405,6 +442,10 @@ pub fn sync_single_server_to_codex(
 /// 从正确的 [mcp_servers] 表中删除，同时清理可能存在于错误位置 [mcp.servers] 的数据
 pub fn remove_server_from_codex(id: &str) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
+        return Ok(());
+    }
+    if is_codex_managed_server(id) {
+        log::debug!("跳过 Codex 托管的 MCP 服务器 '{id}'");
         return Ok(());
     }
     let config_path = crate::codex_config::get_codex_config_path();
@@ -712,5 +753,64 @@ mod tests {
             table.get("timeout").and_then(|item| item.as_integer()),
             Some(30)
         );
+    }
+
+    #[test]
+    fn imports_user_servers_but_skips_codex_managed_node_repl() {
+        let mut config = MultiAppConfig::default();
+        let count = import_from_codex_toml(
+            r#"
+[mcp_servers.node_repl]
+command = "C:\\Users\\Komi\\AppData\\Local\\cua_node\\old-version\\node_repl.exe"
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+"#,
+            &mut config,
+        )
+        .expect("parse MCP config");
+
+        let servers = config.mcp.servers.expect("MCP servers");
+        assert_eq!(count, 1);
+        assert!(servers.contains_key("context7"));
+        assert!(!servers.contains_key("node_repl"));
+    }
+
+    #[test]
+    fn sync_projection_skips_stale_node_repl_from_saved_config() {
+        let mut cfg = McpConfig::default();
+        cfg.servers.insert(
+            "node_repl".into(),
+            json!({ "enabled": true, "server": { "type": "stdio", "command": "C:\\stale\\node_repl.exe" } }),
+        );
+        cfg.servers.insert(
+            "context7".into(),
+            json!({ "enabled": true, "server": { "type": "stdio", "command": "npx" } }),
+        );
+
+        let enabled = collect_enabled_servers(&cfg);
+
+        assert_eq!(enabled.len(), 1);
+        assert!(enabled.contains_key("context7"));
+        assert!(!enabled.contains_key("node_repl"));
+    }
+
+    #[test]
+    fn sync_projection_preserves_current_codex_managed_node_repl() {
+        let doc = r#"
+[mcp_servers.node_repl]
+command = "C:\\Users\\Komi\\AppData\\Local\\cua_node\\current-version\\node_repl.exe"
+
+[mcp_servers.context7]
+command = "npx"
+"#
+        .parse::<toml_edit::DocumentMut>()
+        .expect("parse Codex config");
+
+        let preserved = preserved_codex_managed_servers(&doc);
+
+        assert!(preserved.contains_key("node_repl"));
+        assert!(!preserved.contains_key("context7"));
     }
 }
