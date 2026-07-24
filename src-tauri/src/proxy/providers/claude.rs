@@ -351,11 +351,7 @@ pub fn transform_claude_request_for_api_format(
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
     // 格式: "uuid_sessionId" → 提取 "_" 后面的部分作为 session 标识
     // 同一会话的请求共享 cache key，提升 Copilot 缓存命中率
-    let is_copilot = provider
-        .meta
-        .as_ref()
-        .and_then(|m| m.provider_type.as_deref())
-        == Some("github_copilot")
+    let is_copilot = provider.is_github_copilot()
         || provider
             .settings_config
             .get("baseUrl")
@@ -447,6 +443,16 @@ pub fn transform_claude_request_for_api_format(
             // 不在 SSE 末尾吐 usage → 转换出的 Anthropic message_delta 全 0 →
             // 整笔 input/output/cache 漏记（与 Codex Responses→Chat 路径同源）。
             super::transform::inject_openai_stream_include_usage(&mut result);
+            // GitHub Copilot 的 OpenAI Chat 端点不支持 `stop` 参数，携带该字段会
+            // 直接返回 400。Claude Code auto mode 的 classifier 请求会带
+            // stop_sequences（转换后即为 stop），导致 classifier 在 Copilot 下
+            // 始终不可用（Issue #5175）。仅在 Copilot 路径移除该字段，其它
+            // OpenAI 兼容上游（如 OpenRouter）继续保留 stop 语义。
+            if is_copilot {
+                if let Some(obj) = result.as_object_mut() {
+                    obj.remove("stop");
+                }
+            }
             Ok(result)
         }
         "gemini_native" => super::transform_gemini::anthropic_to_gemini_with_shadow(
@@ -2021,6 +2027,82 @@ mod tests {
             "You are helpful."
         );
         assert_eq!(transformed["generationConfig"]["maxOutputTokens"], 64);
+    }
+
+    #[test]
+    fn test_transform_claude_request_openai_chat_strips_stop_for_copilot() {
+        // Issue #5175: GitHub Copilot 的 OpenAI Chat 端点不支持 `stop` 参数，
+        // 携带该字段会返回 400，导致 Claude Code auto mode 的 classifier
+        // 请求（携带 stop_sequences）始终失败。修复后 Copilot 路径应移除转换出的 stop。
+        let provider = create_provider_with_meta(
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                    "ANTHROPIC_API_KEY": "test-key"
+                }
+            }),
+            ProviderMeta {
+                provider_type: Some("github_copilot".to_string()),
+                ..Default::default()
+            },
+        );
+        let body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64,
+            "stop_sequences": ["\n\nHuman:"]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert!(transformed.get("stop").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_openai_chat_strips_stop_for_copilot_env_url() {
+        // 兼容旧/手动 Copilot provider：即使没有 meta.provider_type，
+        // 只要 ANTHROPIC_BASE_URL 指向 Copilot，也应移除 stop。
+        let provider = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com",
+                "ANTHROPIC_API_KEY": "test-key"
+            }
+        }));
+        let body = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64,
+            "stop_sequences": ["\n\nHuman:"]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert!(transformed.get("stop").is_none());
+    }
+
+    #[test]
+    fn test_transform_claude_request_openai_chat_keeps_stop_for_generic_provider() {
+        // 非 Copilot 的 OpenAI 兼容上游（如 OpenRouter）应继续保留 stop 语义，
+        // 确认修复未影响其它 provider。
+        let provider = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1" }
+        }));
+        let body = json!({
+            "model": "moonshotai/kimi-k2",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "max_tokens": 64,
+            "stop_sequences": ["\n\nHuman:"]
+        });
+
+        let transformed =
+            transform_claude_request_for_api_format(body, &provider, "openai_chat", None, None)
+                .unwrap();
+
+        assert_eq!(transformed["stop"], json!(["\n\nHuman:"]));
     }
 
     #[test]
