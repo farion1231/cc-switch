@@ -49,45 +49,90 @@ export function DeepLinkImportDialog() {
   };
 
   useEffect(() => {
-    // Listen for deep link import events
-    const unlistenImport = listen<DeepLinkImportRequest>(
-      "deeplink-import",
-      async (event) => {
+    let disposed = false;
+    let unlistenImport: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
+    const activeRequestKeys = new Set<string>();
+
+    const openImportDialog = async (incomingRequest: DeepLinkImportRequest) => {
+      const requestKey = JSON.stringify(incomingRequest);
+      if (activeRequestKeys.has(requestKey)) return;
+
+      activeRequestKeys.add(requestKey);
+      try {
+        let nextRequest = incomingRequest;
+
         // If config is present, merge it to get the complete configuration
-        if (event.payload.config || event.payload.configUrl) {
+        if (incomingRequest.config || incomingRequest.configUrl) {
           try {
-            const mergedRequest = await deeplinkApi.mergeDeeplinkConfig(
-              event.payload,
-            );
-            setRequest(mergedRequest);
+            nextRequest =
+              await deeplinkApi.mergeDeeplinkConfig(incomingRequest);
           } catch (error) {
             console.error("Failed to merge config:", error);
-            toast.error(t("deeplink.configMergeError"), {
-              description:
-                error instanceof Error ? error.message : String(error),
-            });
-            // Fall back to original request
-            setRequest(event.payload);
+            if (!disposed) {
+              toast.error(t("deeplink.configMergeError"), {
+                description:
+                  error instanceof Error ? error.message : String(error),
+              });
+            }
           }
-        } else {
-          setRequest(event.payload);
         }
 
+        if (disposed) return;
+        setRequest(nextRequest);
         setIsOpen(true);
-      },
-    );
+      } finally {
+        activeRequestKeys.delete(requestKey);
+      }
+    };
 
-    // Listen for deep link error events
-    const unlistenError = listen<DeeplinkError>("deeplink-error", (event) => {
-      console.error("Deep link error:", event.payload);
-      toast.error(t("deeplink.parseError"), {
-        description: event.payload.error,
-      });
+    const openPendingImportDialog = async () => {
+      const pendingRequest = await deeplinkApi.takePendingDeeplink();
+      if (pendingRequest) {
+        await openImportDialog(pendingRequest);
+      }
+    };
+
+    void (async () => {
+      const importOff = await listen<DeepLinkImportRequest>(
+        "deeplink-import",
+        () => {
+          void openPendingImportDialog().catch((error) => {
+            console.error("Failed to handle deep link import event:", error);
+          });
+        },
+      );
+      if (disposed) {
+        importOff();
+        return;
+      }
+      unlistenImport = importOff;
+
+      const errorOff = await listen<DeeplinkError>(
+        "deeplink-error",
+        (event) => {
+          if (disposed) return;
+          console.error("Deep link error:", event.payload);
+          toast.error(t("deeplink.parseError"), {
+            description: event.payload.error,
+          });
+        },
+      );
+      if (disposed) {
+        errorOff();
+        return;
+      }
+      unlistenError = errorOff;
+
+      await openPendingImportDialog();
+    })().catch((error) => {
+      console.error("Failed to subscribe deep link events:", error);
     });
 
     return () => {
-      unlistenImport.then((fn) => fn());
-      unlistenError.then((fn) => fn());
+      disposed = true;
+      unlistenImport?.();
+      unlistenError?.();
     };
   }, [t]);
 
