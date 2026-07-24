@@ -158,6 +158,20 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["byteplus", "volcengine", "ark", "modelark"],
     defaultColor: "#3370FF",
   },
+  iflytek: {
+    name: "iflytek",
+    displayName: "iFlyTek",
+    category: "ai-provider",
+    keywords: ["iflytek", "讯飞星火", "spark", "xfyun", "coding plan"],
+    defaultColor: "#EA0100",
+  },
+  sensenova: {
+    name: "sensenova",
+    displayName: "SenseNova",
+    category: "ai-provider",
+    keywords: ["sensenova", "商汤", "日日新", "sensetime", "token plan"],
+    defaultColor: "#DD282C",
+  },
   ccsub: {
     name: "ccsub",
     displayName: "CCSub",

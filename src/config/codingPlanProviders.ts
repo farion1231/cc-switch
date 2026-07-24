@@ -11,7 +11,15 @@ import { TEMPLATE_TYPES } from "@/config/constants";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
-  id: "kimi" | "zhipu" | "zhipu_team" | "minimax" | "zenmux" | "volcengine";
+  id:
+    | "kimi"
+    | "zhipu"
+    | "zhipu_team"
+    | "minimax"
+    | "zenmux"
+    | "volcengine"
+    | "iflytek"
+    | "sensenova";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -52,6 +60,19 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
     pattern: /volces\.com\/api\/coding/i,
+  },
+  {
+    // 讯飞星火 Astron Coding Plan。base_url 形如
+    // maas-coding-api.cn-huabei-1.xf-yun.com（OpenAI /v2、Anthropic /anthropic、Responses /v1/responses）
+    id: "iflytek",
+    label: "讯飞星火 (iFlytek)",
+    pattern: /maas-coding-api.*xf-yun\.com|xf-yun\.com.*maas-coding-api/i,
+  },
+  {
+    // 商汤日日新 SenseNova Token Plan。base_url 形如 token.sensenova.cn/v1
+    id: "sensenova",
+    label: "商汤日日新 (SenseNova)",
+    pattern: /sensenova\.cn|token\.sensenova/i,
   },
 ] as const;
 
