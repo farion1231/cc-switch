@@ -1036,7 +1036,8 @@
       "qiniu": "七牛雲",
       "openrouter": "OpenRouter",
       "deepseek": "DeepSeek",
-      "together": "Together AI"
+      "together": "Together AI",
+      "huaweiMaas": "華為雲 MaaS"
     },
     "parameterConfig": "參數設定 - {{name}} *",
     "mainModel": "主模型 (選填)",
