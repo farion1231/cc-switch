@@ -441,7 +441,7 @@ Download the latest Linux build from the [Releases](../../releases) page:
 
 - Node.js 18+
 - pnpm 8+
-- Rust 1.85+
+- Rust 1.95 (with the rustfmt and clippy components)
 - Tauri CLI 2.8+
 
 ### Development Commands

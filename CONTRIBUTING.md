@@ -21,7 +21,7 @@ There are many ways to contribute:
 ### Prerequisites
 
 - Node.js 18+ and pnpm 8+
-- Rust 1.85+ and Cargo
+- Rust 1.95 with Cargo, rustfmt, and clippy components
 - [Tauri 2.0 prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ### Quick Start
@@ -149,7 +149,7 @@ CC Switch supports three languages. When modifying user-facing text:
 ### 前提条件
 
 - Node.js 18+ 和 pnpm 8+
-- Rust 1.85+ 和 Cargo
+- Rust 1.95 和 Cargo，并安装 rustfmt、clippy 组件
 - [Tauri 2.0 开发环境](https://v2.tauri.app/start/prerequisites/)
 
 ### 快速开始
