@@ -1388,7 +1388,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
     let mut blocks: BTreeMap<u64, Value> = BTreeMap::new();
     let mut json_accum: BTreeMap<u64, String> = BTreeMap::new();
     let mut stop_reason: Option<String> = None;
-    let mut delta_output_tokens: Option<u64> = None;
+    let mut delta_usage: Option<Value> = None;
     let mut saw_message_stop = false;
 
     let mut buffer = body.to_string();
@@ -1397,7 +1397,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                          blocks: &mut BTreeMap<u64, Value>,
                          json_accum: &mut BTreeMap<u64, String>,
                          stop_reason: &mut Option<String>,
-                         delta_output_tokens: &mut Option<u64>,
+                         delta_usage: &mut Option<Value>,
                          saw_message_stop: &mut bool|
      -> Result<(), ProxyError> {
         let mut data = String::new();
@@ -1484,11 +1484,13 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                 if let Some(reason) = value.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
                     *stop_reason = Some(reason.to_string());
                 }
-                if let Some(output) = value
-                    .pointer("/usage/output_tokens")
-                    .and_then(|v| v.as_u64())
-                {
-                    *delta_output_tokens = Some(output);
+                if let Some(usage) = value.get("usage").and_then(Value::as_object) {
+                    let target = delta_usage.get_or_insert_with(|| json!({}));
+                    if let Some(target) = target.as_object_mut() {
+                        for (key, value) in usage {
+                            target.insert(key.clone(), value.clone());
+                        }
+                    }
                 }
             }
             "message_stop" => *saw_message_stop = true,
@@ -1513,7 +1515,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
             &mut blocks,
             &mut json_accum,
             &mut stop_reason,
-            &mut delta_output_tokens,
+            &mut delta_usage,
             &mut saw_message_stop,
         )?;
     }
@@ -1525,7 +1527,7 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
             &mut blocks,
             &mut json_accum,
             &mut stop_reason,
-            &mut delta_output_tokens,
+            &mut delta_usage,
             &mut saw_message_stop,
         )?;
     }
@@ -1547,16 +1549,30 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
         stop_reason = Some("max_tokens".to_string());
     }
 
-    // Merge in the content blocks (ordered by index), stop_reason, and the cumulative output_tokens.
+    // Merge in the content blocks (ordered by index), stop_reason, and the
+    // cumulative message_delta usage. The Responses bridge reports final input
+    // tokens and server-tool counts there rather than in message_start.
     let content: Vec<Value> = blocks.into_values().collect();
     message["content"] = json!(content);
     if let Some(reason) = stop_reason {
         message["stop_reason"] = json!(reason);
     }
-    if let Some(output) = delta_output_tokens {
-        // message_delta's usage.output_tokens is a cumulative value, overriding the 0 from message_start.
-        if let Some(usage) = message.get_mut("usage").and_then(|u| u.as_object_mut()) {
-            usage.insert("output_tokens".to_string(), json!(output));
+    if let Some(delta_usage) = delta_usage.and_then(|usage| usage.as_object().cloned()) {
+        if !message.get("usage").is_some_and(Value::is_object) {
+            message["usage"] = json!({});
+        }
+        if let Some(usage) = message.get_mut("usage").and_then(Value::as_object_mut) {
+            for (key, value) in delta_usage {
+                if value.as_u64() == Some(0)
+                    && usage
+                        .get(&key)
+                        .and_then(Value::as_u64)
+                        .is_some_and(|existing| existing > 0)
+                {
+                    continue;
+                }
+                usage.insert(key, value);
+            }
         }
     }
 
@@ -2862,15 +2878,16 @@ data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_d
 event: content_block_stop\n\
 data: {\"type\":\"content_block_stop\",\"index\":0}\n\n\
 event: message_delta\n\
-data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":12,\"output_tokens\":7,\"server_tool_use\":{\"web_search_requests\":1}}}\n\n\
 event: message_stop\n\
 data: {\"type\":\"message_stop\"}\n\n";
         let msg = anthropic_sse_to_message_value(sse).unwrap();
         assert_eq!(msg["content"][0]["type"], "text");
         assert_eq!(msg["content"][0]["text"], "Hello world");
         assert_eq!(msg["stop_reason"], "end_turn");
-        assert_eq!(msg["usage"]["input_tokens"], 10);
+        assert_eq!(msg["usage"]["input_tokens"], 12);
         assert_eq!(msg["usage"]["output_tokens"], 7);
+        assert_eq!(msg["usage"]["server_tool_use"]["web_search_requests"], 1);
 
         // The aggregated result can be converted directly into Responses.
         let resp = anthropic_response_to_responses(msg).unwrap();
