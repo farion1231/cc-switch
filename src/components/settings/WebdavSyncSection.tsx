@@ -289,6 +289,7 @@ export function WebdavSyncSection({
   const [s3Profile, setS3Profile] = useState(s3Config?.profile ?? "default");
   const [s3AutoSync, setS3AutoSync] = useState(s3Config?.autoSync ?? false);
   const [s3Enabled, setS3Enabled] = useState(s3Config?.enabled ?? false);
+  const [s3UsePathStyle, setS3UsePathStyle] = useState(s3Config?.usePathStyle ?? true);
   const [s3SecretTouched, setS3SecretTouched] = useState(false);
   const [s3Dirty, setS3Dirty] = useState(false);
   const [s3JustSaved, setS3JustSaved] = useState(false);
@@ -663,6 +664,11 @@ export function WebdavSyncSection({
   const handleS3PresetChange = useCallback(
     (id: string) => {
       setS3Preset(id);
+      if (id === "s3-cos") {
+        setS3UsePathStyle(false);
+      } else {
+        setS3UsePathStyle(true);
+      }
       markS3Dirty();
     },
     [markS3Dirty],
@@ -679,6 +685,7 @@ export function WebdavSyncSection({
       endpoint: s3Endpoint.trim() || undefined,
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
+      usePathStyle: s3UsePathStyle,
     };
   }, [
     s3Enabled,
@@ -690,6 +697,7 @@ export function WebdavSyncSection({
     s3Endpoint,
     s3RemoteRoot,
     s3Profile,
+    s3UsePathStyle,
   ]);
 
   // ─── S3 Handlers ──────────────────────────────────────────
@@ -1350,6 +1358,27 @@ export function WebdavSyncSection({
                 className="text-xs flex-1"
                 disabled={isS3Loading}
               />
+            </div>
+
+            {/* Path Style Toggle */}
+            <div className="flex items-start gap-4">
+              <label className="w-40 text-xs font-medium text-foreground shrink-0">
+                {t("settings.s3Sync.usePathStyle")}
+                <span className="block text-[10px] font-normal text-muted-foreground">
+                  {t("settings.s3Sync.usePathStyleHint")}
+                </span>
+              </label>
+              <div className="pt-1">
+                <Switch
+                  checked={s3UsePathStyle}
+                  onCheckedChange={(checked) => {
+                    setS3UsePathStyle(checked);
+                    markS3Dirty();
+                  }}
+                  aria-label={t("settings.s3Sync.usePathStyle")}
+                  disabled={isS3Loading}
+                />
+              </div>
             </div>
 
             {/* Remote Root */}

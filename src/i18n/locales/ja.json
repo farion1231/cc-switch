@@ -594,6 +594,8 @@
       "endpoint": "エンドポイント（AWSは空欄可）",
       "endpointHint": "多くの S3 互換サービスでは必須です",
       "endpointPlaceholder": "例: https://s3-compatible.example.com",
+      "usePathStyle": "パススタイルを使用 (Path-style)",
+      "usePathStyleHint": "オフにすると Virtual-hosted スタイルになります（Tencent COS ではオフが必要）",
       "remoteRoot": "リモートルートディレクトリ",
       "remoteRootDefault": "デフォルト: cc-switch-sync",
       "profile": "同期プロファイル名",

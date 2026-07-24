@@ -594,6 +594,8 @@
       "endpoint": "Endpoint（AWS 可留空）",
       "endpointHint": "多數 S3 相容服務需要填寫",
       "endpointPlaceholder": "例如 https://s3-compatible.example.com",
+      "usePathStyle": "使用路徑樣式 (Path-style)",
+      "usePathStyleHint": "關閉後使用 Virtual-hosted 樣式（騰訊雲 COS 需關閉此項）",
       "remoteRoot": "遠端根目錄",
       "remoteRootDefault": "預設: cc-switch-sync",
       "profile": "同步設定檔名稱",

@@ -201,6 +201,8 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    #[serde(default = "default_true")]
+    pub use_path_style: bool,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -217,6 +219,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            use_path_style: true,
             status: WebDavSyncStatus::default(),
         }
     }

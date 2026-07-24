@@ -241,6 +241,7 @@ fn creds_for(settings: &S3SyncSettings) -> S3Credentials {
         region: settings.region.clone(),
         bucket: settings.bucket.clone(),
         endpoint: settings.endpoint.clone(),
+        force_path_style: settings.use_path_style,
     }
 }
 
@@ -315,5 +316,6 @@ mod tests {
         assert_eq!(creds.region, "us-west-2");
         assert_eq!(creds.bucket, "my-bucket");
         assert_eq!(creds.endpoint, "minio.local:9000");
+        assert_eq!(creds.force_path_style, true);
     }
 }

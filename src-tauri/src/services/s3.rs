@@ -27,6 +27,10 @@ pub(crate) struct S3Credentials {
     /// Custom endpoint host (e.g. `minio.example.com:9000`).
     /// Empty string means AWS official endpoint.
     pub endpoint: String,
+    /// Use path-style addressing (`endpoint/bucket/key`).
+    /// When false, virtual-hosted style is used (`bucket.endpoint/key`).
+    /// AWS endpoints always use virtual-hosted style regardless.
+    pub force_path_style: bool,
 }
 
 // ─── URL construction ────────────────────────────────────────
@@ -68,9 +72,12 @@ fn build_object_url(creds: &S3Credentials, key: &str) -> String {
             "https://{}.s3.{}.amazonaws.com/{}",
             creds.bucket, creds.region, key
         )
-    } else {
+    } else if creds.force_path_style {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+    } else {
+        let (scheme, host) = split_scheme_host(&creds.endpoint);
+        format!("{}://{}.{}/{}", scheme, creds.bucket, host, key)
     }
 }
 
@@ -81,9 +88,12 @@ fn build_bucket_url(creds: &S3Credentials) -> String {
             "https://{}.s3.{}.amazonaws.com/",
             creds.bucket, creds.region
         )
-    } else {
+    } else if creds.force_path_style {
         let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/", scheme, host, creds.bucket)
+    } else {
+        let (scheme, host) = split_scheme_host(&creds.endpoint);
+        format!("{}://{}.{}/", scheme, creds.bucket, host)
     }
 }
 
@@ -589,6 +599,26 @@ mod tests {
     }
 
     #[test]
+    fn build_object_url_virtual_hosted_style_custom_endpoint() {
+        let mut creds = test_creds("cos.ap-beijing.myqcloud.com", "ap-beijing", "mybucket");
+        creds.force_path_style = false;
+        assert_eq!(
+            build_object_url(&creds, "path/to/file.json"),
+            "https://mybucket.cos.ap-beijing.myqcloud.com/path/to/file.json"
+        );
+    }
+
+    #[test]
+    fn build_bucket_url_virtual_hosted_style_custom_endpoint() {
+        let mut creds = test_creds("cos.ap-beijing.myqcloud.com", "ap-beijing", "mybucket");
+        creds.force_path_style = false;
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://mybucket.cos.ap-beijing.myqcloud.com/"
+        );
+    }
+
+    #[test]
     fn build_object_url_strips_leading_slash_from_key() {
         let creds = test_creds("", "us-east-1", "b");
         assert_eq!(
@@ -728,6 +758,7 @@ mod tests {
             region: "us-east-1".to_string(),
             bucket: "examplebucket".to_string(),
             endpoint: String::new(),
+            force_path_style: true,
         };
 
         let now = chrono::Utc.with_ymd_and_hms(2013, 5, 24, 0, 0, 0).unwrap();
@@ -768,6 +799,7 @@ mod tests {
             region: "us-east-1".to_string(),
             bucket: "b".to_string(),
             endpoint: String::new(),
+            force_path_style: true,
         };
 
         let now = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
@@ -859,6 +891,7 @@ mod tests {
             region: region.to_string(),
             bucket: bucket.to_string(),
             endpoint: endpoint.to_string(),
+            force_path_style: true,
         }
     }
 }
@@ -876,6 +909,7 @@ mod integration_tests {
             region: std::env::var("S3_TEST_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
             bucket: std::env::var("S3_TEST_BUCKET").expect("S3_TEST_BUCKET env required"),
             endpoint: std::env::var("S3_TEST_ENDPOINT").unwrap_or_default(),
+            force_path_style: true,
         }
     }
 

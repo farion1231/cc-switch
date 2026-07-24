@@ -594,6 +594,8 @@
       "endpoint": "Endpoint (optional for AWS)",
       "endpointHint": "Required for most S3-compatible services",
       "endpointPlaceholder": "e.g. https://s3-compatible.example.com",
+      "usePathStyle": "Use Path-style addressing",
+      "usePathStyleHint": "Disable to use Virtual-hosted style (required for Tencent COS)",
       "remoteRoot": "Remote Root Directory",
       "remoteRootDefault": "Default: cc-switch-sync",
       "profile": "Sync Profile Name",

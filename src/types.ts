@@ -319,6 +319,7 @@ export interface S3SyncSettings {
   endpoint?: string;
   remoteRoot?: string;
   profile?: string;
+  usePathStyle?: boolean;
   status?: WebDavSyncStatus;
 }
 
