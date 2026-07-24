@@ -1,4 +1,4 @@
-use crate::config::write_json_file;
+use crate::config::write_json_file_preserving_object_key_order;
 use crate::error::AppError;
 use crate::provider::OpenCodeProviderConfig;
 use crate::settings::get_opencode_override_dir;
@@ -105,7 +105,7 @@ pub fn read_opencode_config() -> Result<Value, AppError> {
 
 pub fn write_opencode_config(config: &Value) -> Result<(), AppError> {
     let path = get_opencode_config_path();
-    write_json_file(&path, config)?;
+    write_json_file_preserving_object_key_order(&path, config, &["variants"])?;
 
     log::debug!("OpenCode config written to {path:?}");
     Ok(())
