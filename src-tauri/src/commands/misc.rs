@@ -1675,6 +1675,14 @@ fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     search_paths
 }
 
+/// Resolve the same executable candidate used by the tool diagnostics page.
+pub fn resolve_tool_executable(tool: &str) -> Option<std::path::PathBuf> {
+    build_tool_search_paths(tool)
+        .into_iter()
+        .flat_map(|dir| tool_executable_candidates(tool, &dir))
+        .find(|path| path.is_file())
+}
+
 #[cfg(target_os = "windows")]
 fn is_windows_command_script(path: &Path) -> bool {
     path.extension()

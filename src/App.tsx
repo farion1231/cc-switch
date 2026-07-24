@@ -25,6 +25,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Puzzle,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -95,6 +96,7 @@ import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
+import PluginsPage from "@/components/plugins/PluginsPage";
 
 type View =
   | "providers"
@@ -102,6 +104,7 @@ type View =
   | "prompts"
   | "skills"
   | "skillsDiscovery"
+  | "plugins"
   | "mcp"
   | "agents"
   | "universal"
@@ -148,6 +151,7 @@ const VALID_VIEWS: View[] = [
   "prompts",
   "skills",
   "skillsDiscovery",
+  "plugins",
   "mcp",
   "agents",
   "universal",
@@ -235,6 +239,16 @@ function App() {
     }
   }, [sharedFeatureApp, currentView]);
 
+  useEffect(() => {
+    if (
+      currentView === "plugins" &&
+      activeApp !== "claude" &&
+      activeApp !== "codex"
+    ) {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView]);
+
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -292,6 +306,7 @@ function App() {
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
   const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasPluginSupport = activeApp === "claude" || activeApp === "codex";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -934,6 +949,8 @@ function App() {
               onSourceChange={setSkillsDiscoverySource}
             />
           );
+        case "plugins":
+          return <PluginsPage />;
         case "mcp":
           return (
             <UnifiedMcpPanel
@@ -1176,6 +1193,7 @@ function App() {
                     })}
                   {currentView === "skills" && t("skills.title")}
                   {currentView === "skillsDiscovery" && t("skills.title")}
+                  {currentView === "plugins" && t("plugins.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
                   {currentView === "universal" &&
@@ -1532,6 +1550,21 @@ function App() {
                                 title={t("prompts.manage")}
                               >
                                 <Book className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("plugins")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  "transition-all duration-200 ease-in-out overflow-hidden",
+                                  hasPluginSupport
+                                    ? "opacity-100 w-8 scale-100 px-2"
+                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
+                                )}
+                                title={t("plugins.manage")}
+                              >
+                                <Puzzle className="flex-shrink-0 w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"

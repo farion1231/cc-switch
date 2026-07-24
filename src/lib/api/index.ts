@@ -6,6 +6,16 @@ export { mcpApi } from "./mcp";
 export { profilesApi } from "./profiles";
 export { promptsApi } from "./prompts";
 export { skillsApi } from "./skills";
+export { pluginsApi } from "./plugins";
+export type {
+  PluginActionResult,
+  PluginActions,
+  PluginApp,
+  PluginClientStatus,
+  PluginMarketplace,
+  PluginScope,
+  UnifiedPlugin,
+} from "./plugins";
 export { usageApi } from "./usage";
 export { subscriptionApi } from "./subscription";
 export { vscodeApi } from "./vscode";

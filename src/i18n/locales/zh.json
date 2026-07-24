@@ -2237,6 +2237,45 @@
       "noSelection": "请选择要删除的环境变量"
     }
   },
+  "plugins": {
+    "title": "插件",
+    "manage": "管理插件",
+    "tabs": { "installed": "已安装", "discover": "发现" },
+    "apps": { "codex": "Codex", "claude": "Claude Code" },
+    "detecting": "正在检测客户端...",
+    "available": "可用",
+    "unavailable": "不可用",
+    "search": "搜索插件名称、ID 或描述...",
+    "empty": "没有匹配的插件",
+    "unknownVersion": "未知版本",
+    "enabled": "启用插件",
+    "install": "安装",
+    "uninstall": "卸载",
+    "update": "更新",
+    "actionSuccess": "插件操作成功",
+    "actionFailed": "插件操作失败",
+    "restartHint": "请重启客户端或新建会话。包含 Hooks 的插件仍需在原生客户端中审核并信任。",
+    "resultLimit": "仅显示前 200 项，请使用搜索缩小范围。",
+    "uninstallConfirm": "确定要从 {{app}} 卸载“{{name}}”吗？另一客户端中的安装不会受影响。",
+    "scope": {
+      "title": "选择 Claude 安装范围",
+      "user": "用户（所有项目）",
+      "project": "项目（与协作者共享）",
+      "local": "本地（仅当前项目）",
+      "projectPath": "选择项目目录",
+      "projectPathRequired": "项目或本地范围必须选择项目目录",
+      "browse": "浏览"
+    },
+    "marketplaces": {
+      "title": "插件市场",
+      "description": "分别管理 Codex 与 Claude Code 的原生 Marketplace。",
+      "sourcePlaceholder": "GitHub owner/repo、Git URL 或本地路径",
+      "add": "添加",
+      "refresh": "刷新",
+      "remove": "删除插件市场",
+      "removeConfirm": "删除插件市场“{{name}}”可能同时卸载来自该市场的插件，是否继续？"
+    }
+  },
   "skills": {
     "manage": "Skills",
     "title": "Skills 管理",

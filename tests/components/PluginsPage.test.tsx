@@ -1,0 +1,255 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import PluginsPage from "@/components/plugins/PluginsPage";
+
+const mutationMock = vi.hoisted(() => ({
+  isPending: false,
+  mutateAsync: vi.fn(),
+}));
+const pluginsMock = vi.hoisted(() => vi.fn());
+const marketplacesMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/hooks/usePlugins", () => ({
+  usePluginStatuses: () => ({
+    data: [
+      { app: "codex", available: true, version: "codex 1" },
+      { app: "claude", available: false, error: "not installed" },
+    ],
+  }),
+  usePlugins: pluginsMock,
+  usePluginMarketplaces: marketplacesMock,
+  usePluginMutation: () => mutationMock,
+}));
+
+vi.mock("@/lib/api", () => ({
+  settingsApi: { pickDirectory: vi.fn() },
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string) => key,
+  }),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+const installedPlugin = {
+  pluginId: "ponytail@ponytail",
+  name: "ponytail",
+  version: "4.8.4",
+  app: "codex" as const,
+  marketplaceName: "ponytail",
+  installed: true,
+  enabled: true,
+  supportedActions: {
+    install: false,
+    update: false,
+    enable: false,
+    disable: true,
+    uninstall: true,
+  },
+};
+
+const projectInstalledClaudePlugin = {
+  ...installedPlugin,
+  app: "claude" as const,
+  scope: "project" as const,
+  projectPath: "/tmp/the_old_days",
+  supportedActions: {
+    ...installedPlugin.supportedActions,
+    update: true,
+  },
+};
+
+const scopedClaudePlugins = [
+  {
+    ...projectInstalledClaudePlugin,
+    scope: "user" as const,
+    projectPath: undefined,
+    enabled: true,
+  },
+  projectInstalledClaudePlugin,
+  {
+    ...projectInstalledClaudePlugin,
+    projectPath: "/tmp/the_futures",
+    enabled: false,
+  },
+  {
+    ...projectInstalledClaudePlugin,
+    scope: "local" as const,
+    projectPath: "/tmp/the_old_days",
+  },
+];
+
+describe("PluginsPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    marketplacesMock.mockReturnValue({ data: [] });
+    pluginsMock.mockImplementation((app: string, includeAvailable: boolean) => {
+      if (includeAvailable) return { data: [], isLoading: false };
+      if (app === "claude") {
+        return {
+          data: [],
+          isLoading: false,
+          error: new Error("claude failed"),
+        };
+      }
+      return { data: [installedPlugin], isLoading: false };
+    });
+  });
+
+  it("shows one client failure without hiding the other client", () => {
+    render(<PluginsPage />);
+    expect(screen.getByText("ponytail")).toBeInTheDocument();
+    expect(screen.getByText(/claude failed/)).toBeInTheDocument();
+  });
+
+  it("does not uninstall when confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(screen.getByTitle("plugins.uninstall"));
+    await user.click(screen.getByText("common.cancel"));
+
+    expect(mutationMock.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("keeps project-installed Claude plugins discoverable for another scope", async () => {
+    pluginsMock.mockImplementation((app: string, includeAvailable: boolean) => {
+      if (!includeAvailable || app === "codex") {
+        return { data: [], isLoading: false };
+      }
+      return { data: [projectInstalledClaudePlugin], isLoading: false };
+    });
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(
+      screen.getByRole("tab", { name: "plugins.tabs.discover" }),
+    );
+    await user.type(screen.getByPlaceholderText("plugins.search"), "ponytail");
+
+    expect(screen.getByText("ponytail")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "plugins.install" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("ponytail@ponytail");
+    expect(screen.getByRole("combobox")).toHaveTextContent(
+      "plugins.scope.user",
+    );
+  });
+
+  it("keeps every Claude installation of the same plugin actionable", async () => {
+    pluginsMock.mockImplementation((app: string, includeAvailable: boolean) => {
+      if (includeAvailable || app === "codex") {
+        return { data: [], isLoading: false };
+      }
+      return { data: scopedClaudePlugins, isLoading: false };
+    });
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    expect(screen.getByText(/user/)).toBeInTheDocument();
+    expect(screen.getAllByText(/\/tmp\/the_old_days/)).toHaveLength(2);
+    expect(screen.getByText(/\/tmp\/the_futures/)).toBeInTheDocument();
+    expect(screen.getAllByRole("switch")).toHaveLength(4);
+    expect(
+      screen.getAllByRole("button", { name: "plugins.update" }),
+    ).toHaveLength(4);
+
+    const projectPath = screen.getByText(/\/tmp\/the_futures/);
+    const installationRow = projectPath.closest("div");
+    expect(installationRow).not.toBeNull();
+    await user.click(within(installationRow!).getByRole("switch"));
+
+    expect(mutationMock.mutateAsync).toHaveBeenCalledWith({
+      action: "setEnabled",
+      app: "claude",
+      pluginId: "ponytail@ponytail",
+      enabled: true,
+      scope: "project",
+      projectPath: "/tmp/the_futures",
+    });
+  });
+
+  it("shows the selected client filter", async () => {
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    const all = screen.getByRole("tab", { name: "common.all" });
+    const claude = screen.getByRole("tab", {
+      name: "plugins.apps.claude",
+    });
+    expect(all).toHaveAttribute("data-state", "active");
+
+    await user.click(claude);
+
+    expect(claude).toHaveAttribute("data-state", "active");
+    expect(all).toHaveAttribute("data-state", "inactive");
+  });
+
+  it("uses the same selected state in marketplace client tabs", async () => {
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: "plugins.marketplaces.title" }),
+    );
+    const dialogElement = screen.getByRole("dialog");
+    const dialog = within(dialogElement);
+    const codex = dialog.getByRole("tab", { name: "plugins.apps.codex" });
+    const claude = dialog.getByRole("tab", { name: "plugins.apps.claude" });
+    expect(codex).toHaveAttribute("data-state", "active");
+    expect(dialogElement).toHaveClass("z-[60]");
+
+    await user.click(claude);
+
+    expect(claude).toHaveAttribute("data-state", "active");
+    expect(codex).toHaveAttribute("data-state", "inactive");
+  });
+
+  it("only offers refresh for supported marketplaces", async () => {
+    marketplacesMock.mockImplementation((app: string) => ({
+      data:
+        app === "codex"
+          ? [
+              {
+                name: "openai-bundled",
+                app: "codex",
+                sourceType: "local",
+                root: "/tmp/openai-bundled",
+                supportsRefresh: false,
+              },
+              {
+                name: "openai-curated",
+                app: "codex",
+                root: "/tmp/plugins",
+                supportsRefresh: false,
+              },
+              {
+                name: "ponytail",
+                app: "codex",
+                sourceType: "git",
+                source: "https://github.com/DietrichGebert/ponytail.git",
+                supportsRefresh: true,
+              },
+            ]
+          : [],
+    }));
+    const user = userEvent.setup();
+    render(<PluginsPage />);
+
+    await user.click(
+      screen.getByRole("button", { name: "plugins.marketplaces.title" }),
+    );
+
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getAllByTitle("plugins.marketplaces.refresh")).toHaveLength(
+      1,
+    );
+    expect(dialog.getByText("openai-bundled")).toBeInTheDocument();
+    expect(dialog.getByText("openai-curated")).toBeInTheDocument();
+    expect(dialog.getByText("ponytail")).toBeInTheDocument();
+  });
+});
