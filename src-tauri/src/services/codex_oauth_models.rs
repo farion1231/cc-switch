@@ -213,7 +213,9 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
         models.push(FetchedModel {
             context_window: None,
             id: id.to_string(),
+            input_modalities: None,
             owned_by: Some("Codex".to_string()),
+            supports_image: None,
         });
         return;
     }
@@ -223,7 +225,9 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
             models.push(FetchedModel {
                 context_window: None,
                 id: id.to_string(),
+                input_modalities: None,
                 owned_by: Some("Codex".to_string()),
+                supports_image: None,
             });
         }
         return;
@@ -250,11 +254,15 @@ fn push_model_entry(models: &mut Vec<FetchedModel>, entry: &Value, fallback_id: 
     .or_else(|| Some("Codex".to_string()));
 
     let context_window = extract_context_window(obj);
+    let input_modalities = extract_input_modalities(obj);
+    let supports_image = extract_supports_image(obj, input_modalities.as_deref());
 
     models.push(FetchedModel {
         context_window,
         id,
+        input_modalities,
         owned_by,
+        supports_image,
     });
 }
 
@@ -317,6 +325,64 @@ fn extract_context_window(obj: &serde_json::Map<String, Value>) -> Option<u64> {
     KEYS.iter()
         .filter_map(|key| obj.get(*key))
         .find_map(parse_positive_u64)
+}
+
+/// 从官方 Codex 模型条目读取输入模态。
+///
+/// 这是 Codex Desktop 判断图片入口的关键能力字段；不能在 OAuth 动态目录同步时丢掉。
+fn extract_input_modalities(obj: &serde_json::Map<String, Value>) -> Option<Vec<String>> {
+    ["input_modalities", "inputModalities", "modalities"]
+        .iter()
+        .filter_map(|key| obj.get(*key))
+        .find_map(parse_input_modalities)
+}
+
+fn parse_input_modalities(value: &Value) -> Option<Vec<String>> {
+    let values = match value {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        Value::Object(obj) => obj
+            .get("input")
+            .or_else(|| obj.get("inputs"))
+            .and_then(parse_input_modalities)?,
+        _ => return None,
+    };
+
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn extract_supports_image(
+    obj: &serde_json::Map<String, Value>,
+    input_modalities: Option<&[String]>,
+) -> Option<bool> {
+    if let Some(value) = [
+        "supports_image",
+        "supportsImage",
+        "vision",
+        "supports_image_detail_original",
+        "supportsImageDetailOriginal",
+    ]
+    .iter()
+    .filter_map(|key| obj.get(*key))
+    .find_map(Value::as_bool)
+    {
+        return Some(value);
+    }
+
+    input_modalities.map(|modalities| {
+        modalities
+            .iter()
+            .any(|modality| modality.eq_ignore_ascii_case("image"))
+    })
 }
 
 /// 将 JSON 数字或纯数字字符串转换为正整数。
@@ -417,6 +483,44 @@ mod tests {
         assert_eq!(models[0].context_window, None);
         assert_eq!(models[1].context_window, Some(272_000));
         assert_eq!(models[2].context_window, Some(1_000_000));
+    }
+
+    #[test]
+    fn parse_codex_oauth_models_preserves_image_modalities() {
+        let models = parse_models(json!({
+            "models": [
+                {
+                    "slug": "gpt-5.6-sol",
+                    "input_modalities": ["text", "image"],
+                    "supports_image_detail_original": true
+                },
+                {
+                    "slug": "gpt-5.3-codex-spark",
+                    "input_modalities": ["text"],
+                    "supports_image_detail_original": false
+                }
+            ]
+        }));
+
+        let sol = models
+            .iter()
+            .find(|model| model.id == "gpt-5.6-sol")
+            .unwrap();
+        assert_eq!(
+            sol.input_modalities.as_deref(),
+            Some(&["text".to_string(), "image".to_string()][..])
+        );
+        assert_eq!(sol.supports_image, Some(true));
+
+        let spark = models
+            .iter()
+            .find(|model| model.id == "gpt-5.3-codex-spark")
+            .unwrap();
+        assert_eq!(
+            spark.input_modalities.as_deref(),
+            Some(&["text".to_string()][..])
+        );
+        assert_eq!(spark.supports_image, Some(false));
     }
 
     #[test]

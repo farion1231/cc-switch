@@ -673,6 +673,19 @@ function providerWithFetchedModelCatalog(
       models[existingIndex] = {
         ...models[existingIndex],
         ...(contextWindow ? { contextWindow } : {}),
+        ...(fetched.inputModalities && fetched.inputModalities.length > 0
+          ? {
+              inputModalities: fetched.inputModalities,
+              input_modalities: fetched.inputModalities,
+            }
+          : {}),
+        ...(fetched.supportsImage !== undefined &&
+        fetched.supportsImage !== null
+          ? {
+              supportsImage: fetched.supportsImage,
+              supports_image: fetched.supportsImage,
+            }
+          : {}),
       };
       continue;
     }
@@ -682,6 +695,18 @@ function providerWithFetchedModelCatalog(
       upstreamModel: id,
       displayName: id,
       ...(contextWindow ? { contextWindow } : {}),
+      ...(fetched.inputModalities && fetched.inputModalities.length > 0
+        ? {
+            inputModalities: fetched.inputModalities,
+            input_modalities: fetched.inputModalities,
+          }
+        : {}),
+      ...(fetched.supportsImage !== undefined && fetched.supportsImage !== null
+        ? {
+            supportsImage: fetched.supportsImage,
+            supports_image: fetched.supportsImage,
+          }
+        : {}),
     };
     byFetchedModel.set(id, models.length);
     byVisibleModel.set(id, models.length);

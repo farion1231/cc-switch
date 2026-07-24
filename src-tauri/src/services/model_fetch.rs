@@ -17,6 +17,8 @@ pub struct FetchedModel {
     pub id: String,
     pub owned_by: Option<String>,
     pub context_window: Option<u64>,
+    pub input_modalities: Option<Vec<String>>,
+    pub supports_image: Option<bool>,
 }
 
 /// 模型列表获取服务的统一入参。
@@ -213,7 +215,9 @@ pub async fn fetch_models(options: FetchModelsRequest<'_>) -> Result<Vec<Fetched
                 .map(|m| FetchedModel {
                     context_window: extract_context_window(&m.extra),
                     id: m.id,
+                    input_modalities: None,
                     owned_by: m.owned_by,
+                    supports_image: None,
                 })
                 .collect();
 
@@ -330,6 +334,8 @@ fn parse_volcengine_plan_model_entry(entry: &serde_json::Value) -> Option<Fetche
             id: model_id.to_string(),
             owned_by: Some("volcengine".to_string()),
             context_window: None,
+            input_modalities: None,
+            supports_image: None,
         });
     }
 
@@ -353,6 +359,8 @@ fn parse_volcengine_plan_model_entry(entry: &serde_json::Value) -> Option<Fetche
         id: id.to_string(),
         owned_by: Some("volcengine".to_string()),
         context_window: extract_context_window(obj),
+        input_modalities: None,
+        supports_image: None,
     })
 }
 
@@ -1137,7 +1145,9 @@ mod tests {
             .map(|entry| FetchedModel {
                 context_window: extract_context_window(&entry.extra),
                 id: entry.id,
+                input_modalities: None,
                 owned_by: entry.owned_by,
+                supports_image: None,
             })
             .collect::<Vec<_>>();
 
@@ -1383,11 +1393,15 @@ Coding 能力开源 SOTA，从代码生成走向工程交付 | 1M | 128K |
                 id: "glm-5.2".to_string(),
                 owned_by: Some("zhipu".to_string()),
                 context_window: Some(123_456),
+                input_modalities: None,
+                supports_image: None,
             },
             FetchedModel {
                 id: "glm-5.1".to_string(),
                 owned_by: Some("zhipu".to_string()),
                 context_window: None,
+                input_modalities: None,
+                supports_image: None,
             },
         ];
 

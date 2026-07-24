@@ -6,6 +6,8 @@ export interface FetchedModel {
   id: string;
   ownedBy: string | null;
   contextWindow?: number | null;
+  inputModalities?: string[] | null;
+  supportsImage?: boolean | null;
 }
 
 export interface VolcengineModelListOptions {

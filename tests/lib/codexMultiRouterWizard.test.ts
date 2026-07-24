@@ -171,6 +171,44 @@ describe("codexMultiRouterWizard helpers", () => {
     ).toEqual(["first-model", "second-model"]);
   });
 
+  it("preserves fetched official image capability in provider catalog", () => {
+    const source = provider({
+      id: "codex-official",
+      name: "OpenAI Official",
+      category: "official",
+      settingsConfig: {
+        modelCatalog: { models: [] },
+      },
+    });
+
+    const refreshed = mergeFetchedModelsIntoWizardProvider(
+      source,
+      [
+        {
+          id: "gpt-5.6-sol",
+          ownedBy: "Codex",
+          contextWindow: 272000,
+          inputModalities: ["text", "image"],
+          supportsImage: true,
+        },
+      ],
+      { preserveExistingSelection: true },
+    );
+
+    expect(refreshed.settingsConfig.modelCatalog.models).toEqual([
+      {
+        model: "gpt-5.6-sol",
+        upstreamModel: "gpt-5.6-sol",
+        displayName: "gpt-5.6-sol",
+        contextWindow: 272000,
+        inputModalities: ["text", "image"],
+        input_modalities: ["text", "image"],
+        supportsImage: true,
+        supports_image: true,
+      },
+    ]);
+  });
+
   it("aliases third-party duplicate models while preserving upstreamModel", () => {
     const official = provider({
       id: "openai-official",

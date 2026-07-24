@@ -673,6 +673,17 @@ fn codex_catalog_capabilities_are_text_only(capabilities: &Value) -> Option<bool
         return Some(text_only);
     }
 
+    if let Some(supports_image) = capabilities
+        .get("supportsImage")
+        .or_else(|| capabilities.get("supports_image"))
+        .or_else(|| capabilities.get("vision"))
+        .or_else(|| capabilities.get("supportsImageDetailOriginal"))
+        .or_else(|| capabilities.get("supports_image_detail_original"))
+        .and_then(|value| value.as_bool())
+    {
+        return Some(!supports_image);
+    }
+
     capabilities
         .get("inputModalities")
         .or_else(|| capabilities.get("input_modalities"))
@@ -1109,6 +1120,16 @@ fn codex_catalog_model_specs(settings: &Value, config_text: &str) -> Vec<CodexCa
                     .collect::<Vec<_>>()
             })
             .filter(|items| !items.is_empty());
+        let input_modalities = input_modalities.or_else(|| {
+            let supports_image = model_config
+                .get("supportsImage")
+                .or_else(|| model_config.get("supports_image"))
+                .or_else(|| model_config.get("vision"))
+                .or_else(|| model_config.get("supportsImageDetailOriginal"))
+                .or_else(|| model_config.get("supports_image_detail_original"))
+                .and_then(|value| value.as_bool())?;
+            supports_image.then(|| vec!["text".to_string(), "image".to_string()])
+        });
         let base_instructions = model_config
             .get("baseInstructions")
             .or_else(|| model_config.get("base_instructions"))
@@ -5300,6 +5321,54 @@ openai_base_url = "http://127.0.0.1:15721/v1"
             "NativeResponses model-specific modalities must not override text-only safeguards"
         );
         assert_eq!(entry.get("inputModalities"), Some(&json!(["text"])));
+    }
+
+    #[test]
+    fn codex_model_catalog_native_responses_preserves_official_image_modalities() {
+        let template = json!({
+            "slug": "native-responses-template",
+            "display_name": "native-responses-template",
+            "context_window": 262144,
+            "max_context_window": 262144,
+            "supports_image_detail_original": false,
+            "input_modalities": ["text"]
+        });
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "gpt-5.6-sol",
+                        "displayName": "GPT-5.6-Sol",
+                        "inputModalities": ["text", "image"],
+                        "supportsImage": true
+                    }
+                ]
+            }
+        });
+        let specs = codex_catalog_model_specs(&settings, r#"model = "gpt-5.6-sol""#);
+
+        assert_eq!(specs.len(), 1);
+        assert!(!specs[0].text_only);
+        assert_eq!(
+            specs[0].input_modalities.as_deref(),
+            Some(&["text".to_string(), "image".to_string()][..])
+        );
+
+        let entry = codex_catalog_model_entry(
+            &template,
+            &specs[0],
+            0,
+            CodexCatalogToolProfile::NativeResponses,
+        );
+
+        assert_eq!(
+            entry.get("input_modalities"),
+            Some(&json!(["text", "image"]))
+        );
+        assert_eq!(
+            entry.get("inputModalities"),
+            Some(&json!(["text", "image"]))
+        );
     }
 
     #[test]

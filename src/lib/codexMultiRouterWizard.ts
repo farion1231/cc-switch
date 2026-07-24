@@ -327,6 +327,22 @@ export function mergeFetchedModelsIntoWizardProvider(
       ...(fetched.contextWindow
         ? { contextWindow: fetched.contextWindow }
         : {}),
+      ...(fetched.inputModalities && fetched.inputModalities.length > 0
+        ? {
+            inputModalities: fetched.inputModalities as Array<
+              "text" | "image"
+            >,
+            input_modalities: fetched.inputModalities as Array<
+              "text" | "image"
+            >,
+          }
+        : {}),
+      ...(fetched.supportsImage !== undefined && fetched.supportsImage !== null
+        ? {
+            supportsImage: fetched.supportsImage,
+            supports_image: fetched.supportsImage,
+          }
+        : {}),
     });
   }
   const models = Array.from(byModel.values());
