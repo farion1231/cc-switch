@@ -488,9 +488,10 @@ fn codex_catalog_model_entry(
     entry_obj.insert("auto_compact_token_limit".to_string(), Value::Null);
 
     // truncation_policy.limit follows context_window (issue #4832/#5110)
-    // 保留模板原有的 mode（gpt5_5 模板是 tokens，codex_native_responses 是 bytes），
-    // 只更新 limit。原来无条件覆盖成 bytes 会导致 tokens 模板的单位错配
-    //（128K tokens 变成 128K bytes ≈ 32K tokens，1/4 容量）。
+    // context_window 的单位是 token，写入时必须同时设 mode="tokens" 确保
+    // limit 与 mode 单位一致。codex_native_responses 模板默认 mode="bytes"，
+    // 若保留 bytes 却写入 token 值，128K-token 模型会被截断在 128K bytes
+    //（≈32K tokens，仅 1/4 容量）。
     let truncation_limit = if spec.context_window > 0 {
         spec.context_window
     } else {
@@ -500,11 +501,12 @@ fn codex_catalog_model_entry(
         .get_mut("truncation_policy")
         .and_then(|v| v.as_object_mut())
     {
+        tp.insert("mode".to_string(), json!("tokens"));
         tp.insert("limit".to_string(), json!(truncation_limit));
     } else {
         entry_obj.insert(
             "truncation_policy".to_string(),
-            json!({ "mode": "bytes", "limit": truncation_limit }),
+            json!({ "mode": "tokens", "limit": truncation_limit }),
         );
     }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
@@ -3827,9 +3829,8 @@ model_catalog_json = "cc-switch-model-catalog.json"
     }
     #[test]
     fn catalog_entry_truncation_preserves_template_mode_tokens() {
-        // ProxyChat 用 gpt5_5_template（mode=tokens）。修复前代码无条件覆盖成
-        // bytes，导致 128K-token 模型得到 128KB budget（≈32K tokens，1/4 容量）。
-        // 修复后应保留模板的 tokens mode，只更新 limit。
+        // ProxyChat 用 gpt5_5_template（mode=tokens）。
+        // 修复后统一设 mode="tokens"，确保 limit（token 值）与 mode 单位一致。
         let settings = json!({
             "modelCatalog": {
                 "models": [
@@ -3841,6 +3842,31 @@ model_catalog_json = "cc-switch-model-catalog.json"
             codex_model_catalog_from_settings(&settings, "", CodexCatalogToolProfile::ProxyChat)
                 .expect("catalog generation")
                 .expect("non-empty catalog");
+        let entry = &catalog["models"][0];
+        assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
+        assert_eq!(entry["truncation_policy"]["limit"], json!(128000));
+    }
+
+    #[test]
+    fn catalog_entry_truncation_forces_tokens_mode_for_native_responses() {
+        // NativeResponses 用 codex_native_responses_template（默认 mode=bytes）。
+        // context_window 单位是 token，若保留 bytes 模式却写入 token 值，
+        // 128K-token 模型会被截断在 128K bytes（≈32K tokens，1/4 容量）。
+        // 修复后应强制 mode="tokens"，与 limit 单位一致。
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "contextWindow": "128000" }
+                ]
+            }
+        });
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .expect("catalog generation")
+        .expect("non-empty catalog");
         let entry = &catalog["models"][0];
         assert_eq!(entry["truncation_policy"]["mode"], json!("tokens"));
         assert_eq!(entry["truncation_policy"]["limit"], json!(128000));

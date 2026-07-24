@@ -221,6 +221,9 @@ pub(crate) fn sanitize_claude_settings_for_live(settings: &Value) -> Value {
         obj.remove("apiFormat");
         obj.remove("openrouter_compat_mode");
         obj.remove("openrouterCompatMode");
+        // cc-switch 专用字段：watcher 从 provider.settings_config 读取，
+        // 不应泄露到 Claude Code 的 settings.json
+        obj.remove("autoSyncContextWindow");
     }
     v
 }
@@ -746,8 +749,17 @@ pub(crate) fn build_effective_settings_with_common_config(
     // 启动 settings.json 监听器，在后台自动同步 ACW/MAX 当用户 /model 切换时
     if matches!(app_type, AppType::Claude) {
         let settings_path = get_claude_settings_path();
-        // 检查父目录存在（而不是文件存在）：watch 父目录能检测文件创建，
-        // 解决 fresh 安装时 settings.json 不存在导致 watcher 不启动的问题。
+        // 确保父目录存在：fresh 安装时 ~/.claude 可能尚未创建，
+        // 而 write_live_snapshot（atomic_write -> create_dir_all）在本函数
+        // 之后才执行。提前创建父目录，保证 watcher 能启动监听。
+        if let Some(parent) = settings_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                log::warn!(
+                    "[ClaudeSettingsWatcher] failed to create {}: {e}",
+                    parent.display()
+                );
+            }
+        }
         if settings_path.parent().map(|p| p.exists()).unwrap_or(false) {
             let provider_arc = std::sync::Arc::new(provider.clone());
             match crate::claude_settings_watcher::spawn_claude_settings_watcher(
@@ -2764,5 +2776,19 @@ base_url = "https://a.example/v1"
             effective["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],
             json!("500000")
         );
+    }
+
+    #[test]
+    fn sanitize_strips_auto_sync_context_window() {
+        // autoSyncContextWindow 是 cc-switch 专用字段，watcher 从 provider.settings_config
+        // 读取，不应泄露到 Claude Code 的 settings.json
+        let settings = json!({
+            "env": { "ANTHROPIC_MODEL": "test" },
+            "autoSyncContextWindow": true
+        });
+        let sanitized = sanitize_claude_settings_for_live(&settings);
+        assert!(sanitized.get("autoSyncContextWindow").is_none());
+        // 其他字段保留
+        assert_eq!(sanitized["env"]["ANTHROPIC_MODEL"], json!("test"));
     }
 }

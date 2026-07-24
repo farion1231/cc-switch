@@ -240,7 +240,9 @@ fn handle_settings_change(
             return;
         }
     };
-    if let Err(e) = std::fs::write(path, new_content) {
+    // 使用原子写入（临时文件 + rename），避免 Claude Code 在写入期间
+    // 读到截断后的空文件或残缺 JSON
+    if let Err(e) = crate::config::atomic_write(path, new_content.as_bytes()) {
         log::warn!("[ClaudeSettingsWatcher] write failed: {e}");
     } else {
         log::info!(
