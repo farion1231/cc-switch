@@ -1,6 +1,7 @@
 //! OpenAI Chat Completions SSE → OpenAI Responses SSE conversion.
 
 use super::codex_responses_sse as sse;
+use super::codex_message_items::response_message_item_id;
 use super::{
     codex_chat_common::{
         extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
@@ -308,7 +309,7 @@ impl ChatToResponsesState {
 
         if !self.text.added {
             let output_index = self.next_output_index();
-            let item_id = format!("{}_msg", self.response_id);
+            let item_id = response_message_item_id(&self.response_id);
             self.text.output_index = Some(output_index);
             self.text.item_id = item_id.clone();
             self.text.added = true;

@@ -14,6 +14,7 @@ use super::transform_codex_chat::{
     build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
     response_tool_call_item_id_from_chat_name, CodexToolContext,
 };
+use super::codex_message_items::indexed_response_message_item_id;
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
 use crate::proxy::json_canonical::canonical_json_string;
@@ -1296,7 +1297,7 @@ pub(crate) fn anthropic_response_to_responses_with_context(
         if !text_parts.is_empty() {
             let idx = output.len();
             output.push(json!({
-                "id": format!("{response_id}_msg_{idx}"),
+                "id": indexed_response_message_item_id(&response_id, idx),
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
