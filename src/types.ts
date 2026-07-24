@@ -324,6 +324,11 @@ export interface S3SyncSettings {
 
 export type RemoteSnapshotLayout = "current" | "legacy";
 
+export interface SkillsArchiveStats {
+  entryCount: number;
+  uncompressedSize: number;
+}
+
 // 远端快照信息（下载前预览）
 export interface RemoteSnapshotInfo {
   deviceName: string;
@@ -334,6 +339,7 @@ export interface RemoteSnapshotInfo {
   dbCompatVersion?: number | null;
   compatible: boolean;
   artifacts: string[];
+  skillsArchive?: SkillsArchiveStats | null;
   layout: RemoteSnapshotLayout;
   remotePath: string;
 }

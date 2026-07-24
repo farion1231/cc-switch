@@ -19,10 +19,10 @@ use crate::settings::{update_webdav_sync_status, WebDavSyncSettings, WebDavSyncS
 
 use super::sync_protocol::{
     apply_snapshot, build_local_snapshot, effective_db_compat_version, localized,
-    persist_sync_success_best_effort, sha256_hex, validate_artifact_size_limit,
-    validate_manifest_compat, verify_artifact, ArtifactMeta, RemoteLayout, SyncManifest,
-    DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES, PROTOCOL_VERSION,
-    REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
+    persist_sync_success_best_effort, sha256_hex, skills_archive_stats_from_artifacts,
+    validate_artifact_size_limit, validate_manifest_compat, verify_artifact, ArtifactMeta,
+    RemoteLayout, SyncManifest, DB_COMPAT_VERSION, MAX_MANIFEST_BYTES, MAX_SYNC_ARTIFACT_BYTES,
+    PROTOCOL_VERSION, REMOTE_DB_SQL, REMOTE_MANIFEST, REMOTE_SKILLS_ZIP,
 };
 
 pub(crate) mod archive;
@@ -68,9 +68,8 @@ pub async fn upload(
     settings.validate()?;
     let auth = auth_for(settings);
     let dir_segs = remote_dir_segments(settings, RemoteLayout::Current);
-    ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
-
     let snapshot = build_local_snapshot(db)?;
+    ensure_remote_directories(&settings.base_url, &dir_segs, &auth).await?;
 
     // Upload order: artifacts first, manifest last (best-effort consistency)
     let db_url = remote_file_url(settings, RemoteLayout::Current, REMOTE_DB_SQL)?;
@@ -169,6 +168,7 @@ pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<V
     };
     let compatible = validate_manifest_compat(&snapshot.manifest, snapshot.layout).is_ok();
     let db_compat_version = effective_db_compat_version(&snapshot.manifest, snapshot.layout);
+    let skills_archive = skills_archive_stats_from_artifacts(&snapshot.manifest.artifacts);
 
     let payload = serde_json::json!({
         "deviceName": snapshot.manifest.device_name,
@@ -179,6 +179,7 @@ pub async fn fetch_remote_info(settings: &WebDavSyncSettings) -> Result<Option<V
         "dbCompatVersion": db_compat_version,
         "compatible": compatible,
         "artifacts": snapshot.manifest.artifacts.keys().collect::<Vec<_>>(),
+        "skillsArchive": skills_archive,
         "layout": snapshot.layout.as_str(),
         "remotePath": remote_dir_display(settings, snapshot.layout),
     });
