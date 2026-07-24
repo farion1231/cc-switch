@@ -3,6 +3,9 @@ use crate::model_capabilities::is_confirmed_text_only_model as confirmed_text_on
 use crate::model_capabilities::{image_input_capability_from_settings, ImageInputCapability};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use crate::proxy::tool_media::{
+    strip_media_from_tool_value, tool_output_contains_media, ToolMediaScope,
+};
 use serde_json::{json, Value};
 
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
@@ -193,6 +196,9 @@ fn responses_input_item_has_image_blocks(item: &Value) -> bool {
     }
 
     item.get("content").is_some_and(content_has_image_blocks)
+        || item
+            .get("output")
+            .is_some_and(|output| tool_output_contains_media(output, ToolMediaScope::ImagesOnly))
 }
 
 fn replace_images_in_responses_input(input: &mut Value) -> usize {
@@ -216,6 +222,23 @@ fn replace_images_in_responses_input_item(item: &mut Value) -> usize {
 
     if let Some(content) = item.get_mut("content") {
         replaced += replace_images_in_content_with_text_type(content, "input_text");
+    }
+
+    if let Some(output) = item.get_mut("output") {
+        // The image-capability fallback deliberately strips images only.
+        // Tool-output files/audio remain a known unsupported-modality gap.
+        let replacement_block = json!({
+            "type": "input_text",
+            "text": UNSUPPORTED_IMAGE_MARKER
+        });
+        let mut discarded_media = Vec::new();
+        replaced += strip_media_from_tool_value(
+            output,
+            &mut discarded_media,
+            ToolMediaScope::ImagesOnly,
+            &replacement_block,
+            UNSUPPORTED_IMAGE_MARKER,
+        );
     }
 
     replaced
@@ -281,6 +304,13 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn large_tool_data_url() -> String {
+        format!(
+            "data:image/png;base64,{}",
+            "SANITIZER_TOOL_MEDIA_SENTINEL".repeat(400)
+        )
     }
 
     #[test]
@@ -601,6 +631,219 @@ mod tests {
             body["messages"][0]["content"][0]["content"][0]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    #[test]
+    fn detects_and_replaces_responses_function_output_images() {
+        let data_url = large_tool_data_url();
+        let mut body = json!({
+            "model": "text-only",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": {
+                    "content": [
+                        {"type": "input_text", "text": "caption"},
+                        {"type": "input_image", "image_url": data_url.clone()},
+                        {"type": "image", "mimeType": "image/webp", "data": "MCP_SENTINEL"}
+                    ]
+                }
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 2);
+        assert_eq!(
+            body["input"][0]["output"]["content"][1],
+            json!({"type": "input_text", "text": UNSUPPORTED_IMAGE_MARKER})
+        );
+        assert_eq!(
+            body["input"][0]["output"]["content"][2],
+            json!({"type": "input_text", "text": UNSUPPORTED_IMAGE_MARKER})
+        );
+        assert!(!body.to_string().contains(&data_url));
+        assert!(!body.to_string().contains("MCP_SENTINEL"));
+    }
+
+    #[test]
+    fn proactive_text_only_sanitizer_covers_responses_tool_outputs() {
+        let provider = provider(json!({
+            "models": [{"id": "text-model", "input": ["text"]}]
+        }));
+        let mut body = json!({
+            "model": "text-model",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [{
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,PROACTIVE_SENTINEL"
+                }]
+            }]
+        });
+
+        let replaced = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(body["input"][0]["output"][0]["type"], "input_text");
+        assert!(!body.to_string().contains("PROACTIVE_SENTINEL"));
+    }
+
+    #[test]
+    fn detects_and_replaces_json_string_tool_output_symmetrically() {
+        let data_url = large_tool_data_url();
+        let output = json!({
+            "content": [{
+                "type": "input_image",
+                "image_url": data_url.clone()
+            }]
+        })
+        .to_string();
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_string",
+                "output": output
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        let rewritten = body["input"][0]["output"].as_str().unwrap();
+        assert!(rewritten.contains(UNSUPPORTED_IMAGE_MARKER));
+        assert!(!rewritten.contains(&data_url));
+        let parsed: Value = serde_json::from_str(rewritten).unwrap();
+        assert_eq!(parsed["content"][0]["type"], "input_text");
+    }
+
+    #[test]
+    fn detects_and_replaces_whole_string_tool_image_data_url() {
+        let data_url = large_tool_data_url();
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_raw",
+                "output": data_url.clone()
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(
+            body["input"][0]["output"],
+            Value::String(UNSUPPORTED_IMAGE_MARKER.to_string())
+        );
+        assert!(!body.to_string().contains(&data_url));
+    }
+
+    #[test]
+    fn detects_and_replaces_custom_tool_output_images() {
+        let mut body = json!({
+            "input": [{
+                "type": "custom_tool_call_output",
+                "call_id": "call_custom",
+                "status": "completed",
+                "output": [{
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/render.png"}
+                }]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 1);
+        assert_eq!(body["input"][0]["status"], "completed");
+        assert_eq!(body["input"][0]["output"][0]["type"], "input_text");
+    }
+
+    #[test]
+    fn ignores_no_media_and_untyped_remote_tool_outputs() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_text",
+                    "output": {"content": [{"type": "text", "text": "ordinary result"}]}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "call_search",
+                    "output": {
+                        "image_url": {"url": "https://example.com/search-thumbnail.png"}
+                    }
+                }
+            ]
+        });
+        let original = body.clone();
+
+        assert!(!contains_image_blocks(&body));
+        assert_eq!(replace_image_blocks_with_marker(&mut body), 0);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn image_retry_scope_intentionally_ignores_tool_files_and_audio() {
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_modalities",
+                "output": {
+                    "content": [
+                        {"type": "input_file", "file_id": "file_1"},
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": "AUDIO", "format": "wav"}
+                        }
+                    ]
+                }
+            }]
+        });
+        let original = body.clone();
+
+        assert!(!contains_image_blocks(&body));
+        assert_eq!(replace_image_blocks_with_marker(&mut body), 0);
+        assert_eq!(body, original);
+    }
+
+    #[test]
+    fn replaces_synthetic_user_and_tool_role_chat_image_parts() {
+        let mut body = json!({
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "tool media"},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,USER_SENTINEL"}
+                        }
+                    ]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/tool.png"}
+                    }]
+                }
+            ]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let replaced = replace_image_blocks_with_marker(&mut body);
+
+        assert_eq!(replaced, 2);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(body["messages"][1]["content"][0]["type"], "text");
     }
 
     #[test]

@@ -16,6 +16,10 @@ use crate::proxy::{
         canonical_json_string, canonicalize_json_string_if_parseable, canonicalize_tool_arguments,
         short_sha256_hex,
     },
+    tool_media::{
+        chat_file_from_input_file, clamp_base64ish_strings, strip_media_from_tool_value,
+        whole_string_image_data_url, ToolMediaScope,
+    },
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -42,6 +46,8 @@ const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
+const TOOL_RESULT_MEDIA_MOVED_MARKER: &str =
+    "[cc-switch: tool result media moved to the following user message]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -539,12 +545,77 @@ fn instruction_text(value: &Value) -> String {
     }
 }
 
+struct ToolOutputMediaPlan {
+    tool_content: String,
+    media_parts: Vec<Value>,
+}
+
+fn plan_tool_output_media(mut output: Value) -> Option<ToolOutputMediaPlan> {
+    let replacement_block = json!({
+        "type": "text",
+        "text": TOOL_RESULT_MEDIA_MOVED_MARKER
+    });
+    let mut media_parts = Vec::new();
+    let replaced = strip_media_from_tool_value(
+        &mut output,
+        &mut media_parts,
+        ToolMediaScope::AllSupported,
+        &replacement_block,
+        TOOL_RESULT_MEDIA_MOVED_MARKER,
+    );
+    if replaced == 0 {
+        return None;
+    }
+
+    // Only media-bearing outputs enter this path. Remove any residual large
+    // data/base64 scalar that was not itself a recognized content block while
+    // preserving ordinary long OCR/log/source text.
+    clamp_base64ish_strings(&mut output);
+    Some(ToolOutputMediaPlan {
+        tool_content: canonical_json_string(&output),
+        media_parts,
+    })
+}
+
+fn plan_raw_tool_output_data_url(output: &str) -> Option<ToolOutputMediaPlan> {
+    whole_string_image_data_url(output).map(|media_part| ToolOutputMediaPlan {
+        // A raw tool-output string remains a raw tool-output string. Do not add
+        // JSON string-literal quotes around the replacement marker.
+        tool_content: TOOL_RESULT_MEDIA_MOVED_MARKER.to_string(),
+        media_parts: vec![media_part],
+    })
+}
+
+fn queue_tool_output_media(pending_media: &mut Vec<Value>, call_id: &str, media_parts: Vec<Value>) {
+    if media_parts.is_empty() {
+        return;
+    }
+
+    pending_media.push(json!({
+        "type": "text",
+        "text": format!("[cc-switch: media output of tool call {call_id}]")
+    }));
+    pending_media.extend(media_parts);
+}
+
+fn flush_pending_media(messages: &mut Vec<Value>, pending_media: &mut Vec<Value>) {
+    if pending_media.is_empty() {
+        return;
+    }
+
+    messages.push(json!({
+        "role": "user",
+        "content": std::mem::take(pending_media)
+    }));
+}
+
 fn append_responses_input_as_chat_messages(
     input: &Value,
     messages: &mut Vec<Value>,
     tool_context: &CodexToolContext,
 ) -> Result<(), ProxyError> {
     let mut pending_tool_calls = Vec::new();
+    let mut pending_media = Vec::new();
     let mut pending_reasoning: Option<String> = None;
     let mut last_assistant_index: Option<usize> = None;
 
@@ -561,6 +632,7 @@ fn append_responses_input_as_chat_messages(
                     item,
                     messages,
                     &mut pending_tool_calls,
+                    &mut pending_media,
                     &mut pending_reasoning,
                     &mut last_assistant_index,
                     tool_context,
@@ -572,6 +644,7 @@ fn append_responses_input_as_chat_messages(
                 input,
                 messages,
                 &mut pending_tool_calls,
+                &mut pending_media,
                 &mut pending_reasoning,
                 &mut last_assistant_index,
                 tool_context,
@@ -580,9 +653,14 @@ fn append_responses_input_as_chat_messages(
         _ => {}
     }
 
+    // If a later assistant tool-call batch was accumulated after an earlier
+    // media-bearing result, the synthetic user media belongs before that next
+    // assistant turn.
+    flush_pending_media(messages, &mut pending_media);
     flush_pending_tool_calls(
         messages,
         &mut pending_tool_calls,
+        &mut pending_media,
         &mut pending_reasoning,
         &mut last_assistant_index,
     );
@@ -603,6 +681,7 @@ fn append_responses_item_as_chat_message(
     item: &Value,
     messages: &mut Vec<Value>,
     pending_tool_calls: &mut Vec<Value>,
+    pending_media: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
     tool_context: &CodexToolContext,
@@ -628,14 +707,35 @@ fn append_responses_item_as_chat_message(
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
+                pending_media,
                 pending_reasoning,
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = match item.get("output") {
-                Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
-                Some(v) => canonical_json_string(v),
-                None => String::new(),
+            let media_plan = match item.get("output") {
+                Some(Value::String(output)) => {
+                    plan_raw_tool_output_data_url(output).or_else(|| {
+                        serde_json::from_str::<Value>(output.trim())
+                            .ok()
+                            .and_then(plan_tool_output_media)
+                    })
+                }
+                Some(output @ (Value::Array(_) | Value::Object(_))) => {
+                    plan_tool_output_media(output.clone())
+                }
+                _ => None,
+            };
+            let output = if let Some(media_plan) = media_plan {
+                queue_tool_output_media(pending_media, call_id, media_plan.media_parts);
+                media_plan.tool_content
+            } else {
+                // Cache-sensitive no-media fallback: keep these expressions
+                // byte-for-byte equivalent to the pre-fix conversion.
+                match item.get("output") {
+                    Some(Value::String(s)) => canonicalize_json_string_if_parseable(s),
+                    Some(v) => canonical_json_string(v),
+                    None => String::new(),
+                }
             };
             messages.push(json!({
                 "role": "tool",
@@ -647,11 +747,39 @@ fn append_responses_item_as_chat_message(
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
+                pending_media,
                 pending_reasoning,
                 last_assistant_index,
             );
             let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
-            let output = canonical_json_string(item);
+            let mut transformed_item = item.clone();
+            let replacement_block = json!({
+                "type": "text",
+                "text": TOOL_RESULT_MEDIA_MOVED_MARKER
+            });
+            let mut media_parts = Vec::new();
+            let replaced = transformed_item
+                .get_mut("output")
+                .map(|output| {
+                    strip_media_from_tool_value(
+                        output,
+                        &mut media_parts,
+                        ToolMediaScope::AllSupported,
+                        &replacement_block,
+                        TOOL_RESULT_MEDIA_MOVED_MARKER,
+                    )
+                })
+                .unwrap_or(0);
+            let output = if replaced > 0 {
+                if let Some(output) = transformed_item.get_mut("output") {
+                    clamp_base64ish_strings(output);
+                }
+                queue_tool_output_media(pending_media, call_id, media_parts);
+                canonical_json_string(&transformed_item)
+            } else {
+                // Preserve the legacy whole-item representation exactly.
+                canonical_json_string(item)
+            };
             messages.push(json!({
                 "role": "tool",
                 "tool_call_id": call_id,
@@ -672,9 +800,14 @@ fn append_responses_item_as_chat_message(
             flush_pending_tool_calls(
                 messages,
                 pending_tool_calls,
+                pending_media,
                 pending_reasoning,
                 last_assistant_index,
             );
+            // `flush_pending_tool_calls` intentionally returns early when
+            // there is no new assistant batch. A previous tool result may
+            // still have media waiting, so flush it before this new message.
+            flush_pending_media(messages, pending_media);
             let role = item
                 .get("role")
                 .and_then(|v| v.as_str())
@@ -705,13 +838,15 @@ fn append_responses_item_as_chat_message(
             messages.push(message);
         }
         Some("message") | None => {
-            flush_pending_tool_calls(
-                messages,
-                pending_tool_calls,
-                pending_reasoning,
-                last_assistant_index,
-            );
             if item.get("role").is_some() || item.get("content").is_some() {
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
+                flush_pending_media(messages, pending_media);
                 let message = responses_message_item_to_chat_message(
                     item,
                     pending_reasoning,
@@ -720,16 +855,28 @@ fn append_responses_item_as_chat_message(
                 );
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
+            } else if pending_media.is_empty() {
+                // Preserve legacy no-media ordering: inert message-like items
+                // used to close a pending tool-call batch.
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
             }
         }
         _ => {
-            flush_pending_tool_calls(
-                messages,
-                pending_tool_calls,
-                pending_reasoning,
-                last_assistant_index,
-            );
             if item.get("role").is_some() || item.get("content").is_some() {
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
+                flush_pending_media(messages, pending_media);
                 let message = responses_message_item_to_chat_message(
                     item,
                     pending_reasoning,
@@ -738,6 +885,16 @@ fn append_responses_item_as_chat_message(
                 );
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
+            } else if pending_media.is_empty() {
+                // Preserve legacy no-media ordering without letting an inert
+                // unknown item flush a media-bearing result batch.
+                flush_pending_tool_calls(
+                    messages,
+                    pending_tool_calls,
+                    pending_media,
+                    pending_reasoning,
+                    last_assistant_index,
+                );
             }
         }
     }
@@ -748,6 +905,7 @@ fn append_responses_item_as_chat_message(
 fn flush_pending_tool_calls(
     messages: &mut Vec<Value>,
     pending_tool_calls: &mut Vec<Value>,
+    pending_media: &mut Vec<Value>,
     pending_reasoning: &mut Option<String>,
     last_assistant_index: &mut Option<usize>,
 ) {
@@ -755,6 +913,10 @@ fn flush_pending_tool_calls(
         return;
     }
 
+    // Media from the preceding tool-result batch must be presented before a
+    // new assistant tool-call turn. Consecutive outputs do not enter here
+    // because `pending_tool_calls` is empty after the first output.
+    flush_pending_media(messages, pending_media);
     let mut message = json!({
         "role": "assistant",
         "content": null,
@@ -1057,18 +1219,7 @@ fn responses_content_to_chat_content(_role: &str, content: &Value) -> Value {
 }
 
 fn responses_input_file_to_chat_file(part: &Value) -> Option<Value> {
-    let mut file = serde_json::Map::new();
-    let has_supported_file_ref = part.get("file_id").is_some() || part.get("file_data").is_some();
-    if !has_supported_file_ref {
-        return None;
-    }
-
-    for key in ["file_id", "file_data", "filename"] {
-        if let Some(value) = part.get(key) {
-            file.insert(key.to_string(), value.clone());
-        }
-    }
-    Some(Value::Object(file))
+    chat_file_from_input_file(part)
 }
 
 fn collect_tool_search_output_tools(value: &Value, context: &mut CodexToolContext) {
@@ -1834,6 +1985,50 @@ pub fn chat_error_to_response_error(body: Option<&Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+
+    fn large_test_image_data_url() -> String {
+        let bytes = b"CC_SWITCH_TOOL_MEDIA_SENTINEL".repeat(400);
+        format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+    }
+
+    fn message_roles(result: &Value) -> Vec<&str> {
+        result["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|message| message.get("role").and_then(Value::as_str))
+            .collect()
+    }
+
+    fn test_function_call(call_id: &str) -> Value {
+        json!({
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "view_image",
+            "arguments": "{}"
+        })
+    }
+
+    fn test_function_output(call_id: &str, output: Value) -> Value {
+        json!({
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": output
+        })
+    }
+
+    fn convert_test_input(items: Vec<Value>) -> Value {
+        responses_to_chat_completions(json!({
+            "model": "kimi-k3",
+            "input": items
+        }))
+        .unwrap()
+    }
+
+    fn result_messages(result: &Value) -> &[Value] {
+        result["messages"].as_array().unwrap()
+    }
 
     #[test]
     fn responses_request_with_stream_injects_include_usage() {
@@ -3059,6 +3254,538 @@ mod tests {
             "not json"
         );
         assert_eq!(messages[1]["content"], "plain text result");
+    }
+
+    #[test]
+    fn responses_request_to_chat_moves_tool_image_to_synthetic_user_message() {
+        let data_url = large_test_image_data_url();
+        let result = convert_test_input(vec![
+            test_function_call("call_image"),
+            test_function_output(
+                "call_image",
+                json!([
+                    {"type": "input_text", "text": "screenshot follows"},
+                    {"type": "input_image", "image_url": data_url.clone()}
+                ]),
+            ),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "user"]);
+        assert!(messages[1]["content"].is_string());
+        let tool_content: Value =
+            serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(tool_content[0]["text"], "screenshot follows");
+        assert_eq!(tool_content[1]["type"], "text");
+        assert_eq!(tool_content[1]["text"], TOOL_RESULT_MEDIA_MOVED_MARKER);
+        assert!(!messages[1]["content"].as_str().unwrap().contains(&data_url));
+
+        assert_eq!(
+            messages[2]["content"][0]["text"],
+            "[cc-switch: media output of tool call call_image]"
+        );
+        assert_eq!(messages[2]["content"][1]["type"], "image_url");
+        assert_eq!(messages[2]["content"][1]["image_url"]["url"], data_url);
+    }
+
+    #[test]
+    fn responses_request_to_chat_groups_parallel_media_after_all_tool_outputs() {
+        let first_url = large_test_image_data_url();
+        let second_payload = "MCP_TOOL_MEDIA_SENTINEL";
+        let result = convert_test_input(vec![
+            test_function_call("call_1"),
+            test_function_call("call_2"),
+            test_function_output(
+                "call_1",
+                json!({"type": "input_image", "image_url": first_url.clone()}),
+            ),
+            json!({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "keep outputs adjacent"}]
+            }),
+            test_function_output(
+                "call_2",
+                json!({
+                    "type": "image",
+                    "mimeType": "image/webp",
+                    "data": second_payload
+                }),
+            ),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "tool", "tool", "user"]
+        );
+        assert_eq!(messages[0]["reasoning_content"], "keep outputs adjacent");
+        assert_ne!(messages[0]["reasoning_content"], "tool call");
+        assert_eq!(messages[1]["tool_call_id"], "call_1");
+        assert_eq!(messages[2]["tool_call_id"], "call_2");
+        assert!(messages[1]["content"].is_string());
+        assert!(messages[2]["content"].is_string());
+        assert!(!messages[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains(&first_url));
+        assert!(!messages[2]["content"]
+            .as_str()
+            .unwrap()
+            .contains(second_payload));
+        assert_eq!(messages[3]["content"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            messages[3]["content"][3]["image_url"]["url"],
+            format!("data:image/webp;base64,{second_payload}")
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_flushes_media_before_next_tool_call_batch() {
+        let result = convert_test_input(vec![
+            test_function_call("call_1"),
+            test_function_output(
+                "call_1",
+                json!({
+                    "type": "input_image",
+                    "image_url": large_test_image_data_url()
+                }),
+            ),
+            test_function_call("call_2"),
+            test_function_output("call_2", json!("second result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "tool", "user", "assistant", "tool"]
+        );
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "call_2");
+        assert_eq!(messages[4]["tool_call_id"], "call_2");
+    }
+
+    #[test]
+    fn responses_request_to_chat_flushes_media_before_real_user_messages() {
+        let boundaries = [
+            json!({"type": "input_text", "text": "continue"}),
+            json!({"type": "future_message", "role": "user", "content": "continue"}),
+        ];
+
+        for boundary in boundaries {
+            let result = convert_test_input(vec![
+                test_function_call("call_1"),
+                test_function_output(
+                    "call_1",
+                    json!({
+                        "type": "input_image",
+                        "image_url": large_test_image_data_url()
+                    }),
+                ),
+                boundary,
+            ]);
+            let messages = result_messages(&result);
+
+            assert_eq!(
+                message_roles(&result),
+                vec!["assistant", "tool", "user", "user"]
+            );
+            assert!(messages[2]["content"].is_array());
+            assert_eq!(messages[3]["role"], "user");
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_handles_raw_data_url_thresholds() {
+        let large = large_test_image_data_url();
+        let large_result = convert_test_input(vec![
+            test_function_call("call_large"),
+            test_function_output("call_large", Value::String(large.clone())),
+        ]);
+        let large_messages = result_messages(&large_result);
+
+        assert_eq!(
+            message_roles(&large_result),
+            vec!["assistant", "tool", "user"]
+        );
+        assert_eq!(large_messages[1]["content"], TOOL_RESULT_MEDIA_MOVED_MARKER);
+        assert_eq!(large_messages[2]["content"][1]["image_url"]["url"], large);
+
+        let small = "data:image/png;base64,YWJj";
+        let small_result = convert_test_input(vec![
+            test_function_call("call_small"),
+            test_function_output("call_small", json!(small)),
+        ]);
+        assert_eq!(message_roles(&small_result), vec!["assistant", "tool"]);
+        assert_eq!(small_result["messages"][1]["content"], small);
+    }
+
+    #[test]
+    fn responses_request_to_chat_maps_supported_structured_image_shapes() {
+        let cases = vec![
+            (
+                json!({
+                    "type": "input_image",
+                    "image_url": {"url": "https://example.com/input.png"},
+                    "detail": "high"
+                }),
+                "https://example.com/input.png",
+                Some("high"),
+            ),
+            (
+                json!({
+                    "type": "image_url",
+                    "image_url": "https://example.com/chat-string.png"
+                }),
+                "https://example.com/chat-string.png",
+                None,
+            ),
+            (
+                json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "https://example.com/chat-object.png",
+                        "detail": "low"
+                    }
+                }),
+                "https://example.com/chat-object.png",
+                Some("low"),
+            ),
+            (
+                json!({"image_url": "data:image/gif;base64,LOOSE_SENTINEL"}),
+                "data:image/gif;base64,LOOSE_SENTINEL",
+                None,
+            ),
+            (
+                json!({
+                    "type": "image",
+                    "source": {
+                        "media_type": "image/jpeg",
+                        "data": "ANTHROPIC_SENTINEL"
+                    }
+                }),
+                "data:image/jpeg;base64,ANTHROPIC_SENTINEL",
+                None,
+            ),
+            (
+                json!({
+                    "type": "image",
+                    "mimeType": "image/webp",
+                    "data": "MCP_SENTINEL"
+                }),
+                "data:image/webp;base64,MCP_SENTINEL",
+                None,
+            ),
+        ];
+
+        for (index, (output, expected_url, expected_detail)) in cases.into_iter().enumerate() {
+            let call_id = format!("call_shape_{index}");
+            let result = convert_test_input(vec![
+                test_function_call(&call_id),
+                test_function_output(&call_id, output),
+            ]);
+            let image = &result["messages"][2]["content"][1];
+
+            assert_eq!(message_roles(&result), vec!["assistant", "tool", "user"]);
+            assert_eq!(image["type"], "image_url");
+            assert_eq!(image["image_url"]["url"], expected_url);
+            match expected_detail {
+                Some(detail) => assert_eq!(image["image_url"]["detail"], detail),
+                None => assert!(image["image_url"].get("detail").is_none()),
+            }
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_extracts_media_from_json_string_and_content_wrapper() {
+        let output = json!({
+            "content": [
+                {"type": "input_text", "text": "MCP response"},
+                {
+                    "type": "image",
+                    "mimeType": "image/png",
+                    "data": "STRING_MCP_SENTINEL"
+                }
+            ]
+        })
+        .to_string();
+        let result = convert_test_input(vec![
+            test_function_call("call_string"),
+            test_function_output("call_string", Value::String(output)),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "user"]);
+        let tool_content: Value =
+            serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(tool_content["content"][0]["text"], "MCP response");
+        assert_eq!(
+            tool_content["content"][1]["text"],
+            TOOL_RESULT_MEDIA_MOVED_MARKER
+        );
+        assert!(!messages[1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("STRING_MCP_SENTINEL"));
+        assert_eq!(
+            messages[2]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,STRING_MCP_SENTINEL"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_extracts_tool_files_and_audio() {
+        let result = convert_test_input(vec![
+            test_function_call("call_media"),
+            test_function_output(
+                "call_media",
+                json!({
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": "file_123",
+                            "filename": "report.pdf"
+                        },
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": "AUDIO_SENTINEL", "format": "wav"}
+                        }
+                    ]
+                }),
+            ),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(message_roles(&result), vec!["assistant", "tool", "user"]);
+        assert_eq!(messages[2]["content"][1]["type"], "file");
+        assert_eq!(messages[2]["content"][1]["file"]["file_id"], "file_123");
+        assert_eq!(messages[2]["content"][2]["type"], "input_audio");
+        assert_eq!(
+            messages[2]["content"][2]["input_audio"]["data"],
+            "AUDIO_SENTINEL"
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_extracts_custom_and_tool_search_output_media() {
+        let cases = [
+            (
+                json!({
+                    "type": "custom_tool_call",
+                    "call_id": "call_custom",
+                    "name": "render",
+                    "input": "draw"
+                }),
+                json!({
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_custom",
+                    "status": "completed",
+                    "output": {
+                        "content": [{
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,CUSTOM_SENTINEL"
+                        }]
+                    }
+                }),
+            ),
+            (
+                json!({
+                    "type": "tool_search_call",
+                    "call_id": "call_search",
+                    "arguments": {"query": "image tool"}
+                }),
+                json!({
+                    "type": "tool_search_output",
+                    "call_id": "call_search",
+                    "status": "completed",
+                    "output": {
+                        "content": [{
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "data": "SEARCH_SENTINEL"
+                        }]
+                    }
+                }),
+            ),
+        ];
+
+        for (call, output) in cases {
+            let expected_type = output["type"].as_str().unwrap().to_string();
+            let result = convert_test_input(vec![call, output]);
+            let messages = result_messages(&result);
+            let tool_content: Value =
+                serde_json::from_str(messages[1]["content"].as_str().unwrap()).unwrap();
+
+            assert_eq!(message_roles(&result), vec!["assistant", "tool", "user"]);
+            assert_eq!(tool_content["type"], expected_type);
+            assert_eq!(tool_content["status"], "completed");
+            assert_eq!(
+                tool_content["output"]["content"][0]["text"],
+                TOOL_RESULT_MEDIA_MOVED_MARKER
+            );
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_rejects_false_positive_media_shapes() {
+        let outputs = [
+            json!({"type": "image", "name": "business metadata"}),
+            json!({
+                "type": "image",
+                "mimeType": "text/plain",
+                "data": "NOT_AN_IMAGE"
+            }),
+            json!({
+                "image_url": {
+                    "url": "https://example.com/search-thumbnail.png"
+                }
+            }),
+        ];
+
+        for (index, output) in outputs.into_iter().enumerate() {
+            let call_id = format!("call_false_positive_{index}");
+            let expected = canonical_json_string(&output);
+            let result = convert_test_input(vec![
+                test_function_call(&call_id),
+                test_function_output(&call_id, output),
+            ]);
+
+            assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+            assert_eq!(result["messages"][1]["content"], expected);
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_keeps_no_media_tool_output_bytes_stable() {
+        let cases = [
+            (Some(json!("plain text")), "plain text".to_string()),
+            (
+                Some(json!("{ \"z\": true, \"a\": [2, 1] }")),
+                r#"{"a":[2,1],"z":true}"#.to_string(),
+            ),
+            (
+                Some(json!(["main.rs", "lib.rs"])),
+                r#"["main.rs","lib.rs"]"#.to_string(),
+            ),
+            (
+                Some(json!({"z": true, "a": [2, 1]})),
+                r#"{"a":[2,1],"z":true}"#.to_string(),
+            ),
+            (Some(json!([])), "[]".to_string()),
+            (None, String::new()),
+        ];
+
+        for (index, (output, expected)) in cases.into_iter().enumerate() {
+            let call_id = format!("call_stable_{index}");
+            let mut item = json!({
+                "type": "function_call_output",
+                "call_id": call_id
+            });
+            if let Some(output) = output {
+                item["output"] = output;
+            }
+            let result = convert_test_input(vec![test_function_call(&call_id), item]);
+
+            assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
+            assert_eq!(result["messages"][1]["content"], expected);
+        }
+
+        for item in [
+            json!({
+                "type": "custom_tool_call_output",
+                "call_id": "call_custom",
+                "status": "completed",
+                "output": {"text": "unchanged"}
+            }),
+            json!({
+                "type": "tool_search_output",
+                "call_id": "call_search",
+                "status": "completed",
+                "output": []
+            }),
+        ] {
+            let expected = canonical_json_string(&item);
+            let result = convert_test_input(vec![item]);
+            assert_eq!(result["messages"][0]["content"], expected);
+        }
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_legacy_unknown_item_batch_boundary_without_media() {
+        let result = convert_test_input(vec![
+            test_function_call("call_1"),
+            json!({"type": "future_metadata", "value": 1}),
+            json!({
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "second batch reasoning"}]
+            }),
+            test_function_call("call_2"),
+            test_function_output("call_1", json!("first result")),
+            test_function_output("call_2", json!("second result")),
+        ]);
+        let messages = result_messages(&result);
+
+        assert_eq!(
+            message_roles(&result),
+            vec!["assistant", "assistant", "tool", "tool"]
+        );
+        assert_eq!(messages[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[0]["reasoning_content"], "tool call");
+        assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_2");
+        assert_eq!(messages[1]["reasoning_content"], "second batch reasoning");
+    }
+
+    #[test]
+    fn responses_request_to_chat_clamps_only_residual_base64ish_strings() {
+        let data_url = large_test_image_data_url();
+        let long_text = format!("{}end", "ordinary OCR text with spaces. ".repeat(3_500));
+        let residual_base64 = "A".repeat(20_000);
+        let result = convert_test_input(vec![
+            test_function_call("call_clamp"),
+            test_function_output(
+                "call_clamp",
+                json!([
+                    {"type": "input_image", "image_url": data_url.clone()},
+                    {"type": "text", "text": long_text.clone()},
+                    {"raw": residual_base64}
+                ]),
+            ),
+        ]);
+        let tool_content_text = result["messages"][1]["content"].as_str().unwrap();
+        let tool_content: Value = serde_json::from_str(tool_content_text).unwrap();
+
+        assert_eq!(tool_content[1]["text"], long_text);
+        assert!(tool_content[2]["raw"]
+            .as_str()
+            .unwrap()
+            .starts_with("[cc-switch: omitted 20000 bytes]"));
+        assert!(!tool_content_text.contains(&data_url));
+        assert!(!tool_content_text.contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_media_conversion_is_deterministic() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                test_function_call("call_repeat"),
+                test_function_output(
+                    "call_repeat",
+                    json!({
+                        "content": [{
+                            "type": "input_image",
+                            "image_url": large_test_image_data_url()
+                        }]
+                    })
+                )
+            ]
+        });
+
+        let first = responses_to_chat_completions(input.clone()).unwrap();
+        let second = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(first, second);
     }
 
     #[test]

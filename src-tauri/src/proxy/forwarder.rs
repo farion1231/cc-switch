@@ -4755,6 +4755,27 @@ mod tests {
         })
     }
 
+    fn body_with_codex_tool_output_image(stringified: bool) -> Value {
+        let output = json!({
+            "content": [{
+                "type": "input_image",
+                "image_url": "data:image/png;base64,TOOL_OUTPUT_SENTINEL"
+            }]
+        });
+        json!({
+            "model": "any-model",
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": if stringified {
+                    Value::String(output.to_string())
+                } else {
+                    output
+                }
+            }]
+        })
+    }
+
     fn image_unsupported_error() -> ProxyError {
         ProxyError::UpstreamError {
             status: 400,
@@ -4855,6 +4876,31 @@ mod tests {
         };
 
         assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[test]
+    fn reactive_triggers_for_structured_and_stringified_codex_tool_images() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+
+        for stringified in [false, true] {
+            let body = body_with_codex_tool_output_image(stringified);
+            assert!(
+                fwd.media_retry_should_trigger("Codex", false, &body, &image_unsupported_error()),
+                "tool-output image should trigger retry (stringified={stringified})"
+            );
+        }
+    }
+
+    #[test]
+    fn reactive_does_not_treat_context_limit_as_image_rejection() {
+        let fwd = forwarder_with_rectifier(RectifierConfig::default());
+        let body = body_with_codex_tool_output_image(false);
+        let context_error = ProxyError::UpstreamError {
+            status: 400,
+            body: Some(r#"{"error":{"message":"maximum context length exceeded"}}"#.to_string()),
+        };
+
+        assert!(!fwd.media_retry_should_trigger("Codex", false, &body, &context_error));
     }
 
     #[test]
