@@ -1770,6 +1770,8 @@
       "deleteServer": "Delete Server",
       "deleteConfirm": "Are you sure you want to delete server \"{{id}}\"? This action cannot be undone.",
       "noServers": "No servers yet",
+      "noMatchingServers": "No MCP servers configured for this app",
+      "noMatchingServersDescription": "Switch apps or click the total button to view all MCP servers",
       "enabledApps": "Enabled Apps",
       "noImportFound": "No MCP servers to import found. All servers are already managed by CC Switch.",
       "importSuccess": "Successfully imported {{count}} MCP servers",

@@ -1770,6 +1770,8 @@
       "deleteServer": "删除服务器",
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "noServers": "暂无服务器",
+      "noMatchingServers": "当前应用没有已配置的 MCP 服务器",
+      "noMatchingServersDescription": "切换应用或点击顶部总数按钮查看全部 MCP 服务器",
       "enabledApps": "启用的应用",
       "noImportFound": "未发现需要导入的 MCP 服务器。所有服务器已在 CC Switch 统一管理中。",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",

@@ -1770,6 +1770,8 @@
       "deleteServer": "サーバーを削除",
       "deleteConfirm": "サーバー「{{id}}」を削除しますか？この操作は元に戻せません。",
       "noServers": "まだサーバーがありません",
+      "noMatchingServers": "このアプリに設定された MCP サーバーはありません",
+      "noMatchingServersDescription": "アプリを切り替えるか、上部の合計ボタンをクリックしてすべての MCP サーバーを表示してください",
       "enabledApps": "有効なアプリ",
       "noImportFound": "インポートする MCP サーバーが見つかりませんでした。すべてのサーバーは CC Switch で管理されています。",
       "importSuccess": "{{count}} 個の MCP サーバーをインポートしました",
