@@ -8,10 +8,24 @@ export interface ParsedDeepLinkConfig {
   tomlConfig?: string;
 }
 
-const isSensitiveKey = (key: string) =>
-  ["TOKEN", "KEY", "SECRET", "PASSWORD"].some((marker) =>
-    key.toUpperCase().includes(marker),
+const SENSITIVE_KEY_MARKERS = [
+  "TOKEN",
+  "KEY",
+  "SECRET",
+  "PASSWORD",
+  "AUTHORIZATION",
+  "COOKIE",
+  "CREDENTIAL",
+];
+const SENSITIVE_KEY_NAMES = new Set(["AUTH", "BEARER"]);
+
+const isSensitiveKey = (key: string) => {
+  const normalizedKey = key.toUpperCase();
+  return (
+    SENSITIVE_KEY_NAMES.has(normalizedKey) ||
+    SENSITIVE_KEY_MARKERS.some((marker) => normalizedKey.includes(marker))
   );
+};
 
 const maskSensitiveValue = (value: string) =>
   value.length > 4 ? `${value.slice(0, 4)}${"*".repeat(12)}` : "****";
