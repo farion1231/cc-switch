@@ -16,7 +16,7 @@ use crate::proxy::{
     },
 };
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::reasoning_bridge::{
     anthropic_block_from_openai_reasoning_item, openai_reasoning_item_from_anthropic_block,
@@ -410,6 +410,49 @@ pub(crate) fn web_search_results_from_output_item(item: &Value) -> Vec<Value> {
     results
 }
 
+pub(crate) fn web_search_results_from_action(item: &Value) -> Vec<Value> {
+    let mut results = Vec::new();
+    let Some(sources) = item.pointer("/action/sources").and_then(Value::as_array) else {
+        return results;
+    };
+
+    for source in sources {
+        let Some(url) = source
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty())
+        else {
+            continue;
+        };
+        let title = source
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(url);
+        let page_age = source
+            .get("page_age")
+            .filter(|page_age| page_age.is_string())
+            .cloned()
+            .unwrap_or(Value::Null);
+        results.push(json!({
+            "type": "web_search_result",
+            "url": url,
+            "title": title,
+            "encrypted_content": "",
+            "page_age": page_age
+        }));
+    }
+
+    let mut seen = HashSet::new();
+    results.retain(|result| {
+        result
+            .get("url")
+            .and_then(Value::as_str)
+            .is_some_and(|url| seen.insert(url.to_string()))
+    });
+    results
+}
+
 /// Anthropic 请求 → OpenAI Responses 请求
 ///
 /// `cache_key`: optional prompt_cache_key to inject for improved cache routing
@@ -521,6 +564,14 @@ pub fn anthropic_to_responses(
             map_tool_choice_to_responses(v, &hosted_web_search_names, is_codex_oauth);
     }
 
+    const WEB_SEARCH_SOURCES_MARKER: &str = "web_search_call.action.sources";
+    // OpenAI otherwise returns citations only on the final message, without a
+    // search-call ID. Request per-call sources so multiple hosted searches can
+    // be paired with the corresponding Anthropic result blocks.
+    if !hosted_web_search_names.is_empty() && !is_codex_oauth {
+        result["include"] = json!([WEB_SEARCH_SOURCES_MARKER]);
+    }
+
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
     if let Some(key) = cache_key {
         result["prompt_cache_key"] = json!(key);
@@ -562,6 +613,13 @@ pub fn anthropic_to_responses(
             .any(|v| v.as_str() == Some(REASONING_MARKER))
         {
             includes.push(json!(REASONING_MARKER));
+        }
+        if !hosted_web_search_names.is_empty()
+            && !includes
+                .iter()
+                .any(|v| v.as_str() == Some(WEB_SEARCH_SOURCES_MARKER))
+        {
+            includes.push(json!(WEB_SEARCH_SOURCES_MARKER));
         }
         result["include"] = json!(includes);
 
@@ -1020,18 +1078,59 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
     let hosted_web_search_name = hosted_web_search_name
         .filter(|name| !name.is_empty())
         .unwrap_or("web_search");
-    let last_web_search_index = output
+    let web_search_indices: Vec<usize> = output
         .iter()
-        .rposition(|item| item.get("type").and_then(Value::as_str) == Some("web_search_call"));
-    let mut web_search_results = Vec::new();
+        .enumerate()
+        .filter_map(|(index, item)| {
+            (item.get("type").and_then(Value::as_str) == Some("web_search_call")).then_some(index)
+        })
+        .collect();
+    let last_web_search_index = web_search_indices.last().copied();
+    let mut web_search_results_by_index = HashMap::new();
+    let mut attributed_web_search_urls = HashSet::new();
+    for &output_index in &web_search_indices {
+        let results = web_search_results_from_action(&output[output_index]);
+        for result in &results {
+            if let Some(url) = result.get("url").and_then(Value::as_str) {
+                attributed_web_search_urls.insert(url.to_string());
+            }
+        }
+        web_search_results_by_index.insert(output_index, results);
+    }
+
+    let mut unassigned_web_search_results = Vec::new();
     let mut seen_web_search_urls = HashSet::new();
     for item in output {
         for result in web_search_results_from_output_item(item) {
             let Some(url) = result.get("url").and_then(Value::as_str) else {
                 continue;
             };
-            if seen_web_search_urls.insert(url.to_string()) {
-                web_search_results.push(result);
+            if seen_web_search_urls.insert(url.to_string())
+                && !attributed_web_search_urls.contains(url)
+            {
+                unassigned_web_search_results.push(result);
+            }
+        }
+    }
+    // Compatible gateways may ignore the requested action.sources include.
+    // Message annotations do not identify which call produced them, so keep
+    // every call/result pair valid and attach only the unassigned citations to
+    // the final call as a deterministic best-effort fallback.
+    if let Some(last_web_search_index) = last_web_search_index {
+        let results = web_search_results_by_index
+            .entry(last_web_search_index)
+            .or_insert_with(Vec::new);
+        let mut seen_last_urls: HashSet<String> = results
+            .iter()
+            .filter_map(|result| result.get("url").and_then(Value::as_str))
+            .map(ToString::to_string)
+            .collect();
+        for result in unassigned_web_search_results {
+            let Some(url) = result.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            if seen_last_urls.insert(url.to_string()) {
+                results.push(result);
             }
         }
     }
@@ -1133,14 +1232,14 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
                     "caller": {"type": "direct"}
                 }));
 
-                if last_web_search_index == Some(output_index) {
-                    content.push(json!({
-                        "type": "web_search_tool_result",
-                        "tool_use_id": id,
-                        "content": web_search_results,
-                        "caller": {"type": "direct"}
-                    }));
-                }
+                content.push(json!({
+                    "type": "web_search_tool_result",
+                    "tool_use_id": id,
+                    "content": web_search_results_by_index
+                        .remove(&output_index)
+                        .unwrap_or_default(),
+                    "caller": {"type": "direct"}
+                }));
             }
 
             "reasoning" => {
@@ -1367,6 +1466,13 @@ mod tests {
             })
         );
         assert_eq!(result["tool_choice"], "required");
+        assert_eq!(
+            result["include"],
+            json!([
+                "reasoning.encrypted_content",
+                "web_search_call.action.sources"
+            ])
+        );
     }
 
     #[test]
@@ -1380,6 +1486,7 @@ mod tests {
 
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"], json!({"type": "web_search"}));
+        assert_eq!(result["include"], json!(["web_search_call.action.sources"]));
     }
 
     #[test]
@@ -1784,6 +1891,136 @@ mod tests {
         assert_eq!(result["content"][2]["type"], "text");
         assert_eq!(result["stop_reason"], "end_turn");
         assert_eq!(result["usage"]["server_tool_use"]["web_search_requests"], 1);
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_pairs_every_hosted_web_search_call() {
+        let input = json!({
+            "id": "resp_multi_search",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_rust",
+                    "status": "completed",
+                    "action": {
+                        "type": "search",
+                        "query": "Rust language",
+                        "sources": [{
+                            "type": "url",
+                            "url": "https://www.rust-lang.org/",
+                            "title": "Rust"
+                        }]
+                    }
+                },
+                {
+                    "type": "web_search_call",
+                    "id": "ws_cargo",
+                    "status": "completed",
+                    "action": {
+                        "type": "search",
+                        "query": "Cargo documentation",
+                        "sources": [{
+                            "type": "url",
+                            "url": "https://doc.rust-lang.org/cargo/",
+                            "title": "Cargo"
+                        }]
+                    }
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Rust and Cargo both have official documentation.",
+                        "annotations": [
+                            {
+                                "type": "url_citation",
+                                "url": "https://www.rust-lang.org/",
+                                "title": "Rust"
+                            },
+                            {
+                                "type": "url_citation",
+                                "url": "https://doc.rust-lang.org/cargo/",
+                                "title": "Cargo"
+                            }
+                        ]
+                    }]
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 5);
+        assert_eq!(content[0]["type"], "server_tool_use");
+        assert_eq!(content[0]["id"], "ws_rust");
+        assert_eq!(content[1]["type"], "web_search_tool_result");
+        assert_eq!(content[1]["tool_use_id"], "ws_rust");
+        assert_eq!(
+            content[1]["content"][0]["url"],
+            "https://www.rust-lang.org/"
+        );
+        assert_eq!(content[2]["type"], "server_tool_use");
+        assert_eq!(content[2]["id"], "ws_cargo");
+        assert_eq!(content[3]["type"], "web_search_tool_result");
+        assert_eq!(content[3]["tool_use_id"], "ws_cargo");
+        assert_eq!(
+            content[3]["content"][0]["url"],
+            "https://doc.rust-lang.org/cargo/"
+        );
+        assert_eq!(content[4]["type"], "text");
+        assert_eq!(result["usage"]["server_tool_use"]["web_search_requests"], 2);
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_pairs_calls_when_sources_are_unavailable() {
+        let input = json!({
+            "id": "resp_multi_search_without_sources",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_first",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "first query"}
+                },
+                {
+                    "type": "web_search_call",
+                    "id": "ws_second",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "second query"}
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Combined answer.",
+                        "annotations": [{
+                            "type": "url_citation",
+                            "url": "https://example.com/result",
+                            "title": "Combined result"
+                        }]
+                    }]
+                }
+            ]
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[1]["type"], "web_search_tool_result");
+        assert_eq!(content[1]["tool_use_id"], "ws_first");
+        assert_eq!(content[1]["content"], json!([]));
+        assert_eq!(content[3]["type"], "web_search_tool_result");
+        assert_eq!(content[3]["tool_use_id"], "ws_second");
+        assert_eq!(
+            content[3]["content"][0]["url"],
+            "https://example.com/result"
+        );
     }
 
     #[test]
