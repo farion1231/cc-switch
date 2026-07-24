@@ -8,6 +8,8 @@ import type {
   RequestLog,
   LogFilters,
   ModelPricing,
+  ModelsDevSyncConfig,
+  ModelsDevSyncState,
   ProviderLimitStatus,
   PaginatedLogs,
   SessionSyncResult,
@@ -162,6 +164,27 @@ export const usageApi = {
       cacheReadCost,
       cacheCreationCost,
     });
+  },
+
+  updateModelPricingBatch: async (entries: ModelPricing[]): Promise<number> => {
+    return invoke("update_model_pricing_batch", { entries });
+  },
+
+  getModelsDevSyncConfig: async (): Promise<ModelsDevSyncState> => {
+    return invoke("get_models_dev_sync_config");
+  },
+
+  saveModelsDevSyncConfig: async (
+    config: ModelsDevSyncConfig,
+  ): Promise<void> => {
+    return invoke("save_models_dev_sync_config", { config });
+  },
+
+  recordModelsDevSyncResult: async (
+    syncedAt: number | null,
+    error: string | null,
+  ): Promise<void> => {
+    return invoke("record_models_dev_sync_result", { syncedAt, error });
   },
 
   deleteModelPricing: async (modelId: string): Promise<void> => {
