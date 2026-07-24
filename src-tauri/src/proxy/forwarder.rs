@@ -1168,8 +1168,17 @@ impl RequestForwarder {
             mapped_body
         };
 
+        // Token Count 必须始终按 Anthropic `/v1/messages/count_tokens` 透传：
+        // 不能走 openai/gemini 格式转换，也不能被 media prevention 改写 body。
+        let is_count_tokens = is_count_tokens_endpoint(endpoint);
+
         // 与 CCH 对齐：请求前不做 thinking 主动改写（仅保留兼容入口）
-        let mut mapped_body = normalize_thinking_type(mapped_body);
+        // count_tokens 透传：跳过 thinking 类型规范，保留客户端原始 body。
+        let mut mapped_body = if is_count_tokens {
+            mapped_body
+        } else {
+            normalize_thinking_type(mapped_body)
+        };
 
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
@@ -1331,7 +1340,8 @@ impl RequestForwarder {
         } else {
             None
         };
-        if adapter.name() == "Claude" {
+        // count_tokens 透传：跳过 Claude 的 thinking/media 内容改写，保留客户端原始 body。
+        if adapter.name() == "Claude" && !is_count_tokens {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
                 super::providers::normalize_anthropic_messages_for_provider(
                     &mut mapped_body,
@@ -1341,9 +1351,14 @@ impl RequestForwarder {
                 self.apply_media_prevention(&mut mapped_body, provider);
             }
         }
-        let needs_transform = match resolved_claude_api_format.as_deref() {
-            Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
-            None => adapter.needs_transform(provider),
+        // count_tokens 永远透传：忽略 apiFormat 的 openai/gemini 转换开关。
+        let needs_transform = if is_count_tokens {
+            false
+        } else {
+            match resolved_claude_api_format.as_deref() {
+                Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
+                None => adapter.needs_transform(provider),
+            }
         };
         // Codex → Anthropic: Claude Code emulation is off by default and only
         // enabled when the user explicitly turns it on in the UI, so requests can
@@ -1386,7 +1401,16 @@ impl RequestForwarder {
         let codex_anthropic_base_is_full_endpoint =
             codex_responses_to_anthropic && base_url_is_full_endpoint(&base_url, "/v1/messages");
 
-        let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
+        let url = if is_count_tokens
+            && (is_full_url || codex_anthropic_base_is_full_endpoint)
+            && base_url_is_full_endpoint(&base_url, "/v1/messages")
+        {
+            // full URL 配成了 `.../v1/messages` 时，count_tokens 要改写到
+            // `.../v1/messages/count_tokens`，避免把计数请求打到 messages 端点。
+            rewrite_full_messages_url_to_count_tokens(&base_url, passthrough_query.as_deref())
+        } else if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native"))
+            && !is_count_tokens
+        {
             super::gemini_url::resolve_gemini_native_url(
                 &base_url,
                 &effective_endpoint,
@@ -2840,6 +2864,31 @@ fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
 
+/// Anthropic Token Count API 路径（含本地 gateway 前缀形态）。
+fn is_count_tokens_endpoint(endpoint: &str) -> bool {
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(
+        path,
+        "/v1/messages/count_tokens"
+            | "/claude/v1/messages/count_tokens"
+            | "/claude-desktop/v1/messages/count_tokens"
+    ) || path.ends_with("/messages/count_tokens")
+}
+
+/// 把 full-url 形态的 `.../v1/messages` 改写为 `.../v1/messages/count_tokens`。
+///
+/// 保留原 URL 上的 query / fragment，并合并额外透传 query。
+fn rewrite_full_messages_url_to_count_tokens(base_url: &str, extra_query: Option<&str>) -> String {
+    let trimmed = base_url.trim();
+    let (path_part, suffix) = match trimmed.find(['?', '#']) {
+        Some(idx) => (&trimmed[..idx], &trimmed[idx..]),
+        None => (trimmed, ""),
+    };
+    let path = path_part.trim_end_matches('/');
+    let rewritten = format!("{path}/count_tokens{suffix}");
+    append_query_to_full_url(&rewritten, extra_query)
+}
+
 fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
     let (_path, query) = split_endpoint_and_query(endpoint);
     let passthrough_query = query.map(ToString::to_string);
@@ -4097,6 +4146,42 @@ mod tests {
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn is_count_tokens_endpoint_matches_known_paths() {
+        assert!(is_count_tokens_endpoint("/v1/messages/count_tokens"));
+        assert!(is_count_tokens_endpoint(
+            "/claude-desktop/v1/messages/count_tokens?x=1"
+        ));
+        assert!(is_count_tokens_endpoint("/claude/v1/messages/count_tokens"));
+        assert!(!is_count_tokens_endpoint("/v1/messages"));
+        assert!(!is_count_tokens_endpoint("/v1/messages/count"));
+    }
+
+    #[test]
+    fn rewrite_full_messages_url_to_count_tokens_preserves_query() {
+        assert_eq!(
+            rewrite_full_messages_url_to_count_tokens(
+                "https://relay.example/api/v1/messages",
+                None
+            ),
+            "https://relay.example/api/v1/messages/count_tokens"
+        );
+        assert_eq!(
+            rewrite_full_messages_url_to_count_tokens(
+                "https://relay.example/api/v1/messages?beta=true",
+                Some("x=1")
+            ),
+            "https://relay.example/api/v1/messages/count_tokens?beta=true&x=1"
+        );
+        assert_eq!(
+            rewrite_full_messages_url_to_count_tokens(
+                "https://relay.example/api/v1/messages/",
+                None
+            ),
+            "https://relay.example/api/v1/messages/count_tokens"
+        );
     }
 
     #[test]
