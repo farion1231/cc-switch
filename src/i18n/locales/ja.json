@@ -575,7 +575,7 @@
         "r2": "Cloudflare R2",
         "r2Hint": "Endpoint: https://<account_id>.r2.cloudflarestorage.com、Regionは auto に設定",
         "oss": "Alibaba Cloud OSS",
-        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com、Region例: cn-hangzhou, cn-shanghai",
+        "ossHint": "Endpoint: https://oss-<region>.aliyuncs.com、Region例: cn-hangzhou, cn-shanghai。仮想ホスト形式（bucket をサブドメインに使用）。",
         "cos": "Tencent Cloud COS",
         "cosHint": "Endpoint: https://cos.<region>.myqcloud.com、Region例: ap-guangzhou, ap-beijing",
         "obs": "Huawei OBS",

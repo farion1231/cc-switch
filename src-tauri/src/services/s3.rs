@@ -57,19 +57,66 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
     }
 }
 
+/// Hostnames that require virtual-hosted-style addressing (`https://{bucket}.{host}/…`).
+///
+/// AWS is handled separately. Aliyun OSS / Tencent COS / Huawei OBS reject
+/// path-style `HEAD https://{host}/{bucket}/` for many buckets (403) and must
+/// use virtual-hosted style instead.
+fn prefers_virtual_hosted_style(endpoint: &str) -> bool {
+    if is_aws_endpoint(endpoint) {
+        return true;
+    }
+    let host = split_scheme_host(endpoint).1.to_ascii_lowercase();
+    host.contains("aliyuncs.com")
+        || host.contains("myqcloud.com")
+        || host.contains("myhuaweicloud.com")
+}
+
+/// True when the endpoint host already embeds the bucket as its first label
+/// (e.g. `my-bucket.oss-cn-shanghai.aliyuncs.com`). In that case the bucket
+/// must not be appended again as a path segment or an extra subdomain.
+fn endpoint_already_virtual_hosted(endpoint: &str, bucket: &str) -> bool {
+    if bucket.is_empty() {
+        return false;
+    }
+    let host = split_scheme_host(endpoint).1.to_ascii_lowercase();
+    // Strip optional :port before comparing the hostname.
+    let host_no_port = host.split(':').next().unwrap_or(&host);
+    let bucket = bucket.to_ascii_lowercase();
+    host_no_port == bucket || host_no_port.starts_with(&format!("{bucket}."))
+}
+
 /// Build the full URL for an S3 object.
 ///
 /// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
-/// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
+/// - Aliyun OSS / COS / OBS regional endpoints use virtual-hosted style:
+///   `https://{bucket}.{endpoint-host}/{key}`
+/// - Endpoints that already include the bucket as a subdomain keep that host
+///   and do not re-append the bucket
+/// - Other custom endpoints use path style: `https://{endpoint}/{bucket}/{key}`
 fn build_object_url(creds: &S3Credentials, key: &str) -> String {
     let key = key.trim_start_matches('/');
     if is_aws_endpoint(&creds.endpoint) {
-        format!(
+        return format!(
             "https://{}.s3.{}.amazonaws.com/{}",
             creds.bucket, creds.region, key
-        )
+        );
+    }
+
+    let (scheme, host) = split_scheme_host(&creds.endpoint);
+    if endpoint_already_virtual_hosted(&creds.endpoint, &creds.bucket) {
+        if key.is_empty() {
+            format!("{}://{}/", scheme, host)
+        } else {
+            format!("{}://{}/{}", scheme, host, key)
+        }
+    } else if prefers_virtual_hosted_style(&creds.endpoint) {
+        if key.is_empty() {
+            format!("{}://{}.{}/", scheme, creds.bucket, host)
+        } else {
+            format!("{}://{}.{}/{}", scheme, creds.bucket, host, key)
+        }
     } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
     }
 }
@@ -77,12 +124,18 @@ fn build_object_url(creds: &S3Credentials, key: &str) -> String {
 /// Build the bucket-level URL (for HEAD bucket / test connection).
 fn build_bucket_url(creds: &S3Credentials) -> String {
     if is_aws_endpoint(&creds.endpoint) {
-        format!(
+        return format!(
             "https://{}.s3.{}.amazonaws.com/",
             creds.bucket, creds.region
-        )
+        );
+    }
+
+    let (scheme, host) = split_scheme_host(&creds.endpoint);
+    if endpoint_already_virtual_hosted(&creds.endpoint, &creds.bucket) {
+        format!("{}://{}/", scheme, host)
+    } else if prefers_virtual_hosted_style(&creds.endpoint) {
+        format!("{}://{}.{}/", scheme, creds.bucket, host)
     } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
         format!("{}://{}/{}/", scheme, host, creds.bucket)
     }
 }
@@ -612,6 +665,64 @@ mod tests {
         assert_eq!(
             build_bucket_url(&creds),
             "https://storage.example.com/data/"
+        );
+    }
+
+    #[test]
+    fn build_object_url_aliyun_oss_virtual_hosted_style() {
+        // Aliyun OSS regional endpoints must not use path-style addressing.
+        let creds = test_creds(
+            "https://oss-cn-shanghai.aliyuncs.com",
+            "cn-shanghai",
+            "my-bucket-ccswitch",
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/db.sql"),
+            "https://my-bucket-ccswitch.oss-cn-shanghai.aliyuncs.com/cc-switch-sync/db.sql"
+        );
+    }
+
+    #[test]
+    fn build_bucket_url_aliyun_oss_virtual_hosted_style() {
+        let creds = test_creds(
+            "https://oss-cn-shanghai.aliyuncs.com",
+            "cn-shanghai",
+            "my-bucket-ccswitch",
+        );
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://my-bucket-ccswitch.oss-cn-shanghai.aliyuncs.com/"
+        );
+    }
+
+    #[test]
+    fn build_bucket_url_aliyun_oss_does_not_double_append_bucket() {
+        // Users sometimes paste the already virtual-hosted endpoint.
+        let creds = test_creds(
+            "https://my-bucket-ccswitch.oss-cn-shanghai.aliyuncs.com",
+            "cn-shanghai",
+            "my-bucket-ccswitch",
+        );
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://my-bucket-ccswitch.oss-cn-shanghai.aliyuncs.com/"
+        );
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/db.sql"),
+            "https://my-bucket-ccswitch.oss-cn-shanghai.aliyuncs.com/cc-switch-sync/db.sql"
+        );
+    }
+
+    #[test]
+    fn build_object_url_tencent_cos_virtual_hosted_style() {
+        let creds = test_creds(
+            "https://cos.ap-guangzhou.myqcloud.com",
+            "ap-guangzhou",
+            "demo-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&creds, "path/file.json"),
+            "https://demo-1250000000.cos.ap-guangzhou.myqcloud.com/path/file.json"
         );
     }
 
