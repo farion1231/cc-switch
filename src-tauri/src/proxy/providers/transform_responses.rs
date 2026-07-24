@@ -292,8 +292,24 @@ fn is_anthropic_web_search_tool(tool: &Value) -> bool {
 }
 
 pub(crate) fn anthropic_web_search_tool_name(body: &Value) -> Option<&str> {
-    body.get("tools")
-        .and_then(Value::as_array)?
+    let tools = body.get("tools").and_then(Value::as_array)?;
+    let forced_name = body
+        .get("tool_choice")
+        .and_then(Value::as_object)
+        .filter(|choice| choice.get("type").and_then(Value::as_str) == Some("tool"))
+        .and_then(|choice| choice.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    if let Some(forced_name) = forced_name.filter(|forced_name| {
+        tools.iter().any(|tool| {
+            is_anthropic_web_search_tool(tool)
+                && tool.get("name").and_then(Value::as_str) == Some(*forced_name)
+        })
+    }) {
+        return Some(forced_name);
+    }
+
+    tools
         .iter()
         .find(|tool| is_anthropic_web_search_tool(tool))
         .and_then(|tool| tool.get("name"))
@@ -301,7 +317,10 @@ pub(crate) fn anthropic_web_search_tool_name(body: &Value) -> Option<&str> {
         .filter(|name| !name.is_empty())
 }
 
-fn anthropic_web_search_to_responses(tool: &Value) -> Result<Value, ProxyError> {
+fn anthropic_web_search_to_responses(
+    tool: &Value,
+    is_codex_oauth: bool,
+) -> Result<(Value, Option<u64>), ProxyError> {
     let blocked_domains = tool
         .get("blocked_domains")
         .and_then(Value::as_array)
@@ -315,10 +334,21 @@ fn anthropic_web_search_to_responses(tool: &Value) -> Result<Value, ProxyError> 
         ));
     }
 
-    let mut response_tool = json!({
-        "type": "web_search",
-        "external_web_access": true
-    });
+    let max_uses = match tool.get("max_uses") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.as_u64().filter(|limit| *limit > 0).ok_or_else(|| {
+            ProxyError::InvalidRequest(
+                "Anthropic WebSearch max_uses must be a positive integer".to_string(),
+            )
+        })?),
+    };
+    let mut response_tool = json!({"type": "web_search"});
+    if is_codex_oauth {
+        // `external_web_access` is a private ChatGPT Codex backend switch. It is
+        // not part of the standard Responses web-search schema, and strict
+        // API-key-compatible gateways reject the unknown member.
+        response_tool["external_web_access"] = json!(true);
+    }
 
     if let Some(allowed_domains) = tool
         .get("allowed_domains")
@@ -337,7 +367,33 @@ fn anthropic_web_search_to_responses(tool: &Value) -> Result<Value, ProxyError> 
         response_tool["user_location"] = user_location.clone();
     }
 
-    Ok(response_tool)
+    Ok((response_tool, max_uses))
+}
+
+pub(crate) fn anthropic_web_search_max_uses(body: &Value) -> Option<u64> {
+    let tools = body.get("tools").and_then(Value::as_array)?;
+    let forced_name = body
+        .get("tool_choice")
+        .and_then(Value::as_object)
+        .filter(|choice| choice.get("type").and_then(Value::as_str) == Some("tool"))
+        .and_then(|choice| choice.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| {
+            tools.iter().any(|tool| {
+                is_anthropic_web_search_tool(tool)
+                    && tool.get("name").and_then(Value::as_str) == Some(*name)
+            })
+        });
+    tools
+        .iter()
+        .filter(|tool| {
+            is_anthropic_web_search_tool(tool)
+                && forced_name
+                    .is_none_or(|name| tool.get("name").and_then(Value::as_str) == Some(name))
+        })
+        .filter_map(|tool| tool.get("max_uses").and_then(Value::as_u64))
+        .filter(|limit| *limit > 0)
+        .min()
 }
 
 pub(crate) fn web_search_action_input(item: &Value) -> Value {
@@ -451,6 +507,104 @@ pub(crate) fn web_search_results_from_action(item: &Value) -> Vec<Value> {
             .is_some_and(|url| seen.insert(url.to_string()))
     });
     results
+}
+
+pub(crate) fn merge_web_search_result_metadata(target: &mut [Value], candidates: &[Value]) {
+    for candidate in candidates {
+        let Some(url) = candidate
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty())
+        else {
+            continue;
+        };
+        let Some(existing) = target
+            .iter_mut()
+            .find(|result| result.get("url").and_then(Value::as_str) == Some(url))
+        else {
+            continue;
+        };
+        let Some(existing_object) = existing.as_object_mut() else {
+            continue;
+        };
+
+        if let Some(candidate_title) = candidate
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.is_empty() && *title != url)
+        {
+            let existing_title_is_placeholder = existing_object
+                .get("title")
+                .and_then(Value::as_str)
+                .is_none_or(|title| title.is_empty() || title == url);
+            if existing_title_is_placeholder {
+                existing_object.insert("title".to_string(), json!(candidate_title));
+            }
+        }
+
+        if let Some(candidate_page_age) = candidate
+            .get("page_age")
+            .and_then(Value::as_str)
+            .filter(|page_age| !page_age.is_empty())
+        {
+            let existing_page_age_is_missing = existing_object
+                .get("page_age")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty);
+            if existing_page_age_is_missing {
+                existing_object.insert("page_age".to_string(), json!(candidate_page_age));
+            }
+        }
+    }
+}
+
+pub(crate) fn web_search_tool_result_error(item: &Value) -> Option<Value> {
+    let status = item.get("status").and_then(Value::as_str);
+    let has_error = item.get("error").is_some_and(|error| !error.is_null());
+    if status.is_none_or(|status| status == "completed") && !has_error {
+        return None;
+    }
+
+    let error_signals = [
+        item.pointer("/error/code").and_then(Value::as_str),
+        item.pointer("/error/type").and_then(Value::as_str),
+        item.pointer("/error/message").and_then(Value::as_str),
+        item.get("error").and_then(Value::as_str),
+    ];
+    let signal = error_signals
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    let error_code = if signal.contains("max_uses") {
+        "max_uses_exceeded"
+    } else if signal.contains("too_many_requests")
+        || signal.contains("rate_limit")
+        || signal.contains("rate limit")
+    {
+        "too_many_requests"
+    } else if signal.contains("query_too_long") || signal.contains("query too long") {
+        "query_too_long"
+    } else if signal.contains("request_too_large") || signal.contains("request too large") {
+        "request_too_large"
+    } else if signal.contains("invalid") {
+        "invalid_tool_input"
+    } else {
+        "unavailable"
+    };
+
+    Some(json!({
+        "type": "web_search_tool_result_error",
+        "error_code": error_code
+    }))
+}
+
+pub(crate) fn web_search_max_uses_exceeded_error() -> Value {
+    json!({
+        "type": "web_search_tool_result_error",
+        "error_code": "max_uses_exceeded"
+    })
 }
 
 fn responses_web_search_call_from_anthropic_blocks(
@@ -606,7 +760,32 @@ pub fn anthropic_to_responses(
     // stop_sequences → 丢弃 (Responses API 不支持)
 
     // 转换 tools (过滤 BatchTool)
+    //
+    // The Codex OAuth request contract accepts only a string `tool_choice`.
+    // When Anthropic forces one hosted WebSearch tool, `"required"` is exact
+    // only if no unrelated tools remain in the outbound list. Resolve the
+    // selected tool by its declared name so future versioned names keep working.
+    let forced_hosted_web_search_name = if is_codex_oauth {
+        body.get("tool_choice")
+            .and_then(Value::as_object)
+            .filter(|choice| choice.get("type").and_then(Value::as_str) == Some("tool"))
+            .and_then(|choice| choice.get("name"))
+            .and_then(Value::as_str)
+            .filter(|selected_name| {
+                body.get("tools")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| {
+                        tools.iter().any(|tool| {
+                            is_anthropic_web_search_tool(tool)
+                                && tool.get("name").and_then(Value::as_str) == Some(*selected_name)
+                        })
+                    })
+            })
+    } else {
+        None
+    };
     let mut hosted_web_search_names = HashSet::new();
+    let mut hosted_web_search_max_uses: Option<u64> = None;
     if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
         let mut response_tools = Vec::new();
         for tool in tools
@@ -614,14 +793,27 @@ pub fn anthropic_to_responses(
             .filter(|t| t.get("type").and_then(Value::as_str) != Some("BatchTool"))
         {
             if is_anthropic_web_search_tool(tool) {
-                hosted_web_search_names.insert(
-                    tool.get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("web_search")
-                        .to_string(),
-                );
-                response_tools.push(anthropic_web_search_to_responses(tool)?);
+                let name = tool
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("web_search");
+                hosted_web_search_names.insert(name.to_string());
+                if forced_hosted_web_search_name.is_some_and(|selected| selected != name) {
+                    continue;
+                }
+                let (response_tool, max_uses) =
+                    anthropic_web_search_to_responses(tool, is_codex_oauth)?;
+                if let Some(max_uses) = max_uses {
+                    hosted_web_search_max_uses = Some(
+                        hosted_web_search_max_uses
+                            .map_or(max_uses, |current| current.min(max_uses)),
+                    );
+                }
+                response_tools.push(response_tool);
             } else {
+                if forced_hosted_web_search_name.is_some() {
+                    continue;
+                }
                 response_tools.push(json!({
                     "type": "function",
                     "name": tool.get("name").and_then(Value::as_str).unwrap_or(""),
@@ -635,6 +827,37 @@ pub fn anthropic_to_responses(
 
         if !response_tools.is_empty() {
             result["tools"] = json!(response_tools);
+        }
+    }
+
+    if let Some(max_uses) = hosted_web_search_max_uses {
+        if is_codex_oauth {
+            if forced_hosted_web_search_name.is_none() {
+                // The ChatGPT Codex contract rejects max_tool_calls. Without a
+                // forced, isolated hosted tool, the proxy cannot safely bound
+                // which built-in calls consume Anthropic's per-tool budget.
+                return Err(ProxyError::InvalidRequest(
+                    "Anthropic WebSearch max_uses on the Codex OAuth backend requires forcing that hosted tool"
+                        .to_string(),
+                ));
+            }
+            let existing = result
+                .get("instructions")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let cap_instruction = format!(
+                "You must perform no more than {max_uses} web search calls in this response."
+            );
+            result["instructions"] = json!(if existing.is_empty() {
+                cap_instruction
+            } else {
+                format!("{existing}\n\n{cap_instruction}")
+            });
+        } else {
+            // Responses exposes one aggregate cap for built-in tool calls.
+            // Hosted WebSearch is the only built-in tool produced by this
+            // transform, so this exactly enforces Anthropic's request limit.
+            result["max_tool_calls"] = json!(max_uses);
         }
     }
 
@@ -741,8 +964,9 @@ fn map_tool_choice_to_responses(
                 let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
                 if hosted_web_search_names.contains(name) {
                     // The ChatGPT Codex backend's canonical request schema accepts a
-                    // string tool_choice. The WebSearch helper sends only this hosted
-                    // tool, so `required` preserves the forced-tool behavior.
+                    // string tool_choice. The request transform filters the outbound
+                    // list to this dynamically named hosted tool, so `required`
+                    // preserves the forced-tool behavior.
                     if is_codex_oauth {
                         json!("required")
                     } else {
@@ -1185,6 +1409,14 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
     body: Value,
     hosted_web_search_name: Option<&str>,
 ) -> Result<Value, ProxyError> {
+    responses_to_anthropic_with_web_search_options(body, hosted_web_search_name, None)
+}
+
+pub(crate) fn responses_to_anthropic_with_web_search_options(
+    body: Value,
+    hosted_web_search_name: Option<&str>,
+    max_web_search_uses: Option<u64>,
+) -> Result<Value, ProxyError> {
     // A Responses failure can arrive inside an HTTP 2xx response object. Reject it
     // before looking at `output`; otherwise `{status:"failed", output:[]}` becomes
     // a successful empty Anthropic `end_turn` and hides the upstream error.
@@ -1200,40 +1432,102 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
     let hosted_web_search_name = hosted_web_search_name
         .filter(|name| !name.is_empty())
         .unwrap_or("web_search");
-    let web_search_indices: Vec<usize> = output
+    let all_web_search_indices: Vec<usize> = output
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
             (item.get("type").and_then(Value::as_str) == Some("web_search_call")).then_some(index)
         })
         .collect();
-    let last_web_search_index = web_search_indices.last().copied();
-    let mut web_search_results_by_index = HashMap::new();
-    let mut attributed_web_search_urls = HashSet::new();
-    for &output_index in &web_search_indices {
-        let results = web_search_results_from_action(&output[output_index]);
-        for result in &results {
-            if let Some(url) = result.get("url").and_then(Value::as_str) {
-                attributed_web_search_urls.insert(url.to_string());
-            }
+    let max_web_search_uses =
+        max_web_search_uses.map(|limit| usize::try_from(limit).unwrap_or(usize::MAX));
+    let retained_web_search_count = max_web_search_uses
+        .map(|limit| limit.saturating_add(1))
+        .unwrap_or(usize::MAX);
+    let web_search_indices: Vec<usize> = all_web_search_indices
+        .iter()
+        .copied()
+        .take(retained_web_search_count)
+        .collect();
+    let web_search_ordinal_by_index: HashMap<usize, usize> = web_search_indices
+        .iter()
+        .enumerate()
+        .map(|(ordinal, output_index)| (*output_index, ordinal))
+        .collect();
+    let web_search_limit_exceeded_index =
+        max_web_search_uses.and_then(|limit| all_web_search_indices.get(limit).copied());
+    let is_web_search_limit_error = |output_index: usize| {
+        max_web_search_uses.is_some_and(|limit| {
+            web_search_ordinal_by_index
+                .get(&output_index)
+                .is_some_and(|ordinal| *ordinal >= limit)
+        })
+    };
+    let web_search_result_error = |output_index: usize| {
+        if is_web_search_limit_error(output_index) {
+            Some(web_search_max_uses_exceeded_error())
+        } else {
+            web_search_tool_result_error(&output[output_index])
         }
+    };
+    let last_web_search_index = web_search_indices
+        .iter()
+        .rev()
+        .copied()
+        .find(|index| web_search_result_error(*index).is_none());
+    let mut web_search_results_by_index = HashMap::new();
+    for &output_index in &web_search_indices {
+        if web_search_result_error(output_index).is_some() {
+            web_search_results_by_index.insert(output_index, Vec::new());
+            continue;
+        }
+        let results = web_search_results_from_action(&output[output_index]);
         web_search_results_by_index.insert(output_index, results);
     }
 
-    let mut unassigned_web_search_results = Vec::new();
+    let mut terminal_web_search_results = Vec::new();
     let mut seen_web_search_urls = HashSet::new();
-    for item in output {
+    for (output_index, item) in output.iter().enumerate() {
+        if web_search_limit_exceeded_index.is_some_and(|limit_index| output_index > limit_index) {
+            continue;
+        }
         for result in web_search_results_from_output_item(item) {
             let Some(url) = result.get("url").and_then(Value::as_str) else {
                 continue;
             };
-            if seen_web_search_urls.insert(url.to_string())
-                && !attributed_web_search_urls.contains(url)
-            {
-                unassigned_web_search_results.push(result);
+            if seen_web_search_urls.insert(url.to_string()) {
+                terminal_web_search_results.push(result);
             }
         }
     }
+    // action.sources often contains only URLs, while final-message annotations
+    // carry the human-readable titles. Enrich matching per-call results before
+    // removing already-attributed citations.
+    for (&output_index, results) in &mut web_search_results_by_index {
+        if web_search_result_error(output_index).is_none() {
+            merge_web_search_result_metadata(results, &terminal_web_search_results);
+        }
+    }
+    let attributed_web_search_urls: HashSet<String> = web_search_results_by_index
+        .iter()
+        .filter(|(output_index, _)| web_search_result_error(**output_index).is_none())
+        .flat_map(|(_, results)| results)
+        .filter_map(|result| {
+            result
+                .get("url")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .collect();
+    let unassigned_web_search_results = terminal_web_search_results
+        .into_iter()
+        .filter(|result| {
+            result
+                .get("url")
+                .and_then(Value::as_str)
+                .is_some_and(|url| !attributed_web_search_urls.contains(url))
+        })
+        .collect::<Vec<_>>();
     // Compatible gateways may ignore the requested action.sources include.
     // Message annotations do not identify which call produced them, so keep
     // every call/result pair valid and attach only the unassigned citations to
@@ -1261,6 +1555,9 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
     let mut web_search_count = 0_u64;
     for (output_index, item) in output.iter().enumerate() {
         let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if web_search_limit_exceeded_index.is_some_and(|limit_index| output_index > limit_index) {
+            continue;
+        }
 
         match item_type {
             "message" => {
@@ -1339,7 +1636,15 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
             }
 
             "web_search_call" => {
-                web_search_count += 1;
+                let Some(&web_search_ordinal) = web_search_ordinal_by_index.get(&output_index)
+                else {
+                    continue;
+                };
+                let limit_exceeded =
+                    max_web_search_uses.is_some_and(|limit| web_search_ordinal >= limit);
+                if !limit_exceeded {
+                    web_search_count += 1;
+                }
                 let id = item
                     .get("id")
                     .and_then(Value::as_str)
@@ -1354,12 +1659,18 @@ pub(crate) fn responses_to_anthropic_with_web_search_name(
                     "caller": {"type": "direct"}
                 }));
 
+                let results = web_search_results_by_index
+                    .remove(&output_index)
+                    .unwrap_or_default();
+                let result_content = if limit_exceeded {
+                    web_search_max_uses_exceeded_error()
+                } else {
+                    web_search_tool_result_error(item).unwrap_or(Value::Array(results))
+                };
                 content.push(json!({
                     "type": "web_search_tool_result",
                     "tool_use_id": id,
-                    "content": web_search_results_by_index
-                        .remove(&output_index)
-                        .unwrap_or_default(),
+                    "content": result_content,
                     "caller": {"type": "direct"}
                 }));
             }
@@ -1588,6 +1899,10 @@ mod tests {
             })
         );
         assert_eq!(result["tool_choice"], "required");
+        assert!(result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("no more than 8 web search calls"));
         assert_eq!(
             result["include"],
             json!([
@@ -1609,6 +1924,94 @@ mod tests {
         let result = anthropic_to_responses(input, None, false, false).unwrap();
         assert_eq!(result["tool_choice"], json!({"type": "web_search"}));
         assert_eq!(result["include"], json!(["web_search_call.action.sources"]));
+        assert!(result["tools"][0].get("external_web_access").is_none());
+    }
+
+    #[test]
+    fn test_api_key_hosted_web_search_maps_max_uses_to_max_tool_calls() {
+        let input = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 3
+            }]
+        });
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["max_tool_calls"], 3);
+    }
+
+    #[test]
+    fn test_codex_forced_hosted_web_search_max_uses_is_enforced_locally() {
+        let input = json!({
+            "model": "gpt-5.6",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 3
+            }],
+            "tool_choice": {"type": "tool", "name": "web_search"}
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+        assert!(result.get("max_tool_calls").is_none());
+        assert!(result["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("no more than 3 web search calls"));
+    }
+
+    #[test]
+    fn test_codex_auto_hosted_web_search_max_uses_fails_closed() {
+        let input = json!({
+            "model": "gpt-5.6",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 3
+            }]
+        });
+
+        let error = anthropic_to_responses(input, None, true, false).unwrap_err();
+        assert!(error.to_string().contains("requires forcing"));
+    }
+
+    #[test]
+    fn test_codex_forced_hosted_web_search_filters_unrelated_tools() {
+        let input = json!({
+            "model": "gpt-5.6",
+            "messages": [{"role": "user", "content": "Search"}],
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search_legacy"
+                },
+                {
+                    "type": "web_search_20991231",
+                    "name": "web_search_future"
+                },
+                {
+                    "name": "get_weather",
+                    "description": "A client-side function",
+                    "input_schema": {"type": "object"}
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "web_search_future"}
+        });
+
+        assert_eq!(
+            anthropic_web_search_tool_name(&input),
+            Some("web_search_future")
+        );
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+        assert_eq!(result["tool_choice"], "required");
+        assert_eq!(result["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(result["tools"][0]["type"], "web_search");
+        assert_eq!(result["tools"][0]["external_web_access"], true);
     }
 
     #[test]
@@ -2051,7 +2454,14 @@ mod tests {
                     "type": "web_search_call",
                     "id": "ws_123",
                     "status": "completed",
-                    "action": {"type": "search", "query": "Rust official documentation"}
+                    "action": {
+                        "type": "search",
+                        "query": "Rust official documentation",
+                        "sources": [{
+                            "type": "url",
+                            "url": "https://doc.rust-lang.org/"
+                        }]
+                    }
                 },
                 {
                     "type": "message",
@@ -2094,8 +2504,139 @@ mod tests {
             result["content"][1]["content"][0]["url"],
             "https://doc.rust-lang.org/"
         );
+        assert_eq!(
+            result["content"][1]["content"][0]["title"],
+            "The Rust Programming Language"
+        );
         assert_eq!(result["content"][2]["type"], "text");
         assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(result["usage"]["server_tool_use"]["web_search_requests"], 1);
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_preserves_failed_hosted_web_search() {
+        let input = json!({
+            "id": "resp_failed_search",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [{
+                "type": "web_search_call",
+                "id": "ws_failed",
+                "status": "failed",
+                "action": {"type": "search", "query": "latest docs"},
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "message": "Too many requests"
+                }
+            }],
+            "usage": {"input_tokens": 4, "output_tokens": 1}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "server_tool_use");
+        assert_eq!(result["content"][0]["id"], "ws_failed");
+        assert_eq!(result["content"][1]["type"], "web_search_tool_result");
+        assert_eq!(result["content"][1]["tool_use_id"], "ws_failed");
+        assert_eq!(
+            result["content"][1]["content"],
+            json!({
+                "type": "web_search_tool_result_error",
+                "error_code": "too_many_requests"
+            })
+        );
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_marks_unfinished_hosted_web_search_as_error() {
+        let input = json!({
+            "id": "resp_unfinished_search",
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "model": "gpt-5.6",
+            "output": [{
+                "type": "web_search_call",
+                "id": "ws_unfinished",
+                "status": "searching",
+                "action": {"type": "search", "query": "latest docs"}
+            }],
+            "usage": {"input_tokens": 4, "output_tokens": 1}
+        });
+
+        let result = responses_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "server_tool_use");
+        assert_eq!(result["content"][1]["type"], "web_search_tool_result");
+        assert_eq!(
+            result["content"][1]["content"],
+            json!({
+                "type": "web_search_tool_result_error",
+                "error_code": "unavailable"
+            })
+        );
+        assert_eq!(result["stop_reason"], "max_tokens");
+    }
+
+    #[test]
+    fn test_responses_to_anthropic_enforces_hosted_web_search_max_uses() {
+        let input = json!({
+            "id": "resp_search_limit",
+            "status": "completed",
+            "model": "gpt-5.6",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_allowed",
+                    "status": "completed",
+                    "action": {
+                        "type": "search",
+                        "query": "allowed query",
+                        "sources": [{
+                            "type": "url",
+                            "url": "https://example.com/allowed",
+                            "title": "Allowed"
+                        }]
+                    }
+                },
+                {
+                    "type": "web_search_call",
+                    "id": "ws_over_limit",
+                    "status": "completed",
+                    "action": {
+                        "type": "search",
+                        "query": "disallowed query",
+                        "sources": [{
+                            "type": "url",
+                            "url": "https://example.com/disallowed",
+                            "title": "Disallowed"
+                        }]
+                    }
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Answer based on the disallowed search."
+                    }]
+                }
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 3}
+        });
+
+        let result =
+            responses_to_anthropic_with_web_search_options(input, Some("web_search"), Some(1))
+                .unwrap();
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content.len(), 4);
+        assert_eq!(content[0]["id"], "ws_allowed");
+        assert_eq!(content[1]["content"][0]["title"], "Allowed");
+        assert_eq!(content[2]["id"], "ws_over_limit");
+        assert_eq!(
+            content[3]["content"],
+            json!({
+                "type": "web_search_tool_result_error",
+                "error_code": "max_uses_exceeded"
+            })
+        );
         assert_eq!(result["usage"]["server_tool_use"]["web_search_requests"], 1);
     }
 
