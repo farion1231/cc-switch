@@ -5,10 +5,14 @@
 
 use once_cell::sync::OnceCell;
 use reqwest::Client;
-use std::env;
-use std::net::IpAddr;
 use std::sync::RwLock;
 use std::time::Duration;
+
+#[cfg(test)]
+use std::env;
+
+#[cfg(test)]
+use serial_test::serial;
 
 /// 全局 HTTP 客户端实例
 static GLOBAL_CLIENT: OnceCell<RwLock<Client>> = OnceCell::new();
@@ -32,15 +36,6 @@ pub fn set_proxy_port(port: u16) {
         let _ = CC_SWITCH_PROXY_PORT.set(RwLock::new(port));
         log::debug!("[GlobalProxy] Initialized CC Switch proxy port to {port}");
     }
-}
-
-/// 获取 CC Switch 代理服务器的监听端口
-fn get_proxy_port() -> u16 {
-    CC_SWITCH_PROXY_PORT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|port| *port)
-        .unwrap_or(15721) // 默认端口作为回退
 }
 
 /// 初始化全局 HTTP 客户端
@@ -246,73 +241,22 @@ fn build_client(proxy_url: Option<&str>) -> Result<Client, String> {
         builder = builder.proxy(proxy);
         log::debug!("[GlobalProxy] Proxy configured: {}", mask_url(url));
     } else {
-        // 未设置全局代理时，让 reqwest 自动检测系统代理（环境变量）
-        // 若系统代理指向本机，禁用系统代理避免自环
-        if system_proxy_points_to_loopback() {
-            builder = builder.no_proxy();
-            log::warn!(
-                "[GlobalProxy] System proxy points to localhost, bypassing to avoid recursion"
-            );
-        } else {
-            log::debug!("[GlobalProxy] Following system proxy (no explicit proxy configured)");
-        }
+        // No explicit proxy configured — always use direct connection for upstream
+        // provider requests. System proxy (e.g. v2rayN, Clash) is for user-facing
+        // outbound traffic, not for CC Switch's internal API calls to AI providers.
+        // If a user needs to reach AI providers through a proxy, they should
+        // configure it explicitly in CC Switch settings.
+        //
+        // Fixes: #4478, #4642, #1695, #4562, #1264
+        builder = builder.no_proxy();
+        log::debug!(
+            "[GlobalProxy] Using direct connection (system proxy bypassed for upstream provider requests)"
+        );
     }
 
     builder
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))
-}
-
-fn system_proxy_points_to_loopback() -> bool {
-    const KEYS: [&str; 6] = [
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "ALL_PROXY",
-        "all_proxy",
-    ];
-
-    KEYS.iter()
-        .filter_map(|key| env::var(key).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .any(|value| proxy_points_to_loopback(&value))
-}
-
-fn proxy_points_to_loopback(value: &str) -> bool {
-    fn host_is_loopback(host: &str) -> bool {
-        if host.eq_ignore_ascii_case("localhost") {
-            return true;
-        }
-        host.parse::<IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-    }
-
-    // 检查是否指向 CC Switch 自己的代理端口
-    // 只有指向自己的代理才需要跳过，避免递归
-    fn is_cc_switch_proxy_port(port: Option<u16>) -> bool {
-        let cc_switch_port = get_proxy_port();
-        port == Some(cc_switch_port)
-    }
-
-    if let Ok(parsed) = url::Url::parse(value) {
-        if let Some(host) = parsed.host_str() {
-            // 只有当主机是 loopback 且端口是 CC Switch 的端口时才返回 true
-            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
-        }
-        return false;
-    }
-
-    let with_scheme = format!("http://{value}");
-    if let Ok(parsed) = url::Url::parse(&with_scheme) {
-        if let Some(host) = parsed.host_str() {
-            return host_is_loopback(host) && is_cc_switch_proxy_port(parsed.port());
-        }
-    }
-
-    false
 }
 
 /// 隐藏 URL 中的敏感信息（用于日志）
@@ -337,12 +281,6 @@ pub fn mask_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     #[test]
     fn test_mask_url() {
@@ -392,59 +330,102 @@ mod tests {
         assert!(result.is_err(), "Should reject invalid proxy scheme");
     }
 
-    #[test]
-    fn test_proxy_points_to_loopback() {
-        // 设置 CC Switch 代理端口为 15721（默认值）
-        set_proxy_port(15721);
-
-        // 只有指向 CC Switch 自己端口的 loopback 地址才返回 true
-        assert!(proxy_points_to_loopback("http://127.0.0.1:15721"));
-        assert!(proxy_points_to_loopback("socks5://localhost:15721"));
-        assert!(proxy_points_to_loopback("127.0.0.1:15721"));
-
-        // 其他 loopback 端口不应该被跳过（允许使用其他本地代理工具）
-        assert!(!proxy_points_to_loopback("http://127.0.0.1:7890"));
-        assert!(!proxy_points_to_loopback("socks5://localhost:1080"));
-
-        // 非 loopback 地址不应该被跳过
-        assert!(!proxy_points_to_loopback("http://192.168.1.10:7890"));
-        assert!(!proxy_points_to_loopback("http://192.168.1.10:15721"));
+    /// RAII guard that snapshots env vars on construction and restores them
+    /// on drop, including when the test panics or an assertion fails, so no
+    /// HTTP_PROXY/HTTPS_PROXY ever leaks into sibling tests.
+    struct EnvVarGuard {
+        entries: Vec<(&'static str, Option<String>)>,
     }
 
-    #[test]
-    fn test_system_proxy_points_to_loopback() {
-        let _guard = env_lock().lock().unwrap();
-
-        // 设置 CC Switch 代理端口
-        set_proxy_port(15721);
-
-        let keys = [
-            "HTTP_PROXY",
-            "http_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-        ];
-
-        for key in &keys {
-            std::env::remove_var(key);
+    impl EnvVarGuard {
+        fn set(entries: impl IntoIterator<Item = (&'static str, String)>) -> Self {
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    let original = env::var(key).ok();
+                    env::set_var(key, value);
+                    (key, original)
+                })
+                .collect();
+            Self { entries }
         }
+    }
 
-        // 指向 CC Switch 端口的代理应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:15721");
-        assert!(system_proxy_points_to_loopback());
-
-        // 指向其他端口的本地代理不应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://127.0.0.1:7890");
-        assert!(!system_proxy_points_to_loopback());
-
-        // 非 loopback 地址不应该被跳过
-        std::env::set_var("HTTP_PROXY", "http://10.0.0.2:7890");
-        assert!(!system_proxy_points_to_loopback());
-
-        for key in &keys {
-            std::env::remove_var(key);
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            for (key, original) in &self.entries {
+                match original {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
+                }
+            }
         }
+    }
+
+    /// Regression test: `build_client(None)` must produce a client that does
+    /// NOT route requests through the system proxy (HTTP_PROXY/HTTPS_PROXY).
+    ///
+    /// Spins up a mock TCP listener as a fake "system proxy", points the env
+    /// vars at it, then sends a request to a different address through the
+    /// built client. If the system proxy is used the mock receives a
+    /// connection (test fails); if it is bypassed the mock stays dark.
+    ///
+    /// The previous conditional-bypass logic (`system_proxy_points_to_loopback`)
+    /// would have failed this test: with HTTP_PROXY set to a non-CC-Switch
+    /// loopback port it took the else branch and let reqwest follow the env
+    /// var, exactly the bug this test locks down.
+    ///
+    /// See: #4478, #4642, #1695, #4562, #1264
+    #[tokio::test]
+    #[serial]
+    async fn build_client_none_does_not_use_system_proxy() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Mock "system proxy": any incoming connection means the proxy was used.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock proxy listener");
+        let proxy_addr = listener.local_addr().expect("local_addr");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_server = hits.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok(_) => {
+                        hits_for_server.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        // Point the system proxy env vars at our mock. The guard restores the
+        // originals (or removes them) on drop, even on panic.
+        let _guard = EnvVarGuard::set([
+            ("HTTP_PROXY", format!("http://{proxy_addr}")),
+            ("HTTPS_PROXY", format!("http://{proxy_addr}")),
+        ]);
+
+        let client = build_client(None).expect("build_client(None) succeeds");
+
+        // Fire a request at a different, closed address. Whether it succeeds
+        // or fails is irrelevant; we only care whether it went through the mock.
+        let _ = client
+            .get("http://127.0.0.1:1/never")
+            .timeout(Duration::from_millis(200))
+            .send()
+            .await;
+
+        // Let the spawned accept loop process any pending connection.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server.abort();
+
+        let count = hits.load(Ordering::SeqCst);
+        assert_eq!(
+            count, 0,
+            "build_client(None) must bypass HTTP_PROXY/HTTPS_PROXY; \
+             saw {count} connection(s) to the mock proxy"
+        );
     }
 }
