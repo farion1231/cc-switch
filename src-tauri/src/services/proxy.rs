@@ -516,31 +516,34 @@ impl ProxyService {
 
     /// 启动代理服务器
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
-        // 1. 启动时自动设置 proxy_enabled = true
+        // Read the persisted switch up front, but only turn it on after the
+        // server has successfully bound. A failed start must not leave a stale
+        // `proxy_enabled = true` value behind.
         let mut global_config = self
             .db
             .get_global_proxy_config()
             .await
             .map_err(|e| format!("获取全局代理配置失败: {e}"))?;
 
-        if !global_config.proxy_enabled {
-            global_config.proxy_enabled = true;
-            self.db
-                .update_global_proxy_config(global_config.clone())
-                .await
-                .map_err(|e| format!("更新代理总开关失败: {e}"))?;
-        }
-
-        // 2. 获取配置
+        // 1. 获取配置
         let config = self
             .db
             .get_proxy_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
-        // 3. 若已在运行：确保持久化状态（如需要）并返回当前信息
+        // 2. 若已在运行：确保持久化状态（如需要）并返回当前信息
         if let Some(server) = self.server.read().await.as_ref() {
             let status = server.get_status().await;
+            if !global_config.proxy_enabled || global_config.listen_port != status.port {
+                global_config.proxy_enabled = true;
+                global_config.listen_address = status.address.clone();
+                global_config.listen_port = status.port;
+                self.db
+                    .update_global_proxy_config(global_config)
+                    .await
+                    .map_err(|e| format!("更新代理总开关失败: {e}"))?;
+            }
             return Ok(ProxyServerInfo {
                 address: status.address,
                 port: status.port,
@@ -549,22 +552,53 @@ impl ProxyService {
             });
         }
 
-        // 4. 创建并启动服务器
+        // 3. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
         let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
         let info = server
             .start()
             .await
             .map_err(|e| format!("启动代理服务器失败: {e}"))?;
+
+        let previous_global_config = global_config.clone();
+        let mut global_config_changed = false;
+        if !global_config.proxy_enabled {
+            global_config.proxy_enabled = true;
+            global_config_changed = true;
+        }
+        if global_config.listen_address != info.address {
+            global_config.listen_address = info.address.clone();
+            global_config_changed = true;
+        }
+        if global_config.listen_port != info.port {
+            global_config.listen_port = info.port;
+            global_config_changed = true;
+        }
+        if global_config_changed {
+            if let Err(e) = self.db.update_global_proxy_config(global_config).await {
+                let _ = server.stop().await;
+                return Err(format!("更新代理总开关失败: {e}"));
+            }
+        }
+
         if let Err(e) = self
             .persist_ephemeral_listen_port_if_needed(&config, info.port)
             .await
         {
             let _ = server.stop().await;
+            if global_config_changed {
+                if let Err(rollback_error) = self
+                    .db
+                    .update_global_proxy_config(previous_global_config)
+                    .await
+                {
+                    return Err(format!("{e}; 恢复代理总开关失败: {rollback_error}"));
+                }
+            }
             return Err(e);
         }
 
-        // 5. 保存服务器实例
+        // 4. 保存服务器实例
         *self.server.write().await = Some(server);
 
         log::info!("代理服务器已启动: {}:{}", info.address, info.port);
@@ -600,6 +634,14 @@ impl ProxyService {
 
         self.start().await?;
         Ok(true)
+    }
+
+    /// Ensure the local proxy is running and return the Anthropic-compatible
+    /// base URL that external clients can connect to.
+    pub async fn ensure_running_and_get_proxy_url(&self) -> Result<String, String> {
+        self.start().await?;
+        let (proxy_url, _) = self.build_proxy_urls().await?;
+        Ok(proxy_url)
     }
 
     /// 启动代理服务器（带 Live 配置接管）
@@ -3277,6 +3319,42 @@ mod tests {
         db.update_proxy_config(proxy_config)
             .await
             .expect("set test proxy config to an ephemeral port");
+    }
+
+    #[tokio::test]
+    async fn failed_proxy_start_does_not_persist_enabled_switch() {
+        let db = Arc::new(Database::memory().expect("init db"));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve test port");
+        let occupied_port = listener.local_addr().expect("listener address").port();
+
+        let mut proxy_config = db.get_proxy_config().await.expect("get proxy config");
+        proxy_config.listen_address = "127.0.0.1".to_string();
+        proxy_config.listen_port = occupied_port;
+        db.update_proxy_config(proxy_config)
+            .await
+            .expect("set occupied proxy port");
+
+        let mut global_config = db
+            .get_global_proxy_config()
+            .await
+            .expect("get global proxy config");
+        global_config.proxy_enabled = false;
+        db.update_global_proxy_config(global_config)
+            .await
+            .expect("disable global proxy switch");
+
+        let service = ProxyService::new(db.clone());
+        let error = service.start().await.expect_err("occupied port must fail");
+
+        assert!(error.contains("启动代理服务器失败"));
+        assert!(!service.is_running().await);
+        assert!(
+            !db.get_global_proxy_config()
+                .await
+                .expect("read global proxy config")
+                .proxy_enabled,
+            "failed starts must preserve the disabled switch"
+        );
     }
 
     async fn running_codex_base_url(service: &ProxyService) -> String {

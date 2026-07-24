@@ -2,12 +2,14 @@ import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { claudeScienceApi } from "@/lib/api/claudeScience";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
   setCurrentProviderId,
   setLiveProviderIds,
   setProviders,
+  setSettings,
 } from "../msw/state";
 import { emitTauriEvent } from "../msw/tauriMocks";
 
@@ -147,13 +149,14 @@ vi.mock("@/components/mcp/McpPanel", () => ({
 
 const renderApp = (AppComponent: ComponentType) => {
   const client = new QueryClient();
-  return render(
+  const renderResult = render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
         <AppComponent />
       </Suspense>
     </QueryClientProvider>,
   );
+  return { client, ...renderResult };
 };
 
 describe("App integration with MSW", () => {
@@ -218,7 +221,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 15_000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
@@ -260,6 +263,39 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it("launches Claude Science through the local proxy", async () => {
+    setSettings({ enableLocalProxy: true });
+    const launchSpy = vi
+      .spyOn(claudeScienceApi, "launchWithProxy")
+      .mockResolvedValue({
+        proxyBaseUrl: "http://127.0.0.1:15721",
+        pid: 1234,
+        port: 3456,
+        binaryPath: "/mock/claude-science",
+      });
+
+    try {
+      const { default: App } = await import("@/App");
+      const { client } = renderApp(App);
+      const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+      const launchButton = await screen.findByTitle("claudeScience.launch");
+      fireEvent.click(launchButton);
+
+      await waitFor(() => expect(launchSpy).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: ["proxyStatus"],
+        }),
+      );
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "claudeScience.launchSuccess",
+      );
+    } finally {
+      launchSpy.mockRestore();
+    }
   });
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {

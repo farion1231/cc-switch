@@ -17,10 +17,12 @@ use super::{
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
-        normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
+        is_thinking_tool_choice_incompatibility, normalize_thinking_type,
+        rectify_anthropic_request, rectify_anthropic_request_for_tool_choice_conflict,
+        should_rectify_thinking_signature,
     },
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
-    ProxyError,
+    ProxyError, CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER,
 };
 use crate::commands::{CodexOAuthState, CopilotAuthState, XaiOAuthState};
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
@@ -34,6 +36,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
@@ -700,22 +703,42 @@ impl RequestForwarder {
                                 });
                             }
 
-                            // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut provider_body);
+                            // 首次触发：整流请求体。部分 Anthropic 兼容上游会把
+                            // anthropic-beta: *thinking* 也视为 thinking mode，
+                            // 所以 tool_choice 冲突时也需要清理 header 后重试。
+                            let mut retry_headers = headers.clone();
+                            let upstream_reported_tool_choice_conflict =
+                                is_thinking_tool_choice_incompatibility(error_message.as_deref());
+                            let removed_thinking_beta_headers =
+                                if upstream_reported_tool_choice_conflict {
+                                    strip_thinking_beta_headers(&mut retry_headers)
+                                } else {
+                                    0
+                                };
+                            let rectified = if upstream_reported_tool_choice_conflict {
+                                rectify_anthropic_request_for_tool_choice_conflict(
+                                    &mut provider_body,
+                                )
+                            } else {
+                                rectify_anthropic_request(&mut provider_body)
+                            };
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
-                            if !rectified.applied {
+                            if !rectified.applied && removed_thinking_beta_headers == 0 {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-006] thinking 签名整流器触发但无可整流内容，继续检查 budget；若 budget 也未命中则按客户端错误返回"
                                 );
                                 signature_rectifier_non_retryable_client_error = true;
                             } else {
                                 log::info!(
-                                    "[{}] [RECT-001] thinking 签名整流器触发, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields",
+                                    "[{}] [RECT-001] thinking 签名整流器触发, 移除 {} thinking blocks, {} redacted_thinking blocks, {} signature fields, 调整 {} top-level thinking fields, 移除 {} effort fields, {} thinking beta headers",
                                     app_type_str,
                                     rectified.removed_thinking_blocks,
                                     rectified.removed_redacted_thinking_blocks,
-                                    rectified.removed_signature_fields
+                                    rectified.removed_signature_fields,
+                                    rectified.rewritten_top_level_thinking_fields,
+                                    rectified.removed_effort_fields,
+                                    removed_thinking_beta_headers
                                 );
 
                                 // 标记已重试（当前逻辑下重试后必定 return，保留标记以备将来扩展）
@@ -729,7 +752,7 @@ impl RequestForwarder {
                                         provider,
                                         endpoint,
                                         &provider_body,
-                                        &headers,
+                                        &retry_headers,
                                         &extensions,
                                         adapter.as_ref(),
                                     )
@@ -1123,6 +1146,9 @@ impl RequestForwarder {
         extensions: &Extensions,
         adapter: &dyn ProviderAdapter,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let is_claude_science_proxy_request = matches!(app_type, AppType::Claude)
+            && headers_contain_claude_science_placeholder(headers);
+
         // 使用适配器提取 base_url
         let mut base_url = adapter.extract_base_url(provider)?;
 
@@ -1178,6 +1204,8 @@ impl RequestForwarder {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
+        let mut standard_anthropic_one_m = false;
+
         if is_copilot {
             mapped_body =
                 super::providers::copilot_model_map::apply_copilot_model_normalization(mapped_body);
@@ -1188,8 +1216,12 @@ impl RequestForwarder {
             // model-catalog match (apply_codex_upstream_model) and the transform's own
             // strip+`context-1m` beta detection. The marker is stripped later, on the
             // final anthropic_body.
-            mapped_body =
-                super::model_mapper::strip_one_m_suffix_for_upstream_from_body(mapped_body);
+            let (stripped_body, requested_one_m) =
+                super::model_mapper::strip_one_m_suffix_for_upstream_from_body_with_flag(
+                    mapped_body,
+                );
+            mapped_body = stripped_body;
+            standard_anthropic_one_m = requested_one_m;
         }
 
         // --- Copilot 优化器：分类 + 请求体优化（在格式转换之前执行） ---
@@ -1570,17 +1602,42 @@ impl RequestForwarder {
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段
         let mut filtered_body = prepare_upstream_request_body(request_body);
+        let mut local_proxy_model_overridden = false;
         if !is_copilot {
             if let Some(overrides) = provider
                 .meta
                 .as_ref()
                 .and_then(|meta| meta.local_proxy_request_overrides.as_ref())
             {
+                local_proxy_model_overridden = overrides
+                    .body
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .is_some_and(|body| body.contains_key("model"));
                 if apply_local_proxy_body_overrides(&mut filtered_body, overrides) {
                     filtered_body = prepare_upstream_request_body(filtered_body);
                 }
             }
         }
+        if !is_copilot && !codex_responses_to_anthropic {
+            let (finalized_body, requested_one_m) = finalize_standard_anthropic_one_m(
+                filtered_body,
+                standard_anthropic_one_m,
+                local_proxy_model_overridden,
+            );
+            filtered_body = finalized_body;
+            standard_anthropic_one_m = requested_one_m;
+        }
+        let science_fable_compatibility = is_claude_science_proxy_request
+            && standard_anthropic_one_m
+            && adapter.name() == "Claude"
+            && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"))
+            && is_fable_model(&filtered_body);
+        let science_tool_aliases = if science_fable_compatibility {
+            prepare_claude_science_fable_request(&mut filtered_body)
+        } else {
+            BTreeMap::new()
+        };
         // 出站 body 定稿后刷新真值（覆盖 Codex chat 上游模型覆写、转换层模型改写）
         if let Some(m) = filtered_body
             .get("model")
@@ -1602,6 +1659,7 @@ impl RequestForwarder {
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
             || codex_responses_to_anthropic
+            || !science_tool_aliases.is_empty()
             || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
@@ -1792,7 +1850,11 @@ impl RequestForwarder {
         };
         // Codex→Anthropic emulation: when there is no custom UA, override Codex's
         // codex_cli_rs UA with the Claude Code UA.
-        let custom_user_agent = if custom_user_agent.is_none() && codex_impersonate_claude_code {
+        let custom_user_agent = if science_fable_compatibility {
+            Some(http::HeaderValue::from_static(
+                CLAUDE_SCIENCE_FABLE_USER_AGENT,
+            ))
+        } else if custom_user_agent.is_none() && codex_impersonate_claude_code {
             Some(http::HeaderValue::from_static(CLAUDE_CODE_USER_AGENT))
         } else {
             custom_user_agent
@@ -1868,20 +1930,11 @@ impl RequestForwarder {
 
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
-            const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-            Some(if let Some(beta) = headers.get("anthropic-beta") {
-                if let Ok(beta_str) = beta.to_str() {
-                    if beta_str.contains(CLAUDE_CODE_BETA) {
-                        beta_str.to_string()
-                    } else {
-                        format!("{CLAUDE_CODE_BETA},{beta_str}")
-                    }
-                } else {
-                    CLAUDE_CODE_BETA.to_string()
-                }
-            } else {
-                CLAUDE_CODE_BETA.to_string()
-            })
+            build_anthropic_beta_value(
+                headers.get("anthropic-beta"),
+                true,
+                standard_anthropic_one_m,
+            )
         } else if codex_impersonate_claude_code || codex_anthropic_one_m {
             // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
             // model injects the context-1m marker.
@@ -2300,6 +2353,11 @@ impl RequestForwarder {
                     // A response.failed/error before output remains failover-safe.
                     response = self.validate_responses_stream_start(response).await?;
                 }
+            }
+            if !science_tool_aliases.is_empty() {
+                response =
+                    rewrite_claude_science_tool_alias_response(response, science_tool_aliases)
+                        .await?;
             }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
@@ -2821,6 +2879,54 @@ fn split_endpoint_and_query(endpoint: &str) -> (&str, Option<&str>) {
         .map_or((endpoint, None), |(path, query)| (path, Some(query)))
 }
 
+fn build_anthropic_beta_value(
+    existing: Option<&http::HeaderValue>,
+    include_claude_code: bool,
+    include_context_one_m: bool,
+) -> Option<String> {
+    const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
+    const CONTEXT_ONE_M_BETA: &str = "context-1m-2025-08-07";
+
+    let mut merged = Vec::new();
+    for beta in [
+        include_claude_code.then_some(CLAUDE_CODE_BETA),
+        include_context_one_m.then_some(CONTEXT_ONE_M_BETA),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        merged.push(beta.to_string());
+    }
+    if let Some(existing) = existing.and_then(|value| value.to_str().ok()) {
+        for beta in existing
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !merged.iter().any(|current| current == beta) {
+                merged.push(beta.to_string());
+            }
+        }
+    }
+
+    (!merged.is_empty()).then(|| merged.join(","))
+}
+
+fn finalize_standard_anthropic_one_m(
+    body: Value,
+    mapped_one_m: bool,
+    model_overridden: bool,
+) -> (Value, bool) {
+    let (body, final_body_one_m) =
+        super::model_mapper::strip_one_m_suffix_for_upstream_from_body_with_flag(body);
+    let requested_one_m = if model_overridden {
+        final_body_one_m
+    } else {
+        mapped_one_m || final_body_one_m
+    };
+    (body, requested_one_m)
+}
+
 fn strip_beta_query(query: Option<&str>) -> Option<String> {
     let filtered = query.map(|query| {
         query
@@ -2855,6 +2961,10 @@ fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<S
 /// Claude Code client fingerprint (used for Codex→Anthropic emulation to pass a
 /// gateway's "Claude Code only" check).
 const CLAUDE_CODE_USER_AGENT: &str = "claude-cli/1.0.119 (external, cli)";
+const CLAUDE_SCIENCE_FABLE_USER_AGENT: &str = "claude-cli/2.1.212 (external, sdk-cli)";
+const CLAUDE_AGENT_SDK_SYSTEM_IDENTITY: &str =
+    "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+const CLAUDE_SCIENCE_FABLE_DEVICE_ID: &str = "00000000-0000-4000-8000-000000157212";
 const CLAUDE_CODE_SYSTEM_IDENTITY: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
 
@@ -2886,6 +2996,265 @@ fn prepend_claude_code_system_prompt(body: &mut Value) {
         _ => {}
     }
     body["system"] = Value::Array(blocks);
+}
+
+fn is_fable_model(body: &Value) -> bool {
+    body.get("model")
+        .and_then(Value::as_str)
+        .is_some_and(|model| model.to_ascii_lowercase().contains("fable"))
+}
+
+fn prepare_claude_science_fable_request(body: &mut Value) -> BTreeMap<String, String> {
+    prepend_claude_agent_sdk_system_prompt(body);
+    ensure_claude_science_device_id(body);
+    append_claude_science_tool_aliases(body)
+}
+
+fn prepend_claude_agent_sdk_system_prompt(body: &mut Value) {
+    let identity = serde_json::json!({
+        "type": "text",
+        "text": CLAUDE_AGENT_SDK_SYSTEM_IDENTITY,
+        "cache_control": { "type": "ephemeral" }
+    });
+    let mut blocks = vec![identity];
+    let existing: Vec<Value> = match body.get("system") {
+        Some(Value::String(text)) if !text.is_empty() => {
+            vec![serde_json::json!({ "type": "text", "text": text })]
+        }
+        Some(Value::Array(existing)) => existing.clone(),
+        _ => Vec::new(),
+    };
+    blocks.extend(existing.into_iter().filter(|block| {
+        let Some(text) = block.get("text").and_then(Value::as_str) else {
+            return true;
+        };
+        text != CLAUDE_AGENT_SDK_SYSTEM_IDENTITY && !text.starts_with("x-anthropic-billing-header:")
+    }));
+    body["system"] = Value::Array(blocks);
+}
+
+fn ensure_claude_science_device_id(body: &mut Value) {
+    let mut user_metadata = body
+        .pointer("/metadata/user_id")
+        .and_then(Value::as_str)
+        .and_then(|value| serde_json::from_str::<serde_json::Map<String, Value>>(value).ok())
+        .unwrap_or_default();
+    user_metadata
+        .entry("device_id".to_string())
+        .or_insert_with(|| Value::String(CLAUDE_SCIENCE_FABLE_DEVICE_ID.to_string()));
+
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    let metadata = body
+        .entry("metadata")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !metadata.is_object() {
+        *metadata = Value::Object(serde_json::Map::new());
+    }
+    if let Some(metadata) = metadata.as_object_mut() {
+        metadata.insert(
+            "user_id".to_string(),
+            Value::String(Value::Object(user_metadata).to_string()),
+        );
+    }
+}
+
+fn append_claude_science_tool_aliases(body: &mut Value) -> BTreeMap<String, String> {
+    const ALIASES: &[(&str, &str)] = &[
+        ("bash", "Bash"),
+        ("edit_file", "Edit"),
+        ("read_file", "Read"),
+    ];
+    let mut injected = BTreeMap::new();
+    let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) else {
+        return injected;
+    };
+    for (source_name, alias_name) in ALIASES {
+        if tools
+            .iter()
+            .any(|tool| tool.get("name").and_then(Value::as_str) == Some(alias_name))
+        {
+            continue;
+        }
+        let Some(mut alias) = tools
+            .iter()
+            .find(|tool| tool.get("name").and_then(Value::as_str) == Some(source_name))
+            .cloned()
+        else {
+            continue;
+        };
+        alias["name"] = Value::String((*alias_name).to_string());
+        alias["description"] = Value::String(format!(
+            "Compatibility alias for {source_name}; prefer the original {source_name} tool."
+        ));
+        tools.push(alias);
+        injected.insert((*alias_name).to_string(), (*source_name).to_string());
+    }
+    injected
+}
+
+fn remap_claude_science_tool_aliases(
+    value: &mut Value,
+    aliases: &BTreeMap<String, String>,
+) -> usize {
+    match value {
+        Value::Array(values) => values
+            .iter_mut()
+            .map(|value| remap_claude_science_tool_aliases(value, aliases))
+            .sum(),
+        Value::Object(object) => {
+            let mut remapped = 0;
+            if object.get("type").and_then(Value::as_str) == Some("tool_use") {
+                if let Some(name) = object.get_mut("name") {
+                    if let Some(source_name) =
+                        name.as_str().and_then(|alias_name| aliases.get(alias_name))
+                    {
+                        *name = Value::String(source_name.clone());
+                        remapped += 1;
+                    }
+                }
+            }
+            remapped
+                + object
+                    .values_mut()
+                    .map(|value| remap_claude_science_tool_aliases(value, aliases))
+                    .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+fn rewrite_claude_science_sse_block(block: &str, aliases: &BTreeMap<String, String>) -> String {
+    block
+        .lines()
+        .map(|line| {
+            let Some(data) = super::sse::strip_sse_field(line, "data") else {
+                return line.to_string();
+            };
+            if data.trim() == "[DONE]" {
+                return line.to_string();
+            }
+            let Ok(mut event) = serde_json::from_str::<Value>(data) else {
+                return line.to_string();
+            };
+            if remap_claude_science_tool_aliases(&mut event, aliases) == 0 {
+                return line.to_string();
+            }
+            format!("data: {event}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn rewrite_claude_science_sse_document(
+    document: &str,
+    aliases: &BTreeMap<String, String>,
+) -> String {
+    let mut buffer = document.to_string();
+    let mut rewritten = String::with_capacity(document.len());
+    while let Some(block) = super::sse::take_sse_block(&mut buffer) {
+        rewritten.push_str(&rewrite_claude_science_sse_block(&block, aliases));
+        rewritten.push_str("\n\n");
+    }
+    if !buffer.is_empty() {
+        rewritten.push_str(&rewrite_claude_science_sse_block(&buffer, aliases));
+    }
+    rewritten
+}
+
+async fn rewrite_claude_science_tool_alias_response(
+    response: ProxyResponse,
+    aliases: BTreeMap<String, String>,
+) -> Result<ProxyResponse, ProxyError> {
+    let status = response.status();
+    let mut headers = response.headers().clone();
+    let is_sse = response.is_sse();
+    let encoding = get_content_encoding(&headers);
+
+    if is_sse && encoding.is_none() {
+        let stream = response.bytes_stream();
+        let rewritten = async_stream::stream! {
+            let mut buffer = String::new();
+            let mut utf8_remainder = Vec::new();
+            tokio::pin!(stream);
+
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        super::sse::append_utf8_safe(
+                            &mut buffer,
+                            &mut utf8_remainder,
+                            &bytes,
+                        );
+                        while let Some(block) = super::sse::take_sse_block(&mut buffer) {
+                            let block =
+                                rewrite_claude_science_sse_block(&block, &aliases);
+                            yield Ok(Bytes::from(format!("{block}\n\n")));
+                        }
+                    }
+                    Err(error) => {
+                        yield Err(error);
+                        return;
+                    }
+                }
+            }
+
+            if !utf8_remainder.is_empty() {
+                buffer.push_str(&String::from_utf8_lossy(&utf8_remainder));
+            }
+            if !buffer.is_empty() {
+                yield Ok(Bytes::from(rewrite_claude_science_sse_block(
+                    &buffer,
+                    &aliases,
+                )));
+            }
+        };
+        headers.remove(http::header::CONTENT_LENGTH);
+        return Ok(ProxyResponse::streamed(status, headers, rewritten));
+    }
+
+    let raw = response.bytes().await?;
+    let decoded = match encoding.as_deref() {
+        Some(encoding) => decompress_body(encoding, &raw)
+            .map_err(|error| {
+                ProxyError::TransformError(format!(
+                    "Failed to decode Claude Science response before tool alias remapping: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                ProxyError::TransformError(format!(
+                    "Unsupported Claude Science response content-encoding: {encoding}"
+                ))
+            })?,
+        None => raw.to_vec(),
+    };
+
+    let body = if is_sse {
+        let document = String::from_utf8(decoded).map_err(|error| {
+            ProxyError::TransformError(format!(
+                "Claude Science SSE response is not valid UTF-8: {error}"
+            ))
+        })?;
+        rewrite_claude_science_sse_document(&document, &aliases).into_bytes()
+    } else {
+        let mut body: Value = serde_json::from_slice(&decoded).map_err(|error| {
+            ProxyError::TransformError(format!(
+                "Failed to parse Claude Science response before tool alias remapping: {error}"
+            ))
+        })?;
+        remap_claude_science_tool_aliases(&mut body, &aliases);
+        serde_json::to_vec(&body).map_err(|error| {
+            ProxyError::TransformError(format!(
+                "Failed to serialize Claude Science response after tool alias remapping: {error}"
+            ))
+        })?
+    };
+
+    headers.remove(http::header::CONTENT_ENCODING);
+    headers.remove(http::header::CONTENT_LENGTH);
+    headers.remove(http::header::TRANSFER_ENCODING);
+    Ok(ProxyResponse::buffered(status, headers, Bytes::from(body)))
 }
 
 /// Headers a native Claude Code client never sends but the Codex/OpenAI CLI (and its
@@ -3244,6 +3613,63 @@ fn headers_contain_proxy_placeholder(headers: &http::HeaderMap) -> bool {
             .map(|value| value.contains(PROXY_AUTH_PLACEHOLDER))
             .unwrap_or(false)
     })
+}
+
+fn headers_contain_claude_science_placeholder(headers: &http::HeaderMap) -> bool {
+    let is_marker = |value: &http::HeaderValue| {
+        let Ok(value) = value.to_str() else {
+            return false;
+        };
+        let value = value.trim();
+        value == CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER
+            || value.split_once(' ').is_some_and(|(scheme, token)| {
+                scheme.eq_ignore_ascii_case("bearer")
+                    && token.trim() == CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER
+            })
+    };
+
+    headers
+        .get_all(http::header::AUTHORIZATION)
+        .iter()
+        .chain(headers.get_all("x-api-key").iter())
+        .any(is_marker)
+}
+
+fn strip_thinking_beta_headers(headers: &mut http::HeaderMap) -> usize {
+    let mut kept = Vec::new();
+    let mut removed = 0usize;
+
+    for value in headers.get_all("anthropic-beta").iter() {
+        let Ok(value) = value.to_str() else {
+            removed += 1;
+            continue;
+        };
+
+        for part in value.split(',') {
+            let beta = part.trim();
+            if beta.is_empty() {
+                continue;
+            }
+            if beta.to_ascii_lowercase().contains("thinking") {
+                removed += 1;
+            } else {
+                kept.push(beta.to_string());
+            }
+        }
+    }
+
+    if removed == 0 {
+        return 0;
+    }
+
+    while headers.remove("anthropic-beta").is_some() {}
+    if !kept.is_empty() {
+        if let Ok(value) = http::HeaderValue::from_str(&kept.join(",")) {
+            headers.insert("anthropic-beta", value);
+        }
+    }
+
+    removed
 }
 
 fn should_preserve_exact_header_case(
@@ -3622,6 +4048,197 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    #[test]
+    fn strip_thinking_beta_headers_keeps_non_thinking_betas() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "anthropic-beta",
+            HeaderValue::from_static(
+                "claude-code-20250219, interleaved-thinking-2025-05-14, context-1m-2025-08-07",
+            ),
+        );
+
+        let removed = strip_thinking_beta_headers(&mut headers);
+
+        assert_eq!(removed, 1);
+        assert_eq!(
+            headers
+                .get("anthropic-beta")
+                .and_then(|value| value.to_str().ok()),
+            Some("claude-code-20250219,context-1m-2025-08-07")
+        );
+    }
+
+    #[test]
+    fn mapped_one_m_model_adds_context_beta_once() {
+        let body = json!({"model": "claude-fable-5[1m]"});
+        let (body, mapped_one_m) =
+            crate::proxy::model_mapper::strip_one_m_suffix_for_upstream_from_body_with_flag(body);
+        let (body, requested_one_m) = finalize_standard_anthropic_one_m(body, mapped_one_m, false);
+        let existing = HeaderValue::from_static(
+            "claude-code-20250219,interleaved-thinking-2025-05-14,claude-code-20250219",
+        );
+
+        let beta = build_anthropic_beta_value(Some(&existing), true, requested_one_m)
+            .expect("standard Anthropic forwarding should emit beta headers");
+
+        assert_eq!(body["model"], "claude-fable-5");
+        assert_eq!(
+            beta,
+            "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14"
+        );
+        assert_eq!(beta.matches("context-1m-2025-08-07").count(), 1);
+        assert_eq!(beta.matches("claude-code-20250219").count(), 1);
+    }
+
+    #[test]
+    fn model_override_controls_final_one_m_intent() {
+        let (body, requested_one_m) =
+            finalize_standard_anthropic_one_m(json!({"model": "claude-fable-5"}), true, true);
+        assert_eq!(body["model"], "claude-fable-5");
+        assert!(!requested_one_m);
+
+        let (body, requested_one_m) =
+            finalize_standard_anthropic_one_m(json!({"model": "claude-fable-5[1m]"}), false, true);
+        assert_eq!(body["model"], "claude-fable-5");
+        assert!(requested_one_m);
+    }
+
+    #[test]
+    fn science_fable_compatibility_is_minimal_and_idempotent() {
+        let mut body = json!({
+            "model": "claude-fable-5",
+            "metadata": {"user_id": "{\"session_id\":\"science-session\"}"},
+            "system": [
+                {
+                    "type": "text",
+                    "text": "x-anthropic-billing-header: cc_version=0.1.18; cc_entrypoint=operon;"
+                },
+                {"type": "text", "text": "Science system prompt"}
+            ],
+            "tools": [
+                {"name": "bash", "description": "run", "input_schema": {"type": "object"}},
+                {"name": "edit_file", "description": "edit", "input_schema": {"type": "object"}},
+                {"name": "read_file", "description": "read", "input_schema": {"type": "object"}}
+            ]
+        });
+
+        let aliases = prepare_claude_science_fable_request(&mut body);
+        let repeated_aliases = prepare_claude_science_fable_request(&mut body);
+
+        assert_eq!(
+            body.pointer("/system/0/text").and_then(Value::as_str),
+            Some(CLAUDE_AGENT_SDK_SYSTEM_IDENTITY)
+        );
+        assert_eq!(
+            body["system"]
+                .as_array()
+                .expect("system blocks")
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .filter(|text| text.starts_with("x-anthropic-billing-header:"))
+                .count(),
+            0
+        );
+        let metadata: Value = serde_json::from_str(
+            body.pointer("/metadata/user_id")
+                .and_then(Value::as_str)
+                .expect("metadata user_id"),
+        )
+        .expect("metadata JSON");
+        assert_eq!(metadata["device_id"], CLAUDE_SCIENCE_FABLE_DEVICE_ID);
+        assert_eq!(metadata["session_id"], "science-session");
+
+        let tools = body["tools"].as_array().expect("tools");
+        for name in ["Bash", "Edit", "Read"] {
+            assert_eq!(
+                tools
+                    .iter()
+                    .filter(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+                    .count(),
+                1
+            );
+        }
+        assert_eq!(tools.len(), 6);
+        assert_eq!(
+            aliases,
+            BTreeMap::from([
+                ("Bash".to_string(), "bash".to_string()),
+                ("Edit".to_string(), "edit_file".to_string()),
+                ("Read".to_string(), "read_file".to_string()),
+            ])
+        );
+        assert!(repeated_aliases.is_empty());
+    }
+
+    #[test]
+    fn science_tool_alias_response_remap_is_scoped_to_injected_aliases() {
+        let aliases = BTreeMap::from([
+            ("Bash".to_string(), "bash".to_string()),
+            ("Edit".to_string(), "edit_file".to_string()),
+        ]);
+        let mut response = json!({
+            "type": "message",
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {}},
+                {"type": "tool_use", "id": "toolu_2", "name": "Edit", "input": {}},
+                {"type": "tool_use", "id": "toolu_3", "name": "Read", "input": {}}
+            ]
+        });
+
+        assert_eq!(
+            remap_claude_science_tool_aliases(&mut response, &aliases),
+            2
+        );
+        assert_eq!(response["content"][0]["name"], "bash");
+        assert_eq!(response["content"][1]["name"], "edit_file");
+        assert_eq!(response["content"][2]["name"], "Read");
+    }
+
+    #[tokio::test]
+    async fn science_tool_alias_stream_remap_handles_split_sse_chunks() {
+        let aliases = BTreeMap::from([("Read".to_string(), "read_file".to_string())]);
+        let headers = http::HeaderMap::from_iter([(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("text/event-stream"),
+        )]);
+        let chunks = futures::stream::iter([
+            Ok(Bytes::from_static(
+                b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Re",
+            )),
+            Ok(Bytes::from_static(b"ad\",\"input\":{}}}\n\n")),
+        ]);
+        let response = ProxyResponse::streamed(http::StatusCode::OK, headers, chunks);
+
+        let rewritten = rewrite_claude_science_tool_alias_response(response, aliases)
+            .await
+            .expect("rewrite Science stream")
+            .bytes()
+            .await
+            .expect("collect rewritten stream");
+        let rewritten = String::from_utf8(rewritten.to_vec()).expect("utf8 SSE");
+
+        assert!(rewritten.contains("\"name\":\"read_file\""), "{rewritten}");
+        assert!(!rewritten.contains("\"name\":\"Read\""), "{rewritten}");
+    }
+
+    #[test]
+    fn science_marker_requires_auth_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer PROXY_MANAGED_CLAUDE_SCIENCE"),
+        );
+        assert!(headers_contain_claude_science_placeholder(&headers));
+
+        headers.clear();
+        headers.insert(
+            "x-debug-marker",
+            HeaderValue::from_static("PROXY_MANAGED_CLAUDE_SCIENCE"),
+        );
+        assert!(!headers_contain_claude_science_placeholder(&headers));
     }
 
     #[test]
