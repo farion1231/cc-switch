@@ -4425,18 +4425,49 @@ mod tests {
         create_history_test_threads_table(&conn);
         conn.execute_batch("CREATE TABLE backfill_state (id INTEGER PRIMARY KEY, status TEXT NOT NULL, last_watermark TEXT, last_success_at INTEGER, updated_at INTEGER NOT NULL); INSERT INTO backfill_state VALUES (1, 'complete', NULL, 0, 0);")
             .expect("backfill state");
-        let active = ActiveCodexStateDb { path: db_path.clone(), kind: "codex_root".to_string() };
+        let active = ActiveCodexStateDb {
+            path: db_path.clone(),
+            kind: "codex_root".to_string(),
+        };
         drop(conn);
         let result = repair_codex_history_visibility_at(
-            &codex_dir, active, "codex_model_router_v2", Some("codex_model_router_v2".to_string()), source_ids(&["openai"]), None,
-            HistoryVisibilityRepairRuntimeOptions { dry_run: false, count: 1, window_limit: 10, balance_recent_window: false, max_per_project: 1, max_total: 1, source_filter: Some("all".to_string()), include_archived: false, include_subagents: false, selected_session_ids: BTreeSet::new(), provider_bucket_sync_enabled: true, backup_root_override: Some(dir.path().join("backup")) }
-        ).expect("repair");
+            &codex_dir,
+            active,
+            "codex_model_router_v2",
+            Some("codex_model_router_v2".to_string()),
+            source_ids(&["openai"]),
+            None,
+            HistoryVisibilityRepairRuntimeOptions {
+                dry_run: false,
+                count: 1,
+                window_limit: 10,
+                balance_recent_window: false,
+                max_per_project: 1,
+                max_total: 1,
+                source_filter: Some("all".to_string()),
+                include_archived: false,
+                include_subagents: false,
+                selected_session_ids: BTreeSet::new(),
+                provider_bucket_sync_enabled: true,
+                backup_root_override: Some(dir.path().join("backup")),
+            },
+        )
+        .expect("repair");
         assert_eq!(result.thread_rows_inserted, 1);
         assert!(result.backfill_state_updated);
         let conn = Connection::open(db_path).expect("read db");
         let row: (String, i64, String, String) = conn.query_row("SELECT model_provider, has_user_event, preview, first_user_message FROM threads WHERE id='restored'", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).expect("rebuilt row");
-        assert_eq!(row.0, "codex_model_router_v2"); assert_eq!(row.1, 1); assert_eq!(row.2, "restore this history"); assert_eq!(row.3, "restore this history");
-        assert_eq!(conn.query_row("SELECT status FROM backfill_state WHERE id=1", [], |row| row.get::<_, String>(0)).expect("status"), "complete");
+        assert_eq!(row.0, "codex_model_router_v2");
+        assert_eq!(row.1, 1);
+        assert_eq!(row.2, "restore this history");
+        assert_eq!(row.3, "restore this history");
+        assert_eq!(
+            conn.query_row("SELECT status FROM backfill_state WHERE id=1", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .expect("status"),
+            "complete"
+        );
     }
 
     #[test]
