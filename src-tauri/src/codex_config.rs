@@ -477,6 +477,18 @@ fn codex_catalog_model_entry(
     entry_obj.insert("description".to_string(), json!(spec.display_name));
     entry_obj.insert("context_window".to_string(), json!(spec.context_window));
     entry_obj.insert("max_context_window".to_string(), json!(spec.context_window));
+    // Only the Responses -> Chat bridge currently synthesizes the single
+    // `compaction` item that Codex remote compaction requires. Advertising an
+    // automatic threshold for Anthropic/native profiles would make Codex
+    // trigger a protocol path those gateways cannot complete.
+    if profile == CodexCatalogToolProfile::ProxyChat {
+        entry_obj.insert(
+            "auto_compact_token_limit".to_string(),
+            json!(spec.context_window.saturating_mul(9) / 10),
+        );
+    } else {
+        entry_obj.remove("auto_compact_token_limit");
+    }
     entry_obj.insert("priority".to_string(), json!(1000 + priority));
     entry_obj.insert("additional_speed_tiers".to_string(), json!([]));
     entry_obj.insert("service_tiers".to_string(), json!([]));
@@ -2964,6 +2976,48 @@ base_url = "https://production.api/v1"
             entry.get("context_window").and_then(|v| v.as_u64()),
             Some(1_000_000)
         );
+        assert!(
+            entry.get("auto_compact_token_limit").is_none(),
+            "native Responses entries must not advertise Chat-only compaction support"
+        );
+    }
+
+    #[test]
+    fn auto_compact_threshold_is_only_advertised_for_proxy_chat() {
+        let template = json!({
+            "auto_compact_token_limit": 1,
+            "base_instructions": "You are a coding agent."
+        });
+        let specs = vec![CodexCatalogModelSpec {
+            model: "deepseek-v4-pro".to_string(),
+            display_name: "DeepSeek V4 Pro".to_string(),
+            context_window: 1_000_000,
+            supports_parallel_tool_calls: None,
+            input_modalities: None,
+            base_instructions: None,
+        }];
+
+        let proxy =
+            codex_model_catalog_from_specs(&specs, &template, CodexCatalogToolProfile::ProxyChat);
+        assert_eq!(
+            proxy["models"][0]
+                .get("auto_compact_token_limit")
+                .and_then(Value::as_u64),
+            Some(900_000)
+        );
+
+        for profile in [
+            CodexCatalogToolProfile::NativeResponses,
+            CodexCatalogToolProfile::Anthropic,
+        ] {
+            let catalog = codex_model_catalog_from_specs(&specs, &template, profile);
+            assert!(
+                catalog["models"][0]
+                    .get("auto_compact_token_limit")
+                    .is_none(),
+                "unsupported profile {profile:?} must remove inherited compaction thresholds"
+            );
+        }
     }
 
     #[test]

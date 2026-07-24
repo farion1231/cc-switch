@@ -84,6 +84,31 @@ pub fn should_convert_codex_responses_to_chat(provider: &Provider, endpoint: &st
     ) && codex_provider_uses_chat_completions(provider)
 }
 
+/// Detect both generations of Codex remote compaction requests.
+///
+/// Legacy clients use `/responses/compact`; current remote-v2 clients keep
+/// using `/responses` and append a `compaction_trigger` input item. Do not use
+/// `x-codex-turn-metadata.request_kind == "compaction"` as a signal here:
+/// Codex also sends that metadata for local checkpoint compaction, whose Chat
+/// response must remain an assistant summary rather than an opaque compaction
+/// item.
+pub fn is_codex_remote_compaction_request(endpoint: &str, body: &JsonValue) -> bool {
+    let path = endpoint
+        .split_once('?')
+        .map_or(endpoint, |(path, _query)| path);
+    if matches!(path, "/responses/compact" | "/v1/responses/compact") {
+        return true;
+    }
+
+    body.get("input")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("type").and_then(JsonValue::as_str) == Some("compaction_trigger")
+            })
+        })
+}
+
 /// Whether a converted Codex Responses request may send `prompt_cache_key` to
 /// its Chat Completions upstream. Unknown OpenAI-compatible gateways default to
 /// false because many reject unsupported request fields with HTTP 400.
@@ -1349,6 +1374,44 @@ wire_api = "chat"
         assert!(should_convert_codex_responses_to_chat(
             &provider,
             "/responses/compact?stream=true"
+        ));
+    }
+
+    #[test]
+    fn detects_legacy_and_v2_codex_remote_compaction_requests() {
+        assert!(is_codex_remote_compaction_request(
+            "/v1/responses/compact?stream=true",
+            &json!({"input": []}),
+        ));
+        assert!(is_codex_remote_compaction_request(
+            "/v1/responses",
+            &json!({
+                "input": [
+                    {"role": "user", "content": "hello"},
+                    {"type": "compaction_trigger"}
+                ]
+            }),
+        ));
+    }
+
+    #[test]
+    fn local_compaction_metadata_is_not_remote_compaction() {
+        assert!(!is_codex_remote_compaction_request(
+            "/responses",
+            &json!({
+                "input": [],
+                "client_metadata": {
+                    "x-codex-turn-metadata": "{\"request_kind\":\"compaction\"}"
+                }
+            }),
+        ));
+    }
+
+    #[test]
+    fn ordinary_codex_turn_is_not_compaction() {
+        assert!(!is_codex_remote_compaction_request(
+            "/v1/responses",
+            &json!({"input": [{"role": "user", "content": "hello"}]}),
         ));
     }
 
