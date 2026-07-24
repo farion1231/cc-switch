@@ -15,7 +15,7 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::grok_config::get_grok_config_dir;
+use crate::grok_config::{extract_model_config, get_grok_config_dir};
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
@@ -69,9 +69,10 @@ pub fn sync_grokbuild_usage(db: &Database) -> Result<SessionSyncResult, AppError
 
     result.files_scanned = 1;
 
-    let session_models = load_session_model_map(&grok_dir.join("sessions"));
+    let (profile_models, default_model) = load_config_model_maps(&grok_dir);
+    let session_models = load_session_model_map(&grok_dir.join("sessions"), &profile_models);
 
-    match sync_unified_log(db, &log_path, &session_models) {
+    match sync_unified_log(db, &log_path, &session_models, &default_model) {
         Ok((imported, skipped)) => {
             result.imported = imported;
             result.skipped = skipped;
@@ -100,6 +101,7 @@ fn sync_unified_log(
     db: &Database,
     file_path: &Path,
     session_models: &HashMap<String, String>,
+    default_model: &str,
 ) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
@@ -115,36 +117,55 @@ fn sync_unified_log(
 
     let file =
         fs::File::open(file_path).map_err(|e| AppError::Config(format!("无法打开文件: {e}")))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
+    // 仅推进到「以 \\n 结尾的完整行」；未写完的尾行留给下次同步，避免永久丢 usage。
     let mut line_offset: i64 = 0;
+    let mut committed_offset: i64 = last_offset;
+    let mut line_buf: Vec<u8> = Vec::new();
 
-    for line_result in reader.lines() {
+    loop {
+        line_buf.clear();
+        let bytes_read = reader
+            .read_until(b'\n', &mut line_buf)
+            .map_err(|e| AppError::Config(format!("读取 Grok Build 日志失败: {e}")))?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        // 没有换行符：当前是正在写入的半行，不推进游标
+        if !line_buf.ends_with(&[b'\n']) {
+            break;
+        }
+
         line_offset += 1;
         if line_offset <= last_offset {
             continue;
         }
 
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+        let line = std::str::from_utf8(&line_buf).unwrap_or("").trim_end_matches(['\r', '\n']);
         if line.trim().is_empty() {
+            committed_offset = line_offset;
             continue;
         }
 
-        let value: Value = match serde_json::from_str(&line) {
+        let value: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(_) => {
+                // 完整行但 JSON 损坏：跳过并推进，避免卡死
+                committed_offset = line_offset;
+                continue;
+            }
         };
 
         let Some(turn) = parse_inference_done(&value, line_offset) else {
+            committed_offset = line_offset;
             continue;
         };
 
-        let model = resolve_model(&turn.session_id, session_models);
+        let model = resolve_model(&turn.session_id, session_models, default_model);
         let request_id = format!(
             "grokbuild_session:{}:L{}:i{}",
             turn.session_id, turn.line_offset, turn.loop_index
@@ -158,9 +179,10 @@ fn sync_unified_log(
                 skipped += 1;
             }
         }
+        committed_offset = line_offset;
     }
 
-    update_sync_state(db, &file_path_str, file_modified, line_offset)?;
+    update_sync_state(db, &file_path_str, file_modified, committed_offset)?;
     Ok((imported, skipped))
 }
 
@@ -215,8 +237,54 @@ fn json_u32(obj: &Value, key: &str) -> u32 {
         .unwrap_or(0)
 }
 
+/// 从 `~/.grok/config.toml` 读取 profile slug → 真实 model，以及默认模型。
+fn load_config_model_maps(grok_dir: &Path) -> (HashMap<String, String>, String) {
+    let config_path = grok_dir.join("config.toml");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let profile_models = load_profile_model_map(&content);
+    let default_model = extract_model_config(&content)
+        .map(|cfg| normalize_model_id(&cfg.model, &profile_models))
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    (profile_models, default_model)
+}
+
+/// 解析 `[model.<slug>] model = "..."` 映射（不限于 models.default）。
+fn load_profile_model_map(config_toml: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Ok(document) = config_toml.parse::<toml::Value>() else {
+        return map;
+    };
+    let Some(models) = document
+        .as_table()
+        .and_then(|root| root.get("model"))
+        .and_then(|v| v.as_table())
+    else {
+        return map;
+    };
+
+    for (slug, value) in models {
+        let Some(model) = value
+            .as_table()
+            .and_then(|t| t.get("model"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let slug = slug.trim();
+        if !slug.is_empty() {
+            map.insert(slug.to_string(), model.to_string());
+        }
+    }
+    map
+}
+
 /// 从 `~/.grok/sessions/**/summary.json` 构建 session_id → model 映射
-fn load_session_model_map(sessions_dir: &Path) -> HashMap<String, String> {
+fn load_session_model_map(
+    sessions_dir: &Path,
+    profile_models: &HashMap<String, String>,
+) -> HashMap<String, String> {
     let mut map = HashMap::new();
     if !sessions_dir.is_dir() {
         return map;
@@ -269,7 +337,7 @@ fn load_session_model_map(sessions_dir: &Path) -> HashMap<String, String> {
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
             {
-                map.insert(session_id, normalize_model_id(model));
+                map.insert(session_id, normalize_model_id(model, profile_models));
             }
         }
     }
@@ -277,24 +345,38 @@ fn load_session_model_map(sessions_dir: &Path) -> HashMap<String, String> {
     map
 }
 
-fn resolve_model(session_id: &str, session_models: &HashMap<String, String>) -> String {
+fn resolve_model(
+    session_id: &str,
+    session_models: &HashMap<String, String>,
+    default_model: &str,
+) -> String {
     session_models
         .get(session_id)
         .cloned()
-        .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+        .unwrap_or_else(|| default_model.to_string())
 }
 
-/// 规范化模型 ID：别名映射 + 自定义 provider slug 回落
-fn normalize_model_id(raw: &str) -> String {
+/// 规范化模型 ID：别名映射 + 自定义 profile slug 解析
+fn normalize_model_id(raw: &str, profile_models: &HashMap<String, String>) -> String {
     let id = raw.trim();
     if id.is_empty() {
         return DEFAULT_MODEL.to_string();
     }
 
-    match id {
+    // `[model.cpa] model = "grok-4.3"` 时 summary 可能只记 profile slug
+    let resolved = if looks_like_provider_slug(id) {
+        profile_models
+            .get(id)
+            .map(String::as_str)
+            .unwrap_or(id)
+    } else {
+        id
+    };
+
+    match resolved {
         "grok-build" | "grok-code-fast-1" | "grok-build-0.1" => "grok-build-0.1".to_string(),
         "grok-composer-2-fast" | "grok-composer-2.5-fast" => "grok-composer-2.5-fast".to_string(),
-        // 用户自定义 [model.<slug>] 的 slug（如 cpa / heiyu）通常不是计费模型名
+        // 仍无法解析的 slug：回落默认，避免把 provider 名当成计费模型
         other if looks_like_provider_slug(other) => DEFAULT_MODEL.to_string(),
         other => other.to_string(),
     }
@@ -461,6 +543,13 @@ fn find_grokbuild_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::services::session_usage::get_sync_state;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    fn empty_profiles() -> HashMap<String, String> {
+        HashMap::new()
+    }
 
     #[test]
     fn parse_inference_done_splits_cache_inclusive_prompt() {
@@ -500,12 +589,52 @@ mod tests {
 
     #[test]
     fn normalize_model_aliases_and_provider_slugs() {
-        assert_eq!(normalize_model_id("grok-build"), "grok-build-0.1");
-        assert_eq!(normalize_model_id("grok-code-fast-1"), "grok-build-0.1");
-        assert_eq!(normalize_model_id("grok-4.5"), "grok-4.5");
-        assert_eq!(normalize_model_id("cpa"), "grok-4.5");
-        assert_eq!(normalize_model_id("heiyu"), "grok-4.5");
-        assert_eq!(normalize_model_id("cursorlao"), "grok-4.5");
+        let profiles = empty_profiles();
+        assert_eq!(normalize_model_id("grok-build", &profiles), "grok-build-0.1");
+        assert_eq!(
+            normalize_model_id("grok-code-fast-1", &profiles),
+            "grok-build-0.1"
+        );
+        assert_eq!(normalize_model_id("grok-4.5", &profiles), "grok-4.5");
+        // 无 config 映射时 slug 回落默认
+        assert_eq!(normalize_model_id("cpa", &profiles), "grok-4.5");
+        assert_eq!(normalize_model_id("heiyu", &profiles), "grok-4.5");
+        assert_eq!(normalize_model_id("cursorlao", &profiles), "grok-4.5");
+    }
+
+    #[test]
+    fn normalize_resolves_profile_slug_via_config_map() {
+        let mut profiles = HashMap::new();
+        profiles.insert("cpa".into(), "grok-4.3".into());
+        profiles.insert("heiyu".into(), "grok-4.5".into());
+        assert_eq!(normalize_model_id("cpa", &profiles), "grok-4.3");
+        assert_eq!(normalize_model_id("heiyu", &profiles), "grok-4.5");
+        assert_eq!(normalize_model_id("unknown-slug", &profiles), "grok-4.5");
+    }
+
+    #[test]
+    fn load_profile_model_map_reads_all_model_tables() {
+        let toml = r#"
+[models]
+default = "cpa"
+
+[model.cpa]
+name = "CPA"
+model = "grok-4.3"
+base_url = "https://example.com"
+api_backend = "responses"
+context_window = 500000
+
+[model.heiyu]
+name = "Heiyu"
+model = "grok-4.5"
+base_url = "https://example.com"
+api_backend = "responses"
+context_window = 500000
+"#;
+        let map = load_profile_model_map(toml);
+        assert_eq!(map.get("cpa").map(String::as_str), Some("grok-4.3"));
+        assert_eq!(map.get("heiyu").map(String::as_str), Some("grok-4.5"));
     }
 
     #[test]
@@ -552,6 +681,83 @@ mod tests {
         assert_eq!(cache, 400);
         assert_eq!(output, 70); // 50 + 20 reasoning
         assert_eq!(semantics, INPUT_TOKEN_SEMANTICS_TOTAL);
+        Ok(())
+    }
+
+    #[test]
+    fn sync_does_not_commit_partial_trailing_line() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = TempDir::new().expect("tempdir");
+        let log_path = temp.path().join("unified.jsonl");
+
+        let complete = serde_json::json!({
+            "ts": "2026-07-22T01:00:00.000Z",
+            "sid": "sess-partial",
+            "msg": "shell.turn.inference_done",
+            "ctx": {
+                "loop_index": 0,
+                "prompt_tokens": 100,
+                "cached_prompt_tokens": 10,
+                "completion_tokens": 5,
+                "reasoning_tokens": 2
+            }
+        });
+        // 完整行 + 未写完的半行（模拟 Grok 仍在 append）
+        {
+            let mut file = fs::File::create(&log_path).expect("create log");
+            writeln!(file, "{complete}").expect("write complete");
+            write!(
+                file,
+                r#"{{"msg":"shell.turn.inference_done","sid":"sess-partial","ctx":{{"#
+            )
+            .expect("write partial");
+        }
+
+        let (imported, _) =
+            sync_unified_log(&db, &log_path, &HashMap::new(), DEFAULT_MODEL)?;
+        assert_eq!(imported, 1);
+
+        let path_str = log_path.to_string_lossy().to_string();
+        let (_, offset) = get_sync_state(&db, &path_str)?;
+        // 只提交完整行 1；半行不得推进游标
+        assert_eq!(offset, 1);
+
+        // 写成两行完整 JSONL，mtime 变化后二次同步应导入第二行
+        let complete2 = serde_json::json!({
+            "ts": "2026-07-22T01:00:01.000Z",
+            "sid": "sess-partial",
+            "msg": "shell.turn.inference_done",
+            "ctx": {
+                "loop_index": 1,
+                "prompt_tokens": 200,
+                "cached_prompt_tokens": 20,
+                "completion_tokens": 8,
+                "reasoning_tokens": 3
+            }
+        });
+        {
+            let mut file = fs::File::create(&log_path).expect("rewrite");
+            writeln!(file, "{complete}").expect("line1");
+            writeln!(file, "{complete2}").expect("line2");
+        }
+        // 确保 mtime 严格大于上次同步记录（极快写盘时可能撞纳秒）
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        {
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(&log_path)
+                .expect("touch");
+            file.write_all(b"").ok();
+            file.flush().ok();
+        }
+
+        let (imported2, _) =
+            sync_unified_log(&db, &log_path, &HashMap::new(), DEFAULT_MODEL)?;
+        // 第一行已存在（skip），第二行新导入
+        assert_eq!(imported2, 1);
+
+        let (_, offset2) = get_sync_state(&db, &path_str)?;
+        assert_eq!(offset2, 2);
         Ok(())
     }
 

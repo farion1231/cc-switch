@@ -1854,7 +1854,8 @@ impl Database {
         // 1. 历史 Codex/Gemini 行只包含 cache read；新 total 行还包含 cache write。
         // 2. Claude/Anthropic 的 input_tokens 已经是 fresh input，不能再次扣减
         // 3. 各项成本是基础成本（不含倍率），倍率只作用于最终总价
-        let cache_inclusive_app = matches!(log.app_type.as_str(), "codex" | "gemini");
+        // Grok Build session 与 Codex/Gemini 一样：input_tokens 含 cache（TOTAL 语义）
+        let cache_inclusive_app = matches!(log.app_type.as_str(), "codex" | "gemini" | "grokbuild");
         let billable_input_tokens =
             if !cache_inclusive_app || log.input_token_semantics == INPUT_TOKEN_SEMANTICS_FRESH {
                 log.input_tokens as u64
@@ -2610,6 +2611,61 @@ mod tests {
                 ("total-cache-semantics".to_string(), "1.000000".to_string()),
             ]
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_grokbuild_total_semantics_does_not_double_bill_cache() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            // grok-4.5: input=$2/M, output=$6/M, cache_read=$0.50/M
+            // TOTAL: input=1_000_000 (含 cache_read 400_000), output=100_000
+            // billable input = 600_000 → $1.2; cache_read → $0.2; output → $0.6; total $2.0
+            insert_usage_log(
+                &conn,
+                "grokbuild-total-zero-cost",
+                "grokbuild",
+                "_grok_session",
+                "grok-4.5",
+                "grok_session",
+                1000,
+                1_000_000,
+                100_000,
+                400_000,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'grokbuild-total-zero-cost'",
+                [INPUT_TOKEN_SEMANTICS_TOTAL],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        let conn = lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, output_cost, total_cost): (
+            String,
+            String,
+            String,
+            String,
+        ) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, output_cost_usd, total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'grokbuild-total-zero-cost'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(input_cost, "1.200000");
+        assert_eq!(cache_read_cost, "0.200000");
+        assert_eq!(output_cost, "0.600000");
+        assert_eq!(total_cost, "2.000000");
 
         Ok(())
     }
