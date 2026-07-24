@@ -93,7 +93,7 @@ CC Switch 的做法是让 Claude Code 始终连本机路由，仍以 Anthropic M
 - **工具与多模态完整转换**：多轮工具调用、图片与 PDF 输入都被完整转换。
 - **上下文按 200K 窗口管理**：Claude Code 对路由供应商按默认 200K 窗口做自动压缩。上游实际窗口更大时（如 ChatGPT Codex 服务的 gpt-5.6 为 372K），超出 200K 的部分当前不会被用到——压缩会提前触发，保守但安全。想突破 200K，目前唯一的开关是模型映射里的 `1M` 复选框（严格声明 1M），仅限方式一且上游真按 1M 及以上服务该模型时使用；方式二的上游上限是 372K、够不到 1M，勾选反而会让长对话在上游真实上限处报错，请维持默认。
 - **输出上限**：方式二的输出上限由 ChatGPT 服务端控制（Claude Code 请求里的 `max_tokens` 不会下发）；方式一则原样透传 Claude Code 的 `max_tokens`，无需配置。
-- **内置联网搜索取决于上游支持**：路由会把 Claude Code 的托管 WebSearch 工具转换为 Responses API 的托管 `web_search` 工具，可用于 Codex OAuth 和实现该工具的兼容 Responses 网关。`allowed_domains` 会保留；由于 Responses 没有等价的拒绝列表，带有非空 `blocked_domains` 的请求会明确失败，而不会静默忽略限制。本地执行的 WebFetch 不受影响。
+- **内置联网搜索取决于上游支持**：路由会把 Claude Code 的托管 WebSearch 工具转换为 Responses API 的托管 `web_search` 工具，可用于 Codex OAuth 和实现该工具的兼容 Responses 网关。`allowed_domains` 会保留；在 API Key Responses 路由中，`max_uses` 会映射为上游的 `max_tool_calls` 硬限制。Codex OAuth 请求协议会拒绝该字段，因此桥接层会对强制使用托管搜索的请求本地限流：把上限写入模型指令，在额外调用开始时立即终止上游流，并返回 `max_uses_exceeded`；无法安全表示逐工具预算的非强制 Codex 请求则明确失败。由于 Responses 没有等价的拒绝列表，带有非空 `blocked_domains` 的请求也会明确失败。本地执行的 WebFetch 不受影响。
 - **用量看板金额是参考值**：token 计数准确，但美元金额是按公开 API 价折算的估算——方式二订阅流量按 GPT-5.6 公开价折算，方式一的第三方网关按各自费率计费，两者都可能与真实扣费不符，仅供对比。方式二的额度消耗以供应商卡片上的窗口利用率为准。
 
 ## 常见问题
