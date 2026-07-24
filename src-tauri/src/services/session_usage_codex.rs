@@ -516,7 +516,38 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         );
     }
 
+    match restore_unrecovered_codex_rollups(db) {
+        Ok(restored) if restored > 0 => {
+            log::info!(
+                "[CODEX-SYNC] 从 v16 迁移前快照恢复了 {restored} 行重导入无法覆盖的历史用量"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => log::warn!("[CODEX-SYNC] 从 v16 迁移前快照恢复历史用量失败: {e}"),
+    }
+
     Ok(result)
+}
+
+/// Fill in `_codex_session` rollup rows the post-migration reimport could
+/// not recover (source JSONL already deleted/rotated away), using the
+/// snapshot `migrate_v15_to_v16` took before the v16 reset. `INSERT OR
+/// IGNORE` means this only ever fills gaps — a date the corrected importer
+/// did reimport already occupies that primary key and is left untouched.
+/// See `Database::migrate_v15_to_v16` and GitHub issue #5727.
+fn restore_unrecovered_codex_rollups(db: &Database) -> Result<u32, AppError> {
+    let conn = lock_conn!(db.conn);
+    if !sqlite_table_exists(&conn, "usage_daily_rollups_codex_v15_backup")? {
+        return Ok(0);
+    }
+    let restored = conn
+        .execute(
+            "INSERT OR IGNORE INTO usage_daily_rollups
+                 SELECT * FROM usage_daily_rollups_codex_v15_backup",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("恢复 Codex 历史用量失败: {e}")))?;
+    Ok(restored as u32)
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
@@ -1937,6 +1968,56 @@ mod tests {
             assert_eq!((codex_rows, gemini_rows, codex_rollups), (0, 1, 0));
             assert_eq!(remaining_cursors, 2);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn restore_unrecovered_codex_rollups_fills_gaps_without_overwriting_reimported_rows(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TABLE usage_daily_rollups_codex_v15_backup AS
+                     SELECT * FROM usage_daily_rollups WHERE 0;
+                 INSERT INTO usage_daily_rollups_codex_v15_backup
+                    (date, app_type, provider_id, model, request_model, pricing_model,
+                     request_count, success_count, input_tokens, output_tokens,
+                     cache_read_tokens, cache_creation_tokens, total_cost_usd,
+                     avg_latency_ms, input_token_semantics)
+                 VALUES
+                    -- unrecoverable: source JSONL is gone, only the reimport-era row exists live
+                    ('2026-05-10', 'codex', '_codex_session', 'gpt-5.4', '', '', 10, 10, 100, 50, 0, 0, '0', 0, 0),
+                    -- would-be stale: reimport already produced a corrected row for this date
+                    ('2026-07-10', 'codex', '_codex_session', 'gpt-5.4', '', '', 999, 999, 999, 999, 0, 0, '0', 0, 0);
+                 INSERT INTO usage_daily_rollups
+                    (date, app_type, provider_id, model, request_model, pricing_model,
+                     request_count, success_count, input_tokens, output_tokens,
+                     cache_read_tokens, cache_creation_tokens)
+                 VALUES
+                    ('2026-07-10', 'codex', '_codex_session', 'gpt-5.4', '', '', 5, 5, 20, 10, 0, 0);",
+            )?;
+        }
+
+        let restored = restore_unrecovered_codex_rollups(&db)?;
+        assert_eq!(restored, 1);
+
+        let conn = lock_conn!(db.conn);
+        let recovered_row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups WHERE date = '2026-05-10'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(recovered_row_count, 1);
+
+        // Reimported row for 2026-07-10 must win over the stale snapshot value.
+        let july_request_count: i64 = conn.query_row(
+            "SELECT request_count FROM usage_daily_rollups WHERE date = '2026-07-10'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(july_request_count, 5);
+
         Ok(())
     }
 
