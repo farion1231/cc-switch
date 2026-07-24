@@ -2285,14 +2285,16 @@ impl RequestForwarder {
                 response = self
                     .validate_codex_anthropic_success_response(response)
                     .await?;
-            } else if matches!(
+            } else if should_validate_responses_semantics(
+                app_type,
+                endpoint,
                 resolved_claude_api_format.as_deref(),
-                Some("openai_responses")
+                codex_responses_to_chat || codex_responses_to_anthropic,
             ) {
                 if !request_is_streaming || response.is_json() {
-                    // Claude→Responses gateways can also return a semantic failure in an
-                    // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
-                    // retry loop so an early failure can still select another provider.
+                    // Responses gateways can also return a semantic failure in an HTTP
+                    // 2xx Response object. Validate buffered/JSON bodies inside the retry
+                    // loop so an early failure can still select another provider.
                     response = self.validate_responses_success_response(response).await?;
                 } else {
                     // Delay committing the downstream stream until the upstream emits
@@ -2415,14 +2417,20 @@ impl RequestForwarder {
         &self,
         response: ProxyResponse,
     ) -> Result<ProxyResponse, ProxyError> {
-        const MAX_PRIME_BYTES: usize = 256 * 1024;
+        // 混合预缓冲：前 1 MiB 留在内存，超过后转存匿名临时文件。
+        // 64 MiB 绝对上限用于阻止始终无法提交的流无限增长。
+        const IN_MEMORY_LIMIT: usize = 1024 * 1024; // 1 MiB
+        const MAX_EVENT_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
+        const ABSOLUTE_LIMIT: usize = 64 * 1024 * 1024; // 64 MiB
 
         let status = response.status();
         let headers = response.headers().clone();
         let mut stream = Box::pin(response.bytes_stream());
         let mut replay_chunks: Vec<Bytes> = Vec::new();
+        let mut spill_file: Option<tokio::fs::File> = None;
         let mut parse_buffer = String::new();
         let mut utf8_remainder = Vec::new();
+        let mut total_primed: usize = 0;
 
         loop {
             let next = if self.streaming_first_byte_timeout.is_zero() {
@@ -2439,16 +2447,23 @@ impl RequestForwarder {
             };
 
             let Some(chunk) = next else {
+                // 流结束时，最后检查尚未被 SSE 分隔符终结的解析缓冲。
                 if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
                     outcome?;
-                    let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
-                    return Ok(ProxyResponse::streamed(status, headers, replay));
+                    return Ok(ProxyResponse::streamed(
+                        status,
+                        headers,
+                        Self::chain_replay(replay_chunks, spill_file.take(), stream),
+                    ));
                 }
                 if !parse_buffer.trim().is_empty() {
                     if let Some(outcome) = inspect_responses_start_event(parse_buffer.trim()) {
                         outcome?;
-                        let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
-                        return Ok(ProxyResponse::streamed(status, headers, replay));
+                        return Ok(ProxyResponse::streamed(
+                            status,
+                            headers,
+                            Self::chain_replay(replay_chunks, spill_file.take(), stream),
+                        ));
                     }
                 }
                 return Err(ProxyError::ForwardFailed(
@@ -2461,8 +2476,46 @@ impl RequestForwarder {
                     "Failed while validating Responses stream start: {error}"
                 ))
             })?;
+
+            // 达到绝对上限仍没有语义结果时，故障转移而不是提交未知字节。
+            total_primed = total_primed.saturating_add(chunk.len());
+            if total_primed > ABSOLUTE_LIMIT {
+                return Err(ProxyError::ForwardFailed(format!(
+                    "Responses stream priming exceeded {} MiB absolute limit",
+                    ABSOLUTE_LIMIT / (1024 * 1024)
+                )));
+            }
+
             crate::proxy::sse::append_utf8_safe(&mut parse_buffer, &mut utf8_remainder, &chunk);
+
+            // 在内存中累计到阈值；跨过阈值时将已有块和当前块按序写入临时文件，
+            // 后续块直接追加到同一文件。
             replay_chunks.push(chunk);
+            if total_primed > IN_MEMORY_LIMIT && spill_file.is_none() {
+                use tokio::io::AsyncWriteExt;
+                let file = tempfile::tempfile().map_err(|e| {
+                    ProxyError::ForwardFailed(format!("Failed to create priming tempfile: {e}"))
+                })?;
+                let mut f = tokio::fs::File::from_std(file);
+                for buffered in replay_chunks.drain(..) {
+                    f.write_all(&buffered).await.map_err(|e| {
+                        ProxyError::ForwardFailed(format!(
+                            "Failed to write priming buffer to tempfile: {e}"
+                        ))
+                    })?;
+                }
+                spill_file = Some(f);
+            } else if let Some(ref mut f) = spill_file {
+                use tokio::io::AsyncWriteExt;
+                f.write_all(replay_chunks.last().unwrap())
+                    .await
+                    .map_err(|e| {
+                        ProxyError::ForwardFailed(format!(
+                            "Failed to write to priming tempfile: {e}"
+                        ))
+                    })?;
+                replay_chunks.pop();
+            }
 
             // Some compatible gateways ignore `stream:true` and return a complete
             // Responses JSON document without a JSON content-type. Recognize that
@@ -2470,26 +2523,68 @@ impl RequestForwarder {
             // contain blank lines and must stay intact.
             if let Some(outcome) = inspect_responses_json_document(&parse_buffer) {
                 outcome?;
-                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
-                return Ok(ProxyResponse::streamed(status, headers, replay));
+                return Ok(ProxyResponse::streamed(
+                    status,
+                    headers,
+                    Self::chain_replay(replay_chunks, spill_file.take(), stream),
+                ));
             }
 
             while let Some(block) = crate::proxy::sse::take_sse_block(&mut parse_buffer) {
                 if let Some(outcome) = inspect_responses_start_event(&block) {
                     outcome?;
-                    let replay =
-                        futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
-                    return Ok(ProxyResponse::streamed(status, headers, replay));
+                    return Ok(ProxyResponse::streamed(
+                        status,
+                        headers,
+                        Self::chain_replay(replay_chunks, spill_file.take(), stream),
+                    ));
                 }
             }
 
-            if replay_chunks.iter().map(Bytes::len).sum::<usize>() >= MAX_PRIME_BYTES {
-                log::warn!(
-                    "[Claude/Responses] semantic stream priming exceeded {MAX_PRIME_BYTES} bytes; committing buffered stream"
-                );
-                let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok)).chain(stream);
-                return Ok(ProxyResponse::streamed(status, headers, replay));
+            if parse_buffer.len() > MAX_EVENT_BYTES {
+                return Err(ProxyError::ForwardFailed(format!(
+                    "Responses SSE event exceeded {} MiB before its delimiter",
+                    MAX_EVENT_BYTES / (1024 * 1024)
+                )));
             }
+        }
+    }
+
+    /// 从内存块或临时文件构造回放流，再接续剩余上游流。
+    ///
+    /// 通过 `Option::take` 接管临时文件所有权。文件准备在返回流内部执行，
+    /// 确保识别到语义输出后的本地回放 I/O 错误不会重新进入 Provider 故障转移。
+    fn chain_replay(
+        replay_chunks: Vec<Bytes>,
+        mut spill: Option<tokio::fs::File>,
+        upstream: std::pin::Pin<
+            Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
+        >,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
+        if let Some(mut file) = spill.take() {
+            let replay = async_stream::try_stream! {
+                use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+
+                file.flush().await?;
+                file.seek(std::io::SeekFrom::Start(0)).await?;
+                let mut buf = vec![0u8; 64 * 1024];
+                loop {
+                    let read = file.read(&mut buf).await?;
+                    if read == 0 {
+                        break;
+                    }
+                    yield Bytes::copy_from_slice(&buf[..read]);
+                }
+
+                let mut upstream = upstream;
+                while let Some(chunk) = upstream.next().await {
+                    yield chunk?;
+                }
+            };
+            Box::pin(replay)
+        } else {
+            let replay = futures::stream::iter(replay_chunks.into_iter().map(Ok));
+            Box::pin(replay.chain(upstream))
         }
     }
 
@@ -2981,6 +3076,22 @@ fn codex_anthropic_cache_config(config: &OptimizerConfig) -> OptimizerConfig {
         thinking_optimizer: false,
         cache_injection: config.cache_injection,
     }
+}
+
+fn should_validate_responses_semantics(
+    app_type: &AppType,
+    endpoint: &str,
+    resolved_claude_api_format: Option<&str>,
+    codex_response_transformed: bool,
+) -> bool {
+    if matches!(resolved_claude_api_format, Some("openai_responses")) {
+        return true;
+    }
+
+    let (path, _) = split_endpoint_and_query(endpoint);
+    matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        && !codex_response_transformed
+        && matches!(path, "/responses" | "/v1/responses")
 }
 
 /// A streaming request may receive a whole JSON document even when the gateway
@@ -3572,6 +3683,7 @@ mod tests {
     use crate::provider::LocalProxyRequestOverrides;
     use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
+    use axum::{routing::post, Router};
     use bytes::Bytes;
     use http::StatusCode;
     use serde_json::json;
@@ -4296,6 +4408,116 @@ mod tests {
     }
 
     #[test]
+    fn native_responses_paths_require_semantic_validation() {
+        assert!(should_validate_responses_semantics(
+            &AppType::Codex,
+            "/responses",
+            None,
+            false,
+        ));
+        assert!(should_validate_responses_semantics(
+            &AppType::Codex,
+            "/v1/responses?trace=1",
+            None,
+            false,
+        ));
+        assert!(should_validate_responses_semantics(
+            &AppType::GrokBuild,
+            "/responses",
+            None,
+            false,
+        ));
+        assert!(should_validate_responses_semantics(
+            &AppType::Claude,
+            "/v1/messages",
+            Some("openai_responses"),
+            false,
+        ));
+
+        assert!(!should_validate_responses_semantics(
+            &AppType::Codex,
+            "/responses",
+            None,
+            true,
+        ));
+        assert!(!should_validate_responses_semantics(
+            &AppType::Codex,
+            "/responses/compact",
+            None,
+            false,
+        ));
+        assert!(!should_validate_responses_semantics(
+            &AppType::Codex,
+            "/chat/completions",
+            None,
+            false,
+        ));
+    }
+
+    #[tokio::test]
+    async fn native_responses_stream_error_reaches_semantic_validator() {
+        let app = Router::new().route(
+            "/v1/responses",
+            post(|| async {
+                (
+                    [(http::header::CONTENT_TYPE, "text/event-stream")],
+                    concat!(
+                        "event: error\n",
+                        "data: {\"type\":\"error\",\"sequence_number\":3,",
+                        "\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",",
+                        "\"message\":\"temporary upstream failure\"}}\n\n"
+                    ),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test upstream");
+        let address = listener.local_addr().expect("read test upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve test upstream");
+        });
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "base_url": format!("http://{address}"),
+            "api_key": "test-key"
+        });
+        let adapter = get_adapter(&AppType::Codex);
+        let result = forwarder
+            .forward(
+                &AppType::Codex,
+                &http::Method::POST,
+                &provider,
+                "/responses?trace=1",
+                &json!({"model": "gpt-test", "stream": true, "input": "hello"}),
+                &HeaderMap::new(),
+                &Extensions::new(),
+                adapter.as_ref(),
+            )
+            .await;
+        server.abort();
+
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("HTTP 200 Responses error must fail before stream commitment"),
+        };
+        assert!(matches!(
+            &error,
+            ProxyError::TransformError(message)
+                if message.contains("server_error")
+                    && message.contains("temporary upstream failure")
+        ));
+        assert_eq!(
+            forwarder.categorize_proxy_error(&error, &provider),
+            ErrorCategory::Retryable
+        );
+    }
+
+    #[test]
     fn responses_stream_start_semantic_failure_is_retryable() {
         let created = concat!(
             "event: response.created\n",
@@ -4994,5 +5216,154 @@ mod tests {
         });
         let body = body_with_image("any-model");
         assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    }
+
+    /// 回归测试：超过 1 MiB 的 `response.in_progress` 生命周期事件之后，
+    /// 没有显式 `event:` 行的 `type:error` 仍必须成为可重试 `TransformError`。
+    #[tokio::test]
+    async fn late_sse_error_after_large_payload_is_not_swallowed() {
+        let lifecycle = format!(
+            "event: response.in_progress\ndata: {{\"type\":\"response.in_progress\",\"padding\":\"{}\"}}\n\n",
+            "x".repeat(16 * 1024)
+        );
+        let large_prefix = lifecycle.repeat(65);
+        assert!(large_prefix.len() > 1024 * 1024);
+
+        // 延迟错误没有显式 `event:` 行，仅在 data 中携带顶层 type:error。
+        let late_error = concat!(
+            "data: {\"type\":\"error\",\"sequence_number\":109,",
+            "\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",",
+            "\"message\":\"late upstream failure\"}}\n\n"
+        );
+
+        let app = Router::new().route(
+            "/v1/responses",
+            post(move || async move {
+                let mut body = large_prefix;
+                body.push_str(late_error);
+                ([(http::header::CONTENT_TYPE, "text/event-stream")], body)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test upstream");
+        let address = listener.local_addr().expect("read test upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve test upstream");
+        });
+
+        let forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+        let mut provider = test_provider_with_type(None);
+        provider.settings_config = json!({
+            "base_url": format!("http://{address}"),
+            "api_key": "test-key"
+        });
+        let adapter = get_adapter(&AppType::Codex);
+        let result = forwarder
+            .forward(
+                &AppType::Codex,
+                &http::Method::POST,
+                &provider,
+                "/responses?trace=1",
+                &json!({"model": "gpt-test", "stream": true, "input": "hello"}),
+                &HeaderMap::new(),
+                &Extensions::new(),
+                adapter.as_ref(),
+            )
+            .await;
+        server.abort();
+
+        // 旧实现超过 256 KiB 后提前返回 Ok，测试必须能捕获这条延迟错误。
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => {
+                panic!("late upstream failure after >1 MiB payload must not be swallowed as Ok")
+            }
+        };
+        assert!(
+            matches!(
+                &error,
+                ProxyError::TransformError(message)
+                    if message.contains("late upstream failure")
+            ),
+            "error must reference the late upstream failure message, got: {error:?}"
+        );
+        assert_eq!(
+            forwarder.categorize_proxy_error(&error, &provider),
+            ErrorCategory::Retryable,
+            "late server_error must be classified as Retryable"
+        );
+    }
+
+    #[tokio::test]
+    async fn large_priming_stream_replays_spill_before_live_tail() {
+        let lifecycle = format!(
+            "event: response.in_progress\ndata: {{\"type\":\"response.in_progress\",\"padding\":\"{}\"}}\n\n",
+            "x".repeat(16 * 1024)
+        );
+        let output = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+        );
+        let tail = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+        );
+
+        let mut expected = String::new();
+        let mut chunks = Vec::new();
+        for _ in 0..65 {
+            expected.push_str(&lifecycle);
+            chunks.push(Ok::<Bytes, std::io::Error>(Bytes::from(lifecycle.clone())));
+        }
+        assert!(expected.len() > 1024 * 1024);
+        expected.push_str(output);
+        expected.push_str(tail);
+        chunks.push(Ok(Bytes::from_static(output.as_bytes())));
+        chunks.push(Ok(Bytes::from_static(tail.as_bytes())));
+
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::iter(chunks),
+        );
+        let prepared = test_forwarder(Duration::from_secs(5), Duration::from_secs(5))
+            .validate_responses_stream_start(response)
+            .await
+            .expect("productive output should commit the primed stream");
+
+        assert_eq!(
+            prepared.bytes().await.expect("read replayed stream"),
+            Bytes::from(expected)
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregated_large_chunk_of_complete_sse_events_is_valid() {
+        let lifecycle = format!(
+            "event: response.in_progress\ndata: {{\"type\":\"response.in_progress\",\"padding\":\"{}\"}}\n\n",
+            "x".repeat(16 * 1024)
+        );
+        let output = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+        );
+        let body = format!("{}{output}", lifecycle.repeat(513));
+        assert!(body.len() > 8 * 1024 * 1024);
+        let response = ProxyResponse::streamed(
+            StatusCode::OK,
+            HeaderMap::new(),
+            futures::stream::once(
+                async move { Ok::<Bytes, std::io::Error>(Bytes::from(body.clone())) },
+            ),
+        );
+        let prepared = test_forwarder(Duration::from_secs(5), Duration::from_secs(5))
+            .validate_responses_stream_start(response)
+            .await
+            .expect("complete SSE events in one large network chunk should remain valid");
+
+        assert!(prepared.bytes().await.is_ok());
     }
 }
