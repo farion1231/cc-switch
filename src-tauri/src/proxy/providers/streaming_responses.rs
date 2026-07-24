@@ -12,7 +12,7 @@ use super::reasoning_bridge::{encode_openai_reasoning_item, reasoning_summary_te
 use super::transform_responses::{
     build_anthropic_usage_from_responses, map_responses_stop_reason,
     responses_to_anthropic_with_web_search_name, sanitize_anthropic_tool_use_input_json,
-    web_search_action_input, web_search_results_from_output_item,
+    web_search_action_input, web_search_results_from_action, web_search_results_from_output_item,
 };
 use crate::proxy::sse::{strip_sse_field, take_sse_block};
 use bytes::Bytes;
@@ -328,6 +328,40 @@ fn web_search_result_events(index: u32, tool_use_id: &str, content: Vec<Value>) 
     ]
 }
 
+fn append_unique_web_search_results(target: &mut Vec<Value>, results: Vec<Value>) {
+    let mut seen: HashSet<String> = target
+        .iter()
+        .filter_map(|result| result.get("url").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .collect();
+    for result in results {
+        let Some(url) = result.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        if seen.insert(url.to_string()) {
+            target.push(result);
+        }
+    }
+}
+
+fn record_web_search_call(
+    search_id: &str,
+    item: &Value,
+    ids_seen: &mut HashSet<String>,
+    id_order: &mut Vec<String>,
+    results_by_id: &mut HashMap<String, Vec<Value>>,
+    request_count: &mut u64,
+) {
+    if ids_seen.insert(search_id.to_string()) {
+        *request_count += 1;
+        id_order.push(search_id.to_string());
+    }
+    append_unique_web_search_results(
+        results_by_id.entry(search_id.to_string()).or_default(),
+        web_search_results_from_action(item),
+    );
+}
+
 #[inline]
 fn reasoning_item_key(data: &Value, item: Option<&Value>) -> Option<String> {
     if let Some(item_id) = item
@@ -411,9 +445,10 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
         let mut web_search_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut web_search_ids_seen: HashSet<String> = HashSet::new();
         let mut web_search_ids_completed: HashSet<String> = HashSet::new();
-        let mut last_web_search_id: Option<String> = None;
+        let mut web_search_id_order: Vec<String> = Vec::new();
+        let mut web_search_results_by_id: HashMap<String, Vec<Value>> = HashMap::new();
+        let mut pending_web_search_results: Vec<Value> = Vec::new();
         let mut seen_web_search_result_urls: HashSet<String> = HashSet::new();
-        let mut has_emitted_web_search_result = false;
         let mut web_search_count = 0_u64;
         let mut reasoning_index_by_item_id: HashMap<String, u32> = HashMap::new();
         let mut reasoning_item_by_index: HashMap<u32, Value> = HashMap::new();
@@ -887,12 +922,16 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
                                             .filter(|id| !id.is_empty())
                                             .map(ToString::to_string)
                                             .unwrap_or_else(|| format!("ws_stream_{index}"));
-                                        if web_search_ids_seen.insert(search_id.clone()) {
-                                            web_search_count += 1;
-                                        }
+                                        record_web_search_call(
+                                            &search_id,
+                                            item,
+                                            &mut web_search_ids_seen,
+                                            &mut web_search_id_order,
+                                            &mut web_search_results_by_id,
+                                            &mut web_search_count,
+                                        );
                                         web_search_index_by_item_id
                                             .insert(search_id.clone(), index);
-                                        last_web_search_id = Some(search_id.clone());
 
                                         if !open_indices.contains(&index) {
                                             yield Ok(anthropic_sse(
@@ -1374,7 +1413,8 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
                                     has_sent_message_start = true;
                                 }
 
-                                let mut terminal_web_search_results = Vec::new();
+                                let mut terminal_web_search_results =
+                                    std::mem::take(&mut pending_web_search_results);
                                 if let Some(output) =
                                     response_obj.get("output").and_then(Value::as_array)
                                 {
@@ -1406,10 +1446,14 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
                                                 .unwrap_or_else(|| {
                                                     format!("ws_terminal_{output_index}")
                                                 });
-                                            last_web_search_id = Some(search_id.clone());
-                                            if web_search_ids_seen.insert(search_id.clone()) {
-                                                web_search_count += 1;
-                                            }
+                                            record_web_search_call(
+                                                &search_id,
+                                                item,
+                                                &mut web_search_ids_seen,
+                                                &mut web_search_id_order,
+                                                &mut web_search_results_by_id,
+                                                &mut web_search_count,
+                                            );
 
                                             if !web_search_ids_completed.contains(&search_id) {
                                                 let index = web_search_index_by_item_id
@@ -1477,28 +1521,60 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
                                     }
                                 }
 
-                                if let Some(search_id) = last_web_search_id.as_deref() {
-                                    if !terminal_web_search_results.is_empty()
-                                        || !has_emitted_web_search_result
-                                    {
-                                        if let Some(text_index) = current_text_index.take() {
-                                            if open_indices.remove(&text_index) {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":text_index}),
-                                                ));
-                                            }
+                                let attributed_web_search_urls: HashSet<String> =
+                                    web_search_results_by_id
+                                        .values()
+                                        .flatten()
+                                        .filter_map(|result| {
+                                            result
+                                                .get("url")
+                                                .and_then(Value::as_str)
+                                                .map(ToString::to_string)
+                                        })
+                                        .collect();
+                                // Final-message citations have no search-call ID.
+                                // Prefer action.sources recorded for each call,
+                                // then put only otherwise-unassigned citations on
+                                // the last call. Every earlier call still receives
+                                // an empty successful result rather than remaining
+                                // structurally unmatched.
+                                if let Some(last_search_id) = web_search_id_order.last().cloned() {
+                                    terminal_web_search_results.retain(|result| {
+                                        result
+                                            .get("url")
+                                            .and_then(Value::as_str)
+                                            .is_some_and(|url| {
+                                                !attributed_web_search_urls.contains(url)
+                                            })
+                                    });
+                                    append_unique_web_search_results(
+                                        web_search_results_by_id
+                                            .entry(last_search_id)
+                                            .or_default(),
+                                        terminal_web_search_results,
+                                    );
+                                }
+
+                                if !web_search_id_order.is_empty() {
+                                    if let Some(text_index) = current_text_index.take() {
+                                        if open_indices.remove(&text_index) {
+                                            yield Ok(anthropic_sse(
+                                                "content_block_stop",
+                                                &json!({"type":"content_block_stop","index":text_index}),
+                                            ));
                                         }
+                                    }
+                                    for search_id in web_search_id_order.clone() {
                                         let index = next_content_index;
                                         next_content_index += 1;
-                                        for event in web_search_result_events(
-                                            index,
-                                            search_id,
-                                            terminal_web_search_results,
-                                        ) {
+                                        let results = web_search_results_by_id
+                                            .remove(&search_id)
+                                            .unwrap_or_default();
+                                        for event in
+                                            web_search_result_events(index, &search_id, results)
+                                        {
                                             yield Ok(event);
                                         }
-                                        has_emitted_web_search_result = true;
                                     }
                                 }
 
@@ -1706,12 +1782,16 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
                                             .unwrap_or_else(|| {
                                                 format!("ws_stream_{next_content_index}")
                                             });
-                                        last_web_search_id = Some(search_id.clone());
+                                        record_web_search_call(
+                                            &search_id,
+                                            item,
+                                            &mut web_search_ids_seen,
+                                            &mut web_search_id_order,
+                                            &mut web_search_results_by_id,
+                                            &mut web_search_count,
+                                        );
                                         if web_search_ids_completed.contains(&search_id) {
                                             continue;
-                                        }
-                                        if web_search_ids_seen.insert(search_id.clone()) {
-                                            web_search_count += 1;
                                         }
 
                                         let index = web_search_index_by_item_id
@@ -1888,31 +1968,10 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_name<
                                                 new_results.push(result);
                                             }
                                         }
-                                        if !new_results.is_empty() {
-                                            if let Some(search_id) = last_web_search_id.as_deref() {
-                                                if let Some(text_index) = current_text_index.take() {
-                                                    if open_indices.remove(&text_index) {
-                                                        yield Ok(anthropic_sse(
-                                                            "content_block_stop",
-                                                            &json!({"type":"content_block_stop","index":text_index}),
-                                                        ));
-                                                    }
-                                                    if fallback_open_index == Some(text_index) {
-                                                        fallback_open_index = None;
-                                                    }
-                                                }
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                for event in web_search_result_events(
-                                                    index,
-                                                    search_id,
-                                                    new_results,
-                                                ) {
-                                                    yield Ok(event);
-                                                }
-                                                has_emitted_web_search_result = true;
-                                            }
-                                        }
+                                        append_unique_web_search_results(
+                                            &mut pending_web_search_results,
+                                            new_results,
+                                        );
                                     }
                                     _ => {}
                                 }
@@ -2041,6 +2100,14 @@ mod tests {
         .into_iter()
         .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
         .collect()
+    }
+
+    fn sse_data_values(output: &str) -> Vec<Value> {
+        output
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str(data).ok())
+            .collect()
     }
 
     #[test]
@@ -2184,6 +2251,85 @@ mod tests {
         assert!(merged.contains("\"stop_reason\":\"end_turn\""));
         assert!(!merged.contains("\"stop_reason\":\"tool_use\""));
         assert!(merged.contains("\"web_search_requests\":1"));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_hosted_web_search_pairs_every_call_with_its_sources() {
+        let input = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_multi_search\",\"model\":\"gpt-5.6\"}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_rust\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_rust\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust language\",\"sources\":[{\"type\":\"url\",\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}}}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_cargo\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_cargo\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Cargo documentation\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}}}\n\n",
+            "event: response.content_part.added\n",
+            "data: {\"type\":\"response.content_part.added\",\"output_index\":2,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"output_index\":2,\"content_index\":0,\"delta\":\"Rust and Cargo have official documentation.\"}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_multi\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust and Cargo have official documentation.\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"},{\"type\":\"url_citation\",\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_multi_search\",\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":14}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search_next").await;
+        let events = sse_data_values(&merged);
+        let result_blocks: Vec<&Value> = events
+            .iter()
+            .filter_map(|event| event.get("content_block"))
+            .filter(|block| {
+                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
+            })
+            .collect();
+
+        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 2);
+        assert_eq!(result_blocks.len(), 2);
+        assert_eq!(result_blocks[0]["tool_use_id"], "ws_rust");
+        assert_eq!(
+            result_blocks[0]["content"][0]["url"],
+            "https://www.rust-lang.org/"
+        );
+        assert_eq!(result_blocks[1]["tool_use_id"], "ws_cargo");
+        assert_eq!(
+            result_blocks[1]["content"][0]["url"],
+            "https://doc.rust-lang.org/cargo/"
+        );
+        assert!(merged.contains("\"web_search_requests\":2"));
+        assert!(merged.contains("event: message_stop"));
+    }
+
+    #[tokio::test]
+    async fn test_streaming_hosted_web_search_pairs_calls_without_sources() {
+        let input = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_multi_fallback\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_first\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"first query\"}},{\"id\":\"ws_second\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"second query\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Combined answer.\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://example.com/result\",\"title\":\"Combined result\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
+        );
+
+        let merged = convert_stream_text_with_web_search_name(input, "web_search_next").await;
+        let events = sse_data_values(&merged);
+        let result_blocks: Vec<&Value> = events
+            .iter()
+            .filter_map(|event| event.get("content_block"))
+            .filter(|block| {
+                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
+            })
+            .collect();
+
+        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 2);
+        assert_eq!(result_blocks.len(), 2);
+        assert_eq!(result_blocks[0]["tool_use_id"], "ws_first");
+        assert_eq!(result_blocks[0]["content"], json!([]));
+        assert_eq!(result_blocks[1]["tool_use_id"], "ws_second");
+        assert_eq!(
+            result_blocks[1]["content"][0]["url"],
+            "https://example.com/result"
+        );
+        assert!(merged.contains("\"web_search_requests\":2"));
         assert!(merged.contains("event: message_stop"));
     }
 
