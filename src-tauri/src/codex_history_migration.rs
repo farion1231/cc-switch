@@ -1807,13 +1807,58 @@ fn scan_rollout_thread_metadata(codex_dir: &Path) -> Result<Vec<RolloutThreadMet
     for root_name in ["sessions", "archived_sessions"] {
         collect_rollout_jsonl_files(&codex_dir.join(root_name), &mut files)?;
     }
-    let mut by_id = BTreeMap::new();
+    let mut metadata_rows = Vec::new();
     for (path, archived) in files {
         if let Some(metadata) = parse_rollout_thread_metadata(&path, archived)? {
-            by_id.insert(metadata.id.clone(), metadata);
+            metadata_rows.push(metadata);
         }
     }
+
+    // "Continue in a new task" currently copies session_meta.id into every forked
+    // rollout. The files are nevertheless independent snapshots, identified by the
+    // UUID in their rollout filename. Treating session_meta.id as globally unique
+    // would silently overwrite all but one branch in the reconstructed thread store.
+    let declared_id_counts = metadata_rows
+        .iter()
+        .fold(BTreeMap::new(), |mut counts, row| {
+            *counts.entry(row.id.clone()).or_insert(0usize) += 1;
+            counts
+        });
+    for metadata in &mut metadata_rows {
+        if declared_id_counts
+            .get(&metadata.id)
+            .copied()
+            .unwrap_or_default()
+            > 1
+        {
+            if let Some(rollout_id) = rollout_filename_thread_id(&metadata.rollout_path) {
+                metadata.id = rollout_id;
+            }
+        }
+    }
+
+    // A malformed duplicate filename must not overwrite a valid row either. Real
+    // rollout filenames carry UUIDs, so this only preserves the existing behavior
+    // for legacy fixtures that do not expose a physical thread identifier.
+    let mut by_id = BTreeMap::new();
+    for metadata in metadata_rows {
+        by_id.entry(metadata.id.clone()).or_insert(metadata);
+    }
     Ok(by_id.into_values().collect())
+}
+
+/// Return the UUID Codex stores at the end of `rollout-<timestamp>-<uuid>.jsonl`.
+/// The UUID is the only stable physical identity when cloned rollouts retain their
+/// parent's session_meta.id.
+fn rollout_filename_thread_id(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    // rsplit_once only returns the last UUID segment, so take the complete trailing
+    // UUID from the stem instead of relying on its hyphen-separated pieces.
+    let candidate_start = stem.len().checked_sub(36)?;
+    let candidate = stem.get(candidate_start..)?;
+    uuid::Uuid::parse_str(candidate)
+        .ok()
+        .map(|id| id.to_string())
 }
 
 fn collect_rollout_jsonl_files(
@@ -4467,6 +4512,102 @@ mod tests {
             })
             .expect("status"),
             "complete"
+        );
+    }
+
+    #[test]
+    fn rebuilds_each_continue_in_new_task_rollout_as_its_own_thread() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        let rollout_dir = codex_dir.join("sessions/2026/07/25");
+        fs::create_dir_all(&rollout_dir).expect("sessions dir");
+        let parent_id = "019f8ce8-81b0-7741-a4d3-eca05e030fc8";
+        let fork_id = "019f8cf3-3050-7153-b6f3-8a0757cfbaf4";
+        let parent = rollout_dir.join(format!("rollout-2026-07-23T10-58-00-{parent_id}.jsonl"));
+        let fork = rollout_dir.join(format!("rollout-2026-07-23T11-09-40-{fork_id}.jsonl"));
+        fs::write(
+            &parent,
+            format!(
+                "{{\"timestamp\":\"2026-07-25T02:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{parent_id}\",\"model_provider\":\"openai\",\"cwd\":\"C:\\\\work\",\"source\":\"vscode\"}}}}\n{{\"timestamp\":\"2026-07-25T02:01:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"shared starting request\"}}}}\n{{\"timestamp\":\"2026-07-25T02:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"parent progress\"}}}}\n"
+            ),
+        )
+        .expect("parent rollout");
+        fs::write(
+            &fork,
+            format!(
+                "{{\"timestamp\":\"2026-07-25T03:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{parent_id}\",\"model_provider\":\"openai\",\"cwd\":\"C:\\\\work\",\"source\":\"vscode\"}}}}\n{{\"timestamp\":\"2026-07-25T03:01:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"shared starting request\"}}}}\n{{\"timestamp\":\"2026-07-25T03:02:00Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"fork-only progress\"}}}}\n"
+            ),
+        )
+        .expect("fork rollout");
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("state db");
+        create_history_test_threads_table(&conn);
+        drop(conn);
+        let active = ActiveCodexStateDb {
+            path: db_path.clone(),
+            kind: "codex_root".to_string(),
+        };
+
+        let result = repair_codex_history_visibility_at(
+            &codex_dir,
+            active,
+            "codex_model_router_v2",
+            Some("codex_model_router_v2".to_string()),
+            source_ids(&["openai"]),
+            None,
+            HistoryVisibilityRepairRuntimeOptions {
+                dry_run: false,
+                count: 2,
+                window_limit: 10,
+                balance_recent_window: false,
+                max_per_project: 2,
+                max_total: 2,
+                source_filter: Some("all".to_string()),
+                include_archived: false,
+                include_subagents: false,
+                selected_session_ids: BTreeSet::new(),
+                provider_bucket_sync_enabled: true,
+                backup_root_override: Some(dir.path().join("backup")),
+            },
+        )
+        .expect("repair");
+
+        assert_eq!(result.thread_rows_inserted, 2);
+        let conn = Connection::open(db_path).expect("read db");
+        let rows = conn
+            .prepare("SELECT id, rollout_path FROM threads ORDER BY id")
+            .expect("query")
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .expect("rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect rows");
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter().any(|(id, path)| {
+                id == parent_id
+                    && path.ends_with(
+                        parent
+                            .file_name()
+                            .expect("parent filename")
+                            .to_string_lossy()
+                            .as_ref(),
+                    )
+            }),
+            "rows: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|(id, path)| {
+                id == fork_id
+                    && path.ends_with(
+                        fork.file_name()
+                            .expect("fork filename")
+                            .to_string_lossy()
+                            .as_ref(),
+                    )
+            }),
+            "rows: {rows:?}"
         );
     }
 

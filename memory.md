@@ -6,6 +6,7 @@
 - 修复入口必须在 Codex/ChatGPT 完全退出时，以 `sessions` 与 `archived_sessions` 的 rollout 为事实来源重建/插入 `threads` 元数据，并在同一 SQLite 事务更新 `backfill_state`；`session_index`、workspace hint 和项目映射只能作为辅助，绝不能写 `local_thread_catalog`。
 - 当前 rollout 的真实用户输入结构是 `type='event_msg'` 且 `payload.type='user_message'`，不能继续用旧的字符串或顶层 `type='user_message'` 判断。preview 与 first_user_message 仅从此真实事件或目标事件 preview 提取，避免编造可见历史。
 - 写入前继续拒绝运行中的 `ChatGPT.exe` / `OpenAI.Codex` / `codex.exe app-server`，并备份 state DB（含 WAL/SHM）和受影响 rollout；修复后需重启 Desktop 验证历史不再闪现后消失。
+- `Continue in a new task` 会把父会话的 `session_meta.id` 原样复制到多个独立 rollout；这些文件的 `rollout-<timestamp>-<uuid>.jsonl` UUID 才是分支物理身份。历史重建必须只在声明 ID 冲突时改用该 filename UUID，分别写入每个 `threads.id -> rollout_path`，不能再用 `BTreeMap<session_meta.id, ...>` 覆盖不同进度的分支，也不能改写原始 JSONL 的 parent ID。
 
 ## 2026-07-20 本机构建缓存与旧发布输出清理
 
