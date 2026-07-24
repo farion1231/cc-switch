@@ -1880,6 +1880,13 @@ async fn enabled_proxy_apps_on_startup(db: &database::Database) -> Vec<&'static 
 }
 
 async fn restore_proxy_state_on_startup(state: &store::AppState) {
+    // 根据保存的路由总开关状态自动恢复代理服务
+    if crate::settings::get_settings().proxy_enabled {
+        if let Err(e) = state.proxy_service.start().await {
+            log::error!("恢复路由总开关失败: {e}");
+        }
+    }
+
     // 收集需要恢复接管的应用列表（从 proxy_config.enabled 读取）
     let apps_to_restore = enabled_proxy_apps_on_startup(&state.db).await;
 
