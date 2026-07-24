@@ -6,8 +6,10 @@ import {
   ExternalLink,
   RefreshCw,
   Loader2,
+  Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -15,6 +17,7 @@ import {
   type SkillBackupEntry,
   useDeleteSkillBackup,
   useInstalledSkills,
+  useInstalledSkillContents,
   useSkillBackups,
   useRestoreSkillBackup,
   useToggleSkillApp,
@@ -30,6 +33,7 @@ import {
 import type { AppId } from "@/lib/api/types";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi, skillsApi } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { AppCountBar } from "@/components/common/AppCountBar";
@@ -47,6 +51,17 @@ import {
 interface UnifiedSkillsPanelProps {
   onOpenDiscovery: () => void;
   currentApp: AppId;
+}
+
+const INSTALLED_SKILL_SEARCH_SCOPES = ["all", "name", "content"] as const;
+
+type InstalledSkillSearchScope = (typeof INSTALLED_SKILL_SEARCH_SCOPES)[number];
+
+function includesSearchQuery(
+  value: string | undefined,
+  normalizedQuery: string,
+): boolean {
+  return value?.toLowerCase().includes(normalizedQuery) ?? false;
 }
 
 export interface UnifiedSkillsPanelHandle {
@@ -79,8 +94,13 @@ const UnifiedSkillsPanel = React.forwardRef<
   } | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchScope, setSearchScope] =
+    useState<InstalledSkillSearchScope>("all");
 
   const { data: skills, isLoading } = useInstalledSkills();
+  const { data: skillContents = {}, isLoading: isLoadingSkillContents } =
+    useInstalledSkillContents();
   const {
     data: skillBackups = [],
     refetch: refetchSkillBackups,
@@ -132,6 +152,36 @@ const UnifiedSkillsPanel = React.forwardRef<
     });
     return counts;
   }, [skills]);
+
+  const trimmedSearchQuery = searchQuery.trim();
+  const normalizedSearchQuery = trimmedSearchQuery.toLowerCase();
+  const filteredSkills = useMemo(() => {
+    if (!skills) return [];
+    if (!normalizedSearchQuery) return skills;
+
+    return skills.filter((skill) => {
+      const matchesName = includesSearchQuery(
+        skill.name,
+        normalizedSearchQuery,
+      );
+      if (searchScope === "name") return matchesName;
+
+      const matchesContent =
+        includesSearchQuery(skill.description, normalizedSearchQuery) ||
+        includesSearchQuery(skillContents[skill.id], normalizedSearchQuery);
+      if (searchScope === "content") return matchesContent;
+
+      return matchesName || matchesContent;
+    });
+  }, [normalizedSearchQuery, searchScope, skillContents, skills]);
+
+  const isWaitingForSearchContent =
+    isLoadingSkillContents &&
+    normalizedSearchQuery.length > 0 &&
+    searchScope !== "name";
+  const searchPlaceholder = t(
+    `skills.installedSearchPlaceholder.${searchScope}`,
+  );
 
   const handleToggleApp = async (id: string, app: AppId, enabled: boolean) => {
     try {
@@ -353,6 +403,7 @@ const UnifiedSkillsPanel = React.forwardRef<
           totalLabel={t("skills.installed", { count: skills?.length || 0 })}
           counts={enabledCounts}
           appIds={SKILLS_APP_IDS}
+          className="mb-0"
         />
         <div className="flex items-center gap-1.5">
           <div
@@ -401,8 +452,48 @@ const UnifiedSkillsPanel = React.forwardRef<
         </div>
       </div>
 
+      {skills && skills.length > 0 && (
+        <div className="mt-2 mb-3 flex flex-col gap-2 sm:flex-row">
+          <div
+            role="group"
+            aria-label={t("skills.installedSearchScopeLabel")}
+            className="inline-flex h-9 shrink-0 items-center rounded-md border border-border-default bg-muted/40 p-0.5"
+          >
+            {INSTALLED_SKILL_SEARCH_SCOPES.map((scope) => (
+              <button
+                key={scope}
+                type="button"
+                aria-pressed={searchScope === scope}
+                onClick={() => setSearchScope(scope)}
+                className={cn(
+                  "h-7 rounded px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                  searchScope === scope
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(`skills.installedSearchScope.${scope}`)}
+              </button>
+            ))}
+          </div>
+          <div className="relative min-w-0 flex-1">
+            <Search
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+            />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
+              className="pl-9"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-24">
-        {isLoading ? (
+        {isLoading || isWaitingForSearchContent ? (
           <div className="text-center py-12 text-muted-foreground">
             {t("skills.loading")}
           </div>
@@ -418,10 +509,25 @@ const UnifiedSkillsPanel = React.forwardRef<
               {t("skills.noInstalledDescription")}
             </p>
           </div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="text-center py-12">
+            <Search
+              size={28}
+              className="mx-auto mb-3 text-muted-foreground/40"
+            />
+            <h3 className="text-base font-medium text-foreground mb-1">
+              {t("skills.noResults")}
+            </h3>
+            <p className="text-muted-foreground text-sm">
+              {t("skills.installedSearchNoResults", {
+                query: trimmedSearchQuery,
+              })}
+            </p>
+          </div>
         ) : (
           <TooltipProvider delayDuration={300}>
             <div className="rounded-xl border border-border-default overflow-hidden">
-              {skills.map((skill, index) => (
+              {filteredSkills.map((skill, index) => (
                 <InstalledSkillListItem
                   key={skill.id}
                   skill={skill}
@@ -433,7 +539,7 @@ const UnifiedSkillsPanel = React.forwardRef<
                   onToggleApp={handleToggleApp}
                   onUninstall={() => handleUninstall(skill)}
                   onUpdate={() => handleUpdateSkill(skill)}
-                  isLast={index === skills.length - 1}
+                  isLast={index === filteredSkills.length - 1}
                 />
               ))}
             </div>

@@ -11,8 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useMigrateSkillStorage } from "@/hooks/useSkills";
 import { cn } from "@/lib/utils";
-import { skillsApi, type MigrationResult } from "@/lib/api/skills";
+import type { MigrationResult } from "@/lib/api/skills";
 import type { SkillStorageLocation } from "@/types";
 
 export interface SkillStorageLocationSettingsProps {
@@ -30,6 +31,7 @@ export function SkillStorageLocationSettings({
   const [pendingTarget, setPendingTarget] =
     useState<SkillStorageLocation | null>(null);
   const [isMigrating, setIsMigrating] = useState(false);
+  const migrateStorage = useMigrateSkillStorage();
 
   const handleSelect = (target: SkillStorageLocation) => {
     if (target === value) return;
@@ -44,7 +46,7 @@ export function SkillStorageLocationSettings({
     setIsMigrating(true);
     setPendingTarget(null);
     try {
-      const result: MigrationResult = await skillsApi.migrateStorage(target);
+      const result: MigrationResult = await migrateStorage.mutateAsync(target);
       if (result.errors.length > 0) {
         toast.warning(
           t("settings.skillStorage.migrationPartial", {

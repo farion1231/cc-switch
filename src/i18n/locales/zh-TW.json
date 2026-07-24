@@ -2298,6 +2298,18 @@
     },
     "search": "搜尋技能",
     "searchPlaceholder": "搜尋技能名稱或儲存庫名稱...",
+    "installedSearchScopeLabel": "搜尋範圍",
+    "installedSearchScope": {
+      "all": "全部",
+      "name": "名稱",
+      "content": "內容"
+    },
+    "installedSearchPlaceholder": {
+      "all": "依名稱或內容搜尋",
+      "name": "依 Skill 名稱搜尋",
+      "content": "搜尋描述和 Skill 正文"
+    },
+    "installedSearchNoResults": "找不到與「{{query}}」相符的已安裝技能",
     "searchSource": {
       "repos": "儲存庫",
       "skillssh": "skills.sh"

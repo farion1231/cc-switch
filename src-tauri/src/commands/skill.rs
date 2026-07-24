@@ -12,6 +12,7 @@ use crate::services::skill::{
     SkillsShSearchResult,
 };
 use crate::store::AppState;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tauri::State;
@@ -30,6 +31,14 @@ fn parse_app_type(app: &str) -> Result<AppType, String> {
 #[tauri::command]
 pub fn get_installed_skills(app_state: State<'_, AppState>) -> Result<Vec<InstalledSkill>, String> {
     SkillService::get_all_installed(&app_state.db).map_err(|e| e.to_string())
+}
+
+/// 获取已安装 Skills 的 SKILL.md 正文，用于本地全文搜索
+#[tauri::command]
+pub fn get_installed_skill_contents(
+    app_state: State<'_, AppState>,
+) -> Result<HashMap<String, String>, String> {
+    SkillService::get_installed_contents(&app_state.db).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

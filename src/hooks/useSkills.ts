@@ -15,6 +15,13 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { mergeImportedSkills } from "@/hooks/useSkills.helpers";
+import type { SkillStorageLocation } from "@/types";
+
+const INSTALLED_SKILL_CONTENTS_QUERY_KEY = [
+  "skills",
+  "installed-contents",
+] as const;
+const INSTALLED_SKILL_CONTENTS_STALE_TIME_MS = 30 * 1000;
 
 /**
  * 查询所有已安装的 Skills
@@ -27,6 +34,30 @@ export function useInstalledSkills() {
     queryFn: () => skillsApi.getInstalled(),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** 获取已安装 Skills 的本地 SKILL.md 正文，用于客户端全文过滤。 */
+export function useInstalledSkillContents() {
+  return useQuery({
+    queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+    queryFn: () => skillsApi.getInstalledContents(),
+    staleTime: INSTALLED_SKILL_CONTENTS_STALE_TIME_MS,
+    refetchOnWindowFocus: "always",
+  });
+}
+
+/** 迁移 Skill 主存储，并重新加载新目录中的 SKILL.md 正文。 */
+export function useMigrateSkillStorage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (target: SkillStorageLocation) =>
+      skillsApi.migrateStorage(target),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
+    },
   });
 }
 
@@ -105,6 +136,9 @@ export function useInstallSkill() {
           });
         },
       );
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
     },
   });
 }
@@ -143,6 +177,9 @@ export function useUninstallSkill() {
           });
         },
       );
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
     },
   });
 }
@@ -159,6 +196,9 @@ export function useRestoreSkillBackup() {
     }) => skillsApi.restoreBackup(backupId, currentApp),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] });
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
       queryClient.invalidateQueries({ queryKey: ["skills", "backups"] });
     },
   });
@@ -220,6 +260,9 @@ export function useImportSkillsFromApps() {
       );
       // 刷新 unmanaged 列表（已被导入的应该移除）
       queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] });
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
     },
   });
 }
@@ -286,6 +329,9 @@ export function useInstallSkillsFromZip() {
           return [...oldData, ...installedSkills];
         },
       );
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
     },
   });
 }
@@ -328,6 +374,9 @@ export function useUpdateSkill() {
           return oldData.filter((u) => u.id !== updatedSkill.id);
         },
       );
+      queryClient.invalidateQueries({
+        queryKey: INSTALLED_SKILL_CONTENTS_QUERY_KEY,
+      });
     },
   });
 }

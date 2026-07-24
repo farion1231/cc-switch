@@ -2326,6 +2326,18 @@
     },
     "search": "Search Skills",
     "searchPlaceholder": "Search skill name or repo...",
+    "installedSearchScopeLabel": "Search scope",
+    "installedSearchScope": {
+      "all": "All",
+      "name": "Name",
+      "content": "Content"
+    },
+    "installedSearchPlaceholder": {
+      "all": "Search by name or content",
+      "name": "Search by skill name",
+      "content": "Search descriptions and skill content"
+    },
+    "installedSearchNoResults": "No installed skills match \"{{query}}\"",
     "searchSource": {
       "repos": "Repos",
       "skillssh": "skills.sh"
