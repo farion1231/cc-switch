@@ -311,6 +311,27 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     );
   }, [filteredSessions, selectedKey]);
 
+  const referencedParentSessionIds = useMemo(() => {
+    const parentIds = new Set<string>();
+    sessions.forEach((session) => {
+      if (session.parentSessionId) {
+        parentIds.add(`${session.providerId}:${session.parentSessionId}`);
+      }
+    });
+    return parentIds;
+  }, [sessions]);
+
+  const parentSession = useMemo(() => {
+    if (!selectedSession?.parentSessionId) return null;
+    return (
+      sessions.find(
+        (session) =>
+          session.providerId === selectedSession.providerId &&
+          session.sessionId === selectedSession.parentSessionId,
+      ) ?? null
+    );
+  }, [selectedSession, sessions]);
+
   const listViewModeLabel =
     listViewMode === "grouped"
       ? t("sessionManager.viewModeGrouped", {
@@ -414,6 +435,36 @@ export function SessionManagerPage({ appId }: { appId: string }) {
     },
     [handleCopy, t],
   );
+
+  const handleOpenParentSession = useCallback(() => {
+    if (!parentSession) return;
+
+    setSearch("");
+    if (
+      providerFilter !== "all" &&
+      providerFilter !== parentSession.providerId
+    ) {
+      setProviderFilter(parentSession.providerId as ProviderFilter);
+    }
+    if (listViewMode === "grouped") {
+      setExpandedProviderGroups((current) => {
+        const next = new Set(current);
+        next.add(parentSession.providerId);
+        return next;
+      });
+      setExpandedDirectoryGroups((current) => {
+        const next = new Set(current);
+        next.add(
+          getSessionDirectoryGroupKey(
+            parentSession.providerId,
+            parentSession.projectDir,
+          ),
+        );
+        return next;
+      });
+    }
+    setSelectedKey(getSessionKey(parentSession));
+  }, [listViewMode, parentSession, providerFilter]);
 
   const handleResume = async () => {
     if (!selectedSession?.resumeCommand) return;
@@ -691,6 +742,10 @@ export function SessionManagerPage({ appId }: { appId: string }) {
         selectionMode={selectionMode}
         searchQuery={search}
         isChecked={selectedSessionKeys.has(sessionKey)}
+        isBranch={Boolean(session.parentSessionId)}
+        isParent={referencedParentSessionIds.has(
+          `${session.providerId}:${session.sessionId}`,
+        )}
         isCheckDisabled={!session.sourcePath}
         onSelect={setSelectedKey}
         onToggleChecked={(checked) => toggleSessionChecked(session, checked)}
@@ -1518,6 +1573,17 @@ export function SessionManagerPage({ appId }: { appId: string }) {
 
                       {/* 右侧：操作按钮组 */}
                       <div className="flex items-center gap-2 shrink-0">
+                        {parentSession && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleOpenParentSession}
+                          >
+                            {t("sessionManager.openParentSession", {
+                              defaultValue: "Open parent",
+                            })}
+                          </Button>
+                        )}
                         {isMac() && (
                           <Tooltip>
                             <TooltipTrigger asChild>

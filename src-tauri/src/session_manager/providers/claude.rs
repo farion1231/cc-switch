@@ -131,6 +131,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
     let mut first_user_message: Option<String> = None;
+    let mut parent_session_id: Option<String> = None;
 
     // Extract metadata and first user message from head lines
     for line in &head {
@@ -152,6 +153,15 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         }
         if created_at.is_none() {
             created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        }
+        if parent_session_id.is_none() {
+            parent_session_id = value
+                .get("forkedFrom")
+                .and_then(|fork| fork.get("sessionId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
         }
         // Extract first real user message as title candidate
         // Skip system-injected caveats and slash commands (e.g. /clear, /compact)
@@ -175,19 +185,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if session_id.is_some()
-            && project_dir.is_some()
-            && created_at.is_some()
-            && first_user_message.is_some()
-        {
-            break;
-        }
     }
 
-    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
+    // Extract last_active_at, summary, titles, and parent fallback from tail lines.
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
     let mut custom_title: Option<String> = None;
+    let mut ai_title: Option<String> = None;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
@@ -207,6 +211,24 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
         }
+        // Look for the latest generated title.
+        if ai_title.is_none() && value.get("type").and_then(Value::as_str) == Some("ai-title") {
+            ai_title = value
+                .get("aiTitle")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+        }
+        if parent_session_id.is_none() {
+            parent_session_id = value
+                .get("forkedFrom")
+                .and_then(|fork| fork.get("sessionId"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+        }
         if summary.is_none() {
             if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
                 continue;
@@ -218,17 +240,15 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
-            break;
-        }
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
     let session_id = session_id?;
 
-    // Title priority: custom-title > first user message > directory basename
+    // Title priority: custom-title > ai-title > first user message > directory basename
     let title = custom_title
         .map(|t| truncate_summary(&t, TITLE_MAX_CHARS))
+        .or_else(|| ai_title.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
         .or_else(|| first_user_message.map(|t| truncate_summary(&t, TITLE_MAX_CHARS)))
         .or_else(|| {
             project_dir
@@ -242,6 +262,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
         session_id: session_id.clone(),
+        parent_session_id,
         title,
         summary,
         project_dir,
@@ -401,6 +422,8 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
+        let serialized = serde_json::to_value(meta).expect("serialize session metadata");
+        assert!(serialized.get("parentSessionId").is_none());
     }
 
     #[test]
@@ -414,12 +437,56 @@ mod tests {
                 "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"fix something\"},\"sessionId\":\"session-def\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
                 "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
                 "{\"type\":\"custom-title\",\"customTitle\":\"fix-login-bug\",\"sessionId\":\"session-def\"}\n",
+                "{\"type\":\"ai-title\",\"aiTitle\":\"Generated login title\",\"sessionId\":\"session-def\"}\n",
             ),
         )
         .expect("write");
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+    }
+
+    #[test]
+    fn parse_session_ai_title_overrides_first_message() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-ai-title.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-ai-title\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"investigate the failing deployment\"},\"sessionId\":\"session-ai-title\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"I found the cause.\"},\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
+                "{\"type\":\"ai-title\",\"aiTitle\":\"Initial generated title\",\"sessionId\":\"session-ai-title\"}\n",
+                "{\"type\":\"ai-title\",\"aiTitle\":\"Deployment failure analysis\",\"sessionId\":\"session-ai-title\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(meta.title.as_deref(), Some("Deployment failure analysis"));
+    }
+
+    #[test]
+    fn parse_session_serializes_fork_parent_session_id() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-fork.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"sessionId\":\"session-fork\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"forkedFrom\":{\"sessionId\":\"session-parent\",\"messageUuid\":\"message-parent\"}}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"continue from the branch point\"},\"sessionId\":\"session-fork\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            ),
+        )
+        .expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        let serialized = serde_json::to_value(meta).expect("serialize session metadata");
+        assert_eq!(
+            serialized
+                .get("parentSessionId")
+                .and_then(serde_json::Value::as_str),
+            Some("session-parent")
+        );
     }
 
     #[test]

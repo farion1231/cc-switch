@@ -101,6 +101,48 @@ const closeSearch = () => {
   fireEvent.click(closeButton);
 };
 
+type BranchedSessionMeta = SessionMeta & {
+  parentSessionId?: string;
+};
+
+const setBranchedSessionFixtures = () => {
+  const sessions: BranchedSessionMeta[] = [
+    {
+      providerId: "claude",
+      sessionId: "parent-session",
+      title: "Planning Session",
+      summary: "Conversation before branching",
+      projectDir: "/mock/claude",
+      createdAt: 1,
+      lastActiveAt: 10,
+      sourcePath: "/mock/claude/parent-session.jsonl",
+      resumeCommand: "claude --resume parent-session",
+    },
+    {
+      providerId: "claude",
+      sessionId: "child-session",
+      parentSessionId: "parent-session",
+      title: "Implementation Session",
+      summary: "Conversation after branching",
+      projectDir: "/mock/claude",
+      createdAt: 2,
+      lastActiveAt: 20,
+      sourcePath: "/mock/claude/child-session.jsonl",
+      resumeCommand: "claude --resume child-session",
+    },
+  ];
+  const messages: Record<string, SessionMessage[]> = {
+    "claude:/mock/claude/parent-session.jsonl": [
+      { role: "user", content: "parent message", ts: 10 },
+    ],
+    "claude:/mock/claude/child-session.jsonl": [
+      { role: "user", content: "child message", ts: 20 },
+    ],
+  };
+
+  setSessionFixtures(sessions, messages);
+};
+
 const openViewModeMenu = async () => {
   await userEvent.click(screen.getByRole("combobox", { name: /查看方式/i }));
 };
@@ -219,6 +261,80 @@ describe("SessionManagerPage", () => {
     };
 
     setSessionFixtures(sessions, messages);
+  });
+
+  it("distinguishes branch relationships and opens the parent session", async () => {
+    setBranchedSessionFixtures();
+    renderPage("claude");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Implementation Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    const childSession = screen.getByRole("button", {
+      name: /Implementation Session/i,
+    });
+    const parentSession = screen.getByRole("button", {
+      name: /Planning Session/i,
+    });
+
+    expect(
+      within(childSession).getByText(/^branch$|^分支$/i),
+    ).toBeInTheDocument();
+    expect(
+      within(parentSession).getByText(/^parent$|^父会话$/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(childSession);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /open.*parent|打开.*父/i,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Planning Session" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("clears search before opening a filtered-out parent session", async () => {
+    setBranchedSessionFixtures();
+    renderPage("claude");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Implementation Session" }),
+      ).toBeInTheDocument(),
+    );
+
+    openSearch();
+    const searchInput = screen.getByRole("textbox");
+    fireEvent.change(searchInput, {
+      target: { value: "Implementation Session" },
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /Planning Session/i }),
+      ).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /open.*parent|打开.*父/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(searchInput).toHaveValue("");
+      expect(
+        screen.getByRole("heading", { name: "Planning Session" }),
+      ).toBeInTheDocument();
+    });
   });
 
   it("deletes the selected session and selects the next visible session", async () => {

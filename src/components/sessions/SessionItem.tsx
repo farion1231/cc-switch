@@ -1,6 +1,7 @@
 import { ChevronRight, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -23,6 +24,8 @@ interface SessionItemProps {
   isSelected: boolean;
   selectionMode: boolean;
   isChecked: boolean;
+  isBranch: boolean;
+  isParent: boolean;
   isCheckDisabled?: boolean;
   searchQuery?: string;
   onSelect: (key: string) => void;
@@ -34,6 +37,8 @@ export function SessionItem({
   isSelected,
   selectionMode,
   isChecked,
+  isBranch,
+  isParent,
   isCheckDisabled = false,
   searchQuery,
   onSelect,
@@ -103,6 +108,26 @@ export function SessionItem({
               ? formatRelativeTime(lastActive, t)
               : t("common.unknown")}
           </span>
+          {isBranch && (
+            <Badge
+              variant="secondary"
+              className="h-4 px-1.5 py-0 text-[10px] leading-none"
+            >
+              {t("sessionManager.branchBadge", {
+                defaultValue: "Branch",
+              })}
+            </Badge>
+          )}
+          {isParent && (
+            <Badge
+              variant="outline"
+              className="h-4 px-1.5 py-0 text-[10px] leading-none"
+            >
+              {t("sessionManager.parentBadge", {
+                defaultValue: "Parent",
+              })}
+            </Badge>
+          )}
         </div>
       </button>
     </div>
