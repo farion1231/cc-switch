@@ -167,4 +167,50 @@ describe("useAddProviderMutation", () => {
     expect(apiMocks.add).not.toHaveBeenCalled();
     expect(persistedProvider).toEqual(seedProvider);
   });
+
+  it("uses providerKey as the database id for Kimi Code providers", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("kimicode"), {
+      wrapper,
+    });
+
+    const created = await act(async () =>
+      result.current.mutateAsync({
+        name: "Custom Kimi",
+        settingsConfig: {
+          config: 'selected_model = "custom/a1"\n[providers.custom-a]\n',
+        },
+        providerKey: "custom-a",
+      }),
+    );
+
+    expect(uuidMocks.generateUUID).not.toHaveBeenCalled();
+    expect(apiMocks.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "custom-a",
+        name: "Custom Kimi",
+      }),
+      "kimicode",
+      undefined,
+    );
+    expect(created.id).toBe("custom-a");
+    expect((created as { providerKey?: string }).providerKey).toBeUndefined();
+  });
+
+  it("requires providerKey when adding a Kimi Code provider", async () => {
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useAddProviderMutation("kimicode"), {
+      wrapper,
+    });
+
+    await expect(
+      act(async () =>
+        result.current.mutateAsync({
+          name: "Missing key",
+          settingsConfig: { config: "" },
+        }),
+      ),
+    ).rejects.toThrow(/Provider key is required for kimicode/);
+    expect(apiMocks.add).not.toHaveBeenCalled();
+  });
 });

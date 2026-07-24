@@ -844,7 +844,9 @@
       "defaultCostMultiplierRequired": "預設倍率不能為空",
       "defaultCostMultiplierInvalid": "預設倍率格式不正確"
     },
-    "saveFailedGeneric": "儲存失敗，請重試"
+    "saveFailedGeneric": "儲存失敗，請重試",
+    "kimiCodeConfigDir": "Kimi Code 設定目錄",
+    "browsePlaceholderKimiCode": "選擇 Kimi Code 設定目錄（預設 ~/.kimi-code）"
   },
   "apps": {
     "claude": "Claude",
@@ -856,7 +858,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "kimicode": "Kimi Code"
   },
   "grokBuild": {
     "apiBackend": "API Backend",

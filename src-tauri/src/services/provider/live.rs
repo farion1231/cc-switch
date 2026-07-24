@@ -186,6 +186,8 @@ pub(crate) fn provider_exists_in_live_config(
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Hermes => crate::hermes_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::KimiCode => crate::kimi_code_config::list_live_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -527,6 +529,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::KimiCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -601,6 +604,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::KimiCode
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -660,6 +664,7 @@ fn apply_common_config_to_settings(
         | AppType::OpenCode
         | AppType::OpenClaw
         | AppType::Hermes
+        | AppType::KimiCode
         | AppType::ClaudeDesktop => Ok(settings.clone()),
     }
 }
@@ -1162,6 +1167,13 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             crate::hermes_config::set_provider(&provider.id, provider.settings_config.clone())?;
             log::debug!("Hermes provider '{}' written to live config", provider.id);
         }
+        AppType::KimiCode => {
+            crate::kimi_code_config::write_provider_live(provider)?;
+            log::debug!(
+                "Kimi Code provider '{}' written to live config",
+                provider.id
+            );
+        }
     }
     Ok(())
 }
@@ -1417,6 +1429,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             let config = crate::hermes_config::yaml_to_json(&yaml_config)?;
             Ok(config)
         }
+        AppType::KimiCode => crate::kimi_code_config::read_active_live_settings(),
     }
 }
 
@@ -1526,7 +1539,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
             })
         }
         // OpenCode, OpenClaw and Hermes use additive mode and are handled by early return above
-        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => {
+        AppType::OpenCode | AppType::OpenClaw | AppType::Hermes | AppType::KimiCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -2615,4 +2628,66 @@ base_url = "https://a.example/v1"
         assert!(!config_text.contains("mcp_servers"));
         assert!(config_text.contains("model = \"grok-4.5\""));
     }
+}
+
+/// Import providers from Kimi Code live config.toml into the database.
+pub fn import_kimi_code_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    use crate::kimi_code_config;
+    use crate::provider::Provider;
+
+    let imported = kimi_code_config::import_live_provider_settings()?;
+    if imported.is_empty() {
+        return Ok(0);
+    }
+
+    let existing_ids = state.db.get_provider_ids("kimicode")?;
+    let mut count = 0usize;
+
+    for (name, settings) in imported {
+        if name.trim().is_empty() {
+            continue;
+        }
+        if existing_ids.iter().any(|id| id == &name) {
+            match state.db.get_provider_by_id(&name, "kimicode") {
+                Ok(Some(mut provider)) => {
+                    provider.settings_config = settings;
+                    if let Err(e) = state.db.save_provider("kimicode", &provider) {
+                        log::warn!("Failed to update Kimi Code provider '{name}' from live: {e}");
+                    } else {
+                        count += 1;
+                        log::info!("Updated Kimi Code provider '{name}' from live config");
+                    }
+                }
+                Ok(None) => log::warn!("Kimi Code provider '{name}' disappeared while importing"),
+                Err(e) => log::warn!("Failed to look up Kimi Code provider '{name}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(name.clone(), name.clone(), settings, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            // Importing a live entry does not grant CC Switch deletion rights.
+            // An explicit save/switch writes the scoped fragment and flips this marker.
+            live_config_managed: Some(false),
+            ..Default::default()
+        });
+        if let Err(e) = state.db.save_provider("kimicode", &provider) {
+            log::warn!("Failed to import Kimi Code provider '{name}': {e}");
+            continue;
+        }
+        count += 1;
+        log::info!("Imported Kimi Code provider '{name}' from live config");
+    }
+    Ok(count)
+}
+
+/// Remove a CC Switch-owned Kimi Code provider from live config.
+pub fn remove_kimi_code_provider_from_live(provider: &Provider) -> Result<(), AppError> {
+    use crate::kimi_code_config;
+    if !kimi_code_config::get_kimi_code_dir().exists() {
+        return Ok(());
+    }
+    // Deletion rights come from the DB-owned scoped fragment. Never infer
+    // ownership from a provider id that merely exists in the user's live file.
+    kimi_code_config::remove_provider_from_live(provider)
 }

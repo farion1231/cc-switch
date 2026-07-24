@@ -51,6 +51,7 @@ export function AppSwitcher({
     opencode: "opencode",
     openclaw: "openclaw",
     hermes: "hermes",
+    kimicode: "kimi",
   };
   const appDisplayName: Record<AppId, string> = {
     claude: "Claude Code",
@@ -61,6 +62,7 @@ export function AppSwitcher({
     opencode: "OpenCode",
     openclaw: "OpenClaw",
     hermes: "Hermes",
+    kimicode: "Kimi Code",
   };
 
   // Filter apps based on visibility settings (default all visible)

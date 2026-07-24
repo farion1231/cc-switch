@@ -111,8 +111,8 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
 }
 
-const VALID_TOOLS: [&str; 7] = [
-    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes",
+const VALID_TOOLS: [&str; 8] = [
+    "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "kimi",
 ];
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -425,6 +425,7 @@ fn tool_display_name(tool: &str) -> &'static str {
         "codex" => "Codex",
         "gemini" => "Gemini CLI",
         "grok" => "Grok Build",
+        "kimi" => "Kimi Code",
         "opencode" => "OpenCode",
         "openclaw" => "OpenClaw",
         "hermes" => "Hermes",
@@ -450,6 +451,16 @@ const GROK_INSTALL_UNIX: &str =
 /// 真正的 Python 版本问题盖成 "python command exists in these Python versions"。
 const HERMES_INSTALL_UNIX: &str =
     "bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+
+const KIMI_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://code.kimi.com/kimi-code/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+// `kimi upgrade` only prints a manual command and exits 0 when stdin/stdout are
+// non-interactive. Using it in CC Switch's silent lifecycle would report a false
+// success, so the native/static update path re-runs the verified installer.
+const KIMI_UPDATE_UNIX: &str = KIMI_INSTALL_UNIX;
+const KIMI_INSTALL_WINDOWS: &str =
+    "powershell -NoProfile -ExecutionPolicy Bypass -Command \"irm https://code.kimi.com/kimi-code/install.ps1 | iex\"";
+const KIMI_UPDATE_WINDOWS: &str = KIMI_INSTALL_WINDOWS;
 const HERMES_UPDATE_UNIX: &str =
     "hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 
@@ -506,6 +517,7 @@ fn npm_install_command_for(tool: &str) -> Option<&'static str> {
         "codex" => Some("npm i -g @openai/codex@latest"),
         "gemini" => Some("npm i -g @google/gemini-cli@latest"),
         "grok" => Some("npm i -g @xai-official/grok@latest"),
+        "kimi" => Some("npm i -g @moonshot-ai/kimi-code@latest"),
         "opencode" => Some("npm i -g opencode-ai@latest"),
         "openclaw" => Some("npm i -g openclaw@latest"),
         _ => None,
@@ -575,6 +587,25 @@ fn tool_action_shell_command_for_shell(
                 }
                 #[cfg(not(target_os = "windows"))]
                 (_, LifecycleCommandShell::WindowsBatch) => return None,
+            }
+            .to_string(),
+        );
+    }
+
+    // Kimi Code: prefer official native install scripts for fresh installs.
+    // Source-aware update (npm/homebrew/etc.) is handled by anchored path logic when
+    // an existing binary is detected; this branch covers static install/update fallbacks.
+    if tool == "kimi" {
+        return Some(
+            match (action, shell) {
+                (ToolLifecycleAction::Install, LifecycleCommandShell::Posix) => KIMI_INSTALL_UNIX,
+                (ToolLifecycleAction::Update, LifecycleCommandShell::Posix) => KIMI_UPDATE_UNIX,
+                (ToolLifecycleAction::Install, LifecycleCommandShell::WindowsBatch) => {
+                    KIMI_INSTALL_WINDOWS
+                }
+                (ToolLifecycleAction::Update, LifecycleCommandShell::WindowsBatch) => {
+                    KIMI_UPDATE_WINDOWS
+                }
             }
             .to_string(),
         );
@@ -791,6 +822,7 @@ async fn get_single_tool_version_impl(
         "codex" => fetch_npm_latest_for_tool(&client, "@openai/codex", tool, local).await,
         "gemini" => fetch_npm_latest_for_tool(&client, "@google/gemini-cli", tool, local).await,
         "grok" => fetch_npm_latest_for_tool(&client, "@xai-official/grok", tool, local).await,
+        "kimi" => fetch_npm_latest_for_tool(&client, "@moonshot-ai/kimi-code", tool, local).await,
         "opencode" => {
             if let Some(version) =
                 fetch_npm_latest_for_tool(&client, "opencode-ai", tool, local).await
@@ -1997,6 +2029,7 @@ fn npm_package_for(tool: &str) -> Option<&'static str> {
         "codex" => Some("@openai/codex"),
         "gemini" => Some("@google/gemini-cli"),
         "grok" => Some("@xai-official/grok"),
+        "kimi" => Some("@moonshot-ai/kimi-code"),
         "opencode" => Some("opencode-ai"),
         "openclaw" => Some("openclaw"),
         _ => None,
@@ -2538,6 +2571,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "grok" => installer_with_npm_fallback(GROK_INSTALL_UNIX, tool),
         "opencode" => installer_with_npm_fallback(OPENCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
+        "kimi" => installer_with_npm_fallback(KIMI_INSTALL_UNIX, tool),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
     }
 }
@@ -2647,6 +2681,7 @@ fn wsl_distro_for_tool(tool: &str) -> Option<String> {
         "codex" => crate::settings::get_codex_override_dir(),
         "gemini" => crate::settings::get_gemini_override_dir(),
         "grok" => crate::settings::get_grok_override_dir(),
+        "kimi" => crate::settings::get_kimi_code_override_dir(),
         "opencode" => crate::settings::get_opencode_override_dir(),
         "openclaw" => crate::settings::get_openclaw_override_dir(),
         "hermes" => crate::settings::get_hermes_override_dir(),

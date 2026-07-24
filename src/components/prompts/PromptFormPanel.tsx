@@ -33,6 +33,8 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     opencode: "AGENTS.md",
     openclaw: "AGENTS.md",
     hermes: "AGENTS.md",
+    // Phase 1: prompt sync unsupported; keep map exhaustive
+    kimicode: "AGENTS.md",
   };
   const filename = filenameMap[appId];
   const [name, setName] = useState("");
