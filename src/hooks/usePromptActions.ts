@@ -79,11 +79,20 @@ export function usePromptActions(appId: AppId) {
       const previousPrompts = prompts;
 
       // Enabling a prompt should preserve any other enabled prompts.
-      if (enabled) {
+      if (enabled && appId === "codex") {
         setPrompts((prev) => ({
           ...prev,
           [id]: { ...prev[id], enabled: true },
         }));
+      } else if (enabled) {
+        const updatedPrompts = Object.keys(prompts).reduce(
+          (acc, key) => {
+            acc[key] = { ...prompts[key], enabled: key === id };
+            return acc;
+          },
+          {} as Record<string, Prompt>,
+        );
+        setPrompts(updatedPrompts);
       } else {
         setPrompts((prev) => ({
           ...prev,

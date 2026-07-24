@@ -104,9 +104,11 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
         <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
           <div className="text-sm text-muted-foreground">
             {t("prompts.count", { count: promptEntries.length })} ·{" "}
-            {enabledPrompts.length > 0
+            {appId === "codex" && enabledPrompts.length > 0
               ? t("prompts.enabledCount", { count: enabledPrompts.length })
-              : t("prompts.noneEnabled")}
+              : enabledPrompts[0]
+                ? t("prompts.enabledName", { name: enabledPrompts[0][1].name })
+                : t("prompts.noneEnabled")}
           </div>
         </div>
 

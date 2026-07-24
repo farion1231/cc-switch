@@ -50,13 +50,20 @@ impl PromptService {
             // 启用提示词：写入内容到文件
             let prompts = state.db.get_prompts(app.as_str())?;
             let target_path = prompt_file_path(&app)?;
-            write_text_file(&target_path, &enabled_prompt_content(&prompts))?;
+            let content = if matches!(app, AppType::Codex) {
+                enabled_prompt_content(&prompts)
+            } else {
+                prompt.content.clone()
+            };
+            write_text_file(&target_path, &content)?;
         } else {
             // 禁用提示词：检查是否还有其他已启用的提示词
             let prompts = state.db.get_prompts(app.as_str())?;
             let target_path = prompt_file_path(&app)?;
-            if target_path.exists() {
+            if matches!(app, AppType::Codex) && target_path.exists() {
                 write_text_file(&target_path, &enabled_prompt_content(&prompts))?;
+            } else if !prompts.values().any(|p| p.enabled) && target_path.exists() {
+                write_text_file(&target_path, "")?;
             }
         }
 
@@ -77,6 +84,7 @@ impl PromptService {
     }
 
     pub fn enable_prompt(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
+        let allow_multiple = matches!(app, AppType::Codex);
         // 回填当前 live 文件内容到已启用的提示词，或创建备份
         let target_path = prompt_file_path(&app)?;
         if target_path.exists() {
@@ -131,6 +139,12 @@ impl PromptService {
 
         // 启用目标提示词并写入文件
         let mut prompts = state.db.get_prompts(app.as_str())?;
+
+        if !allow_multiple {
+            for prompt in prompts.values_mut() {
+                prompt.enabled = false;
+            }
+        }
 
         if let Some(prompt) = prompts.get_mut(id) {
             prompt.enabled = true;
