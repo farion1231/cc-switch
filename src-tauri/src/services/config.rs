@@ -138,6 +138,9 @@ impl ConfigService {
             AppType::Hermes => {
                 // Hermes uses additive mode, no live sync needed
             }
+            AppType::Pi => {
+                crate::pi_config::write_pi_live_provider(&provider)?;
+            }
         }
 
         Ok(())

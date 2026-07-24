@@ -67,6 +67,18 @@ export const OPENCLAW_DEFAULT_CONFIG = JSON.stringify(
   2,
 );
 
+export const PI_DEFAULT_CONFIG = JSON.stringify(
+  {
+    baseUrl: "",
+    apiKey: "",
+    api: "openai-completions",
+    models: [{ id: "gpt-5.5", name: "GPT 5.5" }],
+    defaultModel: "gpt-5.5",
+  },
+  null,
+  2,
+);
+
 // ── Pure functions ───────────────────────────────────────────────────
 
 export function isKnownOpencodeOptionKey(key: string): boolean {

@@ -768,6 +768,8 @@
     "openclawConfigDirDescription": "OpenClaw の設定ディレクトリ（openclaw.json）を上書きします。",
     "hermesConfigDir": "Hermes 設定ディレクトリ",
     "hermesConfigDirDescription": "Hermes の設定ディレクトリ（config.yaml）を上書きします。",
+    "piConfigDir": "Pi Agent 設定ディレクトリ",
+    "piConfigDirDescription": "Pi Agent の設定ディレクトリ（models.json と settings.json）を上書きします。",
     "browsePlaceholderClaude": "例: /home/<your-username>/.claude",
     "browsePlaceholderCodex": "例: /home/<your-username>/.codex",
     "browsePlaceholderGemini": "例: /home/<your-username>/.gemini",
@@ -775,6 +777,7 @@
     "browsePlaceholderOpencode": "例: /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "例: /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "例: /home/<your-username>/.hermes",
+    "browsePlaceholderPi": "例: /home/<your-username>/.pi/agent",
     "browseDirectory": "ディレクトリを選択",
     "resetDefault": "デフォルトに戻す（保存後に反映）",
     "checkForUpdates": "アップデートを確認",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "pi": "Pi Agent"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -2134,6 +2138,16 @@
     },
     "primaryModel": "プライマリモデル",
     "fallbackModel": "フォールバックモデル"
+  },
+  "pi": {
+    "apiProtocol": "API プロトコル",
+    "baseUrl": "API エンドポイント",
+    "defaultModel": "デフォルトモデル",
+    "defaultModelPlaceholder": "デフォルトモデルを選択",
+    "models": "モデル一覧",
+    "addModel": "モデルを追加",
+    "modelId": "モデル ID",
+    "modelName": "表示名"
   },
   "hermes": {
     "form": {

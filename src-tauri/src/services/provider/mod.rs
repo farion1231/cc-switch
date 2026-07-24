@@ -2999,6 +2999,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(&provider.settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(&provider.settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -3016,6 +3017,7 @@ impl ProviderService {
             AppType::OpenCode => Self::extract_opencode_common_config(settings_config),
             AppType::OpenClaw => Self::extract_openclaw_common_config(settings_config),
             AppType::Hermes => Ok(String::new()), // Hermes doesn't use common config snippets
+            AppType::Pi => Ok(String::new()),     // Pi doesn't use common config snippets
         }
     }
 
@@ -3541,6 +3543,15 @@ impl ProviderService {
                     ));
                 }
             }
+            AppType::Pi => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::localized(
+                        "provider.pi.settings.not_object",
+                        "Pi Agent 配置必须是 JSON 对象",
+                        "Pi Agent configuration must be a JSON object",
+                    ));
+                }
+            }
         }
 
         // Validate and clean UsageScript configuration (common for all app types)
@@ -3745,7 +3756,7 @@ impl ProviderService {
 
                 Ok((api_key, base_url))
             }
-            AppType::OpenClaw | AppType::Hermes => {
+            AppType::OpenClaw | AppType::Hermes | AppType::Pi => {
                 // OpenClaw/Hermes use apiKey and baseUrl directly on the object
                 let api_key = provider
                     .settings_config
@@ -3763,6 +3774,7 @@ impl ProviderService {
                 let base_url = provider
                     .settings_config
                     .get("baseUrl")
+                    .or_else(|| provider.settings_config.get("baseURL"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();

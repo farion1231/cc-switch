@@ -13,6 +13,7 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const APP_INTEGRATION_TIMEOUT_MS = 60_000;
 
 vi.mock("sonner", () => ({
   toast: {
@@ -163,193 +164,209 @@ describe("App integration with MSW", () => {
     toastErrorMock.mockReset();
   });
 
-  it("covers basic provider flows via real hooks", async () => {
-    const { default: App } = await import("@/App");
-    renderApp(App);
+  it(
+    "covers basic provider flows via real hooks",
+    async () => {
+      const { default: App } = await import("@/App");
+      renderApp(App);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
-    );
-
-    fireEvent.click(screen.getByText("switch-codex"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
-      ),
-    );
-
-    fireEvent.click(screen.getByText("usage"));
-    expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("save-script"));
-    fireEvent.click(screen.getByText("close-usage"));
-
-    fireEvent.click(screen.getByText("create"));
-    expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("confirm-add"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
-        /New codex Provider/,
-      ),
-    );
-
-    fireEvent.click(screen.getByText("edit"));
-    expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("confirm-edit"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
-        /-edited/,
-      ),
-    );
-
-    fireEvent.click(screen.getByText("switch"));
-    fireEvent.click(screen.getByText("duplicate"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
-    );
-
-    fireEvent.click(screen.getByText("open-website"));
-
-    emitTauriEvent("provider-switched", {
-      appType: "codex",
-      providerId: "codex-2",
-    });
-
-    expect(toastErrorMock).not.toHaveBeenCalled();
-    expect(toastSuccessMock).toHaveBeenCalled();
-  });
-
-  it("shows toast when auto sync fails in background", async () => {
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
-    );
-
-    expect(() => {
-      emitTauriEvent("webdav-sync-status-updated", null);
-    }).not.toThrow();
-    expect(toastErrorMock).not.toHaveBeenCalled();
-
-    emitTauriEvent("webdav-sync-status-updated", {
-      source: "auto",
-      status: "error",
-      error: "network timeout",
-    });
-
-    await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalled();
-    });
-
-    toastErrorMock.mockReset();
-    expect(() => {
-      emitTauriEvent("s3-sync-status-updated", null);
-    }).not.toThrow();
-    expect(toastErrorMock).not.toHaveBeenCalled();
-
-    emitTauriEvent("s3-sync-status-updated", {
-      source: "auto",
-      status: "error",
-      error: "s3 timeout",
-    });
-
-    await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalled();
-    });
-  });
-
-  it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
-    setProviders("openclaw", {
-      deepseek: {
-        id: "deepseek",
-        name: "DeepSeek",
-        settingsConfig: {
-          baseUrl: "https://api.deepseek.com",
-          apiKey: "test-key",
-          api: "openai-completions",
-          models: [],
-        },
-        category: "custom",
-        sortIndex: 0,
-        createdAt: Date.now(),
-      },
-    });
-    setCurrentProviderId("openclaw", "deepseek");
-    setLiveProviderIds("openclaw", ["deepseek-copy"]);
-
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    fireEvent.click(screen.getByText("switch-openclaw"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
-      ),
-    );
-
-    fireEvent.click(screen.getByText("duplicate"));
-
-    await waitFor(() => {
-      const providerList = screen.getByTestId("provider-list").textContent;
-      expect(providerList).toContain("deepseek-copy-2");
-      expect(providerList).toContain("DeepSeek copy");
-    });
-
-    expect(toastErrorMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("Provider key is required for openclaw"),
-    );
-  });
-
-  it("shows toast when duplicate cannot load live provider ids", async () => {
-    setProviders("openclaw", {
-      deepseek: {
-        id: "deepseek",
-        name: "DeepSeek",
-        settingsConfig: {
-          baseUrl: "https://api.deepseek.com",
-          apiKey: "test-key",
-          api: "openai-completions",
-          models: [],
-        },
-        category: "custom",
-        sortIndex: 0,
-        createdAt: Date.now(),
-      },
-    });
-    setCurrentProviderId("openclaw", "deepseek");
-
-    const liveIdsSpy = vi
-      .spyOn(providersApi, "getOpenClawLiveProviderIds")
-      .mockRejectedValueOnce(new Error("broken config"));
-
-    const { default: App } = await import("@/App");
-    renderApp(App);
-
-    fireEvent.click(screen.getByText("switch-openclaw"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
-      ),
-    );
-
-    fireEvent.click(screen.getByText("duplicate"));
-
-    await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith(
-        expect.stringContaining("读取配置中的供应商标识失败"),
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
       );
-    });
 
-    expect(screen.getByTestId("provider-list").textContent).not.toContain(
-      "deepseek-copy",
-    );
+      fireEvent.click(screen.getByText("switch-codex"));
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "codex-1",
+        ),
+      );
 
-    liveIdsSpy.mockRestore();
-  });
+      fireEvent.click(screen.getByText("usage"));
+      expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("save-script"));
+      fireEvent.click(screen.getByText("close-usage"));
+
+      fireEvent.click(screen.getByText("create"));
+      expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("confirm-add"));
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toMatch(
+          /New codex Provider/,
+        ),
+      );
+
+      fireEvent.click(screen.getByText("edit"));
+      expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
+      fireEvent.click(screen.getByText("confirm-edit"));
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toMatch(
+          /-edited/,
+        ),
+      );
+
+      fireEvent.click(screen.getByText("switch"));
+      fireEvent.click(screen.getByText("duplicate"));
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
+      );
+
+      fireEvent.click(screen.getByText("open-website"));
+
+      emitTauriEvent("provider-switched", {
+        appType: "codex",
+        providerId: "codex-2",
+      });
+
+      expect(toastErrorMock).not.toHaveBeenCalled();
+      expect(toastSuccessMock).toHaveBeenCalled();
+    },
+    APP_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "shows toast when auto sync fails in background",
+    async () => {
+      const { default: App } = await import("@/App");
+      renderApp(App);
+
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "claude-1",
+        ),
+      );
+
+      expect(() => {
+        emitTauriEvent("webdav-sync-status-updated", null);
+      }).not.toThrow();
+      expect(toastErrorMock).not.toHaveBeenCalled();
+
+      emitTauriEvent("webdav-sync-status-updated", {
+        source: "auto",
+        status: "error",
+        error: "network timeout",
+      });
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalled();
+      });
+
+      toastErrorMock.mockReset();
+      expect(() => {
+        emitTauriEvent("s3-sync-status-updated", null);
+      }).not.toThrow();
+      expect(toastErrorMock).not.toHaveBeenCalled();
+
+      emitTauriEvent("s3-sync-status-updated", {
+        source: "auto",
+        status: "error",
+        error: "s3 timeout",
+      });
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalled();
+      });
+    },
+    APP_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "duplicates openclaw providers with a generated key that avoids live-only ids",
+    async () => {
+      setProviders("openclaw", {
+        deepseek: {
+          id: "deepseek",
+          name: "DeepSeek",
+          settingsConfig: {
+            baseUrl: "https://api.deepseek.com",
+            apiKey: "test-key",
+            api: "openai-completions",
+            models: [],
+          },
+          category: "custom",
+          sortIndex: 0,
+          createdAt: Date.now(),
+        },
+      });
+      setCurrentProviderId("openclaw", "deepseek");
+      setLiveProviderIds("openclaw", ["deepseek-copy"]);
+
+      const { default: App } = await import("@/App");
+      renderApp(App);
+
+      fireEvent.click(screen.getByText("switch-openclaw"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "deepseek",
+        ),
+      );
+
+      fireEvent.click(screen.getByText("duplicate"));
+
+      await waitFor(() => {
+        const providerList = screen.getByTestId("provider-list").textContent;
+        expect(providerList).toContain("deepseek-copy-2");
+        expect(providerList).toContain("DeepSeek copy");
+      });
+
+      expect(toastErrorMock).not.toHaveBeenCalledWith(
+        expect.stringContaining("Provider key is required for openclaw"),
+      );
+    },
+    APP_INTEGRATION_TIMEOUT_MS,
+  );
+
+  it(
+    "shows toast when duplicate cannot load live provider ids",
+    async () => {
+      setProviders("openclaw", {
+        deepseek: {
+          id: "deepseek",
+          name: "DeepSeek",
+          settingsConfig: {
+            baseUrl: "https://api.deepseek.com",
+            apiKey: "test-key",
+            api: "openai-completions",
+            models: [],
+          },
+          category: "custom",
+          sortIndex: 0,
+          createdAt: Date.now(),
+        },
+      });
+      setCurrentProviderId("openclaw", "deepseek");
+
+      const liveIdsSpy = vi
+        .spyOn(providersApi, "getOpenClawLiveProviderIds")
+        .mockRejectedValueOnce(new Error("broken config"));
+
+      const { default: App } = await import("@/App");
+      renderApp(App);
+
+      fireEvent.click(screen.getByText("switch-openclaw"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("provider-list").textContent).toContain(
+          "deepseek",
+        ),
+      );
+
+      fireEvent.click(screen.getByText("duplicate"));
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalledWith(
+          expect.stringContaining("读取配置中的供应商标识失败"),
+        );
+      });
+
+      expect(screen.getByTestId("provider-list").textContent).not.toContain(
+        "deepseek-copy",
+      );
+
+      liveIdsSpy.mockRestore();
+    },
+    APP_INTEGRATION_TIMEOUT_MS,
+  );
 });

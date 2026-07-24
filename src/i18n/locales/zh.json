@@ -768,6 +768,8 @@
     "openclawConfigDirDescription": "覆盖 OpenClaw 配置目录 (openclaw.json)。",
     "hermesConfigDir": "Hermes 配置目录",
     "hermesConfigDirDescription": "覆盖 Hermes 配置目录 (config.yaml)。",
+    "piConfigDir": "Pi Agent 配置目录",
+    "piConfigDirDescription": "覆盖 Pi Agent 配置目录 (models.json 和 settings.json)。",
     "browsePlaceholderClaude": "例如：/home/<你的用户名>/.claude",
     "browsePlaceholderCodex": "例如：/home/<你的用户名>/.codex",
     "browsePlaceholderGemini": "例如：/home/<你的用户名>/.gemini",
@@ -775,6 +777,7 @@
     "browsePlaceholderOpencode": "例如：/home/<你的用户名>/.config/opencode",
     "browsePlaceholderOpenclaw": "例如：/home/<你的用户名>/.openclaw",
     "browsePlaceholderHermes": "例如：/home/<你的用户名>/.hermes",
+    "browsePlaceholderPi": "例如：/home/<你的用户名>/.pi/agent",
     "browseDirectory": "浏览目录",
     "resetDefault": "恢复默认目录（需保存后生效）",
     "checkForUpdates": "检查更新",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "pi": "Pi Agent"
   },
   "grokBuild": {
     "apiBackend": "API Backend",
@@ -2134,6 +2138,16 @@
     },
     "primaryModel": "默认模型",
     "fallbackModel": "回退模型"
+  },
+  "pi": {
+    "apiProtocol": "API 协议",
+    "baseUrl": "API 端点",
+    "defaultModel": "默认模型",
+    "defaultModelPlaceholder": "选择默认模型",
+    "models": "模型列表",
+    "addModel": "添加模型",
+    "modelId": "模型 ID",
+    "modelName": "显示名称"
   },
   "hermes": {
     "form": {

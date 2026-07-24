@@ -72,7 +72,8 @@ describe("useDirectorySettings", () => {
       if (app === "grokbuild") return "/remote/grok";
       if (app === "opencode") return "/remote/opencode";
       if (app === "openclaw") return "/remote/openclaw";
-      return "/remote/hermes";
+      if (app === "hermes") return "/remote/hermes";
+      return "/remote/pi";
     });
     selectConfigDirectoryMock.mockReset();
   });
@@ -96,6 +97,7 @@ describe("useDirectorySettings", () => {
       opencode: "/remote/opencode",
       openclaw: "/remote/openclaw",
       hermes: "/remote/hermes",
+      pi: "/remote/pi",
     });
   });
 
@@ -255,6 +257,7 @@ describe("useDirectorySettings", () => {
         grokbuild: "/server/grok",
         opencode: "/server/opencode",
         openclaw: "/server/openclaw",
+        pi: "/server/pi",
       });
     });
 
@@ -264,5 +267,6 @@ describe("useDirectorySettings", () => {
     expect(result.current.resolvedDirs.grokbuild).toBe("/server/grok");
     expect(result.current.resolvedDirs.opencode).toBe("/server/opencode");
     expect(result.current.resolvedDirs.openclaw).toBe("/server/openclaw");
+    expect(result.current.resolvedDirs.pi).toBe("/server/pi");
   });
 });

@@ -131,7 +131,13 @@ const VALID_APPS: AppId[] = [
   "opencode",
   "openclaw",
   "hermes",
+  "pi",
 ];
+
+type ProxySupportedAppId = "claude" | "codex" | "gemini";
+
+const isProxySupportedApp = (app: AppId): app is ProxySupportedAppId =>
+  app === "claude" || app === "codex" || app === "gemini";
 
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
@@ -199,6 +205,7 @@ function App() {
     opencode: true,
     openclaw: true,
     hermes: true,
+    pi: true,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -210,6 +217,7 @@ function App() {
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
+    if (visibleApps.pi) return "pi";
     return "claude"; // fallback
   };
 
@@ -221,6 +229,18 @@ function App() {
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
+    if (
+      sharedFeatureApp === "pi" &&
+      (currentView === "prompts" ||
+        currentView === "skills" ||
+        currentView === "skillsDiscovery" ||
+        currentView === "mcp" ||
+        currentView === "sessions")
+    ) {
+      setCurrentView("providers");
+      return;
+    }
+
     if (
       currentView === "sessions" &&
       sharedFeatureApp !== "claude" &&
@@ -268,7 +288,10 @@ function App() {
     takeoverStatus,
     status: proxyStatus,
   } = useProxyStatus();
-  const isCurrentAppTakeoverActive = takeoverStatus?.[activeApp] || false;
+  const hasProxySupport = isProxySupportedApp(activeApp);
+  const isCurrentAppTakeoverActive = hasProxySupport
+    ? takeoverStatus?.[activeApp] || false
+    : false;
   const activeProviderId = useMemo(() => {
     const target = proxyStatus?.active_targets?.find(
       (t) => t.app_type === activeApp,
@@ -291,7 +314,10 @@ function App() {
       currentView === "openclawAgents");
   const { data: openclawHealthWarnings = [] } =
     useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = sharedFeatureApp !== "openclaw";
+  const hasSkillsSupport =
+    sharedFeatureApp !== "openclaw" && sharedFeatureApp !== "pi";
+  const hasPromptSupport = sharedFeatureApp !== "pi";
+  const hasMcpSupport = sharedFeatureApp !== "pi";
   const hasSessionSupport =
     sharedFeatureApp === "claude" ||
     sharedFeatureApp === "codex" ||
@@ -1258,12 +1284,14 @@ function App() {
                   {activeApp === "claude-desktop" ? (
                     <ClaudeDesktopRouteToggle />
                   ) : (
-                    settingsData?.enableLocalProxy && (
+                    settingsData?.enableLocalProxy &&
+                    isProxySupportedApp(activeApp) && (
                       <ProxyToggle activeApp={activeApp} />
                     )
                   )}
                   {activeApp !== "claude-desktop" &&
-                    settingsData?.enableFailoverToggle && (
+                    settingsData?.enableFailoverToggle &&
+                    isProxySupportedApp(activeApp) && (
                       <FailoverToggle activeApp={activeApp} />
                     )}
                 </div>
@@ -1524,15 +1552,17 @@ function App() {
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("prompts.manage")}
-                              >
-                                <Book className="w-4 h-4" />
-                              </Button>
+                              {hasPromptSupport && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("prompts")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2 transition-all duration-200 ease-in-out"
+                                  title={t("prompts.manage")}
+                                >
+                                  <Book className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1548,15 +1578,17 @@ function App() {
                               >
                                 <History className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("mcp")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("mcp.title")}
-                              >
-                                <McpIcon size={16} />
-                              </Button>
+                              {hasMcpSupport && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setCurrentView("mcp")}
+                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2 transition-all duration-200 ease-in-out"
+                                  title={t("mcp.title")}
+                                >
+                                  <McpIcon size={16} />
+                                </Button>
+                              )}
                             </>
                           )}
                         </motion.div>

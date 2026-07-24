@@ -768,6 +768,8 @@
     "openclawConfigDirDescription": "Override OpenClaw configuration directory (openclaw.json).",
     "hermesConfigDir": "Hermes Configuration Directory",
     "hermesConfigDirDescription": "Override Hermes configuration directory (config.yaml).",
+    "piConfigDir": "Pi Agent Configuration Directory",
+    "piConfigDirDescription": "Override Pi Agent configuration directory (models.json and settings.json).",
     "browsePlaceholderClaude": "e.g., /home/<your-username>/.claude",
     "browsePlaceholderCodex": "e.g., /home/<your-username>/.codex",
     "browsePlaceholderGemini": "e.g., /home/<your-username>/.gemini",
@@ -775,6 +777,7 @@
     "browsePlaceholderOpencode": "e.g., /home/<your-username>/.config/opencode",
     "browsePlaceholderOpenclaw": "e.g., /home/<your-username>/.openclaw",
     "browsePlaceholderHermes": "e.g., /home/<your-username>/.hermes",
+    "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -885,7 +888,8 @@
     "grokbuild": "Grok Build",
     "opencode": "OpenCode",
     "openclaw": "OpenClaw",
-    "hermes": "Hermes"
+    "hermes": "Hermes",
+    "pi": "Pi Agent"
   },
   "grokBuild": {
     "apiBackend": "API backend",
@@ -2134,6 +2138,16 @@
     },
     "primaryModel": "Primary Model",
     "fallbackModel": "Fallback Model"
+  },
+  "pi": {
+    "apiProtocol": "API Protocol",
+    "baseUrl": "API Endpoint",
+    "defaultModel": "Default Model",
+    "defaultModelPlaceholder": "Select default model",
+    "models": "Models",
+    "addModel": "Add Model",
+    "modelId": "Model ID",
+    "modelName": "Display Name"
   },
   "hermes": {
     "form": {

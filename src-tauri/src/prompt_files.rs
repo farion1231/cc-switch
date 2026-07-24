@@ -10,7 +10,7 @@ use crate::opencode_config::get_opencode_dir;
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
+    if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
             "当前应用暂不支持 Prompts",
@@ -26,7 +26,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::OpenCode => get_opencode_dir(),
         AppType::OpenClaw => get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::Pi => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -34,7 +34,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Codex => "AGENTS.md",
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => "AGENTS.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::Pi => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

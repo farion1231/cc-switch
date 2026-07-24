@@ -10,11 +10,12 @@ import { Switch } from "@/components/ui/switch";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
+
+type ProxySupportedAppId = "claude" | "codex" | "gemini";
 
 interface ProxyToggleProps {
   className?: string;
-  activeApp: AppId;
+  activeApp: ProxySupportedAppId;
 }
 
 export function ProxyToggle({ className, activeApp }: ProxyToggleProps) {
