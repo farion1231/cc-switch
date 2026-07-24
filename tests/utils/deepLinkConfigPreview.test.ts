@@ -42,6 +42,25 @@ describe("parseDeepLinkConfigPreview", () => {
     expect(preview?.tomlConfig).not.toContain("secret-grok-key");
   });
 
+  it("masks authentication headers in nested TOML", () => {
+    const config = `${grokConfig}
+[mcp.servers.example]
+url = "https://mcp.example"
+headers = { Authorization = "Bearer top-secret", Cookie = "session=secret", credential = "credential-secret", auth = "auth-secret", safe_header = "visible" }
+`;
+    const preview = parseDeepLinkConfigPreview({
+      app: "grokbuild",
+      config: encodeBase64(config),
+      configFormat: "toml",
+    });
+
+    expect(preview?.tomlConfig).not.toContain("Bearer top-secret");
+    expect(preview?.tomlConfig).not.toContain("session=secret");
+    expect(preview?.tomlConfig).not.toContain("credential-secret");
+    expect(preview?.tomlConfig).not.toContain("auth-secret");
+    expect(preview?.tomlConfig).toContain("visible");
+  });
+
   it("also masks secrets in Codex TOML previews", () => {
     const preview = parseDeepLinkConfigPreview({
       app: "codex",

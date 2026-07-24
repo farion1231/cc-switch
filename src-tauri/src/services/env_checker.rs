@@ -37,9 +37,14 @@ fn get_keywords_for_app(app: &str) -> Vec<&str> {
         "claude" => vec!["ANTHROPIC"],
         "codex" => vec!["OPENAI"],
         "gemini" => vec!["GEMINI", "GOOGLE_GEMINI"],
-        "grokbuild" | "grok" => vec!["XAI", "GROK"],
+        "grokbuild" | "grok" => vec!["XAI_API_KEY"],
         _ => vec![],
     }
+}
+
+fn matches_env_keyword(name: &str, keywords: &[&str]) -> bool {
+    let upper_name = name.to_uppercase();
+    keywords.iter().any(|keyword| upper_name.contains(keyword))
 }
 
 /// Check system environment variables (Windows Registry or Unix env)
@@ -50,7 +55,7 @@ fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
     // Check HKEY_CURRENT_USER\Environment
     if let Ok(hkcu) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Environment") {
         for (name, value) in hkcu.enum_values().filter_map(Result::ok) {
-            if keywords.iter().any(|k| name.to_uppercase().contains(k)) {
+            if matches_env_keyword(&name, keywords) {
                 conflicts.push(EnvConflict {
                     var_name: name.clone(),
                     var_value: value.to_string(),
@@ -66,7 +71,7 @@ fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
         .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")
     {
         for (name, value) in hklm.enum_values().filter_map(Result::ok) {
-            if keywords.iter().any(|k| name.to_uppercase().contains(k)) {
+            if matches_env_keyword(&name, keywords) {
                 conflicts.push(EnvConflict {
                     var_name: name.clone(),
                     var_value: value.to_string(),
@@ -86,7 +91,7 @@ fn check_system_env(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
 
     // Check current process environment
     for (key, value) in std::env::vars() {
-        if keywords.iter().any(|k| key.to_uppercase().contains(k)) {
+        if matches_env_keyword(&key, keywords) {
             conflicts.push(EnvConflict {
                 var_name: key,
                 var_value: value,
@@ -132,7 +137,7 @@ fn check_shell_configs(keywords: &[&str]) -> Result<Vec<EnvConflict>, String> {
                         let var_value = export_line[eq_pos + 1..].trim();
 
                         // Check if variable name contains any keyword
-                        if keywords.iter().any(|k| var_name.to_uppercase().contains(k)) {
+                        if matches_env_keyword(var_name, keywords) {
                             conflicts.push(EnvConflict {
                                 var_name: var_name.to_string(),
                                 var_value: var_value
@@ -164,8 +169,18 @@ mod tests {
             get_keywords_for_app("gemini"),
             vec!["GEMINI", "GOOGLE_GEMINI"]
         );
-        assert_eq!(get_keywords_for_app("grokbuild"), vec!["XAI", "GROK"]);
-        assert_eq!(get_keywords_for_app("grok"), vec!["XAI", "GROK"]);
+        assert_eq!(get_keywords_for_app("grokbuild"), vec!["XAI_API_KEY"]);
+        assert_eq!(get_keywords_for_app("grok"), vec!["XAI_API_KEY"]);
         assert_eq!(get_keywords_for_app("unknown"), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn grok_keywords_only_match_credentials() {
+        let keywords = get_keywords_for_app("grokbuild");
+
+        assert!(matches_env_keyword("XAI_API_KEY", &keywords));
+        assert!(matches_env_keyword("xai_api_key", &keywords));
+        assert!(!matches_env_keyword("GROK_BIN_DIR", &keywords));
+        assert!(!matches_env_keyword("GROK_HOME", &keywords));
     }
 }
