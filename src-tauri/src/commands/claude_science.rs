@@ -13,7 +13,9 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use std::time::UNIX_EPOCH;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -32,10 +34,15 @@ const MANAGED_PROFILE_DIR: &str = "claude-science-proxy";
 const PROXY_TOKEN_PLACEHOLDER: &str = CLAUDE_SCIENCE_PROXY_AUTH_PLACEHOLDER;
 const PROXY_REFRESH_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED_CLAUDE_SCIENCE_REFRESH";
 const MANAGED_BIN_DIR: &str = "bin";
+#[cfg(target_os = "macos")]
 const MANAGED_BIN_STAMP: &str = "claude-science-patch.stamp";
+#[cfg(target_os = "macos")]
 const MANAGED_BIN_PATCH_VERSION: u8 = 3;
+#[cfg(any(target_os = "macos", test))]
 const ANTHROPIC_API_ORIGIN: &str = "https://api.anthropic.com";
+#[cfg(any(target_os = "macos", test))]
 const CLAUDE_AI_ORIGIN: &str = "https://claude.ai";
+#[cfg(any(target_os = "macos", test))]
 const ANTHROPIC_OAUTH_PATHS: &[&str] = &[
     "/api/oauth/profile",
     "/api/oauth/account",
@@ -575,6 +582,7 @@ fn prepare_managed_science_binary(
     Ok(source.to_path_buf())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn loopback_proxy_port(proxy_base_url: &str) -> Result<u16, String> {
     let url = url::Url::parse(proxy_base_url)
         .map_err(|e| format!("Claude Science proxy URL is invalid: {e}"))?;
@@ -592,6 +600,7 @@ fn loopback_proxy_port(proxy_base_url: &str) -> Result<u16, String> {
         .ok_or_else(|| "Claude Science proxy URL must include a port".to_string())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn padded_anthropic_loopback_origin(proxy_base_url: &str) -> Result<String, String> {
     let port = loopback_proxy_port(proxy_base_url)?;
     let padded_host = match port.to_string().len() {
@@ -612,6 +621,7 @@ fn padded_anthropic_loopback_origin(proxy_base_url: &str) -> Result<String, Stri
     Ok(origin)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn padded_claude_ai_loopback_origin(proxy_base_url: &str) -> Result<String, String> {
     let port = loopback_proxy_port(proxy_base_url)?;
     let port_digits = port.to_string().len();
@@ -633,6 +643,7 @@ fn padded_claude_ai_loopback_origin(proxy_base_url: &str) -> Result<String, Stri
     Ok(origin)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn replace_binary_origin(binary: &mut [u8], old: &str, new: &str) -> usize {
     let old = old.as_bytes();
     let new = new.as_bytes();
@@ -654,6 +665,7 @@ fn replace_binary_origin(binary: &mut [u8], old: &str, new: &str) -> usize {
     patched
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn patch_science_api_origins(
     binary: &mut [u8],
     anthropic_origin: &str,
@@ -732,14 +744,14 @@ fn run_cli_with_env(
         .map_err(|e| format!("Failed to execute Claude Science CLI: {e}"))
 }
 
-fn science_cli_working_dir<'a>(args: &[&str], profile: &'a ScienceProfilePaths) -> &'a Path {
+fn science_cli_working_dir<'a>(_args: &[&str], profile: &'a ScienceProfilePaths) -> &'a Path {
     // Claude Science 0.1.18 runs micromamba through its macOS seatbelt
     // executor. If the detached daemon inherits a private project/profile
     // directory as cwd, micromamba cannot resolve getcwd() and Python, R, and
     // bundled MCP provisioning all fail. /tmp is explicitly readable inside
     // that sandbox; the managed data/config paths remain explicit CLI args.
     #[cfg(target_os = "macos")]
-    if args.first().copied() == Some("serve") {
+    if _args.first().copied() == Some("serve") {
         return Path::new(MACOS_SCIENCE_SERVE_CWD);
     }
 
@@ -1038,7 +1050,7 @@ fn set_private_file_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn set_private_executable_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -1048,11 +1060,6 @@ fn set_private_executable_permissions(path: &Path) -> Result<(), String> {
             path.display()
         )
     })
-}
-
-#[cfg(not(unix))]
-fn set_private_executable_permissions(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(unix)]
