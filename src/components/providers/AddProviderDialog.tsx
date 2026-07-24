@@ -367,6 +367,7 @@ export function AddProviderDialog({
       title={t("provider.addNewProvider")}
       onClose={() => onOpenChange(false)}
       footer={footer}
+      scrollbarVisible
       contentClassName="pt-3"
     >
       {showUniversalTab ? (

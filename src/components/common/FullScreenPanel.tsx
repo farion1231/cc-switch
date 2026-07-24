@@ -18,6 +18,7 @@ interface FullScreenPanelProps {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  scrollbarVisible?: boolean;
   /**
    * 覆盖内容区滚动容器的内边距/间距类。默认 `px-6 py-6 space-y-6`。
    * 通过 `cn`(twMerge) 合并，传入如 `pt-3` 只覆盖顶部内边距，其余保持默认。
@@ -39,6 +40,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   onClose,
   children,
   footer,
+  scrollbarVisible = false,
   contentClassName,
 }) => {
   React.useEffect(() => {
@@ -142,7 +144,12 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto scroll-overlay">
+          <div
+            className={cn(
+              "flex-1 overflow-y-auto scroll-overlay",
+              scrollbarVisible && "scroll-overlay-visible",
+            )}
+          >
             <div className={cn("px-6 py-6 space-y-6 w-full", contentClassName)}>
               {children}
             </div>
