@@ -14,6 +14,7 @@ import UsageFooter from "@/components/UsageFooter";
 import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
 import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
 import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
+import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
@@ -201,7 +202,7 @@ export function ProviderCard({
   const isAggregate = isAggregateProvider(provider);
   const isOfficial = isOfficialProvider(provider, appId);
   const supportsOfficialSubscription =
-    isOfficial && ["claude", "codex", "gemini"].includes(appId);
+    isOfficial && ["claude", "codex", "gemini", "grokbuild"].includes(appId);
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -232,6 +233,8 @@ export function ProviderCard({
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
+  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
   // 统一权威谓词（详见 providerNeedsRouting）：以 providerType 为准，不受
   // apiFormat 被改动/缺省影响。此 badge 仅在 Codex 视图渲染，故加 appId 守卫。
   const codexNeedsRouting =
@@ -506,6 +509,12 @@ export function ProviderCard({
                   inline={true}
                   isCurrent={isCurrent}
                 />
+              ) : isXaiOauth ? (
+                <XaiOauthQuotaFooter
+                  meta={provider.meta}
+                  inline={true}
+                  isCurrent={isCurrent}
+                />
               ) : isOfficial ? (
                 officialSubscriptionEnabled ? (
                   <SubscriptionQuotaFooter
@@ -587,7 +596,8 @@ export function ProviderCard({
                 isAggregate ||
                 (isOfficial && !supportsOfficialSubscription) ||
                 isCopilot ||
-                isCodexOauth
+                isCodexOauth ||
+                isXaiOauth
                   ? undefined
                   : () => onConfigureUsage(provider)
               }

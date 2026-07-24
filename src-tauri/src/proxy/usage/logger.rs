@@ -122,7 +122,7 @@ impl<'a> UsageLogger<'a> {
 
         let created_at = chrono::Utc::now().timestamp();
         let input_token_semantics =
-            if matches!(log.app_type.as_str(), "codex" | "gemini" | "grokbuild") {
+            if crate::services::sql_helpers::is_cache_inclusive_app(log.app_type.as_str()) {
                 INPUT_TOKEN_SEMANTICS_TOTAL
             } else {
                 INPUT_TOKEN_SEMANTICS_FRESH

@@ -1521,7 +1521,8 @@
       "claude": "Claude Code",
       "codex": "Codex",
       "gemini": "Gemini",
-      "opencode": "OpenCode"
+      "opencode": "OpenCode",
+      "grokbuild": "Grok Build"
     },
     "rawInputLabel": "原始",
     "dataSources": "数据来源",
@@ -1531,7 +1532,8 @@
       "codex_db": "Codex 数据库",
       "codex_session": "Codex 会话日志",
       "gemini_session": "Gemini 会话日志",
-      "opencode_session": "OpenCode 会话日志"
+      "opencode_session": "OpenCode 会话日志",
+      "grok_session": "Grok Build 会话日志"
     },
     "sessionSync": {
       "trigger": "同步会话日志",
@@ -3026,6 +3028,7 @@
     "geminiFlashLite": "Flash Lite",
     "weeklyLimit": "每周",
     "monthly": "每月",
+    "credits": "额度",
     "copilotPremium": "高级请求",
     "utilization": "{{value}}%",
     "resetsIn": "{{time}}后重置",

@@ -1586,8 +1586,11 @@ impl ProxyService {
     /// Grok Build live 是否具备可接管的自定义模型表。
     ///
     /// 官方态 live（Grok CLI 自带 OAuth 登录、无 `[model.*]` 表）没有注入
-    /// 占位符的落点，且官方供应商本就禁止经代理接管（封号风险），调用方
-    /// 应跳过接管或直接报错。
+    /// 占位符的落点：Grok CLI 以「config 是否为空」区分官方 OAuth / 自定义
+    /// 供应商两种模式，表达不出「官方 OAuth + 自定义 base_url」。官方供应商
+    /// 的接管能力门见 `official_provider_supports_proxy_takeover`（按应用逐个
+    /// 开，目前仅 Codex），调用方应跳过接管或直接报错。官方态的用量统计由
+    /// `session_usage_grokbuild` 从会话日志导入，不依赖代理。
     fn grok_live_config_supports_takeover(config: &Value) -> bool {
         config
             .get("config")
