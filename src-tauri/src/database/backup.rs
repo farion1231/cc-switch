@@ -9,6 +9,7 @@ use chrono::{Local, Utc};
 use rusqlite::backup::Backup;
 use rusqlite::types::ValueRef;
 use rusqlite::Connection;
+use std::ffi::CString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
@@ -26,6 +27,7 @@ const SYNC_SKIP_TABLES: &[&str] = &[
 
 /// Tables whose local data is preserved (restored from local snapshot) during WebDAV import.
 /// Excludes ephemeral tables like provider_health that can safely rebuild at runtime.
+#[cfg_attr(not(test), allow(dead_code))]
 const SYNC_PRESERVE_TABLES: &[&str] = &[
     "proxy_request_logs",
     "stream_check_logs",
@@ -46,13 +48,63 @@ impl Database {
     /// 导出为 SQLite 兼容的 SQL 文本（内存字符串，完整导出）
     pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, &[])
+        Self::dump_sql(&snapshot, None, &[])
     }
 
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
-        Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
+        Self::dump_sql(&snapshot, None, SYNC_SKIP_TABLES)
+    }
+
+    /// Export SQL containing full schema but only the selected tables' rows.
+    pub(crate) fn export_sql_string_for_tables(&self, tables: &[&str]) -> Result<String, AppError> {
+        let snapshot = self.snapshot_to_memory()?;
+        Self::export_sql_string_from_connection_for_tables(&snapshot, tables)
+    }
+
+    pub(crate) fn export_sql_string_from_connection_for_tables(
+        conn: &Connection,
+        tables: &[&str],
+    ) -> Result<String, AppError> {
+        Self::dump_sql(conn, Some(tables), &[])
+    }
+
+    /// Replace only the selected tables from one or more SQL exports.
+    ///
+    /// Each SQL document must be a CC Switch export. All documents are imported
+    /// into a temporary database first, then the selected tables are copied
+    /// back into the main database inside a single transaction.
+    pub(crate) fn replace_tables_from_sql_strings(
+        &self,
+        sql_documents: &[&str],
+        tables: &[&str],
+    ) -> Result<(), AppError> {
+        let _safety_backup = self.backup_database_file()?;
+        let temp_file = NamedTempFile::new().map_err(|e| AppError::IoContext {
+            context: "创建临时数据库文件失败".to_string(),
+            source: e,
+        })?;
+        let temp_path = temp_file.path().to_path_buf();
+        let temp_conn =
+            Connection::open(&temp_path).map_err(|e| AppError::Database(e.to_string()))?;
+
+        Self::create_tables_on_conn(&temp_conn)?;
+        Self::apply_schema_migrations_on_conn(&temp_conn)?;
+
+        for sql_raw in sql_documents {
+            let sql_content = sql_raw.trim_start_matches('\u{feff}');
+            Self::validate_cc_switch_sql_export(sql_content)?;
+            Self::import_selected_table_rows_from_sql(&temp_conn, sql_content, tables)?;
+        }
+
+        let mut main_conn = lock_conn!(self.conn);
+        let tx = main_conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::restore_tables(&temp_conn, &tx, tables)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     /// 导出为 SQLite 兼容的 SQL 文本
@@ -87,6 +139,7 @@ impl Database {
 
     /// Import SQL generated for sync, then restore local-only tables from the
     /// current device snapshot before replacing the main database.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn import_sql_string_for_sync(&self, sql_raw: &str) -> Result<String, AppError> {
         self.import_sql_string_inner(sql_raw, SYNC_PRESERVE_TABLES)
     }
@@ -187,7 +240,15 @@ impl Database {
                 continue;
             }
 
-            let columns = Self::get_table_columns(source_conn, table)?;
+            let source_columns = Self::get_table_columns(source_conn, table)?;
+            let target_columns = Self::get_table_columns(target_conn, table)?;
+            if source_columns.is_empty() || target_columns.is_empty() {
+                continue;
+            }
+            let columns = target_columns
+                .into_iter()
+                .filter(|column| source_columns.iter().any(|src| src == column))
+                .collect::<Vec<_>>();
             if columns.is_empty() {
                 continue;
             }
@@ -208,7 +269,14 @@ impl Database {
             let insert_sql = format!("INSERT INTO \"{table}\" ({cols}) VALUES ({placeholders})");
 
             let mut stmt = source_conn
-                .prepare(&format!("SELECT * FROM \"{table}\""))
+                .prepare(&format!(
+                    "SELECT {} FROM \"{table}\"",
+                    columns
+                        .iter()
+                        .map(|column| format!("\"{column}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
                 .map_err(|e| AppError::Database(format!("读取表 {table} 失败: {e}")))?;
             let mut rows = stmt
                 .query([])
@@ -230,6 +298,73 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    fn import_selected_table_rows_from_sql(
+        conn: &Connection,
+        sql_content: &str,
+        tables: &[&str],
+    ) -> Result<(), AppError> {
+        let statements = Self::split_complete_sql_statements(sql_content)?;
+
+        for table in tables {
+            let quoted = format!("INSERT INTO \"{table}\"");
+            let plain = format!("INSERT INTO {table}");
+            let mut cleared = false;
+
+            for statement in &statements {
+                let sql = statement.trim_start();
+                if !sql.starts_with(&quoted) && !sql.starts_with(&plain) {
+                    continue;
+                }
+
+                if !cleared {
+                    conn.execute(&format!("DELETE FROM \"{table}\""), [])
+                        .map_err(|e| AppError::Database(format!("清空表 {table} 失败: {e}")))?;
+                    cleared = true;
+                }
+
+                conn.execute_batch(sql)
+                    .map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn split_complete_sql_statements(sql_content: &str) -> Result<Vec<&str>, AppError> {
+        let mut statements = Vec::new();
+        let mut start = 0;
+
+        for (idx, ch) in sql_content.char_indices() {
+            if ch != ';' {
+                continue;
+            }
+
+            let candidate = &sql_content[start..idx + 1];
+            if !Self::is_complete_sql_statement(candidate)? {
+                continue;
+            }
+
+            let trimmed = candidate.trim();
+            if !trimmed.is_empty() {
+                statements.push(trimmed);
+            }
+            start = idx + 1;
+        }
+
+        let trailing = sql_content[start..].trim();
+        if !trailing.is_empty() {
+            return Err(AppError::Database("SQL 导出包含未完成的语句".to_string()));
+        }
+
+        Ok(statements)
+    }
+
+    fn is_complete_sql_statement(sql: &str) -> Result<bool, AppError> {
+        let c_sql = CString::new(sql).map_err(|_| {
+            AppError::Database("SQL 导出包含 NUL 字符，无法解析语句边界".to_string())
+        })?;
+        Ok(unsafe { rusqlite::ffi::sqlite3_complete(c_sql.as_ptr()) == 1 })
     }
 
     /// Periodic backup: create a new backup if the latest one is older than the configured interval
@@ -296,6 +431,9 @@ impl Database {
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
+        if self.is_in_memory {
+            return Ok(None);
+        }
         let db_path = get_app_config_dir().join("cc-switch.db");
         if !db_path.exists() {
             return Ok(None);
@@ -384,7 +522,11 @@ impl Database {
     }
 
     /// 导出数据库为 SQL 文本
-    fn dump_sql(conn: &Connection, skip_tables: &[&str]) -> Result<String, AppError> {
+    fn dump_sql(
+        conn: &Connection,
+        included_tables: Option<&[&str]>,
+        skip_tables: &[&str],
+    ) -> Result<String, AppError> {
         let mut output = String::new();
         let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let user_version: i64 = conn
@@ -432,6 +574,11 @@ impl Database {
 
         // 导出数据
         for table in tables {
+            if let Some(included_tables) = included_tables {
+                if !included_tables.iter().any(|candidate| *candidate == table) {
+                    continue;
+                }
+            }
             if skip_tables.iter().any(|t| *t == table) {
                 continue;
             }
@@ -689,10 +836,490 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use super::get_app_config_dir;
     use super::Database;
     use crate::error::AppError;
     use crate::settings::{update_settings, AppSettings};
     use serial_test::serial;
+
+    #[test]
+    fn sync_export_for_selected_tables_excludes_unselected_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('provider-1', 'claude', 'Provider 1', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO mcp_servers (
+                    id, name, server_config, tags,
+                    enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                ) VALUES ('mcp-fetch', 'Fetch', '{}', '[]', 1, 0, 0, 0, 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES ('prompt-1', 'claude', 'Prompt 1', 'hello', 1)",
+                [],
+            )?;
+        }
+
+        let sql = db.export_sql_string_for_tables(&["mcp_servers"])?;
+
+        assert!(sql.contains("INSERT INTO \"mcp_servers\""));
+        assert!(sql.contains("mcp-fetch"));
+        assert!(!sql.contains("provider-1"));
+        assert!(!sql.contains("prompt-1"));
+        Ok(())
+    }
+
+    #[test]
+    fn selective_sync_import_replaces_only_target_tables() -> Result<(), AppError> {
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO mcp_servers (
+                    id, name, server_config, tags,
+                    enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                ) VALUES ('remote-mcp', 'Remote MCP', '{}', '[]', 1, 1, 0, 0, 0)",
+                [],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_tables(&["mcp_servers"])?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO mcp_servers (
+                    id, name, server_config, tags,
+                    enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                ) VALUES ('local-mcp', 'Local MCP', '{}', '[]', 1, 0, 0, 0, 0)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES ('local-prompt', 'claude', 'Local Prompt', 'hello', 1)",
+                [],
+            )?;
+        }
+
+        local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["mcp_servers"])?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'local-provider' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let local_prompt_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM prompts WHERE id = 'local-prompt' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let local_mcp_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mcp_servers WHERE id = 'local-mcp'",
+            [],
+            |row| row.get(0),
+        )?;
+        let remote_mcp_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mcp_servers WHERE id = 'remote-mcp'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            provider_count, 1,
+            "unselected provider data should stay local"
+        );
+        assert_eq!(
+            local_prompt_count, 1,
+            "unselected prompts should stay local"
+        );
+        assert_eq!(local_mcp_count, 0, "selected table should be replaced");
+        assert_eq!(remote_mcp_count, 1, "selected table should use remote rows");
+        Ok(())
+    }
+
+    #[test]
+    fn selective_sync_import_supports_multiple_sql_documents_without_unique_conflicts(
+    ) -> Result<(), AppError> {
+        let api_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(api_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
+                [],
+            )?;
+        }
+        let api_sql = api_db.export_sql_string_for_tables(&["providers"])?;
+
+        let prompt_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(prompt_db.conn);
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES ('remote-prompt', 'claude', 'Remote Prompt', 'hello', 1)",
+                [],
+            )?;
+        }
+        let prompt_sql = prompt_db.export_sql_string_for_tables(&["prompts"])?;
+
+        let local_db = Database::memory()?;
+        local_db.replace_tables_from_sql_strings(
+            &[api_sql.as_str(), prompt_sql.as_str()],
+            &["providers", "prompts"],
+        )?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'remote-provider' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let prompt_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM prompts WHERE id = 'remote-prompt' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(provider_count, 1);
+        assert_eq!(prompt_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn selective_sync_import_preserves_multiline_prompt_content() -> Result<(), AppError> {
+        let multiline_content = "line1\nline2\nline3";
+
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES (?1, 'claude', 'Remote Prompt', ?2, 1)",
+                rusqlite::params!["remote-prompt", multiline_content],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_tables(&["prompts"])?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute(
+                "INSERT INTO providers (id, app_type, name, settings_config, meta)
+                 VALUES ('local-provider', 'claude', 'Local Provider', '{}', '{}')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO prompts (id, app_type, name, content, enabled)
+                 VALUES ('local-prompt', 'claude', 'Local Prompt', 'hello', 1)",
+                [],
+            )?;
+        }
+
+        local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["prompts"])?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let provider_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM providers WHERE id = 'local-provider' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let local_prompt_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM prompts WHERE id = 'local-prompt' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        let remote_content: String = conn.query_row(
+            "SELECT content FROM prompts WHERE id = 'remote-prompt' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            provider_count, 1,
+            "unselected provider data should stay local"
+        );
+        assert_eq!(
+            local_prompt_count, 0,
+            "selected prompts table should be replaced"
+        );
+        assert_eq!(remote_content, multiline_content);
+        Ok(())
+    }
+
+    #[test]
+    fn selective_sync_import_replaces_model_pricing_rows_for_api_module() -> Result<(), AppError> {
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute("DELETE FROM model_pricing", [])?;
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million
+                ) VALUES ('gpt-test', 'GPT Test', 1.23, 4.56)",
+                [],
+            )?;
+        }
+        let remote_sql = remote_db.export_sql_string_for_tables(&["model_pricing"])?;
+
+        let local_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.execute("DELETE FROM model_pricing", [])?;
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million
+                ) VALUES ('local-model', 'Local Model', 0.11, 0.22)",
+                [],
+            )?;
+        }
+
+        local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["model_pricing"])?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let local_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM model_pricing WHERE model_id = 'local-model'",
+            [],
+            |row| row.get(0),
+        )?;
+        let remote_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM model_pricing WHERE model_id = 'gpt-test'",
+            [],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(local_count, 0);
+        assert_eq!(remote_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn selective_sync_import_replaces_seeded_proxy_config_rows_without_unique_conflicts(
+    ) -> Result<(), AppError> {
+        let remote_db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(remote_db.conn);
+            conn.execute(
+                "UPDATE proxy_config
+                 SET listen_port = 17777
+                 WHERE app_type = 'claude'",
+                [],
+            )?;
+        }
+        let proxy_sql = remote_db.export_sql_string_for_tables(&["proxy_config"])?;
+
+        let local_db = Database::memory()?;
+        local_db.replace_tables_from_sql_strings(&[proxy_sql.as_str()], &["proxy_config"])?;
+
+        let conn = crate::database::lock_conn!(local_db.conn);
+        let listen_port: i64 = conn.query_row(
+            "SELECT listen_port FROM proxy_config WHERE app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(listen_port, 17777);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn selective_sync_import_creates_observable_safety_backup_for_file_database(
+    ) -> Result<(), AppError> {
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let test_home = std::env::temp_dir().join("cc-switch-selective-sync-safety-backup-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+        update_settings(AppSettings::default()).expect("reset settings");
+
+        let result = (|| -> Result<(), AppError> {
+            let remote_db = Database::memory()?;
+            {
+                let conn = crate::database::lock_conn!(remote_db.conn);
+                conn.execute(
+                    "INSERT INTO mcp_servers (
+                        id, name, server_config, tags,
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                    ) VALUES ('remote-mcp-backup', 'Remote MCP Backup', '{}', '[]', 1, 1, 0, 0, 0)",
+                    [],
+                )?;
+            }
+            let remote_sql = remote_db.export_sql_string_for_tables(&["mcp_servers"])?;
+
+            let local_db = Database::init()?;
+            let backup_dir = get_app_config_dir().join("backups");
+            let backup_paths_before = std::fs::read_dir(&backup_dir)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().map(|ext| ext == "db").unwrap_or(false))
+                .collect::<Vec<_>>();
+            {
+                let conn = crate::database::lock_conn!(local_db.conn);
+                conn.execute(
+                    "INSERT INTO mcp_servers (
+                        id, name, server_config, tags,
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                    ) VALUES ('local-mcp-backup', 'Local MCP Backup', '{}', '[]', 1, 0, 0, 0, 0)",
+                    [],
+                )?;
+            }
+
+            local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["mcp_servers"])?;
+
+            let conn = crate::database::lock_conn!(local_db.conn);
+            let local_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM mcp_servers WHERE id = 'local-mcp-backup'",
+                [],
+                |row| row.get(0),
+            )?;
+            let remote_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM mcp_servers WHERE id = 'remote-mcp-backup'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(local_count, 0, "selected table should be replaced");
+            assert_eq!(remote_count, 1, "remote row should be imported");
+
+            drop(conn);
+
+            let backup_paths_after = std::fs::read_dir(&backup_dir)
+                .expect("backup directory should exist")
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().map(|ext| ext == "db").unwrap_or(false))
+                .collect::<Vec<_>>();
+            let new_backup_paths = backup_paths_after
+                .iter()
+                .filter(|path| !backup_paths_before.iter().any(|before| before == *path))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                new_backup_paths.len(),
+                1,
+                "selective sync import should create exactly one new safety backup"
+            );
+
+            let backup_conn =
+                rusqlite::Connection::open(&new_backup_paths[0]).expect("open backup database");
+            let backed_up_local_count: i64 = backup_conn.query_row(
+                "SELECT COUNT(*) FROM mcp_servers WHERE id = 'local-mcp-backup'",
+                [],
+                |row| row.get(0),
+            )?;
+            let backed_up_remote_count: i64 = backup_conn.query_row(
+                "SELECT COUNT(*) FROM mcp_servers WHERE id = 'remote-mcp-backup'",
+                [],
+                |row| row.get(0),
+            )?;
+
+            assert_eq!(
+                backed_up_local_count, 1,
+                "safety backup should preserve pre-import local rows"
+            );
+            assert_eq!(
+                backed_up_remote_count, 0,
+                "safety backup should not already contain imported remote rows"
+            );
+
+            Ok(())
+        })();
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+
+        result
+    }
+
+    #[test]
+    #[serial]
+    fn selective_sync_import_on_memory_db_does_not_touch_redirected_backup_dir(
+    ) -> Result<(), AppError> {
+        // Reproduces the CI race that flipped CI red on this branch.
+        //
+        // The other selective_sync_import_* tests create memory Databases and call
+        // `replace_tables_from_sql_strings`, which unconditionally invokes
+        // `backup_database_file()`. Once a sibling test sets `CC_SWITCH_TEST_HOME`
+        // and Database::init() lands a real cc-switch.db inside it, the memory-DB
+        // siblings start writing safety backups into that redirected path, blowing
+        // up the "exactly one new safety backup" assertion.
+        //
+        // We reproduce the "landmine" deterministically: set CC_SWITCH_TEST_HOME,
+        // place an existing cc-switch.db there, then run the memory-DB import and
+        // assert that no backup is written.
+        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+        let test_home =
+            std::env::temp_dir().join("cc-switch-selective-sync-memory-no-backup-test");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        let result = (|| -> Result<(), AppError> {
+            let app_dir = get_app_config_dir();
+            std::fs::create_dir_all(&app_dir).expect("create app dir");
+            std::fs::write(app_dir.join("cc-switch.db"), b"landmine")
+                .expect("plant landmine cc-switch.db");
+            let backup_dir = app_dir.join("backups");
+            let backups_before = std::fs::read_dir(&backup_dir)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.filter_map(|e| e.ok()))
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .count();
+
+            let remote_db = Database::memory()?;
+            {
+                let conn = crate::database::lock_conn!(remote_db.conn);
+                conn.execute(
+                    "INSERT INTO mcp_servers (
+                        id, name, server_config, tags,
+                        enabled_claude, enabled_codex, enabled_gemini, enabled_opencode, enabled_hermes
+                    ) VALUES ('remote-mcp', 'Remote MCP', '{}', '[]', 1, 0, 0, 0, 0)",
+                    [],
+                )?;
+            }
+            let remote_sql = remote_db.export_sql_string_for_tables(&["mcp_servers"])?;
+
+            let local_db = Database::memory()?;
+            local_db.replace_tables_from_sql_strings(&[remote_sql.as_str()], &["mcp_servers"])?;
+
+            let backups_after = std::fs::read_dir(&backup_dir)
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.filter_map(|e| e.ok()))
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .count();
+
+            assert_eq!(
+                backups_after, backups_before,
+                "memory Database must not write safety backups into the redirected app dir"
+            );
+            Ok(())
+        })();
+
+        match old_test_home {
+            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&test_home);
+
+        result
+    }
 
     #[test]
     fn sync_import_preserves_local_only_tables() -> Result<(), AppError> {

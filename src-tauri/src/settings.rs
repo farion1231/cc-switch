@@ -97,6 +97,67 @@ pub struct WebDavSyncStatus {
     pub last_remote_manifest_hash: Option<String>,
 }
 
+/// WebDAV 分模块同步选择
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDavSyncModules {
+    #[serde(default = "default_enabled_module")]
+    pub api: bool,
+    #[serde(default = "default_enabled_module")]
+    pub mcp: bool,
+    #[serde(default = "default_enabled_module")]
+    pub prompts: bool,
+    #[serde(default = "default_enabled_module")]
+    pub skills: bool,
+}
+
+impl Default for WebDavSyncModules {
+    fn default() -> Self {
+        Self {
+            api: true,
+            mcp: false,
+            prompts: false,
+            skills: false,
+        }
+    }
+}
+
+impl WebDavSyncModules {
+    pub fn any_enabled(&self) -> bool {
+        self.api || self.mcp || self.prompts || self.skills
+    }
+
+    pub fn upload_default() -> Self {
+        Self {
+            api: true,
+            mcp: false,
+            prompts: false,
+            skills: false,
+        }
+    }
+
+    pub fn download_default() -> Self {
+        Self {
+            api: true,
+            mcp: true,
+            prompts: true,
+            skills: true,
+        }
+    }
+}
+
+fn default_enabled_module() -> bool {
+    true
+}
+
+fn default_upload_modules() -> WebDavSyncModules {
+    WebDavSyncModules::upload_default()
+}
+
+fn default_download_modules() -> WebDavSyncModules {
+    WebDavSyncModules::download_default()
+}
+
 fn default_remote_root() -> String {
     "cc-switch-sync".to_string()
 }
@@ -122,6 +183,10 @@ pub struct WebDavSyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    #[serde(default = "default_upload_modules")]
+    pub upload_modules: WebDavSyncModules,
+    #[serde(default = "default_download_modules")]
+    pub download_modules: WebDavSyncModules,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -136,6 +201,8 @@ impl Default for WebDavSyncSettings {
             password: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            upload_modules: WebDavSyncModules::upload_default(),
+            download_modules: WebDavSyncModules::download_default(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -155,6 +222,20 @@ impl WebDavSyncSettings {
                 "webdav.username.required",
                 "WebDAV 用户名不能为空",
                 "WebDAV username is required.",
+            ));
+        }
+        if !self.upload_modules.any_enabled() {
+            return Err(crate::error::AppError::localized(
+                "webdav.upload_modules.required",
+                "请至少选择一个上传同步模块",
+                "Please select at least one upload sync module.",
+            ));
+        }
+        if !self.download_modules.any_enabled() {
+            return Err(crate::error::AppError::localized(
+                "webdav.download_modules.required",
+                "请至少选择一个下载同步模块",
+                "Please select at least one download sync module.",
             ));
         }
         Ok(())
@@ -1147,6 +1228,7 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+    use serde_json::json;
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
@@ -1177,5 +1259,38 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn webdav_sync_settings_default_uses_api_only_upload_and_full_download_modules() {
+        let settings = WebDavSyncSettings::default();
+
+        assert!(settings.upload_modules.api);
+        assert!(!settings.upload_modules.mcp);
+        assert!(!settings.upload_modules.prompts);
+        assert!(!settings.upload_modules.skills);
+        assert!(settings.download_modules.api);
+        assert!(settings.download_modules.mcp);
+        assert!(settings.download_modules.prompts);
+        assert!(settings.download_modules.skills);
+    }
+
+    #[test]
+    fn webdav_sync_settings_deserialize_defaults_module_selection_when_missing() {
+        let settings: WebDavSyncSettings = serde_json::from_value(json!({
+            "enabled": true,
+            "baseUrl": "https://dav.example.com/dav/",
+            "username": "alice"
+        }))
+        .expect("webdav sync settings");
+
+        assert!(settings.upload_modules.api);
+        assert!(!settings.upload_modules.mcp);
+        assert!(!settings.upload_modules.prompts);
+        assert!(!settings.upload_modules.skills);
+        assert!(settings.download_modules.api);
+        assert!(settings.download_modules.mcp);
+        assert!(settings.download_modules.prompts);
+        assert!(settings.download_modules.skills);
     }
 }
