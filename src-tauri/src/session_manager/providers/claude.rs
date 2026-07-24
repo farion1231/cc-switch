@@ -100,6 +100,15 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
         ));
     }
 
+    // Guard against path traversal before any filesystem mutation:
+    // session_id must be a single safe component (no separators, not
+    // `.` or `..`) before we join it onto the jobs directory below.
+    if !is_safe_path_component(session_id) {
+        return Err(format!(
+            "Refusing to clean up jobs for unsafe session ID: {session_id}"
+        ));
+    }
+
     if let Some(stem) = path.file_stem() {
         let sibling = path.parent().unwrap_or_else(|| Path::new("")).join(stem);
         remove_path_if_exists(&sibling).map_err(|e| {
@@ -113,15 +122,6 @@ pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<boo
     // Clean up Claude Code jobs directory entries associated with this
     // session so the built-in agents panel (← key) does not show stale
     // entries after the session has been deleted.
-    //
-    // Guard against path traversal: session_id must be a single safe
-    // component (no separators, not `.` or `..`) before we join it onto
-    // the jobs directory.
-    if !is_safe_path_component(session_id) {
-        return Err(format!(
-            "Refusing to clean up jobs for unsafe session ID: {session_id}"
-        ));
-    }
     let jobs_dir = get_claude_config_dir().join("jobs");
     let jobs_subdir = jobs_dir.join(session_id);
     let jobs_file = jobs_dir.join(format!("{session_id}.json"));
@@ -228,9 +228,14 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         // of scanning a few extra lines is negligible.
     }
 
-    // Extract last_active_at, summary, and custom-title from tail lines (reverse order)
+    // Extract last_active_at, summary, and custom-title from tail lines (reverse order).
+    // We use a separate tail_found_title flag (instead of guarding on
+    // custom_title.is_none()) so the tail can override a custom-title
+    // value that was set from the head — the most recent rename near
+    // EOF should always win.
     let mut last_active_at: Option<i64> = None;
     let mut summary: Option<String> = None;
+    let mut tail_found_title = false;
 
     for line in tail.iter().rev() {
         let value: Value = match serde_json::from_str(line) {
@@ -240,15 +245,19 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         if last_active_at.is_none() {
             last_active_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
         }
-        // Look for custom-title entry (take the last one, i.e. first in reverse)
-        if custom_title.is_none()
-            && value.get("type").and_then(Value::as_str) == Some("custom-title")
-        {
-            custom_title = value
+        // Look for custom-title entry (take the last one, i.e. first in reverse).
+        // Only the first non-empty title found in the tail (most recent
+        // chronologically) wins; empty entries are skipped.
+        if !tail_found_title && value.get("type").and_then(Value::as_str) == Some("custom-title") {
+            let new_title = value
                 .get("customTitle")
                 .and_then(Value::as_str)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
+            if new_title.is_some() {
+                custom_title = new_title;
+                tail_found_title = true;
+            }
         }
         if summary.is_none() {
             if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
@@ -261,9 +270,9 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 }
             }
         }
-        if last_active_at.is_some() && summary.is_some() && custom_title.is_some() {
-            break;
-        }
+        // No early break — tail_n is only 30 lines and we must scan all
+        // of them in case a custom-title rename falls behind the most
+        // recent last_active_at / summary lines.
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path));
@@ -559,7 +568,9 @@ mod tests {
         let path = temp.path().join("session-head-custom.jsonl");
 
         // custom-title in the head region (line 2, within first 10 lines),
-        // then enough padding to push the file past the small-file threshold.
+        // then enough padding to push the file past TAIL_WINDOW_BYTES (128 KB)
+        // so that read_head_tail_lines exercises its seek-and-read-tail path
+        // rather than the full-file-read path.
         let header = concat!(
             "{\"sessionId\":\"session-big\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
             "{\"type\":\"custom-title\",\"customTitle\":\"my-rename\",\"sessionId\":\"session-big\"}\n",
@@ -571,7 +582,8 @@ mod tests {
             "padding padding padding padding padding\"},",
             "\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
         );
-        let needed = (20_000 - header.len()) / padding_line.len() + 5;
+        // Generate > 128 KB so the seek path is taken (TAIL_WINDOW_BYTES = 131_072)
+        let needed = (140_000 - header.len()) / padding_line.len() + 5;
         let padding: String = std::iter::repeat_n(padding_line, needed)
             .collect::<Vec<_>>()
             .concat();
@@ -625,6 +637,91 @@ mod tests {
 
         let meta = parse_session(&path).unwrap();
         assert_eq!(meta.title.as_deref(), Some("late-rename"));
+    }
+
+    #[test]
+    fn parse_session_tail_custom_title_overrides_head() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-tail-override.jsonl");
+
+        // Build a ~50-line file so head (first 10) and tail (last 30) are
+        // disjoint.  Head has an early rename at line 3; tail has a later
+        // rename at line 42 (within the last 30).  The tail rename must win.
+        let mut file = String::new();
+        file.push_str(concat!(
+            "{\"sessionId\":\"s\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"early-rename\",\"sessionId\":\"s\"}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"start\"},\"sessionId\":\"s\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+        ));
+        // ~40 padding lines between head and the late rename
+        for i in 0..38 {
+            file.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":\"pad {i}\"}},\"sessionId\":\"s\",\"timestamp\":\"2026-03-06T10:{:02}:00Z\"}}\n",
+                (i + 2) % 60
+            ));
+        }
+        // Late rename — chronologically after the early one, within tail window
+        file.push_str(
+            "{\"type\":\"custom-title\",\"customTitle\":\"late-rename\",\"sessionId\":\"s\"}\n",
+        );
+        // A few more lines to push it into the tail region
+        for i in 38..46 {
+            file.push_str(&format!(
+                "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":\"pad {i}\"}},\"sessionId\":\"s\",\"timestamp\":\"2026-03-06T10:{:02}:00Z\"}}\n",
+                (i + 2) % 60
+            ));
+        }
+
+        std::fs::write(&path, file).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("late-rename"),
+            "tail custom-title should override head custom-title"
+        );
+    }
+
+    #[test]
+    fn parse_session_custom_title_in_tail_of_large_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-tail-large.jsonl");
+
+        // custom-title only in the tail region of a file > 128 KB so that
+        // read_head_tail_lines uses the seek path to read the tail window.
+        let bulk = "x".repeat(999); // ~1 KB per line
+        let bulk_line = |i: usize| -> String {
+            format!("{{\"type\":\"bulk\",\"i\":{i},\"pad\":\"{bulk}\"}}\n")
+        };
+
+        let mut file = String::new();
+        file.push_str(concat!(
+            "{\"sessionId\":\"tail-big\",\"cwd\":\"/tmp/project\",",
+            "\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",",
+            "\"content\":\"start\"},\"sessionId\":\"tail-big\",",
+            "\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+        ));
+        // ~135 KB of bulk lines, then custom-title, then ~5 KB more
+        for i in 0..135 {
+            file.push_str(&bulk_line(i));
+        }
+        file.push_str(concat!(
+            "{\"type\":\"custom-title\",\"customTitle\":\"tail-only-rename\",",
+            "\"sessionId\":\"tail-big\"}\n",
+        ));
+        for i in 135..140 {
+            file.push_str(&bulk_line(i));
+        }
+
+        std::fs::write(&path, file).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("tail-only-rename"),
+            "custom-title in tail of >128KB file (seek path) should be found"
+        );
     }
 
     #[test]
