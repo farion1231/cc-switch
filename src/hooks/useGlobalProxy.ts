@@ -8,11 +8,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import {
-  getGlobalProxyUrl,
-  setGlobalProxyUrl,
+  getGlobalProxySettings,
   testProxyUrl,
   getUpstreamProxyStatus,
   scanLocalProxies,
+  setGlobalProxySettings,
+  type GlobalProxySettings,
   type ProxyTestResult,
   type UpstreamProxyStatus,
   type DetectedProxy,
@@ -21,10 +22,10 @@ import {
 /**
  * 获取全局代理 URL
  */
-export function useGlobalProxyUrl() {
+export function useGlobalProxySettings() {
   return useQuery({
-    queryKey: ["globalProxyUrl"],
-    queryFn: getGlobalProxyUrl,
+    queryKey: ["globalProxySettings"],
+    queryFn: getGlobalProxySettings,
     staleTime: 30 * 1000, // 30秒内不重新获取，避免展开时闪烁
   });
 }
@@ -32,14 +33,15 @@ export function useGlobalProxyUrl() {
 /**
  * 设置全局代理 URL
  */
-export function useSetGlobalProxyUrl() {
+export function useSetGlobalProxySettings() {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: setGlobalProxyUrl,
+    mutationFn: setGlobalProxySettings,
     onSuccess: () => {
       toast.success(t("settings.globalProxy.saved"));
+      queryClient.invalidateQueries({ queryKey: ["globalProxySettings"] });
       queryClient.invalidateQueries({ queryKey: ["globalProxyUrl"] });
       queryClient.invalidateQueries({ queryKey: ["upstreamProxyStatus"] });
     },
@@ -107,3 +109,4 @@ export function useScanProxies() {
 }
 
 export type { DetectedProxy };
+export type { GlobalProxySettings };
