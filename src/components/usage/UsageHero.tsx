@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { useUsageSummaryByApp } from "@/lib/query/usage";
+import { isMac } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import { APP_ICON_MAP } from "@/config/appConfig";
 import type { AppId } from "@/lib/api/types";
@@ -37,6 +38,8 @@ interface UsageHeroProps {
   model?: string;
   refreshIntervalMs: number;
 }
+
+const ENABLE_PROGRESS_ANIMATION = !isMac();
 
 interface TitleTheme {
   /** Foreground color for the icon glyph (text-* class). */
@@ -348,9 +351,12 @@ export function UsageHero({
                 <div className="relative h-1.5 rounded-full bg-muted/60 overflow-hidden">
                   <motion.div
                     className="absolute inset-y-0 left-0 bg-emerald-500 rounded-full"
-                    initial={{ width: 0 }}
+                    initial={ENABLE_PROGRESS_ANIMATION ? { width: 0 } : false}
                     animate={{ width: `${hitPercent}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
+                    transition={{
+                      duration: ENABLE_PROGRESS_ANIMATION ? 0.8 : 0,
+                      ease: "easeOut",
+                    }}
                   />
                 </div>
               </div>
