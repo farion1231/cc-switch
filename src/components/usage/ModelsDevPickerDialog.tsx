@@ -22,113 +22,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useUpdateModelPricing } from "@/lib/query/usage";
+import {
+  fetchModelsDevPricing,
+  flattenModels,
+  formatPrice,
+  type ModelsDevEntry,
+} from "@/lib/modelsDevPricing";
 import { isTextEditableTarget } from "@/utils/domUtils";
 
-const MODELS_DEV_API_URL = "https://models.dev/api.json";
+export {
+  flattenModels,
+  formatPrice,
+  normalizeModelIdForPricing,
+} from "@/lib/modelsDevPricing";
+
 // 全量约 5000 条：默认只展示最新发布的一批，搜索时才做全量匹配
 const DEFAULT_VISIBLE_ROWS = 50;
 const MAX_VISIBLE_ROWS = 200;
-
-interface ModelsDevCost {
-  input?: number;
-  output?: number;
-  cache_read?: number;
-  cache_write?: number;
-}
-
-interface ModelsDevModel {
-  id?: string;
-  name?: string;
-  release_date?: string;
-  cost?: ModelsDevCost;
-}
-
-interface ModelsDevProvider {
-  id?: string;
-  name?: string;
-  models?: Record<string, ModelsDevModel>;
-}
-
-type ModelsDevResponse = Record<string, ModelsDevProvider>;
-
-interface ModelsDevEntry {
-  /** providerId/modelId，同一模型可能出现在多个供应商下 */
-  key: string;
-  providerId: string;
-  providerName: string;
-  modelId: string;
-  /** 实际入库的 ID，与后端 clean_model_id_for_pricing 的归一化规则一致 */
-  normalizedId: string;
-  modelName: string;
-  /** YYYY-MM-DD 或 YYYY-MM，缺失时为空串 */
-  releaseDate: string;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-/**
- * 与后端 clean_model_id_for_pricing（usage_stats.rs）保持一致：
- * 取最后一个 '/' 之后的段、去掉 ':' 后缀、'@' 换成 '-'、转小写、去掉 [1m] 标记。
- * 成本归因查询用的就是这种归一化形式，原样入库的 ID 永远匹配不上。
- */
-export function normalizeModelIdForPricing(modelId: string): string {
-  const afterSlash = modelId.slice(modelId.lastIndexOf("/") + 1);
-  const beforeColon = afterSlash.split(":")[0] ?? "";
-  let normalized = beforeColon.trim().replace(/@/g, "-").toLowerCase();
-  if (normalized.endsWith("[1m]")) {
-    normalized = normalized.slice(0, -"[1m]".length).trim();
-  }
-  return normalized;
-}
-
-/** 转成后端可解析的非负十进制字符串（不能用 String()，小数可能变成科学计数法） */
-export function formatPrice(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0";
-  // toFixed 对 >=1e21 会退化成科学计数法；这种量级的"价格"只可能是脏数据，按 0 处理
-  if (value >= 1e12) return "0";
-  const trimmed = value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-  return trimmed || "0";
-}
-
-export function flattenModels(data: ModelsDevResponse): ModelsDevEntry[] {
-  const entries: ModelsDevEntry[] = [];
-  for (const [providerId, provider] of Object.entries(data)) {
-    if (!provider || typeof provider !== "object") continue;
-    const providerName = provider.name || providerId;
-    for (const [modelId, model] of Object.entries(provider.models ?? {})) {
-      const cost = model?.cost;
-      const input = typeof cost?.input === "number" ? cost.input : null;
-      const output = typeof cost?.output === "number" ? cost.output : null;
-      if (input === null && output === null) continue;
-      const normalizedId = normalizeModelIdForPricing(modelId);
-      if (!normalizedId) continue;
-      entries.push({
-        key: `${providerId}/${modelId}`,
-        providerId,
-        providerName,
-        modelId,
-        normalizedId,
-        modelName: model?.name || modelId,
-        releaseDate:
-          typeof model?.release_date === "string" ? model.release_date : "",
-        input: input ?? 0,
-        output: output ?? 0,
-        cacheRead: typeof cost?.cache_read === "number" ? cost.cache_read : 0,
-        cacheWrite:
-          typeof cost?.cache_write === "number" ? cost.cache_write : 0,
-      });
-    }
-  }
-  // 最新发布的排在前面
-  entries.sort(
-    (a, b) =>
-      b.releaseDate.localeCompare(a.releaseDate) ||
-      a.modelName.localeCompare(b.modelName),
-  );
-  return entries;
-}
 
 interface ModelsDevPickerDialogProps {
   open: boolean;
@@ -160,13 +70,7 @@ export function ModelsDevPickerDialog({
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["models-dev-pricing"],
-    queryFn: async (): Promise<ModelsDevResponse> => {
-      const res = await fetch(MODELS_DEV_API_URL);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      return res.json();
-    },
+    queryFn: fetchModelsDevPricing,
     enabled: open,
     staleTime: 60 * 60 * 1000,
     retry: 1,
