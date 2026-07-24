@@ -516,7 +516,70 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         );
     }
 
+    // A deferred file (missing/conflicting parent, no-meta billable file) means
+    // this scan is incomplete: some key that currently has zero detail rows
+    // may just be pending resolution, not genuinely unrecoverable. Restoring
+    // it now and having the deferred file's rows land later would double-count
+    // once rollup_and_prune additively merges them — so only restore on a scan
+    // that came back completely clean.
+    let restore_result = if result.deferred_files == 0 {
+        restore_unrecovered_codex_rollups(db)
+    } else {
+        Ok(0)
+    };
+    match restore_result {
+        Ok(restored) if restored > 0 => {
+            log::info!(
+                "[CODEX-SYNC] 从 v16 迁移前快照恢复了 {restored} 行重导入无法覆盖的历史用量"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => log::warn!("[CODEX-SYNC] 从 v16 迁移前快照恢复历史用量失败: {e}"),
+    }
+
     Ok(result)
+}
+
+/// Fill in `_codex_session` rollup rows the post-migration reimport could
+/// not recover (source JSONL already deleted/rotated away), using the
+/// snapshot `migrate_v15_to_v16` took before the v16 reset.
+///
+/// Reimport writes recovered events straight to `proxy_request_logs`, not
+/// to `usage_daily_rollups` — a rollup row only appears later, once
+/// `rollup_and_prune` aggregates detail rows past its retention window.
+/// So a key can be "reimported successfully" while still having no live
+/// rollup row yet; naively keying on the rollup table's primary key alone
+/// (plain `INSERT OR IGNORE ... SELECT *`) would restore the *stale*
+/// snapshot value for that key, and `rollup_and_prune`'s additive
+/// `COALESCE(old.request_count, 0) + new_req` merge would then double the
+/// day's totals once the fresh detail rows are eventually rolled up. The
+/// `NOT EXISTS` guard below excludes any key that already has matching
+/// `codex_session` detail rows — reimported-but-not-yet-rolled-up — so
+/// only genuinely unrecovered keys (no detail rows at all) get restored.
+/// See `Database::migrate_v15_to_v16` and GitHub issue #5727.
+fn restore_unrecovered_codex_rollups(db: &Database) -> Result<u32, AppError> {
+    let conn = lock_conn!(db.conn);
+    if !sqlite_table_exists(&conn, "usage_daily_rollups_codex_v15_backup")? {
+        return Ok(0);
+    }
+    let restored = conn
+        .execute(
+            "INSERT OR IGNORE INTO usage_daily_rollups
+             SELECT b.* FROM usage_daily_rollups_codex_v15_backup b
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM proxy_request_logs l
+                 WHERE l.data_source = 'codex_session'
+                   AND l.app_type = b.app_type
+                   AND l.provider_id = b.provider_id
+                   AND l.model = b.model
+                   AND COALESCE(l.request_model, '') = b.request_model
+                   AND COALESCE(l.pricing_model, '') = b.pricing_model
+                   AND date(l.created_at, 'unixepoch', 'localtime') = b.date
+             )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("恢复 Codex 历史用量失败: {e}")))?;
+    Ok(restored as u32)
 }
 
 /// 收集所有 Codex 会话 JSONL 文件
@@ -1937,6 +2000,105 @@ mod tests {
             assert_eq!((codex_rows, gemini_rows, codex_rollups), (0, 1, 0));
             assert_eq!(remaining_cursors, 2);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn restore_unrecovered_codex_rollups_fills_gaps_without_overwriting_reimported_rows(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        // Three dates, matching the three states a backup key can be in:
+        let now = chrono::Local::now();
+        let gone_date = (now - chrono::Duration::days(400))
+            .format("%Y-%m-%d")
+            .to_string();
+        // rolled up: reimport succeeded and rollup_and_prune already ran
+        let rolled_up_date = (now - chrono::Duration::days(60))
+            .format("%Y-%m-%d")
+            .to_string();
+        // pending: reimport succeeded but hasn't been rolled up into usage_daily_rollups yet
+        let pending_date = now.format("%Y-%m-%d").to_string();
+        let pending_ts = now.timestamp();
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TABLE usage_daily_rollups_codex_v15_backup AS
+                     SELECT * FROM usage_daily_rollups WHERE 0;",
+            )?;
+            let insert_backup = |date: &str, request_count: i64| -> Result<(), AppError> {
+                conn.execute(
+                    "INSERT INTO usage_daily_rollups_codex_v15_backup
+                        (date, app_type, provider_id, model, request_model, pricing_model,
+                         request_count, success_count, input_tokens, output_tokens,
+                         cache_read_tokens, cache_creation_tokens, total_cost_usd,
+                         avg_latency_ms, input_token_semantics)
+                     VALUES (?1, 'codex', '_codex_session', 'gpt-5.4', '', '', ?2, ?2,
+                             100, 50, 0, 0, '0', 0, 0)",
+                    rusqlite::params![date, request_count],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+                Ok(())
+            };
+            // unrecoverable: source JSONL is gone, nothing live for this date at all
+            insert_backup(&gone_date, 10)?;
+            // would-be stale: reimport already produced a corrected, rolled-up row
+            insert_backup(&rolled_up_date, 999)?;
+            // would-be stale: reimport produced detail rows, but rollup_and_prune
+            // hasn't run yet — this is the case the reviewer flagged (#5739)
+            insert_backup(&pending_date, 999)?;
+
+            conn.execute(
+                "INSERT INTO usage_daily_rollups
+                    (date, app_type, provider_id, model, request_model, pricing_model,
+                     request_count, success_count, input_tokens, output_tokens,
+                     cache_read_tokens, cache_creation_tokens)
+                 VALUES (?1, 'codex', '_codex_session', 'gpt-5.4', '', '', 5, 5, 20, 10, 0, 0)",
+                [&rolled_up_date],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, latency_ms, status_code, created_at, data_source
+                 ) VALUES ('pending-row', '_codex_session', 'codex', 'gpt-5.4', '', '',
+                           20, 10, 100, 200, ?1, 'codex_session')",
+                [pending_ts],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        let restored = restore_unrecovered_codex_rollups(&db)?;
+        assert_eq!(restored, 1);
+
+        let conn = lock_conn!(db.conn);
+        let recovered_row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups WHERE date = ?1",
+            [&gone_date],
+            |row| row.get(0),
+        )?;
+        assert_eq!(recovered_row_count, 1);
+
+        // Already-rolled-up reimported row must win over the stale snapshot value.
+        let rolled_up_request_count: i64 = conn.query_row(
+            "SELECT request_count FROM usage_daily_rollups WHERE date = ?1",
+            [&rolled_up_date],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rolled_up_request_count, 5);
+
+        // Pending date must NOT get a rollup row yet — restoring it here would
+        // double-count once rollup_and_prune later aggregates the pending
+        // detail row on top of it.
+        let pending_row_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usage_daily_rollups WHERE date = ?1",
+            [&pending_date],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pending_row_count, 0);
+
         Ok(())
     }
 

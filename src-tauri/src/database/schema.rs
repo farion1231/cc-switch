@@ -1518,9 +1518,36 @@ impl Database {
     /// v15 -> v16: remove Codex session rows and cursors so startup sync can
     /// rebuild them with fork-history alignment. Must stay connection-level:
     /// schema migration already owns the Database connection mutex.
+    ///
+    /// Reimport only covers dates whose source JSONL still exists on disk;
+    /// Codex rotates/deletes old session logs, so history older than that
+    /// cannot be rebuilt and was previously lost outright (GitHub issue
+    /// #5727). `snapshot_codex_rollups_before_reset` preserves the pre-reset
+    /// rows so `restore_unrecovered_codex_rollups` (called after the next
+    /// sync) can fill back in exactly the dates reimport couldn't recover,
+    /// without touching any row the corrected importer did produce.
     fn migrate_v15_to_v16(conn: &Connection) -> Result<(), AppError> {
+        Self::snapshot_codex_rollups_before_reset(conn)?;
         let codex_dir = crate::codex_config::get_codex_config_dir();
         crate::services::session_usage_codex::reset_codex_usage_on_conn(conn, &codex_dir)
+    }
+
+    /// Snapshot `_codex_session` rollup rows into a backup table before the
+    /// v16 reset wipes them, so history whose source JSONL has since been
+    /// deleted/rotated is not lost forever. See `migrate_v15_to_v16`.
+    fn snapshot_codex_rollups_before_reset(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "usage_daily_rollups")?
+            || !Self::has_column(conn, "usage_daily_rollups", "provider_id")?
+        {
+            return Ok(());
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS usage_daily_rollups_codex_v15_backup AS
+                 SELECT * FROM usage_daily_rollups WHERE 0;
+             INSERT INTO usage_daily_rollups_codex_v15_backup
+                 SELECT * FROM usage_daily_rollups WHERE provider_id = '_codex_session';",
+        )
+        .map_err(|e| AppError::Database(format!("备份 Codex 历史用量失败: {e}")))
     }
 
     /// 插入默认模型定价数据
@@ -3080,6 +3107,16 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         assert_eq!(counts, (0, 1, 0, 1));
+
+        // The pre-reset row must survive in the snapshot table so a later
+        // sync can restore it if reimport can't recover that date (#5727).
+        let backup_row: (String, i64) = conn.query_row(
+            "SELECT date, COUNT(*) FROM usage_daily_rollups_codex_v15_backup
+             WHERE provider_id = '_codex_session' GROUP BY date",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(backup_row, ("2026-07-10".to_string(), 1));
         Ok(())
     }
 }
