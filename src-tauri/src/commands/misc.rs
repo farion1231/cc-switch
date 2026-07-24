@@ -387,6 +387,10 @@ fn build_tool_lifecycle_command(
         // 仍应让管道前段失败参与整条脚本判定。
         lines.push("set -e".to_string());
         lines.push("set -o pipefail".to_string());
+        // 非交互式 bash 默认 PATH 不含 Homebrew 目录(macOS ARM: /opt/homebrew/bin),
+        // 导致 npm/node 等工具找不到 Homebrew 安装的版本。将常见 Homebrew bin 目录追加为兜底,
+        // 避免覆盖继承 PATH 中优先级更高的 nvm/fnm/mise/Volta 等 Node 工具链。
+        lines.push("export PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\"".to_string());
     }
 
     #[cfg(target_os = "windows")]
@@ -3652,6 +3656,36 @@ mod tests {
         assert_eq!(
             build_exec_line("/bin/zsh", Some(Path::new("/tmp/project"))),
             r#"exec '/bin/zsh' -lc 'cd '"'"'/tmp/project'"'"' || exit 1; exec '"'"'/bin/zsh'"'"' -i'"#
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn lifecycle_script_preserves_custom_node_path_before_homebrew_fallbacks() {
+        let script = build_tool_lifecycle_command(&["codex"], ToolLifecycleAction::Install, None)
+            .expect("Codex install script should build");
+
+        assert!(script.starts_with(
+            "set -e\nset -o pipefail\nexport PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\"\n"
+        ));
+        assert!(script.contains("npm i -g @openai/codex@latest"));
+
+        let export_line = script
+            .lines()
+            .find(|line| line.starts_with("export PATH="))
+            .expect("lifecycle script should export PATH");
+        let inherited_path = "/Users/me/.nvm/versions/node/v22.14.0/bin:/usr/bin:/bin";
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("{export_line}\nprintf '%s' \"$PATH\""))
+            .env("PATH", inherited_path)
+            .output()
+            .expect("PATH export should be executable by a POSIX shell");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).expect("PATH output should be UTF-8"),
+            format!("{inherited_path}:/opt/homebrew/bin:/usr/local/bin")
         );
     }
 
