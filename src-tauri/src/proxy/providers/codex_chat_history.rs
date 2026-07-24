@@ -448,6 +448,36 @@ fn cached_call_item(item: &Value) -> Option<(String, Value)> {
     {
         return None;
     }
+
+    // Do not cache incomplete calls: they may carry truncated/malformed data
+    // that will poison future requests when enriched from history.
+    if item.get("status").and_then(Value::as_str) == Some("incomplete") {
+        return None;
+    }
+
+    // For function_call, only cache calls whose arguments are a valid JSON object.
+    // A truncated arguments string (e.g. from an upstream SSE drop) would otherwise
+    // be replayed into transform_codex_anthropic and cause cc_switch_invalid_request.
+    if item.get("type").and_then(Value::as_str) == Some("function_call") {
+        if let Some(args) = item.get("arguments").and_then(Value::as_str) {
+            if !args.trim().is_empty() {
+                match serde_json::from_str::<Value>(args) {
+                    Ok(value) if value.is_object() => {}
+                    _ => {
+                        log::warn!(
+                            "[CodexChatHistory] Skipping cached function_call with invalid arguments: call_id={}",
+                            item.get("call_id")
+                                .and_then(Value::as_str)
+                                .or_else(|| item.get("id").and_then(Value::as_str))
+                                .unwrap_or("")
+                        );
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
     let call_id = response_item_call_id(item)?;
     Some((call_id, item.clone()))
 }
@@ -859,5 +889,71 @@ mod tests {
 
         assert_eq!(history.enrich_request(&mut request).await, 1);
         assert_eq!(request["input"][0]["reasoning_content"], "Need a file.");
+    }
+
+    #[tokio::test]
+    async fn does_not_cache_incomplete_function_call() {
+        let history = CodexChatHistoryStore::default();
+        let recorded = history
+            .record_response(&json!({
+                "id": "resp_incomplete",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "exec_command",
+                        "arguments": "{\\\"cmd\\\":\\\"ls\\\"}",
+                        "status": "incomplete"
+                    }
+                ]
+            }))
+            .await;
+        assert_eq!(recorded, 0);
+
+        let mut request = json!({
+            "previous_response_id": "resp_incomplete",
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok"
+                }
+            ]
+        });
+
+        assert_eq!(history.enrich_request(&mut request).await, 0);
+    }
+
+    #[tokio::test]
+    async fn does_not_cache_function_call_with_invalid_arguments() {
+        let history = CodexChatHistoryStore::default();
+        let recorded = history
+            .record_response(&json!({
+                "id": "resp_bad_args",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "exec_command",
+                        "arguments": "{\\\"cmd\\\":\\\"ls -la /some/very/long",
+                        "status": "completed"
+                    }
+                ]
+            }))
+            .await;
+        assert_eq!(recorded, 0);
+
+        let mut request = json!({
+            "previous_response_id": "resp_bad_args",
+            "input": [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok"
+                }
+            ]
+        });
+
+        assert_eq!(history.enrich_request(&mut request).await, 0);
     }
 }
