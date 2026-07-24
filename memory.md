@@ -4,7 +4,9 @@
 
 - 症状：在 CCSwitchMulti MultiRouter 下选择 official GPT 模型时，Codex Desktop 提示模型不支持图片输入。
 - 根因：官方原始 `~/.codex/models_cache.cc-switch-backup.json` 中 `gpt-5.6-sol/terra/luna/gpt-5.5/gpt-5.4/gpt-5.4-mini` 都带 `input_modalities=["text","image"]` 和 `supports_image_detail_original=true`，但 CCSM 的 `FetchedModel` 只承载 `id/owned_by/context_window`。OAuth/cache 动态目录同步到 provider、route、聚合 catalog 时丢失模态字段；随后 `CodexCatalogToolProfile::NativeResponses` 用 text-only 模板生成 `cc-switch-model-catalog.json`，所有 official GPT 被写成 `input_modalities=["text"]`。
+- 引入边界：`15e712e7` 引入 NativeResponses 直连和 text-only 模板，这是对第三方 native gateway 的合理保护；`a3e4622f` 把 Codex OAuth 动态模型目录接入 MultiRouter，但模型结构没承载模态字段；`ba739bd9` 删除静态 fallback 后让动态目录成为主路径，因此 official 图文能力丢失稳定复现。
 - 修复边界：后端 `codex_oauth_models` 从在线响应和本地 cache 解析 `input_modalities/inputModalities/modalities.input` 与 `supportsImage/supports_image/vision/supports_image_detail_original`；前端 `FetchedModel`、Workspace 刷新、MultiRouter 向导合并都保留 `inputModalities` 与 `supportsImage`；最终 `codex_config` 生成 NativeResponses catalog 时依据这些字段覆盖 text-only 模板。Spark/DeepSeek V4 这类明确 text-only 的模型仍保持文本能力，不能被模板或 route 误开启图片。
+- 所有模型类型支持策略：official 不做主动探测，信任官方在线 catalog / 原始 cache；OpenAI-compatible `/v1/models` 和火山 Plan 若明确返回 `input_modalities`、`modalities.input`、`supportsImage`、`vision` 等字段则透传；没有能力字段时保持未知，靠用户 route capability 显式声明或运行时上游不支持图片错误触发降级。不要在批量刷新时对每个模型发真实图片探测，避免消耗额度、触发审计和产生不稳定副作用。
 - 验证：定向 Rust 测试覆盖 OAuth 图像能力解析与 NativeResponses catalog 图文输出；前端 `codexMultiRouterWizard`/`codexMultiRouterSync` 单线程测试、`pnpm typecheck`、`cargo fmt --check`、`git diff --check` 通过。真实 `~/.codex` 未写入；安装新构建后需刷新/重建 MultiRouter official catalog，再重启 Codex app-server 读取新的 `cc-switch-model-catalog.json`。
 
 ## 2026-07-25 Codex Desktop 新版历史修复根修

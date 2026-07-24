@@ -215,9 +215,9 @@ pub async fn fetch_models(options: FetchModelsRequest<'_>) -> Result<Vec<Fetched
                 .map(|m| FetchedModel {
                     context_window: extract_context_window(&m.extra),
                     id: m.id,
-                    input_modalities: None,
+                    input_modalities: extract_input_modalities(&m.extra),
                     owned_by: m.owned_by,
-                    supports_image: None,
+                    supports_image: extract_supports_image(&m.extra),
                 })
                 .collect();
 
@@ -292,6 +292,80 @@ fn extract_context_window(obj: &serde_json::Map<String, serde_json::Value>) -> O
         .find_map(extract_context_window)
 }
 
+/// 从 OpenAI-compatible `/models` 的供应商扩展字段中读取输入模态。
+///
+/// 只有上游明确声明时才透传，避免把未知能力误推成支持图片。
+fn extract_input_modalities(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Option<Vec<String>> {
+    [
+        "input_modalities",
+        "inputModalities",
+        "modalities",
+        "capabilities",
+        "metadata",
+    ]
+    .iter()
+    .filter_map(|key| obj.get(*key))
+    .find_map(parse_input_modalities)
+}
+
+fn parse_input_modalities(value: &serde_json::Value) -> Option<Vec<String>> {
+    let values = match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        serde_json::Value::Object(obj) => {
+            if let Some(input) = obj
+                .get("input")
+                .or_else(|| obj.get("inputs"))
+                .or_else(|| obj.get("input_modalities"))
+                .or_else(|| obj.get("inputModalities"))
+                .or_else(|| obj.get("modalities"))
+            {
+                parse_input_modalities(input)?
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn extract_supports_image(obj: &serde_json::Map<String, serde_json::Value>) -> Option<bool> {
+    let explicit = [
+        "supports_image",
+        "supportsImage",
+        "vision",
+        "supports_vision",
+        "supportsVision",
+        "supports_image_detail_original",
+        "supportsImageDetailOriginal",
+    ]
+    .iter()
+    .filter_map(|key| obj.get(*key))
+    .find_map(serde_json::Value::as_bool);
+    if explicit.is_some() {
+        return explicit;
+    }
+
+    extract_input_modalities(obj).map(|modalities| {
+        modalities
+            .iter()
+            .any(|modality| modality.eq_ignore_ascii_case("image"))
+    })
+}
+
 /// 解析火山 `ListArkAgentPlanModel` / `ListArkCodingPlanModel` 的模型列表。
 ///
 /// 官方文档示例是 `Result.Datas[].ModelID`；这里额外兼容少量常见字段名，
@@ -359,8 +433,8 @@ fn parse_volcengine_plan_model_entry(entry: &serde_json::Value) -> Option<Fetche
         id: id.to_string(),
         owned_by: Some("volcengine".to_string()),
         context_window: extract_context_window(obj),
-        input_modalities: None,
-        supports_image: None,
+        input_modalities: extract_input_modalities(obj),
+        supports_image: extract_supports_image(obj),
     })
 }
 
@@ -1162,6 +1236,26 @@ mod tests {
         assert_eq!(data[8].context_window, Some(262_144));
         assert_eq!(data[9].context_window, Some(32_768));
         assert_eq!(data[10].context_window, Some(65_536));
+    }
+
+    #[test]
+    fn test_parse_response_extracts_declared_image_capabilities() {
+        let json = r#"{"object":"list","data":[{"id":"vision-model","input_modalities":["text","image"]},{"id":"metadata-vision","metadata":{"modalities":{"input":["text","image"]}}},{"id":"text-model","supportsImage":false},{"id":"unknown-model"}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let data = resp.data.unwrap();
+
+        assert_eq!(
+            extract_input_modalities(&data[0].extra).as_deref(),
+            Some(&["text".to_string(), "image".to_string()][..])
+        );
+        assert_eq!(extract_supports_image(&data[0].extra), Some(true));
+        assert_eq!(
+            extract_input_modalities(&data[1].extra).as_deref(),
+            Some(&["text".to_string(), "image".to_string()][..])
+        );
+        assert_eq!(extract_supports_image(&data[1].extra), Some(true));
+        assert_eq!(extract_supports_image(&data[2].extra), Some(false));
+        assert_eq!(extract_supports_image(&data[3].extra), None);
     }
 
     #[test]
