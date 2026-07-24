@@ -378,6 +378,10 @@ pub fn anthropic_to_responses(
 
     if let Some(v) = body.get("tool_choice") {
         result["tool_choice"] = map_tool_choice_to_responses(v);
+        if let Some(disable_parallel) = v.get("disable_parallel_tool_use").and_then(Value::as_bool)
+        {
+            result["parallel_tool_calls"] = json!(!disable_parallel);
+        }
     }
 
     // Inject prompt_cache_key for improved cache routing on OpenAI-compatible endpoints
@@ -433,8 +437,10 @@ pub fn anthropic_to_responses(
             // —— 兜底必填字段（or_insert：客户端送了什么就保留，否则注入默认值）——
             obj.entry("instructions".to_string()).or_insert(json!(""));
             obj.entry("tools".to_string()).or_insert(json!([]));
+            // Anthropic 默认允许并行工具调用。优先保留上方已转换的显式设置，
+            // 否则允许支持该能力的 Codex 模型在同一响应中批量调用独立工具。
             obj.entry("parallel_tool_calls".to_string())
-                .or_insert(json!(false));
+                .or_insert(json!(true));
 
             // —— 强制覆盖 stream = true ——
             // 即便客户端误传 stream:false 也要覆盖，因为 codex-rs 永远 true，
@@ -2159,10 +2165,54 @@ mod tests {
         assert_eq!(result["tools"], json!([]), "tools 缺失时应兜底为空数组");
         assert_eq!(
             result["parallel_tool_calls"],
-            json!(false),
-            "parallel_tool_calls 应兜底为 false"
+            json!(true),
+            "parallel_tool_calls 应默认允许并行工具调用"
         );
         assert_eq!(result["stream"], json!(true), "stream 应被强制设为 true");
+    }
+
+    /// 验证 Anthropic 的并行工具开关会正确反向映射到 Responses 请求。
+    #[test]
+    fn test_codex_oauth_maps_anthropic_parallel_tool_choice() {
+        let enabled = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6-sol",
+                "tools": [{
+                    "name": "read_file",
+                    "input_schema": {"type": "object"}
+                }],
+                "tool_choice": {
+                    "type": "auto",
+                    "disable_parallel_tool_use": false
+                },
+                "messages": [{"role": "user", "content": "Read both files"}]
+            }),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(enabled["parallel_tool_calls"], json!(true));
+
+        let disabled = anthropic_to_responses(
+            json!({
+                "model": "gpt-5.6-sol",
+                "tools": [{
+                    "name": "read_file",
+                    "input_schema": {"type": "object"}
+                }],
+                "tool_choice": {
+                    "type": "auto",
+                    "disable_parallel_tool_use": true
+                },
+                "messages": [{"role": "user", "content": "Read one file"}]
+            }),
+            None,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(disabled["parallel_tool_calls"], json!(false));
     }
 
     #[test]
