@@ -3078,8 +3078,8 @@ base_url = "https://production.api/v1"
         for slug in ["gpt-5.4", "gpt-5.4-mini"] {
             assert_eq!(
                 entry(slug)["include_skills_usage_instructions"],
-                json!(false),
-                "released Codex catalogs keep skill usage instructions disabled for {slug}"
+                json!(true),
+                "current stable Codex catalogs enable skill usage instructions for {slug}"
             );
         }
 

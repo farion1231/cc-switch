@@ -1,5 +1,5 @@
 {
-  "source": "openai/codex rust-v0.144.6 bundled model registry (2026-07-20)",
+  "source": "openai/codex rust-v0.145.0 bundled model registry (2026-07-24)",
   "models": {
     "gpt-5.6-sol": {
       "default_reasoning_level": "low",
@@ -10,14 +10,20 @@
         },
         {
           "effort": "medium",
-          "description": "Balanced speed and reasoning depth"
+          "description": "Balances speed and reasoning depth for everyday tasks"
         },
         {
           "effort": "high",
           "description": "Greater reasoning depth for complex problems"
         },
-        { "effort": "xhigh", "description": "Extra-high reasoning depth" },
-        { "effort": "max", "description": "Maximum reasoning depth" },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
         {
           "effort": "ultra",
           "description": "Maximum reasoning with automatic task delegation"
@@ -46,14 +52,20 @@
         },
         {
           "effort": "medium",
-          "description": "Balanced speed and reasoning depth"
+          "description": "Balances speed and reasoning depth for everyday tasks"
         },
         {
           "effort": "high",
           "description": "Greater reasoning depth for complex problems"
         },
-        { "effort": "xhigh", "description": "Extra-high reasoning depth" },
-        { "effort": "max", "description": "Maximum reasoning depth" },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        },
         {
           "effort": "ultra",
           "description": "Maximum reasoning with automatic task delegation"
@@ -82,14 +94,20 @@
         },
         {
           "effort": "medium",
-          "description": "Balanced speed and reasoning depth"
+          "description": "Balances speed and reasoning depth for everyday tasks"
         },
         {
           "effort": "high",
           "description": "Greater reasoning depth for complex problems"
         },
-        { "effort": "xhigh", "description": "Extra-high reasoning depth" },
-        { "effort": "max", "description": "Maximum reasoning depth" }
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        },
+        {
+          "effort": "max",
+          "description": "Maximum reasoning depth for the hardest problems"
+        }
       ],
       "shell_type": "shell_command",
       "support_verbosity": true,
@@ -114,13 +132,16 @@
         },
         {
           "effort": "medium",
-          "description": "Balanced speed and reasoning depth"
+          "description": "Balances speed and reasoning depth for everyday tasks"
         },
         {
           "effort": "high",
           "description": "Greater reasoning depth for complex problems"
         },
-        { "effort": "xhigh", "description": "Extra-high reasoning depth" }
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
       ],
       "shell_type": "shell_command",
       "support_verbosity": true,
@@ -143,13 +164,16 @@
         },
         {
           "effort": "medium",
-          "description": "Balanced speed and reasoning depth"
+          "description": "Balances speed and reasoning depth for everyday tasks"
         },
         {
           "effort": "high",
           "description": "Greater reasoning depth for complex problems"
         },
-        { "effort": "xhigh", "description": "Extra-high reasoning depth" }
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
       ],
       "shell_type": "shell_command",
       "support_verbosity": true,
@@ -161,7 +185,7 @@
       "input_modalities": ["text", "image"],
       "supports_search_tool": true,
       "use_responses_lite": false,
-      "include_skills_usage_instructions": false
+      "include_skills_usage_instructions": true
     },
     "gpt-5.4-mini": {
       "default_reasoning_level": "medium",
@@ -172,13 +196,16 @@
         },
         {
           "effort": "medium",
-          "description": "Balanced speed and reasoning depth"
+          "description": "Balances speed and reasoning depth for everyday tasks"
         },
         {
           "effort": "high",
           "description": "Greater reasoning depth for complex problems"
         },
-        { "effort": "xhigh", "description": "Extra-high reasoning depth" }
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
       ],
       "shell_type": "shell_command",
       "support_verbosity": true,
@@ -190,7 +217,7 @@
       "input_modalities": ["text", "image"],
       "supports_search_tool": true,
       "use_responses_lite": false,
-      "include_skills_usage_instructions": false
+      "include_skills_usage_instructions": true
     }
   }
 }
