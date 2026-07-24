@@ -191,11 +191,14 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         // tail pass (reverse order, guarded) will still override this
         // value when a more recent rename falls in the tail window.
         if value.get("type").and_then(Value::as_str) == Some("custom-title") {
-            custom_title = value
+            let new_title = value
                 .get("customTitle")
                 .and_then(Value::as_str)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
+            if new_title.is_some() {
+                custom_title = new_title;
+            }
         }
         // Extract first real user message as title candidate
         // Skip system-injected caveats and slash commands (e.g. /clear, /compact)
@@ -747,6 +750,31 @@ mod tests {
         assert!(
             err.contains("unsafe"),
             "error should mention unsafe session ID, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_session_empty_custom_title_does_not_clear_previous() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("session-empty-rename.jsonl");
+
+        // custom-title at line 2 with valid name, then another custom-title
+        // at line 4 with an empty/whitespace title.  The empty one must NOT
+        // overwrite the valid one.
+        let file = concat!(
+            "{\"sessionId\":\"session-empty\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"valid-name\",\"sessionId\":\"session-empty\"}\n",
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"sessionId\":\"session-empty\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"   \",\"sessionId\":\"session-empty\"}\n",
+        );
+
+        std::fs::write(&path, file).expect("write");
+
+        let meta = parse_session(&path).unwrap();
+        assert_eq!(
+            meta.title.as_deref(),
+            Some("valid-name"),
+            "empty custom-title must not overwrite a previously valid one"
         );
     }
 }
