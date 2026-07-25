@@ -2366,11 +2366,22 @@ impl ProviderService {
     ///
     /// 同时检查本地 settings 和数据库的当前供应商，防止删除任一端正在使用的供应商。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
+    /// Pi 例外：删除当前激活供应商会留下悬空的 `defaultProvider` / `modelRoles.default`，因此拒绝。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         // Additive mode apps - no current provider concept
         if app_type.is_additive_mode() {
             // Single DB read shared across all additive-mode sub-paths below.
             let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
+
+            if matches!(app_type, AppType::Pi) {
+                if let Ok(Some(active)) = crate::pi_config::get_active_provider() {
+                    if active == id {
+                        return Err(AppError::Message(
+                            "无法删除当前正在使用的供应商".to_string(),
+                        ));
+                    }
+                }
+            }
 
             if matches!(app_type, AppType::OpenCode) {
                 let provider_category = existing.as_ref().and_then(|p| p.category.clone());
@@ -2475,6 +2486,13 @@ impl ProviderService {
                 remove_hermes_provider_from_live(id)?;
             }
             AppType::Pi => {
+                if let Ok(Some(active)) = crate::pi_config::get_active_provider() {
+                    if active == id {
+                        return Err(AppError::Message(
+                            "无法删除当前正在使用的供应商".to_string(),
+                        ));
+                    }
+                }
                 remove_pi_provider_from_live(id)?;
             }
             _ => {

@@ -343,7 +343,11 @@ export function ProviderList({
         appId === "openclaw" ||
         appId === "hermes" ||
         appId === "pi";
-      if (isOmo || isAdditiveMode) return true;
+      if (isOmo) return true;
+      // Pi keeps an active pointer in settings; refuse deleting the active one
+      // so defaultProvider / modelRoles.default cannot go stale.
+      if (appId === "pi") return !resolveIsCurrent(provider);
+      if (isAdditiveMode) return true;
       return !resolveIsCurrent(provider);
     },
     [appId, resolveIsCurrent],

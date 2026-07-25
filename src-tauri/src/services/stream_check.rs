@@ -180,6 +180,8 @@ impl StreamCheckService {
                 Self::resolve_opencode_base_url(provider, npm.as_deref())
             }
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
+            // Pi stores the endpoint as camelCase `baseUrl` (same shape as OpenClaw).
+            AppType::Pi => Self::extract_pi_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
@@ -302,6 +304,23 @@ impl StreamCheckService {
                     "openclaw_base_url_missing",
                     "OpenClaw 供应商缺少 baseUrl",
                     "OpenClaw provider is missing `baseUrl`",
+                )
+            })
+    }
+
+    /// Pi: `{ baseUrl, apiKey, api, models, ... }`（camelCase）
+    fn extract_pi_base_url(provider: &Provider) -> Result<String, AppError> {
+        provider
+            .settings_config
+            .get("baseUrl")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::localized(
+                    "pi_base_url_missing",
+                    "Pi 供应商缺少 baseUrl",
+                    "Pi provider is missing `baseUrl`",
                 )
             })
     }
@@ -498,6 +517,23 @@ mod tests {
         assert_eq!(
             StreamCheckService::extract_openclaw_base_url(&p2).unwrap(),
             "https://api.deepseek.com/v1"
+        );
+    }
+
+    #[test]
+    fn test_extract_pi_base_url_reads_camel_case() {
+        let p = make_provider(serde_json::json!({ "apiKey": "k", "api": "openai-completions" }));
+        assert!(StreamCheckService::extract_pi_base_url(&p).is_err());
+
+        let p2 = make_provider(serde_json::json!({ "baseUrl": "https://api.openai.com/v1" }));
+        assert_eq!(
+            StreamCheckService::extract_pi_base_url(&p2).unwrap(),
+            "https://api.openai.com/v1"
+        );
+
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Pi, &p2).unwrap(),
+            "https://api.openai.com/v1"
         );
     }
 

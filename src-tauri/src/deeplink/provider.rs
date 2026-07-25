@@ -635,7 +635,7 @@ pub fn parse_and_merge_config(
         "gemini" => merge_gemini_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" => {
+        "openclaw" | "opencode" | "hermes" | "pi" => {
             merge_additive_config(&mut merged, &config_value)?;
         }
         "" => {

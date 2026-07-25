@@ -23,6 +23,8 @@ import type {
   CodexChatReasoning,
   PromptCacheRoutingMode,
   ClaudeApiKeyField,
+  PiModelEntry,
+  PiProviderConfig,
 } from "@/types";
 import {
   providerPresets,
@@ -1208,9 +1210,25 @@ function ProviderFormFull({
         toast.error(t("pi.form.providerKeyDuplicate"));
         return;
       }
-      const hasValidPiModel = piForm.piModels.some(
-        (model) => typeof model.id === "string" && model.id.trim() !== "",
-      );
+      const hasValidPiModel = (() => {
+        // Prefer the editable JSON value: the JSON editor only updates RHF
+        // `settingsConfig`, leaving `piForm.piModels` stale until synced.
+        try {
+          const parsed = JSON.parse(values.settingsConfig || "{}") as {
+            models?: Array<{ id?: unknown }>;
+          };
+          if (Array.isArray(parsed.models)) {
+            return parsed.models.some(
+              (model) => typeof model.id === "string" && model.id.trim() !== "",
+            );
+          }
+        } catch {
+          // fall through to React form state
+        }
+        return piForm.piModels.some(
+          (model) => typeof model.id === "string" && model.id.trim() !== "",
+        );
+      })();
       if (!hasValidPiModel) {
         issues.push(
           t("pi.form.modelsRequired", {
@@ -2631,7 +2649,25 @@ function ProviderFormFull({
                 </Label>
                 <JsonEditor
                   value={form.getValues("settingsConfig")}
-                  onChange={(config) => form.setValue("settingsConfig", config)}
+                  onChange={(config) => {
+                    form.setValue("settingsConfig", config);
+                    if (appId === "pi") {
+                      try {
+                        const parsed = JSON.parse(
+                          config || "{}",
+                        ) as PiProviderConfig;
+                        const models = Array.isArray(parsed.models)
+                          ? (parsed.models as PiModelEntry[])
+                          : [];
+                        piForm.resetPiState(
+                          { ...parsed, models },
+                          piForm.piProviderKey,
+                        );
+                      } catch {
+                        // ignore invalid JSON while editing
+                      }
+                    }
+                  }}
                   placeholder={
                     appId === "hermes"
                       ? `{
