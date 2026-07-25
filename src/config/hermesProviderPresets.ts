@@ -1602,4 +1602,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "claude-fable-5", provider: "jiekou" },
     },
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    settingsConfig: {
+      name: "abliteration",
+      base_url: "https://api.abliteration.ai/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "abliterated-model",
+          name: "Abliterated Model",
+          context_length: 150000,
+        },
+      ],
+    },
+    category: "third_party",
+    icon: "abliteration",
+    suggestedDefaults: {
+      model: { default: "abliterated-model", provider: "abliteration" },
+    },
+  },
 ];

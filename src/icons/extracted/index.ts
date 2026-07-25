@@ -2,6 +2,7 @@
 // Update entries deliberately; automatic regeneration is intentionally unsupported.
 
 import _a6api from "./a6-icon.png";
+import _abliteration from "./abliteration.svg?url";
 import _apikeyfun from "./apikeyfun.png";
 import _apinebula from "./apinebula_icon.png";
 import _atlascloud from "./atlascloud_icon.png";
@@ -107,6 +108,7 @@ export const icons: Record<string, string> = {
 
 export const iconUrls: Record<string, string> = {
   a6api: _a6api,
+  abliteration: _abliteration,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
   atlascloud: _atlascloud,

@@ -1211,4 +1211,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    category: "third_party",
+    baseUrl: "https://api.abliteration.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    endpointCandidates: ["https://api.abliteration.ai"],
+    icon: "abliteration",
+    iconColor: "#0A0A0A",
+  },
 ];

@@ -1719,4 +1719,18 @@ base_url = "https://cc-api.pipellm.ai/v1"`,
     icon: "jiekou",
     iconColor: "#000000",
   },
+  {
+    name: "Abliteration",
+    websiteUrl: "https://abliteration.ai",
+    apiKeyUrl: "https://abliteration.ai/console",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "abliteration",
+      "https://api.abliteration.ai/v1",
+      "abliterated-model",
+    ),
+    endpointCandidates: ["https://api.abliteration.ai/v1"],
+    category: "third_party",
+    icon: "abliteration",
+  },
 ];
